@@ -277,20 +277,64 @@ fn origin_for_finding(
     let Some(captured) = captured else {
         return missing_input_origin();
     };
+    if captured.has_standalone_cr {
+        return coarse_cr_origin(captured, finding, span);
+    }
     if !finding.source_currentness.permits_candidate_action() {
         return coarse_on_line(&captured.lines, finding.probe.location.line);
     }
     let Some(span) = span else {
         return coarse_on_line(&captured.lines, finding.probe.location.line);
     };
-    if captured.has_standalone_cr {
-        return missing_input_origin();
-    }
     if captured.used_lexical_fallback || !captured.facts_match {
         return coarse_on_line(&captured.lines, finding.probe.location.line);
     }
     exact_origin(captured, span, finding)
         .unwrap_or_else(|| coarse_on_line(&captured.lines, finding.probe.location.line))
+}
+
+/// Analyzer rows end at LF; editor rows also end at a bare CR. A current,
+/// matching parser anchor can select the editor row, but never admits exact
+/// columns in a standalone-CR file. Without that anchor, retain only the
+/// first editor row of the recorded analyzer row.
+fn coarse_cr_origin(
+    captured: &CapturedFile<'_>,
+    finding: &Finding,
+    span: Option<ParserByteSpan>,
+) -> EncodedOrigin {
+    let source = captured.source.as_ref();
+    let mut analyzer_lines = source
+        .split_inclusive('\n')
+        .chain(source.ends_with('\n').then_some(""));
+    let analyzer_start: usize = analyzer_lines
+        .by_ref()
+        .take(finding.probe.location.line.saturating_sub(1))
+        .map(str::len)
+        .sum();
+    let Some(raw) = analyzer_lines.next() else {
+        return missing_input_origin();
+    };
+    let expression = finding.probe.expression.as_str();
+    let offset = span
+        .filter(|_| {
+            finding.source_currentness.permits_candidate_action()
+                && captured.facts_match
+                && !captured.used_lexical_fallback
+                && !expression.is_empty()
+        })
+        .and_then(|span| trimmed_expression_start(source, span.start_byte, expression))
+        .filter(|&start| {
+            let Some(end) = start.checked_add(expression.len()) else {
+                return false;
+            };
+            start >= analyzer_start
+                && end <= analyzer_start + raw.len()
+                && source.get(start..end) == Some(expression)
+        })
+        .unwrap_or(analyzer_start);
+    line_containing(offset, &captured.lines)
+        .map(|(line, _)| coarse_on_line(&captured.lines, line + 1))
+        .unwrap_or_else(missing_input_origin)
 }
 
 fn missing_input_origin() -> EncodedOrigin {
@@ -427,28 +471,24 @@ fn lsp_lines(source: &str) -> Vec<LineSpan> {
     let mut start = 0usize;
     let mut index = 0usize;
     while index < bytes.len() {
-        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
-            lines.push(LineSpan { start, end: index });
-            index += 2;
-            start = index;
-        } else if bytes[index] == b'\n' {
-            lines.push(LineSpan { start, end: index });
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => 0,
+        };
+        if terminator_len == 0 {
             index += 1;
-            start = index;
-        } else {
-            index += 1;
+            continue;
         }
+        lines.push(LineSpan { start, end: index });
+        index += terminator_len;
+        start = index;
     }
-    if start < bytes.len() || bytes.is_empty() || source.ends_with('\n') || source.ends_with("\r\n")
-    {
-        lines.push(LineSpan {
-            start,
-            end: bytes.len(),
-        });
-    }
-    if lines.is_empty() {
-        lines.push(LineSpan { start: 0, end: 0 });
-    }
+    lines.push(LineSpan {
+        start,
+        end: bytes.len(),
+    });
     lines
 }
 
@@ -863,7 +903,7 @@ mod tests {
     fn standalone_cr_refuses_precision() -> Result<(), String> {
         let source = "fn price() {\r    if montant_é > discount_threshold { true }\r}\r";
         let start = require_find(source, PREDICATE, "predicate")?;
-        let finding = current_finding("probe:cr", 2, PREDICATE);
+        let finding = current_finding("probe:cr", 1, PREDICATE);
         let origins = origins_for(
             &finding,
             source,
@@ -872,8 +912,98 @@ mod tests {
         );
         let origin = require_origin(&origins, "probe:cr")?;
         assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
-        assert_eq!(origin.line, 0);
+        assert_eq!(origin.line, 1);
         Ok(())
+    }
+
+    #[test]
+    fn standalone_cr_bounds_untrusted_or_missing_anchors() -> Result<(), String> {
+        let source = "fn price() {\r    let a = 1;\n    let b = 2;\r    if montant_é > discount_threshold { true }\r}\r";
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let mut finding = current_finding("probe:cr-refusal", 2, PREDICATE);
+        let valid = Some(ParserByteSpan { start_byte: start });
+        let origins = origins_for(&finding, source, valid, None);
+        assert_eq!(require_origin(&origins, &finding.id)?.line, 3);
+        for span in [
+            None,
+            Some(ParserByteSpan { start_byte: 0 }),
+            Some(ParserByteSpan {
+                start_byte: usize::MAX,
+            }),
+        ] {
+            let origins = origins_for(&finding, source, span, None);
+            let origin = require_origin(&origins, &finding.id)?;
+            assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+            assert_eq!(origin.line, 2);
+        }
+        let origins = origins_for(&finding, source, valid, Some("different facts"));
+        assert_eq!(require_origin(&origins, &finding.id)?.line, 2);
+        finding.source_currentness = SourceCurrentness::BaseDeleted;
+        let origins = origins_for(&finding, source, valid, None);
+        assert_eq!(require_origin(&origins, &finding.id)?.line, 2);
+        finding.probe.location.line = 99;
+        let origins = origins_for(&finding, source, valid, None);
+        assert_eq!(
+            require_origin(&origins, &finding.id)?,
+            &missing_input_origin()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_cr_deleted_eof_preserves_the_terminal_editor_row() -> Result<(), String> {
+        for source in ["pub fn a() {}\r// note\n", "pub fn a() {}\r// note\r\n"] {
+            let finding = finding_on(
+                "probe:deleted-eof",
+                "src/lib.rs",
+                2,
+                "pub fn removed() {}",
+                SourceCurrentness::BaseDeleted,
+            );
+            let origins = origins_for(&finding, source, None, None);
+            let origin = require_origin(&origins, &finding.id)?;
+            assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+            assert_eq!(origin.line, 2);
+            assert_eq!(origin.utf8.start, origin.utf8.end);
+            assert_eq!(origin.utf16.start, origin.utf16.end);
+            assert_eq!(origin.utf32.start, origin.utf32.end);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_cr_duplicate_expression_uses_the_parser_anchor() -> Result<(), String> {
+        let source = "fn price() {\r    if montant_é > discount_threshold {}\r    if montant_é > discount_threshold {}\r}\r";
+        let (_, second) = require_second(source, PREDICATE)?;
+        let finding = current_finding("probe:cr-duplicate", 1, PREDICATE);
+        let origins = origins_for(
+            &finding,
+            source,
+            Some(ParserByteSpan { start_byte: second }),
+            None,
+        );
+        let origin = require_origin(&origins, &finding.id)?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        assert_eq!(origin.line, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn editor_line_spans_exclude_all_terminators_and_keep_the_final_empty_row() {
+        let source = "a\rb\r\nc\nd\r";
+        let lines = lsp_lines(source);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|line| &source[line.start..line.end])
+                .collect::<Vec<_>>(),
+            ["a", "b", "c", "d", ""]
+        );
+        assert_eq!(
+            line_containing(source.len(), &lines).map(|(line, _)| line),
+            Some(4)
+        );
+        assert_eq!(lsp_lines("").len(), 1);
     }
 
     #[test]
