@@ -1,0 +1,8 @@
+# Registers the shadowed-assertion negative controls for the bool truth-table
+# reading (#10386) under RIPR-SPEC-0353.
+[[extend]]
+id = "RIPR-SPEC-0353"
+tests = [
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_shadowed_assert_eq_in_the_test_file_credits_nothing",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_shadowed_assert_eq_elsewhere_in_the_workspace_credits_nothing",
+]
