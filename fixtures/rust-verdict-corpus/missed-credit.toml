@@ -93,14 +93,6 @@ case = "grid-flow-field-direct"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "grid-loop-exact"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "grid-loop-helper"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "grid-loop-table"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -195,6 +187,10 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "lib-trybuild-pass-file-runs-assert"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "loop-accumulator-bound-input"
+reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
 case = "macro-table-arrow-rows-refused"

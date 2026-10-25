@@ -32,7 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_owner_observation/input --diff <cwd>/fixtures/guarded_result_match_owner_observation/diff.patch --mode fast probe:src_lib.rs:return_value:6daabbf3
   ripr context --root <cwd>/fixtures/guarded_result_match_owner_observation/input --diff <cwd>/fixtures/guarded_result_match_owner_observation/diff.patch --mode fast --at probe:src_lib.rs:return_value:6daabbf3
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:6daabbf3 --root <cwd>/fixtures/guarded_result_match_owner_observation/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

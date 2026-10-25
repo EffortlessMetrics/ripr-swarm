@@ -35,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:289dd551
   ripr context --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:289dd551
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:call_deletion:289dd551 --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

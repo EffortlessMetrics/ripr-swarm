@@ -58,7 +58,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 37
+trap_floor = 40
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -987,6 +987,10 @@ reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+[[spec]]
+id = "RIPR-SPEC-0360"
+scope = "in"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a

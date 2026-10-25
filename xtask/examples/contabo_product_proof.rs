@@ -25,11 +25,11 @@ const PORTFOLIO: &[&str] = &[
     "Workspace and all-target check",
     "All-features ripr target check",
     "Strict workspace Clippy",
-    "Required Rust tests",
-    "Required Rust doctests",
     "Golden output contracts",
     "Fixture contracts",
     "Verdict corpora",
+    "Required Rust tests",
+    "Required Rust doctests",
     "PR evidence",
 ];
 
