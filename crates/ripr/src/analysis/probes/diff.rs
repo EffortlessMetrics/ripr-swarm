@@ -8,6 +8,7 @@ use super::binding_predicate::{
     BindingPredicateResolution, masked_brace_delta, masked_paren_delta,
     resolve_changed_binding_uses,
 };
+use super::binding_return::{ChangedBindingReturnFlow, resolve_changed_binding_return};
 use super::classify::{
     added_header_bound_lines, added_type_bound_lines, is_structural_delimiter_line,
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
@@ -524,16 +525,24 @@ pub(crate) fn probes_for_file_with_relations(
             probes.extend(retargeted);
             continue;
         }
+        // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
+        // expression unchanged keeps its generic static-unknown probe and
+        // only gains the named flow as evidence.
+        let return_flow = (families == [ProbeFamily::StaticUnknown])
+            .then(|| changed_binding_return_flow(&build_context, added, text))
+            .flatten();
         for family in families {
             let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
-            probes.push(SeededProbe::from_probe(build_probe(
+            let mut seeded = SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
                 family,
                 before,
                 Some(text.to_string()),
-            )));
+            ));
+            seeded.binding_return = return_flow.clone();
+            probes.push(seeded);
         }
     }
 
@@ -774,6 +783,26 @@ fn retarget_changed_binding_predicates(
         ));
     }
     (!retargeted.is_empty()).then_some(retargeted)
+}
+
+/// Name the return flow of a changed complete single-line `let` (RIPR-SPEC-0357).
+fn changed_binding_return_flow(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+) -> Option<ChangedBindingReturnFlow> {
+    let (binding, initializer) = changed_let_binding(text)?;
+    if !text.ends_with(';') || masked_paren_delta(text) != 0 || masked_brace_delta(text) != 0 {
+        return None;
+    }
+    let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;
+    resolve_changed_binding_return(
+        binding,
+        initializer,
+        &owner.body,
+        owner.start_line,
+        added.new_side_line,
+    )
 }
 
 fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
@@ -5584,6 +5613,78 @@ mod tests {
 
         let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
         assert!(probes.is_empty());
+    }
+
+    // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
+    // slice keeps its generic probe on the changed line; the flow rides along.
+    #[test]
+    fn changed_binding_return_flow_keeps_the_probe_on_the_changed_line() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let body = "pub fn family(sku: &str) -> &str {\n    let end = sku.find('-').unwrap_or_else(|| sku.len());\n    &sku[..end]\n}";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = sku.find('-').unwrap_or_else(|| sku.len());".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = sku.find('-').unwrap_or(sku.len());".to_string(),
+            }],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("src/lib.rs::family".to_string()),
+                        name: "family".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 4,
+                        body: body.into(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        source_role: FunctionSourceRole::Production,
+                        attrs: vec![],
+                        impl_attrs: Vec::new(),
+                        nested_fn_names: Vec::new(),
+                        let_bindings: Vec::new(),
+                        item: Default::default(),
+                        impl_context: Default::default(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
+
+        let [seeded] = probes.as_slice() else {
+            return Err(format!("expected one probe, got {probes:?}"));
+        };
+        if seeded.probe.family != ProbeFamily::StaticUnknown || seeded.probe.location.line != 2 {
+            return Err(format!(
+                "probe must stay on the changed line: {:?}",
+                seeded.probe
+            ));
+        }
+        if seeded.binding_relation.is_some() {
+            return Err("no predicate relation applies".to_string());
+        }
+        let flow = seeded
+            .binding_return
+            .as_ref()
+            .ok_or_else(|| "expected a return flow".to_string())?;
+        if flow.return_expression != "&sku[..end]" || flow.return_line != 3 {
+            return Err(format!("unexpected flow: {flow:?}"));
+        }
+        Ok(())
     }
 
     // #3294: the changed `let` initializer retargets to its same-function

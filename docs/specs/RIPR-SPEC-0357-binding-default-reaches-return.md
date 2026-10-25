@@ -125,10 +125,16 @@ A rebound, shadowed or captured binding never reaches stage 2.
 
 - `fixtures/rust-verdict-corpus` cases `default-flow-unpinned`,
   `default-flow-rebound`, `default-flow-smoked`.
+- Unit tests in `analysis/probes/binding_return.rs`, the seeding test in
+  `analysis/probes/diff.rs` and the evidence test in
+  `analysis/language/rust/probes.rs`.
 
 ## Implementation Mapping
 
-- Stage 1: `crates/ripr/src/analysis/probes/binding_return.rs` (planned).
+- Stage 1: `crates/ripr/src/analysis/probes/binding_return.rs`
+  (`resolve_changed_binding_return`), seeded from
+  `analysis/probes/diff.rs` and disclosed by
+  `analysis/language/rust/probes.rs` (`attach_changed_binding_return_evidence`).
 - Stage 2: `crates/ripr/src/analysis/classify/value_transfer.rs` (planned).
 
 ## Metrics

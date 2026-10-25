@@ -10,7 +10,9 @@
 //! later RA slices.
 
 use crate::analysis::facts::RustIndex;
-use crate::analysis::probes::{BindingValueResolution, ChangedBindingPredicateUse};
+use crate::analysis::probes::{
+    BindingValueResolution, ChangedBindingPredicateUse, ChangedBindingReturnFlow,
+};
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
 /// #8479: disclose the field-selector boundary without altering any proof leg.
@@ -170,6 +172,42 @@ pub(super) fn attach_changed_binding_predicate_evidence(
                 .to_string(),
         );
     }
+}
+
+/// RIPR-SPEC-0357: name the flow from a changed `let` binding into the
+/// returned expression. Disclosure only: the finding keeps its class and
+/// stop reason, and the non-claim line says no value is evaluated.
+pub(super) fn attach_changed_binding_return_evidence(
+    finding: &mut Finding,
+    flow: Option<&ChangedBindingReturnFlow>,
+) {
+    let Some(flow) = flow else {
+        return;
+    };
+    let before_initializer = finding
+        .probe
+        .before
+        .as_deref()
+        .and_then(changed_let_binding)
+        .filter(|(binding, _)| *binding == flow.binding)
+        .map(|(_, initializer)| initializer);
+    let initializer_range = match before_initializer {
+        Some(before) if before != flow.initializer => {
+            format!("`{before}` -> `{}`", flow.initializer)
+        }
+        _ => format!("`{}`", flow.initializer),
+    };
+    finding.evidence.push(format!(
+        "binding_return_relation: changed binding `{}` initializer {initializer_range} reaches the returned expression `{}` at line {} as a {}",
+        flow.binding,
+        flow.return_expression,
+        flow.return_line,
+        flow.kind.label()
+    ));
+    finding.evidence.push(
+        "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed default"
+            .to_string(),
+    );
 }
 
 /// Find an equality predicate that refers to the established binding after
@@ -414,7 +452,8 @@ fn rust_raw_string_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
 mod tests {
     use super::{
         apply_rust_value_propagation_limit, attach_changed_binding_predicate_evidence,
-        changed_let_binding, find_value_propagation_predicate, mask_rust_comments_and_strings,
+        attach_changed_binding_return_evidence, changed_let_binding,
+        find_value_propagation_predicate, mask_rust_comments_and_strings,
     };
     use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex};
     use crate::analysis::probes::{
@@ -828,5 +867,39 @@ mod tests {
         assert!(finding.evidence.iter().any(|line| {
             line == "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
         }));
+    }
+
+    #[test]
+    fn changed_binding_return_evidence_is_disclosure_only() {
+        use crate::analysis::probes::ChangedBindingReturnFlow;
+        let mut finding = static_unknown_finding(
+            "let end = sku.find('-').unwrap_or_else(|| sku.len());",
+            "src/lib.rs::family",
+        );
+        finding.probe.before = Some("let end = sku.find('-').unwrap_or(sku.len());".to_string());
+        attach_changed_binding_return_evidence(&mut finding, None);
+        assert!(finding.evidence.is_empty());
+
+        let flow = ChangedBindingReturnFlow {
+            binding: "end".to_string(),
+            initializer: "sku.find('-').unwrap_or_else(|| sku.len())".to_string(),
+            return_expression: "&sku[..end]".to_string(),
+            return_line: 7,
+            kind: crate::analysis::probes::ReturnFlowKind::RangeBound,
+        };
+        let class = finding.class.clone();
+        attach_changed_binding_return_evidence(&mut finding, Some(&flow));
+        assert_eq!(finding.class, class);
+        assert_eq!(finding.static_limit_kind, None);
+        assert!(finding.stop_reasons.is_empty());
+        assert!(finding.evidence.iter().any(|line| {
+            line == "binding_return_relation: changed binding `end` initializer `sku.find('-').unwrap_or(sku.len())` -> `sku.find('-').unwrap_or_else(|| sku.len())` reaches the returned expression `&sku[..end]` at line 7 as a range bound"
+        }));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("binding_return_non_claim:"))
+        );
     }
 }

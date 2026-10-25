@@ -45,7 +45,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
       ],
-      "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion can discriminate the changed behavior without a reachable test", "No propagation model is available for this changed syntax", "No reachable test oracle found", "No static test path found for the changed owner"],
+      "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion can discriminate the changed behavior without a reachable test", "No propagation model is available for this changed syntax", "No reachable test oracle found", "No static test path found for the changed owner", "binding_return_relation: changed binding `end` initializer `input.len()` -> `input.trim_end().len()` reaches the returned expression `end` at line 3 as a whole binding", "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed default"],
       "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
       },
