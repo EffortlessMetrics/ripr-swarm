@@ -1681,6 +1681,46 @@ pub(crate) fn receiver_owner_call_relation(
     false
 }
 
+/// The receivers the test authenticates for a method owner: locals built from
+/// the owner's class (`const svc = new Svc()`, in the body or an enclosing
+/// scope) for an instance method, the class names for a static one. A member
+/// call through any other receiver is another binding.
+pub(crate) fn owner_method_receiver_names(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    match owner.owner_kind {
+        OwnerKind::ClassMethod => {
+            class_names_for_class_method_owner(test, owner, alias_map, workspace_root)
+        }
+        OwnerKind::Method => {
+            let constructor_names =
+                constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            let mut receivers =
+                receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+            for binding in &test.scope_bindings {
+                if binding
+                    .constructed_by
+                    .as_ref()
+                    .is_some_and(|constructor| constructor_names.contains(constructor))
+                    && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
+                    && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+                {
+                    push_unique_string(&mut receivers, binding.name.clone());
+                }
+            }
+            // An inline `new Cls().method()` is authenticated by its class.
+            for constructor in &constructor_names {
+                push_unique_string(&mut receivers, format!("new {constructor}"));
+            }
+            receivers
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn class_method_owner_call_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -1705,7 +1745,7 @@ pub(crate) fn class_method_owner_call_relation(
 /// scope (a `describe` body or parameter, a loop header, a hook write, a
 /// test callback parameter) rebinds `name` for this test, so a call through
 /// `name` reaches that binding rather than an import or owner of the name.
-fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+pub(crate) fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
     test.scope_bindings
         .iter()
         .any(|binding| binding.name == name && !binding.file_level)

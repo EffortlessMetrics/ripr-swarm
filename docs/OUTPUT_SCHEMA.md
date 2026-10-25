@@ -434,7 +434,10 @@ capability without failing installed-binary analysis. An additive
 `generated_workflow` advisory check appears when
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
-the refresh command. The source-build profile
+the refresh command. When the root has a `.mcp.json`, an additive `mcp_config`
+check reports `pass` if its `ripr` server entry runs `ripr mcp --stdio` (what
+`ripr init --mcp` writes) and `advisory` otherwise, with `evidence` naming the
+problem; it never changes `status`, and no file means no check. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
 evidence names an install route (rustup or the OS package manager); a rustc
 below the build minimum still names `rustup update stable`. It reports its
@@ -460,7 +463,10 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `warnings`. Cargo build output means a binary beside Cargo's `deps/` and
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
-on PATH is a legitimate development setup.
+on PATH is a legitimate development setup. One warning (#10347) fires when no
+`ripr` is on PATH and a project config (`.mcp.json`, `.vscode/mcp.json`,
+`.cursor/mcp.json`) launches it by bare name; the default human screen prints the
+same text as a `~` line.
 
 ### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
 
