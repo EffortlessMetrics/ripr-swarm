@@ -1003,6 +1003,9 @@ impl<'c> Scan<'c> {
         &self,
         call: &'b oxc_ast::ast::CallExpression<'a>,
     ) -> Option<Registration<'a, 'b>> {
+        // Playwright's `test.describe(...)`: a suite spelled as a member of the
+        // `test` root rather than as a `describe` root of its own.
+        let mut playwright_describe = false;
         let (root, factory) = match call.callee.get_inner_expression() {
             // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
             Expression::CallExpression(factory) => {
@@ -1020,10 +1023,17 @@ impl<'c> Scan<'c> {
             Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
             other => {
                 let (root, segments) = static_chain(other)?;
-                if !segments
-                    .iter()
-                    .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
-                {
+                let modifiers = match segments.split_first() {
+                    Some((&"describe", rest)) => {
+                        playwright_describe = true;
+                        rest
+                    }
+                    _ => &segments[..],
+                };
+                if !modifiers.iter().all(|segment| {
+                    REGISTRATION_MODIFIERS.contains(segment)
+                        || (playwright_describe && *segment == "parallel")
+                }) {
                     return None;
                 }
                 (root, None)
@@ -1042,6 +1052,11 @@ impl<'c> Scan<'c> {
                 }
             }
             _ => return None,
+        };
+        let kind = if playwright_describe {
+            (kind == RegistrationKind::Test).then_some(RegistrationKind::Describe)?
+        } else {
+            kind
         };
         let (factory_args, table) = match factory {
             Some((name, arguments)) => (arguments, matches!(name, "each" | "for")),

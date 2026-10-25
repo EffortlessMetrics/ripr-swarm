@@ -63,15 +63,18 @@ impl ChangedEffect {
             .class_facts
             .direct_statements
             .iter()
-            .any(|statement| statement == line)
-            || guard_entered;
+            .any(|statement| statement == line);
+        // Guard entry (#9833) is proved for the method-call rows of a
+        // `self.attr` write; it does not widen a free function's module
+        // object write, which stays physically direct only.
+        let self_run = direct || guard_entered;
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
             // Only a statement written directly in the method body always
             // runs; a write under an `if`, `try` or loop may never run in
             // the test (#9421, #9782), so it reads no effect unless every
             // strong call provably enters the guard (#9833).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -87,7 +90,7 @@ impl ChangedEffect {
             // Only a statement written directly in the method body always
             // runs; one under an `if`, `try` or loop may never run in the
             // test, so it reads no effect (unknown facts fail closed).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -232,16 +235,21 @@ impl EffectReads {
             }
             ChangedEffect::CallOnParameter { .. } => {}
             ChangedEffect::ModuleField { object, attr } => {
-                reads.operands = test
-                    .imports
-                    .iter()
-                    .filter(|import| {
-                        import.imported == *object
-                            && import_source_module_matches_owner(import, owner, &test.file)
-                            && !test_rebinds_import_alias(test, &import.alias)
-                    })
-                    .map(|import| format!("{}.{attr}", import.alias))
-                    .collect();
+                // A test that assigns the object onto its module
+                // (`route.response = fake`) or writes a dynamic namespace
+                // reads a different object than the owner mutates.
+                if !test.constant_rebinding.assigns_attribute(object) {
+                    reads.operands = test
+                        .imports
+                        .iter()
+                        .filter(|import| {
+                            import.imported == *object
+                                && import_source_module_matches_owner(import, owner, &test.file)
+                                && !test_rebinds_import_alias(test, &import.alias)
+                        })
+                        .map(|import| format!("{}.{attr}", import.alias))
+                        .collect();
+                }
             }
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {

@@ -146,8 +146,14 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref] | join(" ")')"
-              read -r mergeable_state live_head live_base <<<"$live"
+              # mergeable_state is computed lazily and reset whenever the base moves, so
+              # the first read of a quiet PR is often "unknown"; that read starts the work.
+              for _ in 1 2 3; do
+                live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref] | join(" ")')"
+                read -r mergeable_state live_head live_base <<<"$live"
+                [ "$mergeable_state" != "unknown" ] && break
+                sleep 5
+              done
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"

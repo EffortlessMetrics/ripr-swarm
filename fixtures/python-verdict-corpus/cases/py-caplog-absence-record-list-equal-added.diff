@@ -1,0 +1,12 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -26,7 +26,7 @@ def refund(order):
+ 
+ def ship(parcel):
+     if parcel > 0:
+-        log.warning("shipped: %s", parcel)
++        log.warning("trace id")
+         return True
+     return False
+ 
