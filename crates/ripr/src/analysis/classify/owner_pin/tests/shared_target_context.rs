@@ -147,6 +147,10 @@ fn binary_macro_boundaries_route_withheld_sources() -> Result<(), String> {
     )?;
     let mut index = fixture.index.clone();
     assert!(index.remove_file(Path::new("fuzz/parse.rs")));
+    // Membership changes invalidate execution authority. Recompose the
+    // retained source set before exercising narrowed-index admission.
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &fixture.root);
+    assert!(index.execution_context(Path::new("tests/pin.rs")).is_some());
     let mut withheld = WithheldMacroBindings::default();
     assert!(!withheld.absorb_with_members(
         Path::new("fuzz/parse.rs"),
