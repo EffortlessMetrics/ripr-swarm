@@ -38,17 +38,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `area`"},
-        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but table rows do not vary a."},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but numeric table rows agree under factor reordering."},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `area`", "infection weak: Related tests reach the changed operand, but table rows do not vary a.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a (line 2)", "related test tests/test_shop.py:6 test_area uses strong exact value oracle: assert area(a, b) == want", "missing discriminator a table row that varies a: table rows do not vary a"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a (line 2)", "related test tests/test_shop.py:6 test_area uses strong exact value oracle: assert area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
       "flow_sinks": [
         {"kind":"return_value","text":"return b * a","line":2}
       ],
-      "evidence": ["owner: area", "owner_kind: function", "missing_discriminator: a table row that varies a", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_area", "suggested_test_node_id: tests/test_shop.py::test_area", "suggested_verify_command: python -m pytest tests/test_shop.py::test_area", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_area)", "test_fixtures: a, b, want (test_area)", "test_parametrized: pytest (test_area)", "test_verify_command: python -m pytest tests/test_shop.py::test_area (test_area)", "related_test_relation: syntactic_call (test_area)", "test_oracle: exact_value strong (test_area)"],
-      "missing": ["A strong Python oracle reaches `area`, but table rows do not vary a; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `a`."],
+      "evidence": ["owner: area", "owner_kind: function", "missing_discriminator: a table row whose operands distinguish multiplication order", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_area", "suggested_test_node_id: tests/test_shop.py::test_area", "suggested_verify_command: python -m pytest tests/test_shop.py::test_area", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_area)", "test_fixtures: a, b, want (test_area)", "test_parametrized: pytest (test_area)", "test_verify_command: python -m pytest tests/test_shop.py::test_area (test_area)", "related_test_relation: syntactic_call (test_area)", "test_oracle: exact_value strong (test_area)"],
+      "missing": ["A strong Python oracle reaches `area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order."],
       "assertion_texts": {
       },
       "activation": {
@@ -56,8 +56,8 @@
         ],
         "missing_discriminators": [
           {
-            "value": "a table row that varies a",
-            "reason": "table rows do not vary a",
+            "value": "a table row whose operands distinguish multiplication order",
+            "reason": "numeric table rows agree under factor reordering",
             "flow_sink": {"kind":"return_value","text":"return b * a","line":2}
           }
         ]
@@ -66,8 +66,8 @@
       ],
       "missing_discriminators": [
         {
-          "value": "a table row that varies a",
-          "reason": "table rows do not vary a",
+          "value": "a table row whose operands distinguish multiplication order",
+          "reason": "numeric table rows agree under factor reordering",
           "flow_sink": {"kind":"return_value","text":"return b * a","line":2}
         }
       ],
@@ -100,8 +100,8 @@
         "changed_owner": "area",
         "changed_behavior": "return_value changed at src/shop.py:2: `return b * a`",
         "current_test_evidence": "tests/test_shop.py:6 test_area currently has oracle_strength=strong, oracle_kind=exact_value: assert area(a, b) == want",
-        "missing_discriminator": "a table row that varies a",
-        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `a table row that varies a`.",
+        "missing_discriminator": "a table row whose operands distinguish multiplication order",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.",
         "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
         "suggested_location": {
           "test_file": "tests/test_shop.py",
@@ -123,8 +123,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row that varies a`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row that varies a`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

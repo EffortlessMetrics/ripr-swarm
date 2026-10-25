@@ -32,7 +32,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `area`
-  - infection weak: Related tests reach the changed operand, but table rows do not vary a
+  - infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering
   - propagation yes: Changed Python return value is already at the owner output boundary
   - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -40,8 +40,8 @@ Evidence
   - related test tests/test_shop.py:6 test_area uses strong exact value oracle: assert area(a, b) == want
 
 Weakness
-  - A strong Python oracle reaches `area`, but table rows do not vary a; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `a`
-  - missing discriminator a table row that varies a: table rows do not vary a
+  - A strong Python oracle reaches `area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order
+  - missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -51,8 +51,8 @@ Python repair card (preview/advisory)
   changed owner: area
   changed behavior: return_value changed at src/shop.py:2: `return b * a`
   current test evidence: tests/test_shop.py:6 test_area currently has oracle_strength=strong, oracle_kind=exact_value: assert area(a, b) == want
-  missing discriminator: a table row that varies a
-  recommended test shape: Strengthen the existing pytest exact return-value assertion for `a table row that varies a`.
+  missing discriminator: a table row whose operands distinguish multiplication order
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.
   suggested assertion: Assert the returned value equals the expected value for the changed inputs.
   suggested file: tests/test_shop.py
   suggested test: test_area
@@ -70,7 +70,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row that varies a`
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:f5eb84b2
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:f5eb84b2

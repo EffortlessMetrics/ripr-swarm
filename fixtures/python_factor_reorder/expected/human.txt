@@ -20,13 +20,15 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/shop.py:area:return_value:return_value:b*a
   Changed behavior: return b * a
-  Missing discriminator (1 of 2): A strong Python oracle reaches `area`, but table rows do not vary a; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `a`
+  Missing discriminator (1 of 2): A strong Python oracle reaches `area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row…
   Related test: tests/test_shop.py:6 test_area
   Suggested test file: tests/test_shop.py
   Suggested test: test_area
   Test node: tests/test_shop.py::test_area
   Verify command: python -m pytest tests/test_shop.py::test_area (high)
-  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row that varies a`
+  Next step — Python preview: strengthen the existing related test with an exact return-value
+    assertion for missing discriminator `a table row whose operands distinguish multiplication
+    order`
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -36,7 +38,7 @@ Start here:
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `area`
-    - infection weak: Related tests reach the changed operand, but table rows do not vary a
+    - infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
