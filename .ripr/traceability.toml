@@ -18929,6 +18929,7 @@ tests = [
   "crates/ripr/src/output/doctor_binary.rs::tests::cargo_build_output_running_binary_suppresses_path_mismatch_warning",
   "crates/ripr/src/output/doctor_binary.rs::tests::different_installed_ripr_on_path_warns_without_build_output_claim",
   "crates/ripr/src/output/doctor_binary.rs::tests::missing_path_ripr_with_launching_config_warns_advisory_only",
+  "crates/ripr/src/output/doctor_binary.rs::tests::only_server_definitions_count_as_launching_configs",
   "crates/ripr/src/output/doctor_binary.rs::tests::launching_config_with_ripr_on_path_stays_quiet",
   "crates/ripr/src/output/doctor_binary.rs::tests::missing_path_ripr_without_launching_config_stays_quiet",
   "crates/ripr/src/cli/commands/doctor.rs::tests::default_screen_warns_when_config_launches_ripr_missing_from_path",

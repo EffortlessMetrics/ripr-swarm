@@ -48,8 +48,8 @@ impl DoctorBinaryIdentity {
     pub(crate) fn with_path_dependents(mut self, dependents: Vec<String>) -> Self {
         if self.path_ripr.is_none() && !dependents.is_empty() {
             self.warnings.push(format!(
-                "`ripr` is not on PATH, but {} start it by name, so those editor or agent \
-                 integrations cannot launch it; install ripr or put its directory on PATH",
+                "`ripr` is not on this shell's PATH, but {} start it by name, so those editor or agent \
+                 integrations may not be able to launch it; install ripr or put its directory on PATH",
                 dependents.join(", ")
             ));
             self.missing_path_dependents = dependents;
@@ -111,37 +111,44 @@ pub(crate) fn probe_binary_identity(root: &Path) -> DoctorBinaryIdentity {
     .with_path_dependents(ripr_config_dependents(root))
 }
 
-/// Project MCP/LSP configs that may launch the server by name.
-const RIPR_LAUNCH_CONFIGS: [&str; 3] = [".mcp.json", ".vscode/mcp.json", ".cursor/mcp.json"];
+/// Project MCP configs that may launch the server by name, with the key each
+/// client keeps its server definitions under (VS Code: `servers`; Claude Code
+/// and Cursor: `mcpServers`).
+const RIPR_LAUNCH_CONFIGS: [(&str, &str); 3] = [
+    (".mcp.json", "mcpServers"),
+    (".vscode/mcp.json", "servers"),
+    (".cursor/mcp.json", "mcpServers"),
+];
 
-/// The configs under `root` with a `"command"` that is the bare name `ripr`
-/// (a path-qualified command does not depend on PATH). Unreadable or
-/// malformed files are not dependents.
+/// The configs under `root` with a server definition whose `"command"` is the
+/// bare name `ripr` (a path-qualified command does not depend on PATH). A
+/// `command` outside the server container, and unreadable or malformed files,
+/// are not dependents.
 fn ripr_config_dependents(root: &Path) -> Vec<String> {
     RIPR_LAUNCH_CONFIGS
         .iter()
-        .filter(|name| {
+        .filter(|(name, servers_key)| {
             std::fs::read_to_string(root.join(name))
                 .ok()
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-                .is_some_and(|value| launches_ripr_by_name(&value))
+                .is_some_and(|value| launches_ripr_by_name(&value, servers_key))
         })
-        .map(|name| (*name).to_string())
+        .map(|(name, _)| (*name).to_string())
         .collect()
 }
 
-fn launches_ripr_by_name(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(map) => map.iter().any(|(key, child)| {
-            (key == "command"
-                && child
-                    .as_str()
-                    .is_some_and(|command| matches!(command, "ripr" | "ripr.exe")))
-                || launches_ripr_by_name(child)
-        }),
-        serde_json::Value::Array(items) => items.iter().any(launches_ripr_by_name),
-        _ => false,
-    }
+fn launches_ripr_by_name(document: &serde_json::Value, servers_key: &str) -> bool {
+    document
+        .get(servers_key)
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|servers| {
+            servers.values().any(|server| {
+                server
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|command| matches!(command, "ripr" | "ripr.exe"))
+            })
+        })
 }
 
 fn evaluate_binary_identity(
@@ -554,11 +561,48 @@ mod tests {
             let advisory = identity
                 .compact_path_advisory()
                 .ok_or("missing PATH ripr with a launching config must warn")?;
-            if !advisory.contains("not on PATH") || !advisory.contains(".mcp.json") {
+            if !advisory.contains("not on this shell's PATH") || !advisory.contains(".mcp.json") {
                 return Err(format!("warning must name PATH and the config: {advisory}"));
             }
             if identity.warnings.len() != 1 {
                 return Err(format!("expected one warning: {:?}", identity.warnings));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn only_server_definitions_count_as_launching_configs() -> Result<(), String> {
+        let root = temp_dir("config-containers")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(root.join(".vscode")).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(root.join(".cursor")).map_err(|error| error.to_string())?;
+            // `command` outside the server container: not a dependent.
+            std::fs::write(
+                root.join(".mcp.json"),
+                r#"{"mcpServers":{},"notes":{"command":"ripr"}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            // VS Code keeps servers under `servers`; Cursor under `mcpServers`.
+            std::fs::write(
+                root.join(".vscode/mcp.json"),
+                r#"{"servers":{"ripr":{"type":"stdio","command":"ripr","args":["mcp","--stdio"]}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join(".cursor/mcp.json"),
+                r#"{"mcpServers":{"ripr":{"command":"ripr.exe"}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            let dependents = ripr_config_dependents(&root);
+            let expected = vec![
+                ".vscode/mcp.json".to_string(),
+                ".cursor/mcp.json".to_string(),
+            ];
+            if dependents != expected {
+                return Err(format!("expected {expected:?}, got {dependents:?}"));
             }
             Ok(())
         })();

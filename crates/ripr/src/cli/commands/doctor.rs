@@ -3686,10 +3686,10 @@ mod tests {
         };
         let lines = screen(&binary, false);
         assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("~ `ripr` is not on PATH")
-                    && line.contains(".mcp.json")),
+            lines.iter().any(
+                |line| line.starts_with("~ `ripr` is not on this shell's PATH")
+                    && line.contains(".mcp.json")
+            ),
             "{lines:?}"
         );
         assert_eq!(
@@ -3701,12 +3701,14 @@ mod tests {
         assert!(
             verbose
                 .iter()
-                .any(|line| line.starts_with("~ `ripr` is not on PATH")),
+                .any(|line| line.starts_with("~ `ripr` is not on this shell's PATH")),
             "{verbose:?}"
         );
         let quiet = screen(&quiet_binary().with_path_dependents(Vec::new()), false);
         assert!(
-            !quiet.iter().any(|line| line.contains("not on PATH")),
+            !quiet
+                .iter()
+                .any(|line| line.contains("not on this shell's PATH")),
             "{quiet:?}"
         );
     }
