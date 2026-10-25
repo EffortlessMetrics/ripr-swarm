@@ -122,7 +122,7 @@ fn sole_qualified_call(masked: &str, callee: &str) -> Option<(Vec<String>, usize
     }
     // A leading `::`, a generic argument list or a receiver before the path
     // is not a plain own-crate module path.
-    if segments.is_empty() || rest.ends_with([':', '.', '>', '<']) {
+    if segments.is_empty() || rest.ends_with([':', '.', '>', '<', '#']) {
         return None;
     }
     segments.reverse();
@@ -155,9 +155,7 @@ fn resolve_qualifier(
         first => {
             // A bare first segment names a child module of this module only
             // when no import may bind the name to something else.
-            if first.starts_with("r#")
-                || super::super::activation::name_imported_in_file(caller_source, first)
-            {
+            if first.starts_with("r#") || use_item_mentions(caller_source, first) {
                 return None;
             }
         }
@@ -169,6 +167,29 @@ fn resolve_qualifier(
         base.push(segment.to_string());
     }
     Some(base)
+}
+
+/// Whether any `use` item of the file (at any depth, grouped over several
+/// lines, with any visibility) mentions `name` as an identifier. An
+/// unparseable file answers `true`, so the caller declines.
+fn use_item_mentions(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| ast::Use::can_cast(node.kind()))
+        .any(|item| {
+            item.descendants_with_tokens().any(|element| {
+                element.kind() == SyntaxKind::IDENT
+                    && element
+                        .as_token()
+                        .is_some_and(|token| token.text().trim_start_matches("r#") == name)
+            })
+        })
 }
 
 #[cfg(test)]
@@ -274,6 +295,102 @@ mod tests {
                 ("src/lib.rs", &source),
                 ("src/eval.rs", EVAL),
                 ("src/twin.rs", EVAL),
+            ]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_grouped_multi_line_or_restricted_import_of_the_first_segment_declines() {
+        for prelude in [
+            "use other::{\n    eval,\n};\n",
+            "pub(crate) use other::eval;\n",
+            "use other::{self as x, eval as y};\n",
+        ] {
+            let source = lib("eval::matches_req(&self.0, v)", prelude);
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None,
+                "{prelude}"
+            );
+        }
+        // An unrelated import does not block the hop.
+        let source = lib(
+            "eval::matches_req(&self.0, v)",
+            "use std::fmt::{\n    Debug,\n};\n",
+        );
+        assert!(hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]).is_some());
+    }
+
+    #[test]
+    fn a_function_body_import_of_the_first_segment_declines() {
+        let source = lib(
+            "use other::eval;\n        eval::matches_req(&self.0, v)",
+            "",
+        );
+        assert_eq!(
+            hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+            None
+        );
+    }
+
+    #[test]
+    fn super_and_nested_qualifiers_resolve_and_odd_segments_decline() {
+        let child = "pub struct Req(u64);\nimpl Req {\n    pub fn matches(&self, v: u64) -> bool {\n        super::eval::matches_req(&self.0, v)\n    }\n}\n";
+        assert!(
+            hop_names(&[
+                ("src/lib.rs", "mod eval;\nmod a;\n"),
+                ("src/a.rs", child),
+                ("src/eval.rs", EVAL),
+            ])
+            .is_some()
+        );
+        let source = lib("a::b::matches_req(&self.0, v)", "mod a;\n");
+        assert!(
+            hop_names(&[
+                ("src/lib.rs", &source),
+                ("src/a.rs", "pub mod b;\n"),
+                ("src/a/b.rs", EVAL),
+            ])
+            .is_some()
+        );
+        for call in [
+            "r#eval::matches_req(&self.0, v)",
+            "eval::self::matches_req(&self.0, v)",
+            "eval::super::eval::matches_req(&self.0, v)",
+            "eval::crate::matches_req(&self.0, v)",
+        ] {
+            let source = lib(call, "");
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None,
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn items_outside_the_root_library_never_bind() {
+        let source = lib("eval::matches_req(&self.0, v)", "");
+        // A workspace member's library.
+        assert_eq!(
+            hop_names(&[
+                ("crates/m/src/lib.rs", &source),
+                ("crates/m/src/eval.rs", EVAL),
+            ]),
+            None
+        );
+        // An integration test crate calling its own module.
+        assert_eq!(
+            hop_names(&[("tests/api.rs", &source), ("tests/eval.rs", EVAL)]),
+            None
+        );
+        // A binary root: the callee is not composed under it.
+        assert_eq!(
+            hop_names(&[
+                ("src/lib.rs", "pub mod eval;\n"),
+                ("src/bin/tool.rs", &source),
+                ("src/eval.rs", EVAL),
             ]),
             None
         );

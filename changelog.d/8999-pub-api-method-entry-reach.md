@@ -10,3 +10,5 @@
   factory without an annotation, a `str::matches`, a second method of the same
   name, a renamed import and an imported module name stay unrelated. The finding
   reads `infection_unknown`, never `exposed` (#8999).
+  A foreign type of the same name that is imported without a rename is still
+  related, as on the direct route.

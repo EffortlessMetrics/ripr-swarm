@@ -4,15 +4,16 @@
   "origin": "authored",
   "anchor": "src/h_path.rs:5",
   "behavior_family": "predicate_boundary",
-  "test_shape": "helper_chain_path_qualified_call_site",
+  "test_shape": "helper_chain_path_qualified_accept",
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",
   "observed_verdict": "limited",
   "followed_retarget": false,
-  "changed_since_labeling": true,
+  "changed_since_labeling": false,
   "observed_classifications": [
-    "propagation_unknown"
+    "infection_unknown",
+    "weakly_exposed"
   ],
   "outcome": "abstained",
   "contradictions": [],

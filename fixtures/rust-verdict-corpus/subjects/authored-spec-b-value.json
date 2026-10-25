@@ -34,12 +34,16 @@
       "sha256": "54ef6f1d51ae678e1133f2cc641195ace342e2d5b192c06a86e1c26feb50d7ea"
     },
     {
+      "path": "src/h_path_import.rs",
+      "sha256": "3077550f031606660c2f570813e7fddd527e2102439fa5a94d1bd16ad9d20799"
+    },
+    {
       "path": "src/h_recursion.rs",
       "sha256": "eb6890c81e463271e6457f3bfd9f9c9dd5e98ad9582c0bd8d553b0811522e54d"
     },
     {
       "path": "src/lib.rs",
-      "sha256": "00ee206c612428bcbfe38a810f75573a8164a22f18f39888b3436e6d5cb3c3c8"
+      "sha256": "f39ef8d8b8867cc99871fa479bce1994c7471e0e5c968175e87a9d01471d8920"
     },
     {
       "path": "src/v_closure.rs",
