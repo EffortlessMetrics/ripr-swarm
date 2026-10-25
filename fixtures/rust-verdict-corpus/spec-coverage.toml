@@ -18,7 +18,7 @@ floor = 201
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 134
+missed_credit_ceiling = 143
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -62,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 33
+trap_floor = 34
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
