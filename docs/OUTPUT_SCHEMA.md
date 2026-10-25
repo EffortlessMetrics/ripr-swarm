@@ -10298,7 +10298,13 @@ Field contract:
   (`run_status`, `basis = "repo_exposure_complete_run"`, the producer's `corpus`
   identity, `records_total`, `records_digest`; #9599) when the ledger carries a
   verified `analysis_coverage` disclosure from a complete repo-exposure run and
-  its corpus is still current. Only that path can emit
+  its corpus is still current. When a disclosed coverage is refused the
+  `gap_ledger_artifact` scope carries an additive `coverage_refused` array of
+  the differing classes (`content`, `membership`, `config`, `test_intent`,
+  `suppressions`, `cfg_features`, `workspace_manifests`, `lockfile`,
+  `toolchain`, `analyzer_version`, `records_or_disclosure`,
+  `config_unloadable`, `unverifiable`); it is absent when no coverage was
+  disclosed. Only that path can emit
   `rust_workspace_complete`: a `rust_workspace_complete` scope arriving in a
   `--pr-guidance` document is dropped (with a warning) and leaves baseline
   entries `not_evaluated`. A hand-edited gate-decision file is out of scope: the
@@ -10909,7 +10915,9 @@ Field contract:
   is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers only
   normalized relative `.rs` paths in `corpus.analyzed_production_files`, the
   inventory's actual production-role inputs. Symlink aliases, skipped sources
-  and evidence-only inputs are not covered, #9599). `evaluation` is
+  and evidence-only inputs are not covered, #9599; when the gate refused a
+  ledger's workspace coverage the scope's additive `coverage_refused` classes
+  are quoted as `differing: ...`). `evaluation` is
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`
@@ -18576,6 +18584,13 @@ top-level `source_subject`:
   seams and recomputed before cache lookup. Evidence-only sources, generated
   exclusions and no-follow symlink aliases are absent. Missing or malformed
   membership cannot establish baseline coverage; an empty list covers no paths.
+  They also carry `corpus.analysis_inputs`, an object of eight required strings
+  from the same cache key: `cfg_features_hash`, `config_hash` (classified config
+  including raw `ripr.toml` bytes), `test_intent_hash`, `suppressions_hash`,
+  `workspace_manifests_hash` (Cargo manifests and configuration, bound to the
+  checkout path), `lockfile_hash`, `toolchain_hash` and `analyzer_version`.
+  A gate recomputes them to admit baseline coverage; they are 64-bit FNV
+  change detection, not authentication.
   This is the existing
   cache content authority, not another digest or a HEAD identity. Cold and
   warm inventories carry the same authority. Derived writers copy it only

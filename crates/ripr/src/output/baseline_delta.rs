@@ -4032,6 +4032,33 @@ mod tests {
             Some("src/a.rs"),
         );
         assert!(ledger.is_some_and(|r| r.contains("#9599")));
+        // A refused workspace coverage names the differing classes, including
+        // the non-input labels; an empty or absent list adds nothing.
+        for classes in [
+            json!(["config", "membership"]),
+            json!(["records_or_disclosure"]),
+            json!(["config_unloadable"]),
+        ] {
+            let expected = classes
+                .as_array()
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default();
+            let refused = reason(
+                &scope(json!({"scope": "gap_ledger_artifact", "coverage_refused": classes})),
+                Some("src/a.rs"),
+            );
+            assert!(
+                refused.is_some_and(|r| r.contains(&format!("differing: {expected})"))),
+                "{expected}"
+            );
+        }
+        for none in [json!([]), json!("config"), json!([7])] {
+            let plain = reason(
+                &scope(json!({"scope": "gap_ledger_artifact", "coverage_refused": none})),
+                Some("src/a.rs"),
+            );
+            assert!(plain.is_some_and(|r| !r.contains("differing:")));
+        }
         assert!(reason(&scope(json!({"unevaluated_seams": 2})), Some("src/a.rs")).is_some());
         assert!(reason(&scope(json!({"unevaluated_seams": 0})), Some("src/a.rs")).is_none());
         assert!(reason(&scope(json!({"unevaluated_seams": "1"})), Some("src/a.rs")).is_some());

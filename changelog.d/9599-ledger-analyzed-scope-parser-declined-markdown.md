@@ -9,5 +9,10 @@
   edited or stale ledgers, limited or parser-declined runs, non-Rust paths and
   paths outside the producer's actual production-file membership (including
   symlink aliases and evidence-only sources) still read `not_evaluated` (#9599).
-  Gate admission verifies current membership as well as corpus content. The review-comments Markdown summary now lists
+  Gate admission verifies current membership and eight non-Rust analysis input
+  identities (config bytes, test intent, suppressions, build features, Cargo
+  manifests, lockfile, toolchain, analyzer build) as well as corpus content; the
+  manifest identity is bound to the checkout path, so gate in the producing
+  checkout (path-bound follow-up: #10166), and a refusal names the differing
+  classes in `coverage_refused`. The review-comments Markdown summary now lists
   parser-declined files as a limitation (#9734).
