@@ -88,6 +88,7 @@ mod schema_producer_sweep;
 mod verification_contracts;
 mod version;
 mod windows_advisory;
+mod windows_advisory_run;
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
