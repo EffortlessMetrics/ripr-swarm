@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0118 example 4: a unit test reaches the owner through a helper chain
+//! RIPR-SPEC-0118 example 5: a unit test reaches the owner through a helper chain
 //! in ordinary source, not an integration test.
 
 pub fn outer(x: u32) -> u32 {
