@@ -20,7 +20,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
   Changed behavior: response.status_code = 400
-  Missing discriminator (1 of 2): A strong Python oracle reaches `checkout`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
+  Missing discriminator (1 of 2): A strong Python oracle reaches `checkout`, but its assertion does
+    not observe the changed owner's output; static evidence cannot confirm the changed behavior is
+    discriminated. Add an assertion on the changed owner's output
   Related test: tests/test_route.py:7 test_checkout (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_route.py
   Suggested test: test_checkout

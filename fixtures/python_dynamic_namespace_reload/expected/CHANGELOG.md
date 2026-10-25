@@ -14,3 +14,16 @@ Updated:
 
 The same run's generated `human-full.txt` is retained for the
 RIPR-SPEC-0108 expected-class invariant.
+
+## Pending — python_dynamic_namespace_reload (2)
+
+Reason:
+RIPR-SPEC-0122 / #10258: the human view now fits or wraps the complete missing-discriminator prose instead of clipping it with an ellipsis. Only that wrapping changes; classes, stages, findings, IDs, JSON and human-full are unchanged.
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_reload --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
