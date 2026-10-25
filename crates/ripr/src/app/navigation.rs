@@ -647,7 +647,20 @@ mod tests {
                 && !no_missing.contains("full gate's answer"),
             "empty missing list must say the evidence is incomplete: {no_missing}"
         );
-        // #9244: a policy or class refusal is a named state and keeps its text.
+        // #9244: a refusal that is not a not-ready route (here the gate could
+        // not decide) keeps its reason and the gate pointer.
+        let unverified = RepairRouteRefusal::Ineligible {
+            reason: "the gate could not decide".to_string(),
+            kind: RefusalKind::Unverified,
+            missing: vec!["ignored".to_string()],
+        }
+        .advisory(gate);
+        assert!(
+            unverified.contains("the gate could not decide")
+                && unverified.contains(gate)
+                && !unverified.contains("still missing"),
+            "non-RouteNotReady kinds keep their reason and gate pointer: {unverified}"
+        );
         // #9244: a finding with no canonical gap would get the same refusal
         // from the full gate, so the advisory names its own recovery.
         let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate);

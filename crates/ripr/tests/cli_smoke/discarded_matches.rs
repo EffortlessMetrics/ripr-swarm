@@ -119,36 +119,58 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
-/// Replace only the NoBindingSeam and not-ready (RouteNotReady) advisory
-/// sentences (the historical capture's or the current producer's) with a fixed
-/// slot, so that wording stays owned by `RepairRouteRefusal::advisory`
-/// (#9244). Every other advisory line stays byte-exact. Returns the projected
-/// bytes and how many lines were blanked.
-fn blank_no_binding_seam_advisory(bytes: &[u8]) -> (Vec<u8>, usize) {
-    const OLD: &str =
-        "  no repair start offered: no seam in the finding's file binds this finding;";
-    const NEW: &str =
-        "  no repair start offered: ripr found no seam in this finding's file to bind it to,";
-    const OLD_NOT_READY: &str = "  no repair start offered: repair route not ready";
-    const NEW_NOT_READY: &str =
-        "  no repair start offered: ripr cannot build a repair packet for this finding yet";
-    let mut blanked = 0;
+/// Normalize the two repair-route advisory sentences whose wording moved
+/// (#9244) so `RepairRouteRefusal::advisory` owns the boilerplate while the
+/// historical capture keeps its original bytes:
+///
+/// - NoBindingSeam (old capture or current producer text) becomes a fixed slot.
+/// - Not-ready (RouteNotReady) keeps its producer-owned missing-evidence list:
+///   the old `(missing evidence: LIST); run ...` form and the current
+///   `still missing: LIST; follow ...` form both become
+///   `<not-ready missing=LIST>`, so the list is still compared byte-exact and
+///   a wrong list fails. A line in neither shape is left untouched.
+///
+/// Every other advisory line stays byte-exact. Returns the projected bytes and
+/// how many lines were normalized.
+fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
+    const NO_BINDING: [&str; 2] = [
+        "  no repair start offered: no seam in the finding's file binds this finding;",
+        "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
+    ];
+    const OLD_NOT_READY: &str =
+        "  no repair start offered: repair route not ready (missing evidence: ";
+    const OLD_LIST_END: &str = "); run `";
+    const NEW_NOT_READY: &str = "  no repair start offered: ripr cannot build a repair packet for this \
+         finding yet because it is still missing: ";
+    const NEW_LIST_END: &str = "; follow the Next step above";
+    let list_between = |line: &str, start: &str, end: &str| -> Option<String> {
+        let rest = line.strip_prefix(start)?;
+        let list = &rest[..rest.find(end)?];
+        Some(format!(
+            "  no repair start offered: <not-ready missing={list}>\n"
+        ))
+    };
+    let mut normalized = 0;
     let projected = String::from_utf8_lossy(bytes)
         .split_inclusive('\n')
         .map(|line| {
-            if [OLD, NEW, OLD_NOT_READY, NEW_NOT_READY]
-                .iter()
-                .any(|prefix| line.starts_with(prefix))
-            {
-                blanked += 1;
-                "  no repair start offered: <superseded advisory>\n"
+            let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
+                Some("  no repair start offered: <no-binding-seam advisory>\n".to_string())
             } else {
-                line
+                list_between(line, OLD_NOT_READY, OLD_LIST_END)
+                    .or_else(|| list_between(line, NEW_NOT_READY, NEW_LIST_END))
+            };
+            match replacement {
+                Some(text) => {
+                    normalized += 1;
+                    text
+                }
+                None => line.to_string(),
             }
         })
         .collect::<String>()
         .into_bytes();
-    (projected, blanked)
+    (projected, normalized)
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
@@ -354,17 +376,17 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     } else {
                         actual
                     };
-                    // The NoBindingSeam advisory wording is owned by
+                    // The moved repair-advisory wording is owned by
                     // `RepairRouteRefusal::advisory` (#9244); the historical
                     // human.txt capture keeps its original bytes and only that
                     // slot is compared, present on both sides or neither.
                     let (actual, expected_bytes) = if file == "human.txt" {
-                        let (actual, actual_slots) = blank_no_binding_seam_advisory(&actual);
+                        let (actual, actual_slots) = normalize_moved_repair_advisories(&actual);
                         let (expected, expected_slots) =
-                            blank_no_binding_seam_advisory(&expected_bytes);
+                            normalize_moved_repair_advisories(&expected_bytes);
                         assert_eq!(
                             actual_slots, expected_slots,
-                            "{id}: the NoBindingSeam advisory must appear on both sides"
+                            "{id}: each moved repair advisory must appear on both sides"
                         );
                         (actual, expected)
                     } else {
