@@ -696,6 +696,7 @@ pub(super) fn admit_dependents(
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
     let drop_ins = crate::analysis::facts::drop_in::DropInManifests::new(root);
+    let members = crate::analysis::facts::member_crates::MemberCrates::new(root);
     // A package nested under a changed one relates like the owner's own, so
     // it is read first: its local empty macros join the query.
     let mut query = query.clone();
@@ -774,11 +775,12 @@ pub(super) fn admit_dependents(
                     tokens.insert_scanned(id, file_tokens);
                     withheld.push((*file).clone());
                     if !bindings_saturated {
-                        bindings_saturated = withheld_macro_bindings.absorb(
+                        bindings_saturated = withheld_macro_bindings.absorb_with_members(
                             file,
                             &String::from_utf8_lossy(bytes),
                             &query.package_names,
                             &drop_ins,
+                            &members,
                         );
                     }
                 }

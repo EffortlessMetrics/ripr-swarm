@@ -210,7 +210,8 @@ fn a_membership_or_read_another_element_may_satisfy_keeps_the_gap() -> Result<()
 }
 
 /// Each of these tests passes without running a check of the changed
-/// element, so none observes it (#8059 review).
+/// element, so none observes it (#8059 review). The shared assertion-identity
+/// gate withholds the oracle entirely, as for whole returns (#10191).
 #[test]
 fn a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap() -> Result<(), String> {
     const INDEX: &str = "        assert_eq!(rows[1].total, 33);";
@@ -228,7 +229,7 @@ fn a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap() -> Result<(), Stri
     ] {
         assert_eq!(
             field_class_with("0", items, &body)?,
-            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
             "{label}"
         );
     }

@@ -13649,6 +13649,13 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_assertion_rebindings_refuse_credit_and_disclose_the_site",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_bare_and_standard_assertion_credit",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::visible_macro_rebindings_and_unknown_placement_still_refuse_credit",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_require_manifest_authority",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_read_the_selected_manifest_epoch",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::binary_macro_boundaries_route_withheld_sources",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",
@@ -14147,6 +14154,9 @@ code = [
   "crates/ripr/src/analysis/syntax/fn_signature.rs",
 ]
 outputs = [
+  "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_whole_shadow.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_field_shadow.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_field_positive.json",
   "fixtures/owner_return_pin_pointer_scope_escape/expected/check.json",
   "fixtures/owner_return_pin_pointer_scope_escape/expected/human.txt",
   "fixtures/owner_return_pin_pointer_raw_shadow/expected/check.json",

@@ -2148,6 +2148,22 @@ receiving call is itself resolved.
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
+- A manifest-established binary context is also a containment boundary for
+  exported bindings and opaque macro arguments (#10191). A binary cannot be
+  imported by another crate, so `fuzz_target!` in a separate fuzz binary does
+  not rebind an integration test's `assert_eq!`. Changed constructed fields
+  use the same assertion-identity gate as whole returns, including whole-record
+  equality and field reads. A local or imported shadow and an opaque in-scope
+  expansion refuse credit and disclose the refusal; a qualified standard
+  assertion retains credit despite a local bare-name shadow. Every approved execution
+  context must be a binary root, read from the selected manifest epoch:
+  ordinary binary layouts or a literal `[[bin]] path`, including paths outside
+  `src/`. A file also declared as its package's or an ancestor package's library
+  root does not qualify. Shared library/module contexts, unresolved includes,
+  unknown paths, unparsed files and missing manifests keep the conservative
+  refusal. The narrowed dependent-scope scan applies the same boundary only
+  when the withheld file itself is that binary root. This exception does not
+  establish positive owner-call identity for custom binary paths.
 - `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a

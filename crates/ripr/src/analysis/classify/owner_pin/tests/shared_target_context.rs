@@ -127,6 +127,57 @@ fn admission(index: &RustIndex) -> Result<bool, String> {
 const SHADOW: &str = "macro_rules! assert_eq { ($($t:tt)*) => {} }";
 
 #[test]
+fn binary_macro_boundaries_route_withheld_sources() -> Result<(), String> {
+    let source = "fuzz_target!(|bytes: &[u8]| { assert_eq!(bytes, bytes); });";
+    let fixture = fixture_from_files(
+        "withheld-fuzz",
+        &[
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            ("src/lib.rs", WEIGHT_LIB),
+            (
+                "tests/pin.rs",
+                "use demo::weight;\n#[test]\nfn pin() { assert_eq!(weight(4), 12); }\n",
+            ),
+            (
+                "fuzz/Cargo.toml",
+                "[package]\nname='fuzz'\nversion='0.0.0'\n[workspace]\n[[bin]]\nname='parse'\npath='parse.rs'\n",
+            ),
+            ("fuzz/parse.rs", source),
+        ],
+    )?;
+    let mut index = fixture.index.clone();
+    assert!(index.remove_file(Path::new("fuzz/parse.rs")));
+    // Membership changes invalidate execution authority. Recompose the
+    // retained source set before exercising narrowed-index admission.
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &fixture.root);
+    assert!(index.execution_context(Path::new("tests/pin.rs")).is_some());
+    let mut withheld = WithheldMacroBindings::default();
+    assert!(!withheld.absorb_with_members(
+        Path::new("fuzz/parse.rs"),
+        source,
+        index.macro_scope_crates(),
+        &index.drop_in_manifests,
+        &index.member_crates,
+    ));
+    assert!(!withheld.trusted.contains("assert_eq"));
+    assert!(
+        withheld
+            .by_root
+            .get(Path::new("fuzz/parse.rs"))
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pin")
+        .ok_or("missing test")?;
+    assert_eq!(test.assertions.len(), 1);
+    let syntax = OwnerPinSyntax::default().with_withheld(withheld);
+    assert_eq!(syntax.refusal(test, &test.assertions[0], &index), None);
+    Ok(())
+}
+
+#[test]
 fn shared_assertion_requires_every_target_context() -> Result<(), String> {
     for (lib, main, admitted) in [("", "", true), (SHADOW, "", false), ("", SHADOW, false)] {
         let index = fixture(lib, main, false, false)?;

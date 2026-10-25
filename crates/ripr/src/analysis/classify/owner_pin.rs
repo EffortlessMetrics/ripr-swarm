@@ -368,12 +368,24 @@ pub(in crate::analysis) struct WithheldMacroBindings {
 impl WithheldMacroBindings {
     /// Fold one withheld file in. Returns `true` once nothing further can
     /// change the result, so the caller can stop reading.
+    #[cfg(test)]
     pub(in crate::analysis) fn absorb(
         &mut self,
         path: &Path,
         source: &str,
         packages: &BTreeSet<String>,
         drop_ins: &DropInManifests,
+    ) -> bool {
+        self.absorb_with_members(path, source, packages, drop_ins, &Default::default())
+    }
+
+    pub(in crate::analysis) fn absorb_with_members(
+        &mut self,
+        path: &Path,
+        source: &str,
+        packages: &BTreeSet<String>,
+        drop_ins: &DropInManifests,
+        members: &crate::analysis::facts::member_crates::MemberCrates,
     ) -> bool {
         if self.any_name {
             return true;
@@ -386,20 +398,27 @@ impl WithheldMacroBindings {
             }
         };
         let root = withheld_crate_root(path);
+        let binary_root = OnceCell::new();
         for (name, site) in macro_binding_scan(
             source,
             packages,
             &assertion_context_macros(),
             &drop_in_verified,
         ) {
-            if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
+            let binary = *binary_root.get_or_init(|| members.is_binary_target_root(path));
+            let local_root = if binary {
+                Some(path)
+            } else {
+                root.as_deref().filter(|_| site.crate_local)
+            };
+            if let Some(root) = local_root {
                 self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
-                    .entry(root.clone())
+                    .entry(root.to_path_buf())
                     .or_default()
                     .insert(name.clone());
                 self.root_sites
-                    .entry((name, root.clone()))
+                    .entry((name, root.to_path_buf()))
                     .or_insert_with(|| (path.to_path_buf(), site));
                 continue;
             }
@@ -687,6 +706,7 @@ impl OwnerPinSyntax {
             Some("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne") => matches!(
                 family,
                 ProbeFamily::ReturnValue
+                    | ProbeFamily::FieldConstruction
                     | ProbeFamily::ErrorPath
                     | ProbeFamily::Predicate
                     | ProbeFamily::SideEffect
@@ -1635,6 +1655,9 @@ struct TargetRoots {
     src_dirs: BTreeSet<PathBuf>,
     /// Per-file answers, so repeated admissions do not recompute them.
     memo: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
+    /// #10191: all contexts must be non-importable binary crates before
+    /// opaque expansions or exported bindings can be confined to them.
+    binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
 impl TargetRoots {
@@ -1660,6 +1683,7 @@ impl TargetRoots {
             disabled,
             src_dirs,
             memo: SyncMemo::default(),
+            binary_macro_roots: SyncMemo::default(),
         }
     }
 
@@ -1682,6 +1706,44 @@ impl TargetRoots {
         (roots.len() == 1)
             .then(|| roots.into_iter().next())
             .flatten()
+    }
+
+    fn binding_roots(
+        &self,
+        file: &Path,
+        site: &MacroBindingSite,
+        index: &RustIndex,
+    ) -> Option<BTreeSet<PathBuf>> {
+        if self.disabled {
+            return None;
+        }
+        if site.crate_local
+            && let Some(roots) = self.roots(file, index)
+        {
+            return Some(roots);
+        }
+        self.binary_roots(file, index)
+    }
+
+    fn binary_roots(&self, file: &Path, index: &RustIndex) -> Option<BTreeSet<PathBuf>> {
+        if self.disabled {
+            return None;
+        }
+        if let Some(roots) = self.binary_macro_roots.borrow().get(file) {
+            return roots.clone();
+        }
+        let roots = index.execution_context(file).and_then(|context| {
+            (!context.roots.is_empty()
+                && context
+                    .roots
+                    .iter()
+                    .all(|root| index.member_crates.is_binary_target_root(root)))
+            .then_some(context.roots)
+        });
+        self.binary_macro_roots
+            .borrow_mut()
+            .insert(file.to_path_buf(), roots.clone());
+        roots
     }
 
     fn may_belong(&self, file: &Path, root: &Path, index: &RustIndex) -> bool {
@@ -2065,19 +2127,23 @@ fn workspace_macro_binding_site(
         .files()
         .iter()
         .map(|(path, facts)| {
-            let root = test_root.and_then(|_| roots.roots(path, index));
-            (path, facts, root)
+            // Preserve the selected manifest overlay before entering rayon.
+            if test_root.is_some() {
+                let _ = roots.roots(path, index);
+                let _ = roots.binary_roots(path, index);
+            }
+            (path, facts)
         })
         .collect();
-    let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<BTreeSet<PathBuf>>)| {
+    let scan = |(path, facts): &(&PathBuf, FileFactsView<'_>)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
         let reaches = |site: &MacroBindingSite| {
-            !site.crate_local
-                || test_root.is_none()
-                || root.as_ref().is_none_or(|site_roots| {
-                    test_root.is_some_and(|root| site_roots.contains(root))
-                })
+            test_root.is_none_or(|test_root| {
+                roots
+                    .binding_roots(path, site, index)
+                    .is_none_or(|site_roots| site_roots.contains(test_root))
+            })
         };
         let mut first = None;
         for (_, site) in macro_binding_sites(
@@ -2108,7 +2174,7 @@ fn workspace_macro_binding_site(
         } else {
             chunk.iter().map(scan).collect()
         };
-        for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
+        for ((path, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
             }
@@ -2373,11 +2439,7 @@ fn retain_macro_sites(
         if site.scope.is_some() {
             continue;
         }
-        if let Some(contexts) = site
-            .crate_local
-            .then(|| roots.roots(&path, index))
-            .flatten()
-        {
+        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -2487,11 +2549,7 @@ fn absorb_macro_sites(
             scoped.entry(path).or_default().push((name, site));
             continue;
         }
-        if let Some(contexts) = site
-            .crate_local
-            .then(|| roots.roots(&path, index))
-            .flatten()
-        {
+        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }

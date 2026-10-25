@@ -5,6 +5,119 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_field_assertion_identity_whole_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_whole_shadow.json",
+      "vector": "field_assertion_identity_whole_shadow",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "pin",
+          "file": "tests/pin.rs",
+          "line": 4,
+          "kind": "unknown",
+          "strength": "none",
+          "relation_reason": "direct_owner_call",
+          "miss": "assertion_not_credited"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_assertion_identity_field_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_field_shadow.json",
+      "vector": "field_assertion_identity_field_shadow",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "pin",
+          "file": "tests/pin.rs",
+          "line": 4,
+          "kind": "unknown",
+          "strength": "none",
+          "relation_reason": "direct_owner_call",
+          "miss": "assertion_not_credited"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_assertion_identity_field_positive",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_field_positive.json",
+      "vector": "field_assertion_identity_field_positive",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "pin",
+          "file": "tests/pin.rs",
+          "line": 3,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
       "id": "rust_wrapper_boolean_return_discarded",
       "language": "rust",
       "tier": "pure",
