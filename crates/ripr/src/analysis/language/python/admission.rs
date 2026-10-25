@@ -1974,7 +1974,12 @@ pub(super) fn bound_import_names(imports: &[PythonImport]) -> Vec<String> {
     imports
         .iter()
         .map(|import| {
-            if import.alias.is_empty() {
+            // `import a.b.c` binds only `a`; its alias field holds the full
+            // dotted spelling. `import a.b as x` and `from m import y`
+            // bind their alias.
+            if import.source_module.is_empty()
+                && (import.alias.is_empty() || import.alias == import.imported)
+            {
                 import.imported.split('.').next().unwrap_or("").to_string()
             } else {
                 import.alias.clone()

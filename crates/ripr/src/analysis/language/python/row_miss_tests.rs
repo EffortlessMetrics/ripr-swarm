@@ -370,6 +370,41 @@ fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(),
             NO_CALL_PATH_CONTROL.to_string(),
         ),
         (
+            "decorator boolean calls a local helper that calls the owner",
+            "import pytest\n\ndef helper2():\n    return score(1)\n\n@pytest.mark.slow or helper2()\ndef other():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator argument reads an imported object",
+            "import pytest\nfrom src.other import OBJ\n\n@pytest.mark.skipif(OBJ)\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used through a deeper attribute",
+            "import a.b.c\n\nX = a.b.d\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used through its head",
+            "import a.b\n\nX = a.attr\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used by a module-level with",
+            "import a.b\n\nwith a.b.ctx:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "aliased dotted import used at module level",
+            "import a.b as q\n\nX = q.attr\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used in the test body",
+            "import a.b\n\n",
+            format!("def test_defaults():\n{REF}    assert a.attr == 1\n"),
+        ),
+        (
             "owner called directly",
             "",
             format!("def test_defaults():\n{REF}    assert len([score(0)]) == 1\n"),
@@ -395,6 +430,9 @@ fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(),
         "from src.other import OBJ\n",
         "import pytest\n\n@pytest.mark.parametrize('x', [1, 2])\ndef helper(x):\n    pass\n\n",
         "LIMIT = 3\n\n",
+        "from src.other import OB\n\nOBJ = 1\n\n",
+        "import a.b.c\n\nLIMIT = 1\n\n",
+        "import pytest\n\n@pytest.mark.skipif(False, reason='x')\ndef helper():\n    pass\n\n",
     ] {
         let finding = closed_row_case(prefix, NO_CALL_PATH_CONTROL)?;
         assert_eq!(

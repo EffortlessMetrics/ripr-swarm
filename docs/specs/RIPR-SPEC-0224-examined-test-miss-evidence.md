@@ -305,7 +305,11 @@ Python does not yet write:
   as inert only when its whole text is a dotted name with at most one flat
   argument group (no nested call, subscript hiding a call or boolean) whose
   head is on the inert list and which mentions no import (any `(` in a
-  compound statement, even `if (True):`, is an accepted recall cost); no `import` appears in the test body; no import other than the
+  module statement, even `if (True):`, withholds through the shared
+  module-effect check). Accepted recall costs, all fail-closed: a module
+  docstring or string naming the owner or an imported name or the word
+  `import`, `X = sys.platform`, a def annotated with an imported type,
+  `skipif(sys.version_info < (3, 8))`, and any string holding `(`; no `import` appears in the test body; no import other than the
   owner, `pytest` and `unittest` is used in the body; and
   every mention of the owner, strings and comments included, is one of
   `callable(owner)`, `owner is [not] None`, `owner.__name__`/`__qualname__`/
