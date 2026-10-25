@@ -243,6 +243,13 @@ pub(crate) fn load_findings_for_reuse_core(
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
     verify_identity(&artifact, &current, path)
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    if artifact.findings.iter().any(|finding| {
+        finding.alignment_reason.as_deref() == Some(crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT)
+    }) {
+        return Err(crate::core_error::CoreError::check_artifact_unusable(
+            "Python truthiness evidence requires a fresh physical source audit; run `ripr explain` or `ripr context` without `--from`",
+        ));
+    }
     Ok(artifact.findings)
 }
 

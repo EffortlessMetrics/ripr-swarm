@@ -1,7 +1,7 @@
 //! Physical isolation admission for this small truthiness capability only.
 //! This does not replace the general Python walker or infer namespace effects.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ const IMPORT_ARTIFACTS: [&str; 9] = ["pyc", "pyo", "pyd", "so", "dll", "zip", "e
 /// inert; any omitted/error/opaque state withholds this capability's credit.
 pub(super) fn closed_sources(
     root: &Path,
-    sources: &BTreeMap<PathBuf, String>,
+    sources: &HashMap<PathBuf, String>,
     incomplete: bool,
 ) -> Option<[PathBuf; 2]> {
     if incomplete {
@@ -114,7 +114,7 @@ mod tests {
     type Check = Result<(), Box<dyn std::error::Error>>;
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
-    struct Workspace(PathBuf, BTreeMap<PathBuf, String>);
+    struct Workspace(PathBuf, HashMap<PathBuf, String>);
 
     impl Workspace {
         fn new() -> Result<Self, Box<dyn std::error::Error>> {
@@ -125,7 +125,7 @@ mod tests {
             ));
             fs::create_dir_all(std::env::temp_dir())?;
             fs::create_dir(&root)?;
-            let sources = BTreeMap::from([
+            let sources = HashMap::from([
                 (
                     PathBuf::from("src/money.py"),
                     "class Money: pass\n".to_string(),

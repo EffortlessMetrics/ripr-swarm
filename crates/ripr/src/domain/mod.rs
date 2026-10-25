@@ -128,6 +128,7 @@ pub use repair_card::{
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.
+pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};

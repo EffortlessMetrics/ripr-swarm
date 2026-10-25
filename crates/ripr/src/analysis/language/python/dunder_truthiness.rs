@@ -18,7 +18,7 @@ const PLAIN_METHODS: [&str; 2] = ["__init__", "__bool__"];
 pub(super) fn bind_workspace_observer(
     root: &std::path::Path,
     owners: &mut [PythonOwner],
-    sources: &std::collections::BTreeMap<std::path::PathBuf, String>,
+    sources: &std::collections::HashMap<std::path::PathBuf, String>,
     incomplete: bool,
 ) {
     let pair = workspace_admission::closed_sources(root, sources, incomplete);

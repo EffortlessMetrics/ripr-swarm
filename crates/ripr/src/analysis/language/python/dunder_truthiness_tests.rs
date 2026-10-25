@@ -32,7 +32,7 @@ fn classify(source: &str, old: &str, test_source: &str, sole: bool) -> Result<Fi
     std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
     std::fs::create_dir(&root).map_err(|error| error.to_string())?;
     let workspace = TestWorkspace(root);
-    let sources = std::collections::BTreeMap::from([
+    let sources = std::collections::HashMap::from([
         (file.to_path_buf(), source.to_string()),
         (test_file.to_path_buf(), test_source.to_string()),
     ]);

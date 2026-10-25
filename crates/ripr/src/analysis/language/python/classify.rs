@@ -473,7 +473,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
                 changed_sink: alignment.changed_sink,
                 observed_sink: Some(credit.assertion.text.clone()),
                 oracle_alignment: "direct".to_string(),
-                alignment_reason: "strong_oracle_observes_dunder_truthiness".to_string(),
+                alignment_reason: crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string(),
                 credited: Some(CreditedAssertion {
                     test_name: credit.test.name.clone(),
                     test_file: credit.test.file.clone(),
