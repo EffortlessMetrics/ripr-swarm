@@ -259,11 +259,11 @@ fn named_callback_mock_call_count_aliases_use_body_order() -> Result<(), String>
 }
 
 #[test]
-fn mock_call_count_late_constants_do_not_supply_alias_identity() {
+fn a_late_mock_call_count_binding_still_is_not_an_argument_pin() {
     let source = node_test("assert.equal(calls.length, 1); const calls = fn.mock.calls;");
     let tests = extract_tests(Path::new("tests/notify.test.ts"), &source);
     assert_eq!(tests.len(), 1);
-    assert_eq!(mock_call_count_assertions(&tests[0]), vec![false]);
+    assert_eq!(mock_call_count_assertions(&tests[0]), vec![true]);
 }
 
 #[test]
@@ -296,5 +296,21 @@ fn shadowed_argument_pin_keeps_credit_beside_an_unused_mock_call_count() -> Resu
         notify_class("shadowed-argument-pin", &source)?,
         ExposureClass::Exposed
     );
+    Ok(())
+}
+
+#[test]
+fn unused_callback_mentions_do_not_steal_mock_call_count_alias_identity() -> Result<(), String> {
+    for assertion in [
+        "const unused = () => console.log(calls.length); const calls = fn.mock.calls; assert.equal(calls.length, 1);",
+        "const unused = () => console.log(count); const count = fn.mock.calls.length; assert.equal(count, 1);",
+        "const unused = () => assert.equal(calls.length, 1); const calls = fn.mock.calls; assert.equal(calls.length, 1);",
+    ] {
+        assert_eq!(
+            notify_class("unused-mention-count", &node_test(assertion))?,
+            ExposureClass::WeaklyExposed,
+            "{assertion}"
+        );
+    }
     Ok(())
 }

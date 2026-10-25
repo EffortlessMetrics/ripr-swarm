@@ -17176,10 +17176,11 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::unused_callback_mentions_do_not_steal_mock_call_count_alias_identity",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::shadowed_argument_pin_keeps_credit_beside_an_unused_mock_call_count",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::a_long_receiver_does_not_resurrect_mock_call_count_credit",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::named_callback_mock_call_count_aliases_use_body_order",
-  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::mock_call_count_late_constants_do_not_supply_alias_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::a_late_mock_call_count_binding_still_is_not_an_argument_pin",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::mock_call_count_batch_preserves_many_ordinary_argument_pins",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::a_call_count_does_not_see_the_arguments_of_a_changed_call",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::an_aliased_mock_call_count_is_not_an_argument_pin",

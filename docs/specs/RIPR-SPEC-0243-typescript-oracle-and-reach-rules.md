@@ -1266,11 +1266,12 @@ the masker.
     no removed counterpart, which a count sees), or a value that decides
     how many calls run (a count sees both), and `mock.calls[0].arguments`
     pins, which keep their reading. Alias resolution follows straight-line
-    callback-local constants declared before the assertion, including supported
-    named callbacks, and refuses names bound more than once anywhere in the
-    registration. Count facts are read once per related test; ordinary argument
+    callback-local constant identities, including supported named callbacks,
+    and refuses names bound more than once anywhere in the registration.
+    A count binding cannot supply exact argument evidence even when declared
+    lexically later; this demotion establishes no execution or admission. Count facts are read once per related test; ordinary argument
     pins do not trigger repeated whole-test parsing. Mutable, destructured,
-    outer-scope, late and ambiguous aliases, dynamic keys within the count
+    outer-scope and ambiguous aliases, dynamic keys within the count
     suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
     properties retain their existing reading; they are not covered by this
     bounded recognizer. `toHaveBeenCalledTimes` already reads weak mock

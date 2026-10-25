@@ -2580,12 +2580,9 @@ pub(crate) fn mock_call_count_assertions(test: &TypeScriptTest) -> Vec<bool> {
             if pending.is_empty() {
                 return counts;
             }
-            let (aliases, uses) = mock_count_aliases(file, source, allocator);
+            let aliases = mock_count_aliases(file, source, allocator);
             for index in pending {
                 let Some(text) = &observed[index] else {
-                    continue;
-                };
-                let Some(before) = uses.get(text) else {
                     continue;
                 };
                 let Ok(expression) =
@@ -2594,7 +2591,7 @@ pub(crate) fn mock_call_count_assertions(test: &TypeScriptTest) -> Vec<bool> {
                     continue;
                 };
                 counts[index] =
-                    mock_count_suffix(&mock_count_path(&expression, &aliases, *before, 0));
+                    mock_count_suffix(&mock_count_path(&expression, &aliases, u32::MAX, 0));
             }
             counts
         },
@@ -2622,51 +2619,26 @@ enum MockCountPart {
 }
 
 type MockCountAliases = std::collections::BTreeMap<String, (Vec<MockCountPart>, u32)>;
-type MockCountUses = std::collections::BTreeMap<String, u32>;
 
-/// Follow only unique straight-line callback-local constants. The parsed
-/// use positions preserve declaration order even when extraction appends a
-/// named callback declared before its registration (original file lines no
-/// longer map to offsets in that combined source). Nested shadowing refuses
-/// the name rather than borrowing a different binding's count.
-fn mock_count_aliases(
-    file: &Path,
-    source: &str,
-    allocator: &Allocator,
-) -> (MockCountAliases, MockCountUses) {
-    use oxc_ast_visit::{Visit, walk};
-    struct Bindings<'s> {
-        source: &'s str,
-        names: std::collections::BTreeMap<String, usize>,
-        uses: MockCountUses,
-    }
-    impl<'a> Visit<'a> for Bindings<'_> {
+/// A unique callback-local constant denotes the same value at every use.
+/// Resolve that binding identity independently of source-text mentions in
+/// unused closures. This only withholds argument credit; it establishes no
+/// execution order or admission. Initializer aliases still resolve in order,
+/// and any nested shadowing refuses the name entirely.
+fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockCountAliases {
+    use oxc_ast_visit::Visit;
+    #[derive(Default)]
+    struct Bindings(std::collections::BTreeMap<String, usize>);
+    impl<'a> Visit<'a> for Bindings {
         fn visit_binding_identifier(&mut self, node: &oxc_ast::ast::BindingIdentifier<'a>) {
-            *self.names.entry(node.name.to_string()).or_default() += 1;
-        }
-        fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
-            if let Some(text) = call
-                .arguments
-                .first()
-                .and_then(|arg| source_text_for_argument(arg, self.source))
-            {
-                self.uses
-                    .entry(text)
-                    .and_modify(|before| *before = (*before).min(call.span.start))
-                    .or_insert(call.span.start);
-            }
-            walk::walk_call_expression(self, call);
+            *self.0.entry(node.name.to_string()).or_default() += 1;
         }
     }
     let parsed = Parser::new(allocator, source, source_type_for(file)).parse();
     if !parsed.errors.is_empty() {
         return Default::default();
     }
-    let mut bindings = Bindings {
-        source,
-        names: Default::default(),
-        uses: Default::default(),
-    };
+    let mut bindings = Bindings::default();
     bindings.visit_program(&parsed.program);
     let mut aliases = MockCountAliases::new();
     for statement in &parsed.program.body {
@@ -2701,7 +2673,7 @@ fn mock_count_aliases(
                     let BindingPattern::BindingIdentifier(name) = &declarator.id else {
                         continue;
                     };
-                    if bindings.names.get(name.name.as_str()) != Some(&1) {
+                    if bindings.0.get(name.name.as_str()) != Some(&1) {
                         continue;
                     }
                     if let Some(init) = &declarator.init {
@@ -2712,7 +2684,7 @@ fn mock_count_aliases(
             }
         }
     }
-    (aliases, bindings.uses)
+    aliases
 }
 
 fn mock_count_suffix(path: &[MockCountPart]) -> bool {
