@@ -20,15 +20,15 @@ const OLD: &str = "        return self.cents != 0";
 const NEW: &str = "        return self.cents > 0";
 
 fn classify(source: &str, old: &str, test_source: &str, sole: bool) -> Result<Finding, String> {
-    classify_with_missing_committed(source, old, test_source, sole, false)
+    classify_with_committed_writer(source, old, test_source, sole, None)
 }
 
-fn classify_with_missing_committed(
+fn classify_with_committed_writer(
     source: &str,
     old: &str,
     test_source: &str,
     sole: bool,
-    missing_committed: bool,
+    committed_writer: Option<&'static str>,
 ) -> Result<Finding, String> {
     let file = Path::new("shapes/money.py");
     let test_file = Path::new("tests/test_money.py");
@@ -52,14 +52,15 @@ fn classify_with_missing_committed(
             .map_err(|error| error.to_string())?;
         std::fs::write(absolute, text).map_err(|error| error.to_string())?;
     }
-    let overlay = missing_committed.then(|| {
+    let overlay = committed_writer.map(|path| {
+        if path.ends_with("__init__.py") {
+            std::fs::write(workspace.0.join(path), "")
+                .expect("empty initializer in test workspace");
+        }
         std::sync::Arc::new(
             crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
                 &workspace.0,
-                [(
-                    "tests/test_patch.py",
-                    Some(b"writer retained at HEAD".as_slice()),
-                )],
+                [(path, Some(b"writer retained at HEAD".as_slice()))],
             ),
         )
     });
@@ -144,11 +145,20 @@ fn integer_truthiness_credits_only_a_changed_truth_value() -> Check {
 
 #[test]
 fn integer_truthiness_refuses_a_committed_writer_missing_from_disk() -> Check {
-    assert_eq!(
-        classify_with_missing_committed(MONEY, OLD, &test("    assert Money(-1)"), true, true)?
+    for path in ["tests/test_patch.py", "shapes/__init__.py"] {
+        assert_eq!(
+            classify_with_committed_writer(
+                MONEY,
+                OLD,
+                &test("    assert Money(-1)"),
+                true,
+                Some(path)
+            )?
             .class,
-        ExposureClass::StaticUnknown
-    );
+            ExposureClass::StaticUnknown,
+            "{path}"
+        );
+    }
     Ok(())
 }
 

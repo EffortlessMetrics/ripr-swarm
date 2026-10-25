@@ -15,6 +15,8 @@ The test imports `Money` from `shapes.money` and asserts `Money(-1)`.
 ## Then
 
 The single finding is `exposed`: `assert Money(-1)` passes before the edit and fails after it.
+This credit uses the fixture runner's explicit `--diff` live source view. Other
+source modes retain abstention for this capability.
 
 ## Must Not
 

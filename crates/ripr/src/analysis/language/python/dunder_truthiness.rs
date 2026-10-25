@@ -24,10 +24,9 @@ pub(super) fn bind_workspace_observer(
     let pair = workspace_admission::closed_sources(
         root,
         sources,
-        // The physical audit cannot exclude a writer retained at HEAD but
-        // deleted from disk in a committed-history source view.
-        incomplete
-            || !crate::analysis::committed_source::committed_paths_missing_on_disk(root).is_empty(),
+        // An overlay can retain writers deleted or truncated on disk. Its
+        // routed file set cannot prove absence of all HEAD import artifacts.
+        incomplete || crate::analysis::committed_source::current_overlay().is_some(),
         super::bounded_read::source_matches_capped,
     );
     for owner in owners.iter_mut().filter(|owner| owner.name == "__bool__") {

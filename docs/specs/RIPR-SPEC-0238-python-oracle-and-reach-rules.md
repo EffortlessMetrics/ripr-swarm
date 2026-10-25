@@ -870,7 +870,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     literal with `==`, `!=`, `<`, `<=`, `>` or `>=`. Both old and new predicates
     must resolve on the same field. The test module contains one import and
     one argument-free, undecorated function without annotations or defaults;
-    literal docstrings are allowed. A truthiness-only physical audit must find
+    literal docstrings are allowed. This capability is limited to explicit
+    `--diff` input's live source view; default/`--base`, `--worktree` and immutable
+    candidate subjects retain abstention. A committed-content overlay also
+    refuses credit: a physical audit cannot exclude committed writers or import
+    artifacts deleted or truncated on disk. A truthiness-only physical audit must find
     exactly those two nonempty, ASCII Python sources with bytes matching the
     parsed view. Empty package initializers are allowed. It inspects every
     directory, including generated, excluded and hidden paths, within 512
