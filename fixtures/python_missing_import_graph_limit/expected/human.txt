@@ -19,7 +19,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return remote_total(client, include_tax=True)
-  Analyzer limit: Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation…
+  Analyzer limit: Static limit `missing_import_graph`: the changed line calls an imported symbol;
+    the Python preview adapter does not build an import graph or resolve imported implementation
+    semantics
   Related test: tests/test_totals.py:4 test_total_includes_tax
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
