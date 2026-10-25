@@ -185,8 +185,11 @@ fn a_module_building_macro_keeps_the_file_whatever_its_spacing() -> Result<(), S
         "mod\n        $n;",
         "mod/* generated */$n;",
         "mod // generated\n        $n;",
+        "mod /* outer /* nested */ */ $n;",
     ] {
-        let lib = format!("macro_rules! m {{ ($n:ident) => {{ {builder} }} }}\n");
+        let lib = format!(
+            "const OPEN: &str = \"/*\";\nmacro_rules! m {{ ($n:ident) => {{ {builder} }} }}\n"
+        );
         let run = run(&lib, "", Some(HAY_SOURCE))?;
         assert!(
             run.related_files.contains(&HAY.to_string()),

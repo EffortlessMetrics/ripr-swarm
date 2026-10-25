@@ -61,7 +61,9 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
 3. No Rust source or `Cargo.toml` of the workspace names its file name
    anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
    `path`, a `build =`), no source declares a `mod` of its stem, and no source
-   builds a `mod` or `include!` operand from a macro metavariable.
+   builds a `mod` or `include!` operand from a macro metavariable (any `$` beside a
+   `mod`/`include` word, whatever comments or strings intervene), passes a computed
+   `include!` operand. A `mod.rs` file is always kept.
 4. The workspace has no unresolved `include!`, and every lexical-fallback file
    or unknown `#[path]` is itself unlinked: a file no root reaches never
    compiles its own declarations either.

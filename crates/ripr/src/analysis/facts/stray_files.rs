@@ -92,6 +92,11 @@ pub(super) fn never_compiled(
         let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
+        // A `mod.rs` is named by its directory's declaration, which a text scan
+        // cannot tie to the file: keep it.
+        if name == "mod.rs" {
+            continue;
+        }
         let stem = file
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -103,30 +108,51 @@ pub(super) fn never_compiled(
     out
 }
 
-/// True when a source assembles a `mod` or `include!` operand from macro
-/// metavariables, so the compiled file set cannot be read from text.
+/// True when a source may assemble a `mod` or `include!` operand the text
+/// cannot name: any `$` beside a `mod`/`include` word (macro metavariables,
+/// whatever comments, strings or whitespace sit between them), or an
+/// `include!` whose operand is not a plain string literal.
 fn builds_module_operands(source: &str) -> bool {
-    // Whitespace and comments may sit between the tokens (`mod\n$n;`,
-    // `mod/**/$n;`), so compare with both removed.
-    let compact: String = without_comments(source)
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect();
-    compact.contains("mod$") || compact.contains("include!($")
+    if source.contains('$') && (source.contains("mod") || source.contains("include")) {
+        return true;
+    }
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact
+        .match_indices("include!(")
+        .any(|(at, matched)| !compact[at + matched.len()..].starts_with('"'))
 }
 
-/// `source` with every block and line comment replaced by one space. An
-/// unterminated block comment swallows the rest, which is only more doubt in
-/// callers that also scan the raw text.
+/// `source` with every block and line comment replaced by one space; block
+/// comments nest as in Rust. Strings are not tracked, so callers also scan the
+/// raw text and a stripped scan only ever adds names.
 fn without_comments(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut rest = source;
     while let Some(at) = rest.find('/') {
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
-        if let Some(body) = tail.strip_prefix("/*") {
+        if tail.starts_with("/*") {
             out.push(' ');
-            rest = body.find("*/").map_or("", |end| &body[end + 2..]);
+            let mut depth = 0usize;
+            let mut end = tail.len();
+            let bytes = tail.as_bytes();
+            let mut i = 0;
+            while i + 1 < bytes.len() {
+                if &bytes[i..i + 2] == b"/*" {
+                    depth += 1;
+                    i += 2;
+                } else if &bytes[i..i + 2] == b"*/" {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            rest = &tail[end..];
         } else if tail.starts_with("//") {
             out.push(' ');
             rest = tail.find('\n').map_or("", |end| &tail[end..]);
@@ -178,8 +204,9 @@ fn collect_modules_in(source: &str, out: &mut BTreeSet<String>) {
         {
             continue;
         }
-        let name: String = source[at + 3..]
-            .trim_start()
+        let after = source[at + 3..].trim_start();
+        let after = after.strip_prefix("r#").unwrap_or(after);
+        let name: String = after
             .chars()
             .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
             .collect();
@@ -244,6 +271,9 @@ mod tests {
         assert!(modules.contains("nl"), "{modules:?}");
         assert!(modules.contains("cm"), "{modules:?}");
         assert!(!modules.contains("ule"));
+        collect_declared_modules("mod /* /* */ */ nested;\nmod r#raw;\n", &mut modules);
+        assert!(modules.contains("nested"), "{modules:?}");
+        assert!(modules.contains("raw"), "{modules:?}");
     }
 
     #[test]
@@ -256,7 +286,16 @@ mod tests {
         ] {
             assert!(builds_module_operands(source), "{source}");
         }
+        for source in [
+            "m!{ ($n:ident) => { mod /* /* */ */ $n; } }",
+            "const A: &str = \"/*\";\nm!{ ($n:ident) => { mod $n; } }",
+            "include!(concat!(\"hay\", \".rs\"));",
+            "include!(env!(\"X\"));",
+        ] {
+            assert!(builds_module_operands(source), "{source}");
+        }
         assert!(!builds_module_operands("mod plain;\n// mod\nfn f() {}"));
+        assert!(!builds_module_operands("include!(\"gen.rs\");"));
     }
 }
 
