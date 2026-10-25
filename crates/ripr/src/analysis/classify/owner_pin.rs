@@ -4984,7 +4984,7 @@ enum CallShape<'a> {
 /// token of the one `fn <name>` item whose span holds the owner's start
 /// line. No parse, or no single match, reads as sync: an async owner then
 /// gets no `.await` credit, and its bare call (a future) does not compile.
-fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
+pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
     function_declaration_is_async(owner, index).unwrap_or(false)
 }
 
