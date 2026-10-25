@@ -8,6 +8,19 @@ The machine-readable source is `metrics/capabilities.toml`. Run
 `cargo xtask metrics` for generated Markdown and JSON reports under
 `target/ripr/reports/`.
 
+Entries may optionally declare `cells = ["language/framework/mode/family", ...]`
+using exact IDs from `ripr capabilities --json`. `cargo xtask check-capabilities`
+builds and reads that whole runtime registry, rejects missing named cells, and
+requires every registered cell to be claimed by at least one capability. Omitting
+`cells` (or using `[]`) claims no cells; it does not disable the completeness check.
+A repeated `cells` field or repeated identity within one entry is invalid. Multiple
+capabilities may refer to the same cell.
+
+These bindings join identities only. Product status remains in this manifest;
+semantic support, tier ceilings, limits and proof references remain in the
+binary-resident `CAPABILITY_CELLS` table (the bind-not-migrate decision in #9294).
+A claim here neither changes a cell's state nor implies adapter availability.
+
 For an adopter-facing summary of what is usable alpha, preview, scaffold,
 blocked, or deferred, see [Support tiers](status/SUPPORT_TIERS.md). This matrix
 is the deeper proof map; the support-tier page is the first read for rollout

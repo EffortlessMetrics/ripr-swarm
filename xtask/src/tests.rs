@@ -14149,6 +14149,7 @@ fn capability_helpers_validate_ids_and_escape_json() {
         spec: Some("RIPR-SPEC-0003".to_string()),
         evidence: vec!["agent context spec".to_string()],
         fixtures: Vec::new(),
+        cells: None,
         next: Some("agent-context-v2".to_string()),
         metric: Some("context packets with suggested assertions".to_string()),
         line: 1,

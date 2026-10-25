@@ -167,6 +167,8 @@ pub(crate) struct Capability {
     pub(crate) spec: Option<String>,
     pub(crate) evidence: Vec<String>,
     pub(crate) fixtures: Vec<String>,
+    /// Explicit registry identities; omission means this entry claims no cells.
+    pub(crate) cells: Option<Vec<String>>,
     pub(crate) next: Option<String>,
     pub(crate) metric: Option<String>,
 }

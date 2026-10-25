@@ -1,5 +1,6 @@
 mod all;
 mod allow_attributes;
+mod capability_cells;
 mod capability_docs;
 mod capability_producers;
 mod changelog_fragments;
@@ -30,6 +31,7 @@ mod workflows;
 
 pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
+pub(crate) use capability_cells::check_capability_cells;
 pub(crate) use capability_docs::capability_docs;
 pub(crate) use capability_producers::check_capability_producers;
 pub(crate) use changelog_fragments::{

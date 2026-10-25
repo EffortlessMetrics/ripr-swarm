@@ -13297,6 +13297,9 @@ fn check_capabilities() -> Result<(), String> {
     violations.extend(parse_violations);
     validate_capabilities(&capabilities, &mut violations)?;
     validate_capability_matrix(&capabilities, &mut violations)?;
+    if violations.is_empty() {
+        policy::check_capability_cells(&capabilities, &mut violations)?;
+    }
     finish_capabilities_report(&violations)
 }
 
@@ -13635,6 +13638,10 @@ fn assign_capability_array(
     match key {
         "evidence" => capability.evidence = values,
         "fixtures" => capability.fixtures = values,
+        "cells" if capability.cells.is_none() => capability.cells = Some(values),
+        "cells" => violations.push(format!(
+            "capability line {line_number} repeats `cells` field"
+        )),
         _ => violations.push(format!(
             "capability line {line_number} uses unsupported array field `{key}`"
         )),
