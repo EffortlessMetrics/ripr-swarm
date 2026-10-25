@@ -1,7 +1,7 @@
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,9 +1,9 @@
+@@ -1,18 +1,18 @@
  pub fn signed(n: i32) -> bool {
      let k = n.checked_sub(1).map_or(0, |i| i);
 -    k < 0
@@ -12,4 +12,14 @@ diff --git a/src/lib.rs b/src/lib.rs
      let k = "ab".find('b').map_or(1 / n, |i| i);
 -    k < 1
 +    k <= 1
+ }
+ 
+ pub mod narrow {
+     #[allow(non_camel_case_types)]
+     type usize = u8;
+ 
+     pub fn score(n: usize) -> bool {
+-        (n + 100) / 2 < 150
++        (n + 100) / 2 <= 150
+     }
  }

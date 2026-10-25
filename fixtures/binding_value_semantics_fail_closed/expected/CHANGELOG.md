@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (5)
+
+Reason:
+RIPR-SPEC-0158: add the native-confirmed shadowed usize=u8 direct-expression counterexample. Independent assertions require exactly three unknown predicates with no equality or missing input; preserve the separate inherited returned-comparison fallback, not a correctness claim for it.
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

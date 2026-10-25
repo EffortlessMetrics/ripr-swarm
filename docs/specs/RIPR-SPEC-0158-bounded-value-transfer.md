@@ -58,8 +58,11 @@ exercised boundary from a missing one.
   stays unresolved instead of borrowing `usize` overflow semantics. String
   lengths and char-derived indices keep their intrinsic `usize` semantics.
   A same-file type alias, import rename or unresolved glob that can shadow
-  an intrinsic type spelling refuses integer evaluation too, including raw
-  identifier spellings. Alias resolution is not inferred from a name.
+  an intrinsic type spelling refuses integer evaluation in both direct
+  expressions and local initializers, including raw identifier spellings.
+  Both forms share the intrinsic-identity admission; their operation-family
+  limits remain distinct. Literal-only expressions do not require unused
+  parameter types to be resolved. Alias resolution is not inferred from a name.
 - `map_or` evaluates its default once before selecting `Some` or `None`.
   A refused default (including division by zero or an unsupported call)
   leaves either arm unresolved. An evaluated default contributes its

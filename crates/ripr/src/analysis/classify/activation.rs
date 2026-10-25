@@ -377,6 +377,7 @@ fn observed_discriminator_values(
         &parameters,
         &probe.expression,
         probe.location.line,
+        index,
     ) else {
         return Vec::new();
     };
@@ -610,21 +611,12 @@ pub(crate) enum ResolvedOperand {
 const WIDE_INTEGER_TYPES: [&str; 8] =
     ["u32", "u64", "u128", "usize", "i32", "i64", "i128", "isize"];
 
-/// The declared type of a parameter when it is a plain integer or a plain
-/// text reference/owner (`&str`, `String`, `&String`). Generic owners,
-/// patterns, `mut`/`ref` bindings and every other type answer `None`, so a
-/// `.len()` is read only on the intrinsic string method.
-fn exact_scalar_parameter(owner: &FunctionSummary, name: &str) -> bool {
-    plain_parameter_type(owner, name).is_some_and(|text| {
-        // Only types wide enough to hold every bounded arithmetic result.
-        WIDE_INTEGER_TYPES.contains(&text.as_str())
-            || matches!(text.as_str(), "&str" | "String" | "&String")
-    })
-}
-
 /// The declared type is retained before row literals erase integer width.
-/// This is syntax evidence, not inference from a decimal argument.
-fn plain_parameter_type(owner: &FunctionSummary, name: &str) -> Option<String> {
+/// Parse all plain parameter bindings together; this is syntax evidence,
+/// not inference from a decimal argument.
+fn plain_parameter_types(
+    owner: &FunctionSummary,
+) -> Option<std::collections::BTreeMap<String, String>> {
     use ra_ap_syntax::{
         AstNode,
         ast::{self, HasGenericParams, HasName},
@@ -644,27 +636,69 @@ fn plain_parameter_type(owner: &FunctionSummary, name: &str) -> Option<String> {
         return None;
     }
     let params = function.param_list()?;
-    params.params().find_map(|param| {
-        let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
-            return None;
-        };
-        if pattern.name().is_none_or(|bound| bound.text() != name)
-            || pattern.mut_token().is_some()
-            || pattern.ref_token().is_some()
-            || pattern.at_token().is_some()
-        {
-            return None;
-        }
-        let ty = param.ty()?;
-        let text: String = ty
-            .syntax()
-            .text()
-            .to_string()
-            .chars()
-            .filter(|ch| !ch.is_whitespace())
-            .collect();
-        Some(text)
-    })
+    Some(
+        params
+            .params()
+            .filter_map(|param| {
+                let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+                    return None;
+                };
+                if pattern.mut_token().is_some()
+                    || pattern.ref_token().is_some()
+                    || pattern.at_token().is_some()
+                {
+                    return None;
+                }
+                let ty = param.ty()?;
+                let text: String = ty
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect();
+                Some((pattern.name()?.text().to_string(), text))
+            })
+            .collect(),
+    )
+}
+
+/// Resolve intrinsic identity before applying an operation family's type
+/// limits. Direct expressions and local initializers must use the same
+/// evidence: a primitive-looking alias is not an integer-width guarantee.
+fn intrinsic_parameter_types(
+    owner: &FunctionSummary,
+    names: &[&String],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<Option<String>> {
+    // Literal-only initializers need no signature or file/index binding scan.
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let Some(types) = plain_parameter_types(owner) else {
+        return vec![None; names.len()];
+    };
+    let standard_root_alias = ["std", "core", "alloc"].iter().any(|root| {
+        super::owner_pin::targeted_name_is_alias(index, root)
+            || super::owner_pin::targeted_name_is_alias(index, &format!("r#{root}"))
+    });
+    if standard_root_alias {
+        return vec![None; names.len()];
+    }
+    let source_facts = index.files().get(&owner.file);
+    let source = source_facts
+        .as_ref()
+        .map_or(owner.body.as_str(), |facts| facts.source.as_ref());
+    let bindings = crate::analysis::syntax::fn_signature::TypeNameBindings::from_source(source);
+    names
+        .iter()
+        .map(|name| {
+            types
+                .get(name.as_str())
+                .filter(|ty| !bindings.shadows(ty.trim_start_matches('&')))
+                .cloned()
+        })
+        .collect()
 }
 
 /// Bounded arithmetic fits every admitted wide integer, but checked methods
@@ -705,7 +739,7 @@ fn closed_form_operand(
     predicate_line: usize,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<ResolvedOperand> {
-    let text = closed_form_text(owner, operand, parameters, predicate_line)?;
+    let text = closed_form_text(owner, operand, parameters, predicate_line, index)?;
     let constants = initializer_constants(owner, text, parameters, index);
     Some(ResolvedOperand::Expression(text.to_string(), constants))
 }
@@ -744,6 +778,7 @@ fn closed_form_text<'a>(
     operand: &'a str,
     parameters: &[String],
     predicate_line: usize,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<&'a str> {
     let text = operand.trim();
     if text.is_empty()
@@ -767,10 +802,16 @@ fn closed_form_text<'a>(
             && (!is_constant_like(name) || matches!(name.as_str(), "true" | "false"))
     };
     if names.iter().any(foreign)
-        || parameters_read.iter().any(|name| {
-            parameter_may_be_rebound(owner, name, predicate_line)
-                || !exact_scalar_parameter(owner, name)
-        })
+        || parameters_read
+            .iter()
+            .any(|name| parameter_may_be_rebound(owner, name, predicate_line))
+        || intrinsic_parameter_types(owner, &parameters_read, index)
+            .iter()
+            .any(|ty| {
+                !ty.as_deref().is_some_and(|ty| {
+                    WIDE_INTEGER_TYPES.contains(&ty) || matches!(ty, "&str" | "String" | "&String")
+                })
+            })
     {
         return None;
     }
@@ -813,8 +854,9 @@ fn is_parameter_expression(
     operand: &str,
     parameters: &[String],
     predicate_line: usize,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
-    closed_form_text(owner, operand, parameters, predicate_line).is_some_and(|text| {
+    closed_form_text(owner, operand, parameters, predicate_line, index).is_some_and(|text| {
         free_identifiers(text)
             .iter()
             .any(|name| parameters.contains(name))
@@ -870,27 +912,12 @@ fn resolve_boundary_operand(
             return None;
         }
         let constants = initializer_constants(owner, &initializer, parameters, index);
-        let source_facts = index.files().get(&owner.file);
-        let source = source_facts
-            .as_ref()
-            .map_or(owner.body.as_str(), |facts| facts.source.as_ref());
-        let standard_root_alias = ["std", "core", "alloc"].iter().any(|root| {
-            super::owner_pin::targeted_name_is_alias(index, root)
-                || super::owner_pin::targeted_name_is_alias(index, &format!("r#{root}"))
-        });
-        let parameter_types = free_identifiers(&initializer)
+        let names = free_identifiers(&initializer);
+        let parameters_read: Vec<&String> = names
             .iter()
             .filter(|name| parameters.contains(name))
-            .map(|name| {
-                plain_parameter_type(owner, name).filter(|ty| {
-                    !standard_root_alias
-                        && !crate::analysis::syntax::fn_signature::shadows_type_name(
-                            source,
-                            ty.trim_start_matches('&'),
-                        )
-                })
-            })
             .collect();
+        let parameter_types = intrinsic_parameter_types(owner, &parameters_read, index);
         return Some(ResolvedOperand::Local(
             operand.to_string(),
             initializer,
@@ -1722,6 +1749,7 @@ fn missing_boundary_discriminator(
         &parameters,
         &probe.expression,
         probe.location.line,
+        index,
     )?;
     if let Some(view) = adaptor_element_view(
         probe,
@@ -4871,6 +4899,7 @@ fn oriented_comparison_operands(
     parameters: &[String],
     expression: &str,
     predicate_line: usize,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<(String, String)> {
     let (left, right) = comparison_operands(expression)?;
     let owner_bound = |operand: &str| {
@@ -4879,7 +4908,7 @@ fn oriented_comparison_operands(
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
             || owner_declares_local(owner, operand, usize::MAX)
-            || is_parameter_expression(owner, operand, parameters, predicate_line)
+            || is_parameter_expression(owner, operand, parameters, predicate_line, index)
     };
     if !owner_bound(&left) && owner_bound(&right) {
         return Some((right, left));

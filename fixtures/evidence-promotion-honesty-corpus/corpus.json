@@ -9,11 +9,11 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/binding_value_semantics_fail_closed",
-      "vector": "local_boundary_requires_declared_integer_semantics_and_successful_eager_default",
+      "vector": "local_and_direct_boundaries_require_intrinsic_integer_identity_and_successful_eager_default",
       "probe_family": "predicate",
       "assertions": [
         { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 2 },
+        { "type": "expected_finding_count", "count": 3 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "infection_unknown" }
       ]

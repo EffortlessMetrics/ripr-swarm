@@ -41,6 +41,30 @@ fn finding_with_prelude(
     argument: &str,
     bound: &str,
 ) -> Result<Value, String> {
+    finding_with_shape(
+        prelude,
+        ty,
+        initializer,
+        argument,
+        bound,
+        OperandShape::Local,
+    )
+}
+
+enum OperandShape {
+    Local,
+    Direct,
+    Reversed,
+}
+
+fn finding_with_shape(
+    prelude: &str,
+    ty: &str,
+    expression: &str,
+    argument: &str,
+    bound: &str,
+    shape: OperandShape,
+) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     if prelude.contains("mod std;") || prelude.contains("mod r#std;") {
         std::fs::write(
@@ -54,8 +78,31 @@ fn finding_with_prelude(
         "[package]\nname = \"integer_width\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n",
     )
     .map_err(|error| error.to_string())?;
+    let (binding, before, after, lines, predicate_offset) = match shape {
+        OperandShape::Local => (
+            format!("    let k = {expression};\n"),
+            format!("k < {bound}"),
+            format!("k <= {bound}"),
+            4,
+            2,
+        ),
+        OperandShape::Direct => (
+            String::new(),
+            format!("{expression} < {bound}"),
+            format!("{expression} <= {bound}"),
+            3,
+            1,
+        ),
+        OperandShape::Reversed => (
+            String::new(),
+            format!("{bound} > {expression}"),
+            format!("{bound} >= {expression}"),
+            3,
+            1,
+        ),
+    };
     let source = format!(
-        "{prelude}pub fn score(n: {ty}) -> bool {{\n    let k = {initializer};\n    k <= {bound}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn anchor() {{ assert!(score({argument})); }}\n}}\n"
+        "{prelude}pub fn score(n: {ty}) -> bool {{\n{binding}    {after}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn anchor() {{ assert!(score({argument})); }}\n}}\n"
     );
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let diff = scratch.0.join("change.diff");
@@ -63,7 +110,8 @@ fn finding_with_prelude(
     std::fs::write(
         &diff,
         format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},4 +{start},4 @@\n pub fn score(n: {ty}) -> bool {{\n     let k = {initializer};\n-    k < {bound}\n+    k <= {bound}\n }}\n"
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},{lines} +{start},{lines} @@\n pub fn score(n: {ty}) -> bool {{\n{}-    {before}\n+    {after}\n }}\n",
+            binding.replace("    let", "     let")
         ),
     )
     .map_err(|error| error.to_string())?;
@@ -86,7 +134,11 @@ fn finding_with_prelude(
     assert_eq!(findings.len(), 1, "one changed predicate: {json}");
     let finding = findings[0];
     assert_eq!(finding["probe"]["family"], "predicate", "{finding}");
-    assert_eq!(finding["probe"]["line"], start + 2, "{finding}");
+    assert_eq!(
+        finding["probe"]["line"],
+        start + predicate_offset,
+        "{finding}"
+    );
     assert!(
         finding["related_tests"]
             .as_array()
@@ -96,6 +148,85 @@ fn finding_with_prelude(
         "setup: the literal call reaches the owner: {finding}"
     );
     Ok(finding.clone())
+}
+
+#[test]
+fn shadowed_integer_names_cannot_credit_direct_or_reversed_arithmetic() -> Result<(), String> {
+    for (prelude, ty) in [
+        (
+            "#[allow(non_camel_case_types)]\ntype usize = u8;\n",
+            "usize",
+        ),
+        (
+            "#[allow(non_camel_case_types)]\ntype r#usize = u8;\n",
+            "usize",
+        ),
+        ("use std::primitive::u8 as usize;\n", "usize"),
+        ("#[allow(non_camel_case_types)]\ntype u32 = u8;\n", "u32"),
+        ("mod std;\nuse std::core;\nuse core::usize;\n", "usize"),
+    ] {
+        for shape in [OperandShape::Direct, OperandShape::Reversed] {
+            let finding = finding_with_shape(prelude, ty, "(n + 100) / 2", "200", "150", shape)?;
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{prelude}: {finding}"
+            );
+            assert_eq!(
+                finding["ripr"]["infect"]["state"], "unknown",
+                "{prelude}: {finding}"
+            );
+            assert!(
+                finding["activation"]["missing_discriminators"]
+                    .as_array()
+                    .ok_or("missing discriminator array")?
+                    .is_empty(),
+                "a shadowed spelling cannot invent an equality or a missing input: {finding}"
+            );
+            assert!(
+                finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing observed values")?
+                    .iter()
+                    .all(|value| !value["value"]
+                        .as_str()
+                        .is_some_and(|value| value.contains(" == "))),
+                "a refused expression cannot retain an equality observation: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn direct_intrinsics_and_literal_only_operands_keep_their_credit() -> Result<(), String> {
+    for shape in [OperandShape::Direct, OperandShape::Reversed] {
+        let finding = finding_with_shape(
+            "use std::primitive::usize;\n",
+            "usize",
+            "(n + 100) / 2",
+            "200",
+            "150",
+            shape,
+        )?;
+        assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    }
+    for shape in [OperandShape::Local, OperandShape::Direct] {
+        let finding = finding_with_shape("mod std;\n", "u8", "1 + 2", "200", "3", shape)?;
+        assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    }
+    let reversed = finding_with_shape(
+        "mod std;\n",
+        "u8",
+        "1 + 2",
+        "200",
+        "3",
+        OperandShape::Reversed,
+    )?;
+    assert_eq!(
+        reversed["ripr"]["infect"]["state"], "unknown",
+        "the existing literal-only reversed refusal is retained: {reversed}"
+    );
+    Ok(())
 }
 
 #[test]

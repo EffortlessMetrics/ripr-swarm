@@ -7,3 +7,12 @@ pub fn eager(n: usize) -> bool {
     let k = "ab".find('b').map_or(1 / n, |i| i);
     k <= 1
 }
+
+pub mod narrow {
+    #[allow(non_camel_case_types)]
+    type usize = u8;
+
+    pub fn score(n: usize) -> bool {
+        (n + 100) / 2 <= 150
+    }
+}
