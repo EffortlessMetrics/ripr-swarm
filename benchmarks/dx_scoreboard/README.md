@@ -31,8 +31,10 @@ its own row set.
 
 The corpus is a fixed list of real repositories pinned to exact commits. Each
 pin is a commit whose own change touches production Rust, so the warm
-`ripr check --base HEAD~1` measures a real small edit. Entries marked
-`heavy = true` (ripr-swarm at two sizes, cargo) run only with `--include-heavy`.
+`ripr check --base HEAD~1` measures a real small edit. The `serde-no-rust` and `cargo-no-rust` entries pin commits that touch no `.rs` file
+(a CI workflow, a changelog), so a docs-or-CI edit has its own warm-check row, memory row and
+trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Entries marked
+`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`) run only with `--include-heavy`.
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
 
 ```bash
