@@ -254,3 +254,24 @@ fn bindings_that_are_not_rewritten_keep_their_import() {
         assert_eq!(imports_of(source).len(), 1, "{source}");
     }
 }
+
+#[test]
+fn a_hoisted_block_require_or_a_late_create_require_import_is_read_conservatively() {
+    assert_eq!(
+        imports_of(
+            "if (true) { function require() { return { f() {} }; } }\nconst s = require('./lib').f;\n"
+        ),
+        Vec::new(),
+        "a block-level function require hoists in sloppy CommonJS"
+    );
+    assert_eq!(
+        imports_of(
+            "const require = createRequire(import.meta.url);\nconst s = require('./lib').f;\nimport { createRequire } from 'node:module';\n"
+        )
+        .into_iter()
+        .filter(|import| import.0 == "./lib")
+        .collect::<Vec<_>>(),
+        vec![named("./lib", "f", "s")],
+        "imports hoist, so their position does not matter"
+    );
+}

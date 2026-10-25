@@ -1380,8 +1380,21 @@ fn extract_imports_from_statements_inner(
     // The ambient-`require` contract of `createRequire(import.meta.url)` keeps
     // its reading.
     let mut top_level_names = Vec::new();
-    super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, true);
-    let require_name_bound = top_level_names.iter().any(|name| name == "require");
+    // A block-level `function require()` hoists in sloppy CommonJS, so count it
+    // as a file-level binding (the conservative reading).
+    super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, false);
+    // ES imports hoist, so the loader predicate sees all of them whatever their
+    // position relative to `const require = createRequire(...)`.
+    let require_is_ambient = !top_level_names.iter().any(|name| name == "require") || {
+        let es_imports: Vec<TypeScriptImport> = statements
+            .iter()
+            .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+            .flat_map(|statement| {
+                extract_imports_from_statements_inner(std::slice::from_ref(statement), false)
+            })
+            .collect();
+        super::admission::program_require_is_known(statements, &es_imports, false)
+    };
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
@@ -1489,9 +1502,7 @@ fn extract_imports_from_statements_inner(
                 let Some(init) = &declarator.init else {
                     continue;
                 };
-                if require_name_bound
-                    && !super::admission::program_require_is_known(statements, &out, true)
-                {
+                if !require_is_ambient {
                     continue;
                 }
                 // A `let`/`var` binding the file assigns to again may no longer
