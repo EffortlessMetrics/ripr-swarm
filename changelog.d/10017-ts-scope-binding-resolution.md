@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript test extraction resolves each test's scope bindings by grouping a level's writes once instead of rescanning the level for every name, so a test file with thousands of file-level bindings and thousands of tests no longer costs cubic time (a 128 KiB file of that shape took 43 s in a debug build and now takes 7 s, with byte-identical output). The per-test binding list is still quadratic in output size and is tracked on #10017.

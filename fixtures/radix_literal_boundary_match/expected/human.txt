@@ -30,7 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/radix_literal_boundary_match/input --diff <cwd>/fixtures/radix_literal_boundary_match/diff.patch --mode fast probe:src_lib.rs:predicate:7432bf5c
   ripr context --root <cwd>/fixtures/radix_literal_boundary_match/input --diff <cwd>/fixtures/radix_literal_boundary_match/diff.patch --mode fast --at probe:src_lib.rs:predicate:7432bf5c
-  no repair start offered: repair route not ready (missing evidence: incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:7432bf5c --root <cwd>/fixtures/radix_literal_boundary_match/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

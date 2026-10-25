@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_unrelated_write_no_promote (4)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless out_parameter_unrelated_write_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -355,3 +355,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unsafe_boundary_probe (30)
+
+Reason:
+RIPR-SPEC-0357 stage 1: changed let reaching the returned expression adds binding_return_relation evidence only (#10259)
+
+Command:
+`cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
