@@ -1003,3 +1003,53 @@ fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
         );
     }
 }
+
+#[test]
+fn foreign_index_keeps_writes_and_word_cap_across_parse_batches() {
+    // #10441: sources are parsed in parallel batches. Writes from any batch
+    // reach every other file's view, and the word cap still makes the whole
+    // view unknown wherever in the input it trips.
+    let mut owned: Vec<(String, String)> = vec![("m.py".to_string(), "LIMIT = 10\n".to_string())];
+    for index in 1..600 {
+        owned.push((
+            format!("pad{index:03}.py"),
+            format!("PAD{index} = {index}\n"),
+        ));
+    }
+    owned[400].1 = "import m\nm.LIMIT = 1\n".to_string();
+    owned[550].1 = "setattr(target, 'OTHER', 1)\nOTHER\n".to_string();
+    let sources: Vec<(&Path, &str)> = owned
+        .iter()
+        .map(|(file, source)| (Path::new(file.as_str()), source.as_str()))
+        .collect();
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("m.py");
+    let view = index.excluding(module);
+    assert!(
+        view.may_rebind("LIMIT", module),
+        "a second-batch attribute write reaches the first-batch module"
+    );
+    assert!(
+        view.may_rebind("OTHER", module),
+        "a third-batch dynamic writer's words reach the first-batch module"
+    );
+    assert!(
+        !view.may_rebind("UNSEEN", module),
+        "control: a name no file writes stays stable"
+    );
+    assert!(
+        !index
+            .excluding(Path::new(owned[400].0.as_str()))
+            .may_rebind("LIMIT", module),
+        "the writing file's own view excludes its write"
+    );
+
+    let flood: String = (0..200_001).map(|word| format!("w{word}\n")).collect();
+    let mut capped = sources.clone();
+    capped[300] = (Path::new("flood.py"), flood.as_str());
+    let capped_index = super::module_value::ForeignIndex::build(capped.iter().copied(), false);
+    assert!(
+        capped_index.excluding(module).may_rebind("UNSEEN", module),
+        "a word cap tripped in a later batch leaves the absence of writes unknown"
+    );
+}
