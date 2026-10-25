@@ -7977,7 +7977,7 @@ fn protocol_entry_quoted_for_membership_reads_keep_receiver_credit() -> Result<(
         "'foré'",
     ] {
         let test_src = format!(
-            "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    assert {literal} and ((r)) in [r]\n    assert list(reversed(r)) == []\n"
+            "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(1)\n    assert {literal} and ((r)) in [r]\n    assert list(reversed(r)) == [0]\n"
         );
         let (finding, relations) = classify_reversed_guard(&test_src)?;
         assert_eq!(
@@ -8013,7 +8013,6 @@ fn protocol_entry_real_for_targets_still_withhold_receiver_credit() -> Result<()
     }
     Ok(())
 }
-
 
 #[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {

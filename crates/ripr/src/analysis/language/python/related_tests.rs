@@ -807,7 +807,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         || head.trim_end().ends_with(" as")
 }
 
-/// Whether `head` (the text of a line before a peeled target) sits in the
+/// Whether `head` (the body prefix before a peeled target) sits in the
 /// target list of a `for` statement: the last whole code word `for` on the
 /// current line has no `in`, `=` or `:` after it. Keep earlier lines available
 /// to the string mask, since a triple-quoted string can start on one of them.
