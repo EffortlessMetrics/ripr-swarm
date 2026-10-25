@@ -823,8 +823,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     receiver is `logging` or a module-level `name = logging.getLogger(...)`
     (a detached `logging.Logger(...)` or any other object abstains), the
     method is not `exception` (its traceback can hold the asserted text),
-    and the test never rebinds `caplog`. An assertion about unrelated text
-    keeps its verdict.
+    and the test never rebinds `caplog`. `caplog` must be pytest's own
+    fixture: the test requests it as a parameter and no `@pytest.fixture`
+    in its module or a `conftest.py` up its directory chain defines a
+    fixture of that name; otherwise the reading abstains. An assertion about
+    unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
