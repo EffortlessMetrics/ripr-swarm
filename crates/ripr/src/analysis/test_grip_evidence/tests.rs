@@ -19686,3 +19686,27 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     }
     Ok(())
 }
+
+/// #10229: file is part of a value fact's identity, so the same line, value
+/// and text from two test files stays two facts while an exact same-file
+/// duplicate still collapses.
+#[test]
+fn value_facts_keep_one_fact_per_test_file() {
+    let fact = |file: &str| ValueFact {
+        file: Some(PathBuf::from(file)),
+        line: 6,
+        text: "assert_eq!(score(100, 100), true);".to_string(),
+        value: "amount == threshold".to_string(),
+        context: ValueContext::FunctionArgument,
+    };
+    let mut values = vec![fact("tests/b.rs"), fact("tests/a.rs"), fact("tests/b.rs")];
+    sort_value_facts(&mut values);
+    let files = values
+        .iter()
+        .map(|value| value.file.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        files,
+        vec![Some(Path::new("tests/a.rs")), Some(Path::new("tests/b.rs"))]
+    );
+}
