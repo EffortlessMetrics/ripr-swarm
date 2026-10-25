@@ -776,7 +776,14 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
         &run_ripr_default_cache(&elsewhere, &["cache", "status", "--root", root_arg], &[])?.stderr,
     )
     .into_owned();
-    if !hint.contains(&format!("`ripr cache clear --root {root_arg} --force`")) {
+    // Windows quotes the printed root for cmd/PowerShell; a plain temp path
+    // needs no quoting on Unix.
+    let printed_root = if cfg!(windows) {
+        format!("\"{root_arg}\"")
+    } else {
+        root_arg.to_string()
+    };
+    if !hint.contains(&format!("`ripr cache clear --root {printed_root} --force`")) {
         return Err(format!("hint must carry --root: {hint}"));
     }
 
