@@ -133,10 +133,12 @@ impl RepairRouteRefusal {
                 "no repair start offered: no seam in the finding's file binds this finding; {}",
                 gate()
             ),
-            Self::SeveralBindingSeams => format!(
-                "no repair start offered: several seams bind this finding and the check \
-                 screen never picks one; `ripr repair` needs the ID of the seam you choose"
-            ),
+            Self::SeveralBindingSeams => {
+                "no repair start offered: several seams bind this finding \
+                 and the check screen never picks one; `ripr repair` needs the ID of the seam \
+                 you choose"
+                    .to_string()
+            }
             Self::Ineligible { reason } => {
                 format!("no repair start offered: {reason}; {}", gate())
             }
