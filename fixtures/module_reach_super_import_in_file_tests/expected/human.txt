@@ -30,7 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_tests/input --diff <cwd>/fixtures/module_reach_super_import_in_file_tests/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_tests/input --diff <cwd>/fixtures/module_reach_super_import_in_file_tests/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:41e056ec --root <cwd>/fixtures/module_reach_super_import_in_file_tests/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
