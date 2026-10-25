@@ -3087,11 +3087,11 @@ fn score_loaded_corpus(
     );
     if let Some(coverage) = &report.spec_example_coverage {
         println!(
-            "verdict-corpus: spec examples covered {} ({}/{}), floor {}",
+            "verdict-corpus: spec examples covered {} ({}/{}), locked {}",
             coverage.coverage.rate,
             coverage.coverage.numerator,
             coverage.coverage.denominator,
-            coverage.floor
+            coverage.locked_examples
         );
     }
     if let Some(note) = coverage::axis_note(dir, &corpus, cases.is_some())? {
@@ -3327,12 +3327,12 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                     // that calls `validate` enforces it too.
                     let floor_note = coverage::floor_gate(&coverage)?;
                     println!(
-                        "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
+                        "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (locked {})",
                         corpus.cases.len(),
                         corpus.subjects.len(),
                         coverage.coverage.numerator,
                         coverage.coverage.denominator,
-                        coverage.floor
+                        coverage.locked_examples
                     );
                     if let Some(note) = floor_note {
                         println!("{note}");

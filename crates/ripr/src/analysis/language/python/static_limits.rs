@@ -2,7 +2,8 @@ use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
-use super::caplog_text::PythonLogEvidence;
+use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
     is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
@@ -37,7 +38,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, None, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -49,6 +50,7 @@ pub(super) fn static_limit_for_focused_change(
     log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
+    owner_source: &str,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
     let trimmed = line_text.trim();
@@ -106,9 +108,13 @@ pub(super) fn static_limit_for_focused_change(
     // only a client call to a route observes; a test that calls the function
     // directly never sees it (#9756).
     if is_route_decorator_edit(trimmed)
-        && !related_candidates
-            .iter()
-            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+        && !related_candidates.iter().any(|candidate| {
+            matches!(
+                candidate.relation,
+                PythonRelationKind::ApiClientRouteCall
+                    | PythonRelationKind::ApiClientRouteUnidentifiedApp
+            )
+        })
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -116,6 +122,30 @@ pub(super) fn static_limit_for_focused_change(
             missing: format!(
                 "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
                 owner.qualified_name
+            ),
+        });
+    }
+    // A request client whose application the adapter cannot tie to the owner's
+    // route registration reaches the route without evidence that the owner's
+    // application serves it: the test may discriminate the change or may
+    // exercise another application, so neither a gap nor a credit is claimed
+    // (#10110).
+    if !related_candidates
+        .iter()
+        .any(|candidate| candidate.relation.uses_oracle())
+        && let Some(candidate) = related_candidates.iter().find(|candidate| {
+            candidate.relation == PythonRelationKind::ApiClientRouteUnidentifiedApp
+        })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: the request client in `{}` is not tied to the application `{}` is registered on",
+                candidate.test.qualified_name, owner.qualified_name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: related test `{}` calls the route of `{}` through a request client whose application the Python preview adapter does not resolve (a fixture it cannot read, a factory-built app, an app defined in the test or a router included elsewhere); it does not build an import graph through them. Build the client over the application the route is registered on, or inspect which application the test exercises.",
+                candidate.test.qualified_name, owner.qualified_name
             ),
         });
     }
@@ -142,11 +172,27 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
-    if related_candidates
+    // A mocked test keeps the limit unless its substitutions are literal
+    // zero-argument stand-ins the edit cannot hide behind (`literal_patch`).
+    let mut substituted_calls: Vec<String> = Vec::new();
+    let mut mocked = false;
+    for candidate in related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
-        .any(|candidate| test_has_mocked_module(candidate.test))
+        .filter(|candidate| test_has_mocked_module(candidate.test))
     {
+        match literal_patch_calls(
+            candidate.test,
+            owner,
+            owner_source,
+            old_line_text,
+            line_text,
+        ) {
+            Some(calls) => substituted_calls.extend(calls),
+            None => mocked = true,
+        }
+    }
+    if mocked {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MockedModule,
             evidence: "static_limit mocked_module: related test uses patch/mock/monkeypatch module syntax"
@@ -204,7 +250,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(trimmed, &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
@@ -919,9 +965,14 @@ fn related_candidates_have_log_membership_limit(
             select_relevant_assertion(&candidate.test.assertions, Some(focus))
                 .assertion()
                 .is_some_and(|assertion| {
+                    // A local alias of a captured-log read (`msgs = caplog.messages`)
+                    // is read as the capture itself: whether it is a faithful
+                    // snapshot is the evaluator's question, not a reason to
+                    // report a gap (#10151).
+                    let gate_text = substitute_caplog_aliases(candidate.test, &assertion.gate_text);
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    caplog_membership_literals(&assertion.gate_text)
+                    caplog_membership_literals(&gate_text)
                         .iter()
                         .any(|checked| {
                             words(&checked.literal)
@@ -932,9 +983,9 @@ fn related_candidates_have_log_membership_limit(
                         // `caplog.records` (`caplog.records[0].message == ...`,
                         // `caplog.messages == [...]`) are not evaluated: any
                         // shared word abstains.
-                        || (assertion.gate_text.contains("caplog.messages")
-                            || assertion.gate_text.contains("caplog.records"))
-                            && words(&assertion.gate_text)
+                        || (gate_text.contains("caplog.messages")
+                            || gate_text.contains("caplog.records"))
+                            && words(&gate_text)
                                 .iter()
                                 .any(|word| changed.contains(word))
                 })

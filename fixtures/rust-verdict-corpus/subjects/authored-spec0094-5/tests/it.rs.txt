@@ -1,0 +1,8 @@
+use spec0094_5::{Notifier, place};
+
+#[test]
+fn placing_records_the_order() {
+    let notifier = Notifier::default();
+    assert!(place(42, &notifier));
+    assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);
+}

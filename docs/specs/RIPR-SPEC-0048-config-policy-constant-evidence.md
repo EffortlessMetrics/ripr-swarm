@@ -333,55 +333,35 @@ not create a headline user test gap.
 
 ## Acceptance Examples
 
-Internal allowlist or policy metadata:
-
-- Given a changed constant used only by an internal allowlist, proof-lane map,
-  policy metadata table, or fixture label, RIPR emits one canonical
-  `config_or_policy_constant` item.
-- `gap_state = "internal_only"`.
-- Actionability is `no_action_internal`.
-- RIPR preserves raw findings as support and does not create user test debt.
-
-Rendered report/config label without observer:
-
-- Given a changed policy/config label that flows to a supported report, schema,
-  config-output, table, snapshot, or golden output path with no observer, RIPR
-  emits one actionable canonical item.
-- Actionability is `add_output_observer`.
-- The recommended repair names the most specific observer class known.
-
-Rendered label already observed:
-
-- Given a changed policy/config label and a supported golden, snapshot,
-  report-render, schema-render, or config-output test observing it, RIPR emits
-  an `already_observed` item.
-- No new RIPR repair action is recommended.
-
-Behavior selector without discriminator:
-
-- Given a changed threshold, routing constant, or validation selector that
-  reaches user-visible behavior but no related test observes the selected
-  behavior, RIPR emits one actionable canonical item.
-- Actionability is `add_behavior_discriminator`.
-- The repair names the missing discriminator or target assertion shape when
-  known.
-
-Opaque config lookup:
-
-- Given a changed constant whose flow passes through an unsupported helper,
-  registry, macro, generated output, dynamic dispatch, or untraceable cross-file
-  formatting, RIPR emits a static limitation.
-- The limitation category is `config_policy_flow_unknown`,
-  `opaque_config_lookup`, `macro_generated_config_output`, or
-  `dynamic_config_dispatch`.
-- RIPR does not infer output visibility or recommend mutation execution as the
-  first action.
-
-Unrelated constant:
-
-- Given a changed constant that has no supported config, policy, output,
-  schema, validation, or behavior-selector shape, RIPR does not create a
-  config/policy user action from the constant alone.
+1. Internal allowlist or policy metadata. Given a changed constant used only
+   by an internal allowlist, proof-lane map, policy metadata table, or fixture
+   label, RIPR emits one canonical `config_or_policy_constant` item with
+   `gap_state = "internal_only"` and actionability `no_action_internal`. RIPR
+   preserves raw findings as support and does not create user test debt.
+2. Rendered report/config label without observer. Given a changed
+   policy/config label that flows to a supported report, schema, config-output,
+   table, snapshot, or golden output path with no observer, RIPR emits one
+   actionable canonical item with actionability `add_output_observer`. The
+   recommended repair names the most specific observer class known.
+3. Rendered label already observed. Given a changed policy/config label and a
+   supported golden, snapshot, report-render, schema-render, or config-output
+   test observing it, RIPR emits an `already_observed` item. No new RIPR repair
+   action is recommended.
+4. Behavior selector without discriminator. Given a changed threshold, routing
+   constant, or validation selector that reaches user-visible behavior but no
+   related test observes the selected behavior, RIPR emits one actionable
+   canonical item with actionability `add_behavior_discriminator`. The repair
+   names the missing discriminator or target assertion shape when known.
+5. Opaque config lookup. Given a changed constant whose flow passes through an
+   unsupported helper, registry, macro, generated output, dynamic dispatch, or
+   untraceable cross-file formatting, RIPR emits a static limitation. The
+   limitation category is `config_policy_flow_unknown`,
+   `opaque_config_lookup`, `macro_generated_config_output`, or
+   `dynamic_config_dispatch`. RIPR does not infer output visibility or
+   recommend mutation execution as the first action.
+6. Unrelated constant. Given a changed constant that has no supported config,
+   policy, output, schema, validation, or behavior-selector shape, RIPR does
+   not create a config/policy user action from the constant alone.
 
 ## Test Mapping
 

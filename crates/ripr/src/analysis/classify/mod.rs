@@ -48,6 +48,7 @@ pub(in crate::analysis) use activation::{
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+    wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
