@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_dynamic_namespace_dunder_setattr/input
 config: <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input/ripr.toml
 
-Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (0 exposed, 1 weak, 0 unrevealed, 0 no path, 1 unknown); 2 of 2 findings unsuppressed
 
 Changed file(s) by language: python = 2
 
@@ -12,24 +12,24 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
-  File: shop/route.py:7
+  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  File: shop/pricing.py:5
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
-  Changed behavior: response.status_code = 400
-  Missing discriminator (1 of 2): A strong Python oracle reaches `checkout`, but its assertion does
-    not observe the changed owner's output; static evidence cannot confirm the changed behavior is
-    discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_route.py:7 test_checkout (ripr could not confirm that this assertion observes the changed behavior)
-  Suggested test file: tests/test_route.py
-  Suggested test: test_checkout
-  Test node: tests/test_route.py::test_checkout
-  Verify command: python -m pytest tests/test_route.py::test_checkout (high)
-  Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `response.status_code == 400`
-  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+  Canonical gap: gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
+  Changed behavior: if amount >= DISCOUNT_THRESHOLD:
+  Missing discriminator: A strong Python oracle reaches `discounted_total`, but static evidence does
+    not place a related test input at the changed predicate boundary. No strong related test call
+    places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed
+    DISCOUNT_THRESHOLD values: unresolved
+  Related test: tests/test_pricing.py:6 test_discount
+  Suggested test file: tests/test_pricing.py
+  Suggested test: test_discount
+  Test node: tests/test_pricing.py::test_discount
+  Verify command: python -m pytest tests/test_pricing.py::test_discount (high)
+  Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -37,18 +37,18 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-    - reach yes: 1 related Python test(s) found for owner `checkout`
-    - infection yes: Changed Python field or attribute construction can alter object state: `response.status_code = 400`
-    - 5 more detail line(s) in --format human-full
+    - reach yes: 1 related Python test(s) found for owner `discounted_total`
+    - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+    - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
-  ripr context --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shop/route.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
+  ripr context --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shop/pricing.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - shop/pricing.py:5 (weak)
+    - shop/route.py:7 (unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

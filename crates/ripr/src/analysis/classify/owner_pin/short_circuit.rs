@@ -169,6 +169,61 @@ impl ShortCircuitTail {
         })
     }
 
+    /// #6488: whether `runs` (one per owner call, literal arguments) form a
+    /// truth table that tells this all-bool chain from every one-step
+    /// mutation of it: the other connective, the constant `true`, the
+    /// constant `false`, and the chain with any one operand negated. Each
+    /// needs a run on which its value differs from the chain's.
+    ///
+    /// Fail closed toward `false`: a comparison operand (its boundary is a
+    /// literal question, not a truth-table one), no run, a run with an
+    /// unreadable argument, or any mutation the runs cannot separate.
+    pub(in crate::analysis::classify) fn runs_tell_apart_one_step_mutants(
+        &self,
+        runs: &[Vec<Option<String>>],
+    ) -> bool {
+        if runs.is_empty()
+            || !self
+                .operands
+                .iter()
+                .all(|operand| matches!(operand.kind, OperandKind::Flag(_)))
+            || !runs.iter().all(|values| values.iter().all(Option::is_some))
+        {
+            return false;
+        }
+        let evaluate = |negated: Option<usize>, connective: &str, values: &[Option<String>]| {
+            let mut operands = self.operands.iter().enumerate().map(|(at, operand)| {
+                operand
+                    .evaluate(values)
+                    .map(|value| if negated == Some(at) { !value } else { value })
+            });
+            let mut folded = operands.next().flatten()?;
+            for operand in operands {
+                let operand = operand?;
+                folded = if connective == "&&" {
+                    folded && operand
+                } else {
+                    folded || operand
+                };
+            }
+            Some(folded)
+        };
+        let other = if self.operator == "&&" { "||" } else { "&&" };
+        let separates = |mutant: &dyn Fn(&[Option<String>]) -> Option<bool>| {
+            runs.iter().any(|values| {
+                match (evaluate(None, self.operator, values), mutant(values)) {
+                    (Some(chain), Some(mutated)) => chain != mutated,
+                    _ => false,
+                }
+            })
+        };
+        separates(&|values| evaluate(None, other, values))
+            && separates(&|_| Some(true))
+            && separates(&|_| Some(false))
+            && (0..self.operands.len())
+                .all(|at| separates(&|values| evaluate(Some(at), self.operator, values)))
+    }
+
     /// Whether some run of the pinned call `call_text` (of `name`)
     /// evaluates every operand. Every argument the chain reads must be
     /// readable on that run; an unreadable run never counts.
@@ -650,6 +705,51 @@ mod tests {
             negated.operands[0].evaluate(&[Some("true".to_string()), None]),
             Some(false)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn truth_table_rows_must_separate_every_one_step_mutant() -> Result<(), String> {
+        let and = tail("fn f(a: bool, b: bool) -> bool {", "a && b").ok_or("and")?;
+        let run = |a: &str, b: &str| vec![Some(a.to_string()), Some(b.to_string())];
+        let (tt, tf, ft, ff) = (
+            run("true", "true"),
+            run("true", "false"),
+            run("false", "true"),
+            run("false", "false"),
+        );
+        // The three-row pin separates the swap, both constants and each negation.
+        assert!(and.runs_tell_apart_one_step_mutants(&[tt.clone(), tf.clone(), ft.clone()]));
+        assert!(and.runs_tell_apart_one_step_mutants(&[tt.clone(), tf.clone(), ft, ff.clone()]));
+        // No row where the operands differ: `a || b` agrees everywhere.
+        assert!(!and.runs_tell_apart_one_step_mutants(&[tt.clone(), ff.clone()]));
+        // `(true, false)` alone agrees with the constant `false` and with `!a && b`.
+        assert!(!and.runs_tell_apart_one_step_mutants(std::slice::from_ref(&tf)));
+        // `(true, true)` and `(true, false)` already separate every mutant.
+        assert!(and.runs_tell_apart_one_step_mutants(&[tt.clone(), tf.clone()]));
+        // A chain whose first operand is negated reads through `evaluate`.
+        let not_a = tail("fn f(a: bool, b: bool) -> bool {", "!a && b").ok_or("not")?;
+        assert!(not_a.runs_tell_apart_one_step_mutants(&[
+            run("false", "true"),
+            tf.clone(),
+            ff.clone()
+        ]));
+        // Without the all-false row `!a || b` agrees with `!a && b`.
+        assert!(!not_a.runs_tell_apart_one_step_mutants(&[run("false", "true"), tf.clone()]));
+        // An unreadable argument, or no run at all, proves nothing.
+        assert!(!and.runs_tell_apart_one_step_mutants(&[tt.clone(), vec![None, None]]));
+        assert!(!and.runs_tell_apart_one_step_mutants(&[]));
+        // `||` mirrors: the same table, read through its own connective.
+        let or = tail("fn f(a: bool, b: bool) -> bool {", "a || b").ok_or("or")?;
+        assert!(or.runs_tell_apart_one_step_mutants(&[ff, tf.clone(), run("false", "true")]));
+        assert!(!or.runs_tell_apart_one_step_mutants(&[tt, tf]));
+        // A comparison operand has a literal boundary, not a truth table.
+        let compare = tail("fn f(a: bool, b: u8) -> bool {", "a && b > 1").ok_or("cmp")?;
+        assert!(!compare.runs_tell_apart_one_step_mutants(&[
+            vec![Some("true".to_string()), Some("2".to_string())],
+            vec![Some("true".to_string()), Some("0".to_string())],
+            vec![Some("false".to_string()), Some("2".to_string())],
+        ]));
         Ok(())
     }
 }
