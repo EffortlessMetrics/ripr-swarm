@@ -376,6 +376,37 @@ fn colliding_deleted_lines_keep_their_ids_under_reorder() -> Result<(), String> 
     Ok(())
 }
 
+/// A candidate-side finding keeps the unsuffixed id, so a deleted line whose
+/// fingerprint collides with it numbers after it, whichever line is which.
+#[test]
+fn deleted_line_colliding_with_a_candidate_finding_numbers_after_it() -> Result<(), String> {
+    let base = "probe:src_cart.py:python_preview:6bbc8bb2";
+    for (label, kept, deleted) in [
+        ("cand-low", "16976", "28141"),
+        ("cand-high", "28141", "16976"),
+    ] {
+        let source = format!(
+            "CAP = 100\n\n\ndef capped_total(items):\n    total = min(total, {kept})\n    return total\n"
+        );
+        let removed = format!("    total = min(total, {deleted})");
+        let findings = analyze(label, &source, &[5], vec![line(7, 7, &removed)])?;
+        let id_of = |text: &str| {
+            findings
+                .iter()
+                .find(|finding| finding.probe.expression.trim() == text.trim())
+                .map(|finding| finding.id.clone())
+                .ok_or_else(|| format!("no record for {text}: {findings:?}"))
+        };
+        assert_eq!(
+            id_of(&format!("total = min(total, {kept})"))?,
+            base,
+            "{label}"
+        );
+        assert_eq!(id_of(&removed)?, format!("{base}.2"), "{label}");
+    }
+    Ok(())
+}
+
 /// A deleted line inside the old docstring ran no behavior, even when its
 /// text looks like code; the old-side docstring ranges say so.
 #[test]
