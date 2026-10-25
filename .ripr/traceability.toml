@@ -3385,6 +3385,17 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::a_test_expecting_the_edited_literal_does_not_credit_the_edit",
   "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::a_neighbouring_non_ascii_letter_is_not_a_match",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::spy_binding_unicode_tests::a_non_ascii_qualifier_before_the_spy_call_does_not_split_a_char",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_scopes_extraction_partial_to_test_files_that_reach_the_diff",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::an_unrelated_gap_file_cannot_reach_the_diff",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_direct_or_transitive_import_of_a_changed_file_reaches",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_barrel_reaches_the_changed_file_it_re_exports",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::an_owner_name_in_the_closure_reaches_without_a_resolved_import",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::unresolved_computed_and_opaque_loading_keeps_the_gap",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::spaced_and_commented_loader_calls_are_followed",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_concatenated_specifier_is_computed_not_its_leading_literal",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::esm_emitted_extensions_resolve_to_the_typescript_source",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::resolution_config_that_remaps_imports_disables_scoping",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_cross_language_consumer_disables_scoping",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_collapses_complete_multiline_spans_before_bounding",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_keeps_selected_file_boundaries_and_refuses_invalid_spans",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_marks_only_display_overflow_and_counts_unicode_scalars",
@@ -17084,6 +17095,28 @@ id = "RIPR-SPEC-0265"
 name = "Rust closures in iterator adaptors"
 spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"
 tests = [
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::direct_result_observed",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::qualified_result_observed_despite_rival_import",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::applied_result_overwritten",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::applied_result_shadowed",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::returned_closure_replaced_before_invocation",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::qualified_rival_assertion_after_discarded_owner_result",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::imported_rival_assertion_after_discarded_owner_result",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::exact_assertion_inside_uninvoked_closure",
+
+  "crates/ripr/tests/returned_closure_pin.rs::token_coincidence_cannot_replace_a_returned_closure_pin",
+  "crates/ripr/tests/returned_closure_pin.rs::effective_body_values_must_discriminate_every_arithmetic_node",
+  "crates/ripr/tests/returned_closure_pin.rs::typed_discriminating_arithmetic_and_literal_captures_keep_credit",
+  "crates/ripr/tests/returned_closure_pin.rs::unsupported_numeric_authority_or_arithmetic_stays_withheld",
+  "crates/ripr/tests/returned_closure_pin.rs::qualified_owner_survives_a_rebound_local_callee",
+  "crates/ripr/tests/returned_closure_pin.rs::distinct_decimals_that_round_to_one_float_input_keep_the_gap",
+  "crates/ripr/tests/returned_closure_pin.rs::raw_primitive_bindings_do_not_supply_builtin_widths",
+  "crates/ripr/tests/returned_closure_pin.rs::unrelated_type_annotations_do_not_shadow_the_primitive",
+  "crates/ripr/tests/returned_closure_pin.rs::a_parent_alias_does_not_rebind_a_child_module_primitive",
+  "crates/ripr/tests/returned_closure_pin.rs::import_syntax_cannot_hide_a_primitive_binding",
+  "crates/ripr/tests/returned_closure_pin.rs::irrelevant_imports_traits_and_raw_literal_constants_keep_credit",
+  "crates/ripr/tests/returned_closure_pin.rs::raw_parameter_spelling_does_not_defeat_closure_shadowing",
+  "crates/ripr/tests/returned_closure_pin.rs::grouped_parent_import_does_not_hide_builtin_numeric_authority",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_each_adaptor_over_a_slice_parameter",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::refuses_shapes_outside_the_spec",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::literal_sequences_read_only_literal_elements",
@@ -17107,9 +17140,14 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter",
 ]
 fixtures = [
+  "fixtures/returned_closure_arithmetic_masking",
   "fixtures/rust-verdict-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/returned_closure.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/returned_closure/arithmetic.rs",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
@@ -17385,6 +17423,12 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::if_guarded_registration_is_indexed_with_guard_and_no_assertion_credit",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::else_branch_registration_names_the_negated_guard",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::describe_nested_under_an_if_guards_its_tests",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::unguarded_registration_keeps_assertion_credit",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::finding_resting_only_on_a_guarded_test_reads_static_unknown",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",
@@ -17944,7 +17988,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
   "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_is_credited",
   "crates/ripr/tests/pinned_shape_limit.rs::a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap",
-  "crates/ripr/tests/pinned_shape_limit.rs::a_returned_closure_the_test_applies_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_applied_returned_closure_pin_is_no_longer_withheld",
   "crates/ripr/tests/pinned_shape_limit.rs::a_collected_iterator_chain_reads_as_a_shape_limit",
   "crates/ripr/tests/pinned_shape_limit.rs::a_closure_that_may_not_run_keeps_the_gap",
   "crates/ripr/tests/pinned_shape_limit.rs::another_exit_before_the_closure_tail_keeps_the_gap",

@@ -45,6 +45,7 @@ pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod helper_arguments;
+pub(super) mod returned_closure;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -2813,6 +2814,15 @@ enum ReturnPathGate {
     /// pinned value to be an `Ok(..)` that every element reached
     /// (`requires_ok`, #9490).
     Adaptor { position: usize, requires_ok: bool },
+    /// RIPR-SPEC-0265 rule 5: the changed tail is the owner's whole body and
+    /// one closure over its own parameters. The pinned operand must apply
+    /// the returned closure to `arity` distinct nonzero numeric literals, so
+    /// the closure runs once and the bounded typed body discriminates the
+    /// supported arithmetic replacements, including through literal captures.
+    ReturnedClosure {
+        arity: usize,
+        arithmetic: returned_closure::ArithmeticPin,
+    },
     /// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) a
     /// zero-initialized local that the owner returns, once per element of the
     /// slice-like parameter at `position`. The pinned call must pass that
@@ -3081,6 +3091,17 @@ fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExp
     }
 }
 
+/// A changed whole returned closure can confirm observation only through
+/// its admitted application pin, even when the arithmetic model is unknown.
+pub(in crate::analysis) fn returned_closure_pin_required(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && returned_closure::owner_returned_closure_tail(owner)
+            .is_some_and(|tail| tail.tail_is(&probe.expression))
+}
+
 impl OwnerReturnPin {
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
@@ -3158,6 +3179,20 @@ impl OwnerReturnPin {
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
                         requires_ok: tail.collects_result(),
+                    })
+                    // RIPR-SPEC-0265 rule 5: a returned closure applied in the
+                    // pinned expression.
+                    .or_else(|| {
+                        returned_closure::owner_returned_closure_tail(owner)
+                            .filter(|tail| tail.tail_is(&probe.expression))
+                            .and_then(|tail| {
+                                Some(ReturnPathGate::ReturnedClosure {
+                                    arity: tail.arity,
+                                    arithmetic: returned_closure::ArithmeticPin::establish(
+                                        owner, index,
+                                    )?,
+                                })
+                            })
                     })?
             }
             None => return None,
@@ -3642,6 +3677,14 @@ impl OwnerReturnPin {
     /// not hold, so that stays refused.
     fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         let operand = operand.trim();
+        // RIPR-SPEC-0265 rule 5: the pinned value is the returned closure
+        // applied to its arguments; the call shape is the owner call inside.
+        let operand = match &self.path {
+            ReturnPathGate::ReturnedClosure { arity, .. } => {
+                returned_closure::strip_applied(operand, *arity)?
+            }
+            _ => operand,
+        };
         // An async owner's bare call is its future, not its return value.
         match (self.awaited, operand.strip_suffix(".await")) {
             (true, Some(call)) => owner_call_shape(call.trim_end(), name),
@@ -4234,6 +4277,16 @@ impl OwnerReturnPin {
                             &self.name,
                             *position,
                         )
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0265 rule 5: the application must tell the
+                // closure's operators apart.
+                if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
+                    && !call_text.is_some_and(|text| {
+                        returned_closure::applied_inputs_are_distinct_literals(text, *arity)
+                            && arithmetic.discriminates(text)
                     })
                 {
                     return false;
@@ -5235,7 +5288,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::ShortCircuit(_) => true,
+            Self::Any | Self::ReturnedClosure { .. } | Self::ShortCircuit(_) => true,
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
