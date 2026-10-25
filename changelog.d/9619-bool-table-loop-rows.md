@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A pure bool `&&`/`||` owner now reads its infection from the rows of a constant bool-tuple `for` table (`for (a, b, want) in rows { assert_eq!(owner(a, b), want); }`) the same way it does from direct calls, so `grid-bool-table` reads credited; a table that can skip a row, an unasserted call, a computed or short row, a one-row table and a property loop over inputs keep the unknown reading (#9619).

@@ -214,10 +214,70 @@ fn another_caller_of_the_owner_stays_unknown() -> Result<(), String> {
     Ok(())
 }
 
+/// A test that feeds `rows` through `for (paid, in_stock, want) in rows`.
+fn table_test(rows: &str, body: &str) -> String {
+    format!(
+        "use truth_table::can_ship;\n\n#[test]\nfn ships() {{\n    let rows = {rows};\n    for (paid, in_stock, want) in rows {{\n{body}    }}\n}}\n"
+    )
+}
+
+const TABLE_ASSERT: &str = "        assert_eq!(can_ship(paid, in_stock), want);\n";
+const THREE_TABLE_ROWS: &str = "[(true, true, true), (true, false, false), (false, true, false)]";
+
+fn table_findings(test: &str) -> Result<Vec<Finding>, String> {
+    predicate_findings(&lib_with("    in_stock && paid\n", ""), test)
+}
+
 #[test]
-fn rows_fed_through_a_table_stay_unknown() -> Result<(), String> {
-    let table = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    let rows = [(true, true, true), (true, false, false), (false, true, false)];\n    for (paid, in_stock, want) in rows {\n        assert_eq!(can_ship(paid, in_stock), want);\n    }\n}\n";
-    let findings = predicate_findings(&lib_with("    in_stock && paid\n", ""), table)?;
+fn rows_fed_through_a_table_are_the_same_rows_as_direct_calls() -> Result<(), String> {
+    let findings = table_findings(&table_test(THREE_TABLE_ROWS, TABLE_ASSERT))?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_that_can_skip_a_row_stays_unknown() -> Result<(), String> {
+    let body = "        if !want {\n            continue;\n        }\n        assert_eq!(can_ship(paid, in_stock), want);\n";
+    let findings = table_findings(&table_test(THREE_TABLE_ROWS, body))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_row_that_cannot_fail_stays_unknown() -> Result<(), String> {
+    let body = "        can_ship(paid, in_stock);\n";
+    let findings = table_findings(&table_test(THREE_TABLE_ROWS, body))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_with_a_computed_cell_stays_unknown() -> Result<(), String> {
+    let rows = "[(true, true, true), (true, false, 1 == 2), (false, true, false)]";
+    let findings = table_findings(&table_test(rows, TABLE_ASSERT))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_with_a_short_row_stays_unknown() -> Result<(), String> {
+    let rows = "[(true, true, true), (true, false), (false, true, false)]";
+    let findings = table_findings(&table_test(rows, TABLE_ASSERT))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_of_one_row_stays_unknown() -> Result<(), String> {
+    let findings = table_findings(&table_test("[(true, false, false)]", TABLE_ASSERT))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_property_loop_over_inputs_stays_unknown() -> Result<(), String> {
+    let property = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    for paid in [true, false] {\n        for in_stock in [true, false] {\n            assert_eq!(can_ship(paid, in_stock), in_stock && paid);\n        }\n    }\n}\n";
+    let findings = table_findings(property)?;
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())
 }

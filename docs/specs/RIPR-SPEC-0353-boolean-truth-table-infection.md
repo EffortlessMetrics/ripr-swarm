@@ -64,7 +64,8 @@ boundary when every item holds:
 3. No function other than the related tests calls the owner by name.
 4. Every related test reaches the owner only by direct calls with plain
    boolean or decimal literal arguments, one owner call per line, with no
-   table, builder, helper or user macro that could feed other inputs.
+   builder, helper or user macro that could feed other inputs. The one
+   table form read is the constant table loop below.
    Each such test is a plain `#[test]` (no `#[ignore]`, `#[should_panic]` or
    other attribute) whose body is only top-level `assert!([!]owner(..));` or
    `assert_eq!`/`assert_ne!` of an owner call against `true`/`false`: a row
@@ -80,6 +81,24 @@ boundary when every item holds:
    The probe then gets a `ReturnValue` sink and the direct-return witness may
    complete, so a strong exact oracle on the call reads `exposed`. Without
    rules 1 to 5 the sink stays unknown and propagation is unchanged.
+
+Constant table loop. A related test may instead be a plain `#[test]` that
+holds only a table of bool-literal tuples and one loop over it,
+
+```rust
+let rows = [(true, true, true), (true, false, false), (false, true, false)];
+for (paid, in_stock, want) in rows {
+    assert_eq!(can_ship(paid, in_stock), want);
+}
+```
+
+where every owner argument and the expected value is a loop variable or a
+bool literal, every cell read is a bool literal, and the loop body is exactly
+the one strong `assert_eq!`/`assert_ne!` of the owner call (a message, a
+`continue`, an `if`, a computed or short row, a rebound name or a second
+statement declines). Each tuple is one run, in the owner's parameter order,
+and joins the direct-call runs under rule 5. A property loop over inputs
+(`for paid in [true, false]`) is not a table and keeps its reading.
 
 Conditions the code adds to rule 3: a bare-name mention of the owner in any
 non-test function, or in a `macro_rules!` body, counts as another caller (the
@@ -99,14 +118,17 @@ no oracle strength, which stays the reveal stage's judgment.
   `(true,false)`, `(false,true)`) on `in_stock && paid` reads infection
   `yes`.
 - Negatives: a single row, a test pinning only `(true, true)` and `(false,
-  false)`, a loop-fed argument (`for banned in [true, false]`) with a surviving mutant that must not read `exposed`, a table-driven test, an owner with another
+  false)`, a loop-fed argument (`for banned in [true, false]`) with a surviving mutant that must not read `exposed`, an owner with another
   caller, a comparison operand and an owner body with a leading statement
-  each keep `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`.
+  each keep `infection_unknown`; the constant table loop above reads `yes` with
+  the same rows as direct calls, while a table that can skip a row (`continue`),
+  an unasserted call, a computed cell, a short row, a one-row table and a
+  property loop over inputs stay `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`.
 
 ## Known Limits
 
-- Table-driven and helper-fed rows (`for (a, b, want) in cases`) are not
-  read here; they stay `infection_unknown`.
+- Helper-fed rows and tables other than the constant bool-tuple loop above
+  are not read here; they stay `infection_unknown`.
 - The rows must separate the listed one-step mutations. Multi-step mutations
   are not claimed.
 - Process success, oracle strength and propagation stay separate axes.
