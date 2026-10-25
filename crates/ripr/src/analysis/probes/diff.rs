@@ -8,7 +8,9 @@ use super::binding_predicate::{
     BindingPredicateResolution, masked_brace_delta, masked_paren_delta,
     resolve_changed_binding_uses,
 };
-use super::binding_return::{ChangedBindingReturnFlow, resolve_changed_binding_return};
+use super::binding_return::{
+    ChangedBindingReturnFlow, is_single_statement, resolve_changed_binding_return,
+};
 use super::classify::{
     added_header_bound_lines, added_type_bound_lines, is_structural_delimiter_line,
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
@@ -796,7 +798,7 @@ fn changed_binding_return_flow(
         return None;
     }
     // One statement on the line: a second `let` after `;` could shadow it.
-    if initializer.contains(';') {
+    if !is_single_statement(initializer) {
         return None;
     }
     let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;

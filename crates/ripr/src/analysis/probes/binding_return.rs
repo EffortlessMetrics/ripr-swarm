@@ -141,6 +141,12 @@ pub(crate) fn resolve_changed_binding_return(
     })
 }
 
+/// An initializer with no statement boundary: a `;` inside a literal or
+/// comment is data, so the check reads the masked text.
+pub(crate) fn is_single_statement(initializer: &str) -> bool {
+    !mask_rust_comments_and_strings(initializer).contains(';')
+}
+
 fn mentions_early_exit(line: &str) -> bool {
     contains_token(line, "return") || line.contains('?') || contains_token(line, "break")
 }
@@ -304,5 +310,12 @@ mod tests {
     #[test]
     fn the_changed_line_must_be_the_let() {
         assert_eq!(resolve(FAMILY, "end", 2), None);
+    }
+
+    #[test]
+    fn a_semicolon_inside_a_literal_is_not_a_second_statement() {
+        assert!(is_single_statement("choice.unwrap_or(';')"));
+        assert!(is_single_statement("choice.unwrap_or(\";\") // a; b"));
+        assert!(!is_single_statement("s.len(); let end = end.min(4)"));
     }
 }
