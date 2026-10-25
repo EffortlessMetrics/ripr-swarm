@@ -4304,55 +4304,96 @@ fn ingested_identity_fills_an_empty_context_and_never_replaces_a_measured_one() 
 /// lengthens the agent's path, leaves more non-exposed verdicts or adds
 /// white-box tests fails before merge. The 2026-10-04 receipt is the negative
 /// control: it is worse than the baseline on three metrics.
-fn agent_gate_report(receipt: &str) -> Result<Value, String> {
-    let config = load_config(&committed_config())?;
-    let samples = parse_ingest(
-        &serde_json::from_str(receipt).map_err(|err| err.to_string())?,
-        &config,
-    )?;
-    let baseline = check_baseline(
+const COMMITTED_AGENT_RECEIPT: &str =
+    include_str!("../../../../metrics/public-proof/agent-as-user.json");
+
+fn agent_baseline() -> Result<Value, String> {
+    check_baseline(
         serde_json::from_str(include_str!(
             "../../../../metrics/dx-scoreboard/agent-baseline.json"
         ))
         .map_err(|err| err.to_string())?,
-    )?;
+    )
+}
+
+fn agent_gate_report(receipt: &Value) -> Result<Value, String> {
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(receipt, &config)?;
     let boards = vec!["agent".to_string()];
     Ok(build_report(
         &config,
         &boards,
         &samples,
         &context("local"),
-        Some(&baseline),
+        Some(&agent_baseline()?),
         true,
     ))
 }
 
+/// A metric the receipt stops reporting is `not_measured`, which the generic
+/// gate lists as uncompared and does not fail. Every baseline-measured metric
+/// must therefore keep the same repositories in the current report; metrics
+/// the baseline never measured (stale re-checks, stub calls) stay exempt.
+fn agent_coverage_gaps(report: &Value, baseline: &Value) -> Vec<String> {
+    let repos = |row: &Value| -> Vec<String> {
+        let mut found: Vec<String> = row["samples"]
+            .as_array()
+            .map(|samples| {
+                samples
+                    .iter()
+                    .map(|sample| sample["repo"].as_str().unwrap_or("-").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+    let mut gaps = Vec::new();
+    for base in baseline["metrics"].as_array().into_iter().flatten() {
+        let Some(id) = base["id"].as_str().filter(|id| id.starts_with("agent.")) else {
+            continue;
+        };
+        if base["status"].as_str() == Some("not_measured") {
+            continue;
+        }
+        match metric(report, id) {
+            Ok(row) if repos(row) == repos(base) => {}
+            Ok(row) => gaps.push(format!(
+                "{id}: samples {:?}, baseline {:?}",
+                repos(row),
+                repos(base)
+            )),
+            Err(err) => gaps.push(err),
+        }
+    }
+    gaps
+}
+
+fn committed_agent_receipt() -> Result<Value, String> {
+    serde_json::from_str(COMMITTED_AGENT_RECEIPT).map_err(|err| err.to_string())
+}
+
 #[test]
 fn committed_agent_receipt_does_not_regress_the_agent_baseline() -> Result<(), String> {
-    let report = agent_gate_report(include_str!(
-        "../../../../metrics/public-proof/agent-as-user.json"
-    ))?;
+    let report = agent_gate_report(&committed_agent_receipt()?)?;
     assert_eq!(
         report["gate"]["status"].as_str(),
         Some("pass"),
         "{}",
         gate_failure_message(&report)
     );
-    assert_eq!(
-        metric(&report, "agent.ripr_commands_to_fix")?["samples"]
-            .as_array()
-            .map(Vec::len),
-        Some(3),
-        "the receipt must still carry one sample per target"
-    );
+    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
+    assert!(gaps.is_empty(), "receipt lost baseline coverage: {gaps:?}");
     Ok(())
 }
 
 #[test]
 fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
-    let report = agent_gate_report(include_str!(
+    let old: Value = serde_json::from_str(include_str!(
         "../../../../benchmarks/dx_scoreboard/testdata/10183-agent-receipt-2026-10-04.json"
-    ))?;
+    ))
+    .map_err(|err| err.to_string())?;
+    let report = agent_gate_report(&old)?;
     assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
     let message = gate_failure_message(&report);
     for id in [
@@ -4362,5 +4403,44 @@ fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
     ] {
         assert!(message.contains(id), "{id} not named in: {message}");
     }
+    Ok(())
+}
+
+/// Dropping evidence passes the generic gate, so the coverage check is the
+/// control: each ratcheted metric, and one repository's sample of a per-repo
+/// metric, must be reported as lost.
+#[test]
+fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String> {
+    let baseline = agent_baseline()?;
+    for id in [
+        "agent.ripr_commands_to_fix",
+        "agent.tool_steps_to_fix",
+        "agent.false_weak_findings_after_fix",
+        "agent.white_box_tests_to_satisfy_ripr",
+    ] {
+        let mut receipt = committed_agent_receipt()?;
+        let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| row["id"].as_str() != Some(id));
+        let report = agent_gate_report(&receipt)?;
+        let gaps = agent_coverage_gaps(&report, &baseline);
+        assert!(
+            gaps.iter().any(|gap| gap.starts_with(id)),
+            "dropping {id} was not reported: {gaps:?}"
+        );
+    }
+
+    let mut receipt = committed_agent_receipt()?;
+    let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
+    let at = rows
+        .iter()
+        .position(|row| row["id"].as_str() == Some("agent.tool_steps_to_fix"))
+        .ok_or("no tool steps row")?;
+    rows.remove(at);
+    let gaps = agent_coverage_gaps(&agent_gate_report(&receipt)?, &baseline);
+    assert!(
+        gaps.iter()
+            .any(|gap| gap.starts_with("agent.tool_steps_to_fix")),
+        "dropping one repository's sample was not reported: {gaps:?}"
+    );
     Ok(())
 }
