@@ -14658,7 +14658,7 @@ tests = [
   "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_that_drops_the_variant_derivation_is_refused",
   "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
   "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start",
   "crates/ripr/src/app/task_first.rs::tests::non_rust_item_language_names_gap_and_preview_probe_ids",
   "crates/ripr/src/app/task_first.rs::tests::unknown_repair_item_names_terminal_reason_only_for_non_rust_items",
   "crates/ripr/src/app/navigation.rs::tests::repair_route_refusal_advisory_names_state_and_recovery",
@@ -19313,7 +19313,7 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0311"
-name = "A complete TypeScript packet offers a gap-bound repair start"
+name = "A complete TypeScript or Python packet offers a gap-bound repair start"
 spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
 tests = [
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
@@ -19325,10 +19325,16 @@ tests = [
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_status_after_pilot_names_the_gap_bound_start",
+  "crates/ripr/src/app/gap_bound_repair.rs::tests::python_gap_subjects_need_a_printable_tail",
+  "crates/ripr/src/app/gap_bound_repair.rs::tests::a_python_lookup_fails_closed_without_one_validated_record",
+  "crates/ripr/src/app/gap_bound_repair.rs::tests::a_python_record_the_shared_validator_refuses_is_not_a_start",
+  "crates/ripr/src/app/gap_bound_repair.rs::tests::a_python_start_sees_every_finding_that_shares_its_gap",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::gap_bound_receipt_closure_needs_a_closed_bound_gap_in_verify_and_receipt",
   "crates/ripr/src/output/agent_receipt.rs::tests::receipt_carries_bound_gap_only_when_the_verify_closure_names_its_seam",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_parses_a_gap_bound_before_start",
-  "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_is_exclusive_and_typescript_only",
+  "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_is_exclusive_and_typescript_or_python_only",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_binds_a_typescript_gap_packet_to_its_test_file",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_refuses_typescript_gap_packets_aimed_at_production_or_non_test_files",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::gap_binding_is_additive_and_round_trips_in_the_manifest",
