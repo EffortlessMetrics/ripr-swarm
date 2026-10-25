@@ -1,0 +1,12 @@
+diff --git a/src/m_literal.rs b/src/m_literal.rs
+--- a/src/m_literal.rs
++++ b/src/m_literal.rs
+@@ -10,7 +10,7 @@
+ 
+ pub fn classify_lit(input: &str) -> &'static str {
+     let final_label = label_lit(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

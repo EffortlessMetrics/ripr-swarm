@@ -110,7 +110,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - The related test `size_hint_caps_at_remaining` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
+  - The related test `size_hint_caps_at_remaining` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
   ripr explain --root <cwd>/fixtures/cross_crate_trait_impl_direct_owner_positive/input --diff <cwd>/fixtures/cross_crate_trait_impl_direct_owner_positive/diff.patch --mode fast probe:util_src_stream_take.rs:return_value:acd87efb
   ripr context --root <cwd>/fixtures/cross_crate_trait_impl_direct_owner_positive/input --diff <cwd>/fixtures/cross_crate_trait_impl_direct_owner_positive/diff.patch --mode fast --at probe:util_src_stream_take.rs:return_value:acd87efb
