@@ -8876,20 +8876,54 @@ fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), Str
 }
 
 #[test]
-fn alias_replacement_skips_string_literals_and_longer_names() {
-    use super::caplog_text::replace_identifier;
+fn overlapping_alias_names_do_not_corrupt_the_read() -> Result<(), String> {
+    // #10282 review: `msgs = caplog.text` then `text = caplog.messages` made
+    // the second replacement rewrite the first's inserted `caplog.text`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs\n";
     assert_eq!(
-        replace_identifier(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_assertion_using_an_alias_is_evaluated() -> Result<(), String> {
+    // #10282 review: the alias use on a continuation line is part of the
+    // assertion statement, not an extra use.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert (\n        \"low balance: 5\" in msgs\n    )\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_replacement_skips_string_literals_and_longer_names() {
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
             "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
-            "msgs",
-            "caplog.messages"
+            &[("msgs", "caplog.messages")]
         ),
         "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
             .replace("x.msgs", "x.caplog.messages")
     );
     assert_eq!(
-        replace_identifier("\"a\\\"msgs\" in msgs", "msgs", "R"),
+        replace_identifiers("\"a\\\"msgs\" in msgs", &[("msgs", "R")]),
         "\"a\\\"msgs\" in R"
+    );
+    // One pass: a read inserted for one alias is not rescanned as another
+    // alias named `text` (#10282 review).
+    assert_eq!(
+        replace_identifiers(
+            "\"x\" in msgs and text",
+            &[("msgs", "caplog.text"), ("text", "caplog.messages")]
+        ),
+        "\"x\" in caplog.text and caplog.messages"
     );
 }
 

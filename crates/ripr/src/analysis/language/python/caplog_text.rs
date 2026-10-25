@@ -629,9 +629,11 @@ fn caplog_aliases(body: &str) -> Vec<CaplogAlias<'_>> {
         .collect()
 }
 
-/// `text` with each whole-word `name` outside a string literal replaced by
-/// `with`: an alias spelled inside a quoted literal is data, not the alias.
-pub(super) fn replace_identifier(text: &str, name: &str, with: &str) -> String {
+/// `text` with each whole-word `name` outside a string literal replaced by its
+/// read, in one pass: an alias spelled inside a quoted literal is data, not the
+/// alias, and a read inserted for one alias (`caplog.text`) is never rescanned
+/// as another alias named `text`.
+pub(super) fn replace_identifiers(text: &str, replacements: &[(&str, &str)]) -> String {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
@@ -652,13 +654,14 @@ pub(super) fn replace_identifier(text: &str, name: &str, with: &str) -> String {
             }
         } else if ch == '\'' || ch == '"' {
             quote = Some(ch);
-        } else if text[index..].starts_with(name)
-            && !text[..index].chars().next_back().is_some_and(is_word)
-            && !text[index + name.len()..]
-                .chars()
-                .next()
-                .is_some_and(is_word)
-        {
+        } else if let Some((name, with)) = replacements.iter().find(|(name, _)| {
+            text[index..].starts_with(name)
+                && !text[..index].chars().next_back().is_some_and(is_word)
+                && !text[index + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        }) {
             out.push_str(with);
             index += name.len();
             continue;
@@ -673,11 +676,42 @@ pub(super) fn replace_identifier(text: &str, name: &str, with: &str) -> String {
 /// read itself. Only for deciding whether the assertion could be about the
 /// changed message: nothing shows the alias is a snapshot of it.
 pub(super) fn substitute_caplog_aliases(test: &PythonTest, gate_text: &str) -> String {
-    caplog_aliases(&test.body_text)
-        .iter()
-        .fold(gate_text.to_string(), |text, alias| {
-            replace_identifier(&text, alias.name, alias.read)
-        })
+    let aliases = caplog_aliases(&test.body_text);
+    let replacements: Vec<_> = aliases.iter().map(|a| (a.name, a.read)).collect();
+    replace_identifiers(gate_text, &replacements)
+}
+
+/// Lines of the statement starting at `start`: through the line that closes
+/// its brackets, so `assert (` / `"..." in msgs` / `)` is one assertion.
+fn statement_lines(lines: &[&str], start: usize) -> std::ops::Range<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (offset, line) in lines.iter().skip(start).enumerate() {
+        for ch in line.chars() {
+            if let Some(open) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+            } else if ch == '#' {
+                break;
+            } else if ch == '\'' || ch == '"' {
+                quote = Some(ch);
+            } else if matches!(ch, '(' | '[' | '{') {
+                depth += 1;
+            } else if matches!(ch, ')' | ']' | '}') {
+                depth -= 1;
+            }
+        }
+        if depth <= 0 && quote.is_none() && !line.trim_end().ends_with('\\') {
+            return start..start + offset + 1;
+        }
+    }
+    start..lines.len()
 }
 
 /// The assertion text with its aliases of captured-log reads replaced by the
@@ -703,9 +737,9 @@ fn snapshot_alias_gate(
     }
     let lines: Vec<&str> = test.body_text.lines().collect();
     let assertion_index = assertion_line.checked_sub(test.line)?;
-    let assertion_lines = assertion_index..assertion_index + gate_text.lines().count().max(1);
+    let assertion_lines = statement_lines(&lines, assertion_index);
     let last_call = owner_call_lines.max()?;
-    let mut gate = gate_text.to_string();
+    let mut replacements = Vec::new();
     for alias in mentioned {
         let bound_once = aliases
             .iter()
@@ -724,9 +758,9 @@ fn snapshot_alias_gate(
         if !(bound_once && only_uses && level && test.line + alias.index > last_call) {
             return None;
         }
-        gate = replace_identifier(&gate, alias.name, alias.read);
+        replacements.push((alias.name, alias.read));
     }
-    Some(gate)
+    Some(replace_identifiers(gate_text, &replacements))
 }
 
 /// The `if <condition>:` lines, outermost first, between the owner's `def`
