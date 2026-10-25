@@ -232,7 +232,7 @@ fn owner_returns_bool(
 
 /// How many statements, at any depth including function and class bodies,
 /// bind `name`. A star import counts as binding every name.
-fn count_bindings(body: &[Stmt], name: &str) -> usize {
+pub(super) fn count_bindings(body: &[Stmt], name: &str) -> usize {
     body.iter().map(|stmt| stmt_bindings(stmt, name)).sum()
 }
 

@@ -6,6 +6,9 @@ use super::activation::{
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
+#[cfg(test)]
+use crate::value_origins::LocatedValueFact as ValueFact;
 use std::collections::BTreeMap;
 
 /// #7970: whether ripr can show that no related test input evaluates the
@@ -88,7 +91,7 @@ fn owner_literal_runs(
     {
         return None;
     }
-    let in_bystander = |fact: &ValueFact| {
+    let in_bystander = |fact: &crate::value_origins::LocatedValueFact| {
         related_tests.iter().any(|test| {
             bystander(test)
                 && (test.start_line..=test.end_line).contains(&fact.line)
