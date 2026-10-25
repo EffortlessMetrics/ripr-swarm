@@ -254,3 +254,20 @@ fn a_one_line_suite_rebinding_withdraws_the_alias_like_its_multi_line_form() -> 
     assert!(related("app/a.py", OWN_APP, untouched)?);
     Ok(())
 }
+
+#[test]
+fn a_different_symbol_from_the_owners_shared_module_does_not_relate() -> Result<(), String> {
+    let owner = "from common import app\n\n@app.get(\"/items\")\ndef items():\n    return []\n";
+    let same = "from starlette.testclient import TestClient\nfrom common import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(related("app/a.py", owner, same)?);
+    let other = "from starlette.testclient import TestClient\nfrom common import other_app as app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(!related("app/a.py", owner, other)?);
+    Ok(())
+}
+
+#[test]
+fn a_different_symbol_from_the_owners_own_module_does_not_relate() -> Result<(), String> {
+    let other = "from starlette.testclient import TestClient\nfrom app.a import other_app as app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, other)?);
+    Ok(())
+}

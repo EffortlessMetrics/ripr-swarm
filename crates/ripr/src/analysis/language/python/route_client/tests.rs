@@ -183,3 +183,16 @@ fn a_large_body_resolves_without_quadratic_rescans() {
     assert!(receivers(&body).contains(&"api".to_string()));
     assert_eq!(client_app_name(&body, "api").as_deref(), Some("app"));
 }
+
+#[test]
+fn names_that_start_or_end_with_lambda_are_ordinary_names() {
+    let body = "lambda_client = client\nother = lambda_client\n";
+    assert!(receivers(body).contains(&"lambda_client".to_string()));
+    let body = "api = client\nlambda_x = Store()\nmy_lambda = 1\n";
+    assert!(receivers(body).contains(&"api".to_string()));
+    let body = "api = client\nlambda_api = client\napi = Store()\n";
+    assert!(!receivers(body).contains(&"api".to_string()));
+    // A real lambda parameter default is still not an assignment.
+    let body = "api = client\nf = lambda api=1: api\n";
+    assert!(receivers(body).contains(&"api".to_string()));
+}

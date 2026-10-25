@@ -133,10 +133,16 @@ fn assignment_equals(line: &str) -> Vec<usize> {
     // A `lambda` parameter default (`lambda api=1: api`) is not an assignment.
     let line = line
         .match_indices("lambda")
-        .find(|(at, _)| {
-            line.get(..*at)
+        .find(|(at, matched)| {
+            let before_ok = line
+                .get(..*at)
                 .and_then(|before| before.chars().next_back())
-                .is_none_or(|ch| !is_python_identifier_char(ch))
+                .is_none_or(|ch| !is_python_identifier_char(ch));
+            let after_ok = line
+                .get(*at + matched.len()..)
+                .and_then(|rest| rest.chars().next())
+                .is_none_or(|ch| !is_python_identifier_char(ch));
+            before_ok && after_ok
         })
         .map_or(line, |(at, _)| line.get(..at).unwrap_or(line));
     let bytes = line.as_bytes();

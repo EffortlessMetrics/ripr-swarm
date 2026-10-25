@@ -2145,24 +2145,35 @@ fn client_targets_rival_app(
         .imports
         .iter()
         .find(|import| import_bound_name(import) == owner_receiver)
-        .map(|import| import.source_module.as_str());
+        .map(|import| (import.source_module.as_str(), import.imported.as_str()));
     test.imports.iter().any(|import| {
-        if import_bound_name(import) != app_name
-            || import.imported != owner_receiver
-            || import.source_module.is_empty()
-        {
+        if import_bound_name(import) != app_name || import.source_module.is_empty() {
             return false;
         }
         match owner_origin {
-            Some(origin) => import.source_module != origin,
+            // Same module, different symbol (`from common import other_app as app`)
+            // is a different application under the same bound name.
+            Some((origin, symbol)) => {
+                if import.source_module == origin {
+                    import.imported != symbol
+                } else {
+                    import.imported == owner_receiver || import.imported == symbol
+                }
+            }
             // Defined in the owner's own module: the test's import must name that
             // module or a package above it (`from pkg import app` re-exports
             // `pkg/main.py`'s `app`).
             None => {
-                !import_source_module_matches_owner(import, owner, &test.file)
-                    && !owner_module_paths(&owner.file)
-                        .iter()
-                        .any(|path| path.starts_with(&format!("{}.", import.source_module)))
+                let names_owner_module =
+                    import_source_module_matches_owner(import, owner, &test.file)
+                        || owner_module_paths(&owner.file)
+                            .iter()
+                            .any(|path| path.starts_with(&format!("{}.", import.source_module)));
+                if names_owner_module {
+                    import.imported != owner_receiver
+                } else {
+                    import.imported == owner_receiver
+                }
             }
         }
     })
