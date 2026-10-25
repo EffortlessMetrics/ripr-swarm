@@ -662,8 +662,9 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 crate::app::task_first::non_rust_item_language(seam_id)
             {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}",
-                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
+                    crate::app::task_first::no_seam_inventory_reason(language, ""),
+                    crate::app::task_first::gap_bound_start_pointer(language)
                 )
             } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
@@ -3131,12 +3132,24 @@ fn run_gap_bound_before_phase(
         format!("agent repair --gap-id `{gap_id}`: {error}. No repair attempt was started.")
     })?;
     let snapshot = super::check::gap_check_findings_snapshot(root, &base_commit)?;
-    let record = match lookup_gap_start(&snapshot.output.findings, gap_id) {
+    let python = crate::app::gap_bound_repair::is_python_gap_bound_subject(gap_id);
+    let lookup = if python {
+        crate::app::gap_bound_repair::lookup_python_gap_start(
+            &snapshot.output.findings,
+            &snapshot.rendered,
+            &root_display,
+            gap_id,
+        )
+    } else {
+        lookup_gap_start(&snapshot.output.findings, gap_id)
+    };
+    let language = if python { "Python" } else { "TypeScript" };
+    let record = match lookup {
         GapStartLookup::Ready(record) => *record,
         GapStartLookup::NoSuchGap => {
             refusal.start_refused = true;
             return Err(format!(
-                "agent repair --gap-id `{gap_id}` names no current TypeScript gap in the diff against `{base}` in the selected root; the id is stale or belongs to another diff. Re-run `ripr check --root {} --base {}` and use the gap it prints. No repair attempt was started.",
+                "agent repair --gap-id `{gap_id}` names no current {language} gap in the diff against `{base}` in the selected root; the id is stale or belongs to another diff. Re-run `ripr check --root {} --base {}` and use the gap it prints. No repair attempt was started.",
                 shell_arg(&root_display),
                 shell_arg(base)
             ));
@@ -3149,7 +3162,7 @@ fn run_gap_bound_before_phase(
         }
     };
     let before_snapshot_display = format!("target/ripr/workflow/{GAP_BOUND_BEFORE_SNAPSHOT_FILE}");
-    let packet = output::agent_seam_packets::render_typescript_gap_repair_packet(
+    let packet = output::agent_seam_packets::render_gap_bound_repair_packet(
         &before_snapshot_display,
         &record,
     )

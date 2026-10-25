@@ -3693,9 +3693,9 @@ an operational error (exit `2`).
 
 ### Gap-Bound Repair Start
 
-For a TypeScript finding whose repair packet is complete, `ripr check` prints
-`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
-line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
+For a TypeScript or Python finding whose repair packet is complete,
+`ripr check` prints `ripr agent repair --gap-id <gap> --base <base> --phase
+before` as the start line (RIPR-SPEC-0311, #9103; Python #10373). The command re-runs the diff-scoped check against
 `--base`, requires the same shared packet validator to accept the finding, and
 otherwise refuses with "the repair packet is not ready" and writes nothing.
 A refused start restores the shared workflow artifacts to the bytes they had
