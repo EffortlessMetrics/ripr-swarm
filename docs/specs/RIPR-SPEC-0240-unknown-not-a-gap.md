@@ -783,6 +783,7 @@ Tests in `crates/ripr/tests/operator_call_credit.rs` and
   `a_macro_defined_in_a_sibling_file_may_generate_a_second_impl`,
   `a_comparison_before_a_plus_does_not_hide_the_operator`,
   `an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl`,
+  `an_operator_inside_stringify_is_text_not_a_call`,
   `reference_operands_do_not_reach_the_owned_impl` (an operator picks its
   impl by the operand's exact type, so `&T` operands, bound or literal, never
   credit the owned impl) and

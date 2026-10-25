@@ -178,10 +178,12 @@ pub(super) fn test_applies_operator_to_owner(
             .into_iter()
             .map(|item| item.range)
             .collect();
+    let stringified = stringified_ranges(&masked);
     let returns_self = |name: &str| associated_fn_returns_self(index, impl_type, name);
     let reaching = operator_positions(&masked, operator.token, !operator.unary)
         .into_iter()
         .filter(|site| !opaque.iter().any(|range| range.contains(&site.at)))
+        .filter(|site| !stringified.iter().any(|range| range.contains(&site.at)))
         // A result thrown away cannot reach an assertion.
         .filter(|site| result_is_used(&masked, site.at))
         // `>>` and `<<` also close and open generic arguments; no other
@@ -227,8 +229,6 @@ fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
     })
 }
 
-/// Whether the site sits inside an unclosed `<` of its statement, as in
-/// `let v: Vec<Result<u8, Money>> = ..`, where `>>` is no operator.
 /// Whether the operand is a reference: `&x`, or a binding whose last `let` is
 /// annotated `&T` or initialised by `&..`. `operand_has_type` looks through
 /// `&` because equality and formatting compare through references, but an
@@ -255,12 +255,72 @@ fn is_reference_operand(operand: &str, before: &str) -> bool {
     }
 }
 
+/// Whether the site sits inside an unclosed generic `<` of its statement, as
+/// in `let v: Vec<Result<u8, Money>> = ..`, where `>>` is no operator. Only a
+/// `<` that follows a name or `::` with no space opens generics; a comparison
+/// such as `1 < 2 && Money(8) >> Money(1)` does not, so it cannot hide a real
+/// shift.
 fn in_generic_arguments(masked: &str, at: usize) -> bool {
     let before = &masked[..at];
     let statement = before
         .rfind([';', '{', '}'])
         .map_or(before, |i| &before[i + 1..]);
-    statement.matches('<').count() > statement.matches('>').count()
+    let bytes = statement.as_bytes();
+    let opened = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(i, &byte)| {
+            byte == b'<' && i > 0 && (is_ident_byte(bytes[i - 1]) || bytes[i - 1] == b':')
+        })
+        .count();
+    let closed = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(i, &byte)| byte == b'>' && (i == 0 || !matches!(bytes[i - 1], b'-' | b'=')))
+        .count();
+    opened > closed
+}
+
+/// Byte ranges of `stringify!(..)` arguments: the tokens become text and are
+/// never evaluated, so an operator inside runs no impl.
+fn stringified_ranges(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    for (start, _) in masked.match_indices("stringify") {
+        if start > 0 && is_ident_byte(bytes[start - 1]) {
+            continue;
+        }
+        let after = masked[start + "stringify".len()..].trim_start();
+        let Some(rest) = after.strip_prefix('!') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let open = masked.len() - rest.len();
+        let Some(&delimiter) = bytes.get(open) else {
+            continue;
+        };
+        let close_byte = match delimiter {
+            b'(' => b')',
+            b'[' => b']',
+            b'{' => b'}',
+            _ => continue,
+        };
+        let mut depth = 0usize;
+        let mut end = masked.len();
+        for (index, &byte) in bytes.iter().enumerate().skip(open) {
+            if byte == delimiter {
+                depth += 1;
+            } else if byte == close_byte {
+                depth -= 1;
+                if depth == 0 {
+                    end = index;
+                    break;
+                }
+            }
+        }
+        ranges.push(open..end);
+    }
+    ranges
 }
 
 /// Whether the bare identifier `operand` is also bound as a parameter, closure

@@ -424,10 +424,46 @@ fn generic_arguments_are_not_shift_operators() -> Result<(), String> {
         ..shr
     };
     let direct = direct_tests(&real)?;
+    if direct != ["operator_under_test"] {
+        return Err(format!("a real `>>` was not credited: {direct:?}"));
+    }
+    // A comparison earlier in the statement opens no generic argument.
+    let after_comparison = Case {
+        label: "a real shift after a comparison",
+        test_body: "let a = Money(8);\n        assert!(1 < 2 && (a >> Money(1)).0 == 4);",
+        ..shr
+    };
+    let direct = direct_tests(&after_comparison)?;
     if direct == ["operator_under_test"] {
         Ok(())
     } else {
-        Err(format!("a real `>>` was not credited: {direct:?}"))
+        Err(format!(
+            "a `>>` after a comparison was not credited: {direct:?}"
+        ))
+    }
+}
+
+#[test]
+fn an_operator_inside_stringify_is_text_not_a_call() -> Result<(), String> {
+    let text_only = with_body(
+        ADD,
+        "stringify only",
+        "assert_eq!(stringify!(Money(1) + Money(2)), \"Money(1) + Money(2)\");",
+    );
+    let direct = direct_tests(&text_only)?;
+    if !direct.is_empty() {
+        return Err(format!("stringify! credited the impl: {direct:?}"));
+    }
+    let evaluated_too = with_body(
+        ADD,
+        "stringify beside an evaluated plus",
+        "let s = stringify!(Money(1) + Money(2));\n        assert!(!s.is_empty());\n        assert_eq!(Money(2) + Money(3), Money(5));",
+    );
+    let direct = direct_tests(&evaluated_too)?;
+    if direct == ["operator_under_test"] {
+        Ok(())
+    } else {
+        Err(format!("the evaluated `+` was not credited: {direct:?}"))
     }
 }
 
