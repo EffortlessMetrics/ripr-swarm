@@ -18737,7 +18737,10 @@ fn if_guarded_registration_is_indexed_with_guard_and_no_assertion_credit() {
     let source = "if (isWindows) {\n  test('a', () => {\n    expect(f(1)).toBe(2);\n  });\n}\n";
     let tests = extract_tests(Path::new("tests/a.test.ts"), source);
     assert_eq!(tests.len(), 1, "{tests:?}");
-    assert_eq!(tests[0].conditional_registration.as_deref(), Some("isWindows"));
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("isWindows")
+    );
     assert!(tests[0].assertions.is_empty(), "{:?}", tests[0].assertions);
 }
 
@@ -18757,7 +18760,10 @@ fn describe_nested_under_an_if_guards_its_tests() {
     let source = "if (isLinux) {\n  describe('s', () => {\n    test('a', () => { expect(f(1)).toBe(2); });\n  });\n}\n";
     let tests = extract_tests(Path::new("tests/a.test.ts"), source);
     assert_eq!(tests.len(), 1, "{tests:?}");
-    assert_eq!(tests[0].conditional_registration.as_deref(), Some("isLinux"));
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("isLinux")
+    );
 }
 
 #[test]
