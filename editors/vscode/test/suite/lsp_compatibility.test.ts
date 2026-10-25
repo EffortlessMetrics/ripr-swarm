@@ -6,6 +6,32 @@ import * as path from 'path';
 import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS } from '../../src/lspCompatibility';
 import { probeServerVersion } from '../../src/serverResolver';
 
+// A terminated descendant is reparented to PID 1. Where PID 1 does not reap
+// orphans (some containers), it stays a zombie and `kill(pid, 0)` still
+// succeeds, so a zombie counts as terminated here (#10256).
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+      return false;
+    }
+    throw error;
+  }
+  if (process.platform !== 'linux') {
+    return true;
+  }
+  let stat: string;
+  try {
+    stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+  } catch {
+    return false;
+  }
+  // The state field follows the parenthesised command name.
+  const state = stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3);
+  return state !== 'Z' && state !== 'X';
+}
+
 suite('Standard LSP compatibility probe', () => {
   const fakeProbeTimeoutMs = 8000;
   const temporaryRoots: string[] = [];
@@ -192,7 +218,7 @@ suite('Standard LSP compatibility probe', () => {
     assert.ok('message' in result && result.message.includes('did not respond'));
     const descendantPid = Number(fs.readFileSync(pidPath, 'utf8').trim());
     await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.throws(() => process.kill(descendantPid, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH');
+    assert.ok(!processIsRunning(descendantPid), `descendant ${descendantPid} is still running after the group kill`);
   });
 
   test('version classification waits for the probe output streams to close', async function () {
