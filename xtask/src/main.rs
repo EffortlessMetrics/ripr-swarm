@@ -22859,6 +22859,9 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
 mod tests;
 
 #[cfg(test)]
+mod release_website_tests;
+
+#[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]
 mod sorted_allowlist_content_tests;
 

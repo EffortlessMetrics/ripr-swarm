@@ -47,7 +47,7 @@ SHA-256 hashes with the sources.
 
 For a website change:
 
-- Run `python3 docs/site/test_example.py` with Cargo on `PATH`. It checks local
+- Run `cargo test -p xtask --bin xtask release_website_tests`. It checks local
   links/assets and fixture excerpts, then executes the page's focused equality
   test in a standalone project using the boundary fixture's function and tests.
   This models the reader's crate, not ripr's nested fixture workspace. Both
