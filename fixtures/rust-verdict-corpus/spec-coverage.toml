@@ -801,9 +801,9 @@ example = 6
 reason = "a partially indexed workspace; an authored crate is stored whole, so no case can present an incomplete index to ripr"
 
 # Bounded scanner-state transitions
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0163"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Bounded literal match-arm transfer
 [[spec]]

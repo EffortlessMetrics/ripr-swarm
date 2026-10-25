@@ -425,6 +425,30 @@ case = "spec-b-0159-path-qualified-call-site"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec-b-0163-bare-identifier-state"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0163-computed-argument"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0163-computed-next-state"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0163-data-dependent-iterable"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0163-input-beyond-step-bound"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0163-unrecognized-loop-line"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
+
+[[entry]]
 case = "spec-b-0164-bare-binding-pattern"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
