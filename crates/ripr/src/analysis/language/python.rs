@@ -62,11 +62,13 @@ mod bool_oracle;
 mod boundary;
 mod caplog_text;
 mod classify;
+mod conditional_defs;
 mod deleted_lines;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
 mod message_pin;
+mod module_value;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
@@ -306,6 +308,12 @@ struct PythonOwner {
     /// (`related_tests.rs`, #9421). Empty until the workspace pass fills it,
     /// which keeps every consumer fail-closed.
     class_facts: related_tests::PythonClassFacts,
+    /// Writes to module attributes found in the workspace's other Python
+    /// files; only filled for the module owner of a changed file
+    /// (`module_value.rs`, #9423).
+    foreign_writes: module_value::ForeignWrites,
+    /// Owner admitted through a decided interpreter-version condition.
+    version_conditional: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1021,6 +1029,38 @@ impl PythonAdapter {
             .map(|path| normalized_path(path))
             .collect::<BTreeSet<_>>();
 
+        // Module-value reads (#9423) need what the rest of the workspace can
+        // do to a changed module's attributes, and which tests the diff also
+        // edits. Both are filled once per changed file, before classification.
+        let workspace_incomplete = refused_files > 0
+            || !workspace_read.limits.is_empty()
+            || !workspace_read.io_failures.is_empty();
+        let foreign_index = module_value::ForeignIndex::build(
+            workspace_read
+                .sources
+                .iter()
+                .map(|(file, source)| (file.as_path(), source.as_str())),
+            workspace_incomplete,
+        );
+        for changed in &python_changed_files {
+            let foreign = foreign_index.excluding(&changed.path);
+            conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
+            for owner in all_owners
+                .iter_mut()
+                .filter(|owner| owner.is_module_owner() && owner.file == changed.path)
+            {
+                owner.foreign_writes = foreign.clone();
+            }
+        }
+        for test in &mut all_tests {
+            if python_changed_files
+                .iter()
+                .any(|changed| changed.path == test.file)
+            {
+                test.constant_rebinding.edited_in_diff = true;
+            }
+        }
+
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut changed_count: usize = 0;
@@ -1155,6 +1195,12 @@ impl PythonAdapter {
                     structural_def_header_line: in_multi_line_def_header
                         && is_structural_def_header_text(&added.text),
                     multi_line_def_header_line: in_multi_line_def_header,
+                    // Removed lines carry the new-side line where the removal
+                    // sits, so a replacement in place has equal coordinates.
+                    sole_line_replacement: matches!(
+                        (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+                        ([added_line], [removed_line]) if added_line.line == removed_line.line
+                    ),
                 };
                 if let Some(finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -1292,6 +1338,8 @@ mod helper_inline_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod module_value_tests;
 #[cfg(test)]
 mod new_declaration_tests;
 

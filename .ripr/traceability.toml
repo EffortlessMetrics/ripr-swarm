@@ -3581,6 +3581,17 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::unreferenced_malformed_modules_do_not_erase_exact_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::referenced_or_implicitly_loaded_malformed_modules_withhold_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::generator_keyword_in_test_data_or_comments_preserves_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::the_target_assertion_is_identified_before_crediting_its_line",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::prior_assertions_and_generator_tests_cannot_lend_unreached_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::foreign_conditional_bindings_are_not_certain_owners",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::structural_foreign_and_test_reader_targets_withhold_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_workspace_reader_replacement_withholds_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_walrus_reader_replacement_withholds_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_replaced_version_guard_or_callable_keeps_module_abstention",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::continuation_lines_cannot_hide_a_return_before_the_assertion",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_observes_whole_return_including_short_elements",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_preserves_ast_call_identity",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_unresolved_or_nonobserving_calls",
