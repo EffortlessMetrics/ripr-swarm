@@ -42,9 +42,11 @@ Weakness
 
 Stop reasons:
   - dynamic_dispatch_unresolved — the path goes through a dynamic call ripr cannot resolve statically
+    Next: Call the changed owner on the concrete type in a test, not through a trait object, and assert on its result.
 
 Static limitation
   dynamic_dispatch — Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
+  Next: Add a test that calls the changed owner on the concrete type, not through a trait object or `dyn` value, and assert on its result.
 Drill in:
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_replaced_test/input --diff <cwd>/fixtures/python_dunder_truthiness_replaced_test/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_replaced_test/input --diff <cwd>/fixtures/python_dunder_truthiness_replaced_test/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
