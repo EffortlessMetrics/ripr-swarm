@@ -231,28 +231,110 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
     // One field per line: a top-level `,` before the last token means the line
     // holds a second field (`b: u8, c: u8,`) or something ambiguous, and a
     // top-level `=` is an initializer or discriminant, never a field type.
+    let kind_at = |index: Option<usize>| {
+        index
+            .and_then(|at| tokens.get(at))
+            .map(ra_ap_syntax::SyntaxToken::kind)
+    };
     let mut angle_depth = 0usize;
+    let mut top_level_colon = false;
     for (index, token) in tokens.iter().enumerate() {
         let top_level = angle_depth == 0 && token.parent().as_ref() == Some(&body);
+        let previous = kind_at(index.checked_sub(1));
+        let next = kind_at(Some(index + 1));
+        // An allowlist: only tokens that can spell a field type are accepted,
+        // so a literal, closure, operator, cast, `?`, range or member access
+        // keeps its lexical probe (a bare path like `None` or `Foo` is
+        // indistinguishable from a type and is the declared limit).
         let pure_type = match token.kind() {
-            SyntaxKind::BANG | SyntaxKind::L_CURLY => false,
             SyntaxKind::L_PAREN => type_paren_group(token),
             SyntaxKind::L_BRACK => literal_or_path_array_length(token),
             SyntaxKind::L_ANGLE => {
                 angle_depth += 1;
                 true
             }
-            SyntaxKind::R_ANGLE => {
-                angle_depth = angle_depth.saturating_sub(1);
+            // `&` is a reference prefix, never a binary `a & b`/`a && b`.
+            SyntaxKind::AMP => !matches!(
+                previous,
+                Some(
+                    SyntaxKind::IDENT
+                        | SyntaxKind::SELF_TYPE_KW
+                        | SyntaxKind::SELF_KW
+                        | SyntaxKind::CRATE_KW
+                        | SyntaxKind::SUPER_KW
+                        | SyntaxKind::R_PAREN
+                        | SyntaxKind::R_BRACK
+                        | SyntaxKind::INT_NUMBER
+                )
+            ),
+            // `*` is a raw-pointer prefix: `*const T` / `*mut T`, never a product.
+            SyntaxKind::STAR => matches!(next, Some(SyntaxKind::CONST_KW | SyntaxKind::MUT_KW)),
+            // Inside a token tree `->` is `-` then `>`: the pair is an arrow.
+            SyntaxKind::MINUS => next == Some(SyntaxKind::R_ANGLE),
+            SyntaxKind::R_ANGLE if previous == Some(SyntaxKind::MINUS) => true,
+            SyntaxKind::R_ANGLE => match angle_depth.checked_sub(1) {
+                Some(depth) => {
+                    angle_depth = depth;
+                    true
+                }
+                None => false,
+            },
+            SyntaxKind::COLON => {
+                top_level_colon |= top_level;
                 true
             }
             SyntaxKind::COMMA => !top_level || index + 1 == tokens.len(),
-            SyntaxKind::EQ | SyntaxKind::SEMICOLON => !top_level,
-            _ => true,
+            SyntaxKind::EQ => angle_depth > 0,
+            SyntaxKind::SEMICOLON => !top_level,
+            // A length literal belongs to `[T; 4]` only.
+            SyntaxKind::INT_NUMBER => {
+                previous == Some(SyntaxKind::SEMICOLON) && next == Some(SyntaxKind::R_BRACK)
+            }
+            // `+` joins bounds (`dyn Fn() + Send`), never arithmetic on a literal.
+            SyntaxKind::PLUS => {
+                matches!(
+                    previous,
+                    Some(
+                        SyntaxKind::IDENT
+                            | SyntaxKind::LIFETIME_IDENT
+                            | SyntaxKind::R_ANGLE
+                            | SyntaxKind::R_PAREN
+                    )
+                ) && matches!(
+                    next,
+                    Some(SyntaxKind::IDENT | SyntaxKind::LIFETIME_IDENT | SyntaxKind::DYN_KW)
+                )
+            }
+            SyntaxKind::IDENT
+            | SyntaxKind::LIFETIME_IDENT
+            | SyntaxKind::SELF_TYPE_KW
+            | SyntaxKind::SELF_KW
+            | SyntaxKind::CRATE_KW
+            | SyntaxKind::SUPER_KW
+            | SyntaxKind::COLON2
+            | SyntaxKind::R_PAREN
+            | SyntaxKind::R_BRACK
+            | SyntaxKind::THIN_ARROW
+            | SyntaxKind::DYN_KW
+            | SyntaxKind::MUT_KW
+            | SyntaxKind::CONST_KW
+            | SyntaxKind::IMPL_KW
+            | SyntaxKind::FN_KW
+            | SyntaxKind::UNSAFE_KW
+            | SyntaxKind::EXTERN_KW
+            | SyntaxKind::FOR_KW
+            | SyntaxKind::PUB_KW
+            | SyntaxKind::IN_KW
+            | SyntaxKind::POUND
+            | SyntaxKind::UNDERSCORE => true,
+            _ => false,
         };
         if !pure_type {
             return false;
         }
+    }
+    if angle_depth != 0 || !top_level_colon {
+        return false;
     }
     // The struct must sit directly in the token tree of one macro call: a
     // macro nested inside another macro's input is opaque twice over.
@@ -339,6 +421,7 @@ fn type_paren_group(open: &ra_ap_syntax::SyntaxToken) -> bool {
     };
     match previous.kind() {
         SyntaxKind::FN_KW
+        | SyntaxKind::PUB_KW
         | SyntaxKind::COLON
         | SyntaxKind::L_ANGLE
         | SyntaxKind::COMMA
@@ -555,6 +638,15 @@ mod tests {
             "pair: (u8, Foo),",
             "buf: [u8; 4],",
             "buf: [u8; N],",
+            "r: &'a str,",
+            "b: Box<dyn Fn(u8) -> u8>,",
+            "pub(crate) v: Vec<u8>,",
+            "c: [A; N],",
+            "m: HashMap<K, V>,",
+            "p: *const u8,",
+            "q: &&'a str,",
+            "pub(super) x: u8,",
+            "pub(self) z: u8,",
         ] {
             let source = format!("m! {{\n    struct S {{\n        {body}\n    }}\n}}\n");
             assert!(
@@ -574,6 +666,28 @@ mod tests {
             "b: u8, c: u8,",
             "a: u8 = 3,",
             "a: u8; b",
+            "f: pub_fn(x),",
+            "f: a * b,",
+            "f: a - b,",
+            "f: a & b,",
+            "f: |x| x,",
+            "f: BASE + 1,",
+            "f: a | b,",
+            "f: 17,",
+            "f: \"s\",",
+            "f: true,",
+            "f: 1.5,",
+            "f: 'a',",
+            "f: a.b,",
+            "f: x as u8,",
+            "f: -1,",
+            "f: 1..2,",
+            "f: a?,",
+            "f: a && b,",
+            "f: a < b,",
+            "f: (1, 2),",
+            "f: [1, 2],",
+            "f: [0u8; 3],",
         ] {
             let source = format!("m! {{\n    struct S {{\n        {body}\n    }}\n}}\n");
             assert!(

@@ -605,17 +605,43 @@ fn item_macro_struct_field_is_unknown_but_an_initializer_keeps_its_probe() -> Re
 /// type is expected, so a call or an arithmetic array length keeps its probe.
 #[test]
 fn item_macro_struct_field_holding_an_expression_keeps_field_construction() -> Result<(), String> {
-    for field in ["value: compute(),", "buf: [u8; N + 1],"] {
+    let mut constructions = 0usize;
+    for field in [
+        "value: compute(),",
+        "buf: [u8; N + 1],",
+        "f: |x| x,",
+        "f: BASE + 1,",
+        "f: a | b,",
+        "f: 17,",
+        "f: \"s\",",
+        "f: true,",
+        "f: 1.5,",
+        "f: 'a',",
+        "f: a.b,",
+        "f: x as u8,",
+        "f: -1,",
+        "f: 1..2,",
+        "f: a?,",
+        "f: a < b,",
+        "f: (1, 2),",
+        "f: [1, 2],",
+        "f: [0u8; 3],",
+    ] {
         let source =
             format!("pin_project! {{\n    pub struct Task {{\n        {field}\n    }}\n}}\n");
         let probes = probes_at(&source, 3)?;
-        assert!(
-            probes
-                .iter()
-                .any(|probe| probe.family == ProbeFamily::FieldConstruction),
-            "`{field}` must keep field_construction: {probes:?}"
-        );
+        // Only lines the lexer reads as a construction can be wrongly demoted.
+        if super::lexical::classify_changed_line(field).contains(&ProbeFamily::FieldConstruction) {
+            constructions += 1;
+            assert!(
+                probes
+                    .iter()
+                    .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+                "`{field}` must keep field_construction: {probes:?}"
+            );
+        }
     }
+    assert!(constructions >= 10, "table lost its teeth: {constructions}");
     Ok(())
 }
 
