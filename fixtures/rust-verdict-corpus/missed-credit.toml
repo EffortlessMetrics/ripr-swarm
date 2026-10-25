@@ -477,6 +477,14 @@ case = "spec-b-0165-non-unique-nested-callee"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec0048-label-rendered-observed"
+reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
+
+[[entry]]
+case = "spec0096-named-binding-used"
+reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
+
+[[entry]]
 case = "spec0114-helper-chain-public-api"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
