@@ -668,7 +668,9 @@ test('receiver', (t) => {
 }
 
 /// RIPR-SPEC-0243 rule 10 (example 14): a non-negated chai `throw` with one
-/// string literal pins the error; a class, no argument, or `not` stays broad.
+/// string literal, a PascalCase class, or a class and a string literal pins
+/// the error; no argument, `not`, a regex, a lowercase reference, a
+/// dynamic message and a third argument stay broad.
 #[test]
 fn chai_throw_string_literal_is_exact_error_variant() {
     let assertions = only_assertions(
@@ -680,19 +682,32 @@ import { parse } from "../src/parse";
 it("parse", () => {
   expect(() => parse("")).to.throw("blank");
   expect(() => parse("")).to.throw(TypeError);
+  expect(() => parse("")).to.throw(TypeError, "blank");
   expect(() => parse("")).to.throw();
   expect(() => parse("x")).to.not.throw("blank");
+  expect(() => parse("x")).to.not.throw(TypeError, "blank");
+  expect(() => parse("")).to.throw(/blank/);
+  expect(() => parse("")).to.throw(errorClass);
+  expect(() => parse("")).to.throw(TypeError, message);
+  expect(() => parse("")).to.throw(TypeError, /blank/);
+  expect(() => parse("")).to.throw(TypeError, "blank", "extra");
 });
 "#,
     );
-    assert_eq!(assertions.len(), 4, "{assertions:?}");
-    assert_oracle(
-        &assertions[0],
-        OracleKind::ExactErrorVariant,
-        OracleStrength::Strong,
-        "expect(...).to.throw(\"blank\")",
-    );
-    for broad in &assertions[1..] {
+    assert_eq!(assertions.len(), 11, "{assertions:?}");
+    for (index, rendered) in [
+        (0, "expect(...).to.throw(\"blank\")"),
+        (1, "expect(...).to.throw(TypeError)"),
+        (2, "expect(...).to.throw(TypeError, \"blank\")"),
+    ] {
+        assert_oracle(
+            &assertions[index],
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+            rendered,
+        );
+    }
+    for broad in &assertions[3..] {
         assert_eq!(broad.oracle_kind, OracleKind::BroadError, "{broad:?}");
         assert_eq!(broad.oracle_strength, OracleStrength::Weak, "{broad:?}");
         assert!(broad.error_payload.is_none(), "{broad:?}");
@@ -741,9 +756,53 @@ test("parse", async () => {
         OracleStrength::Strong,
         "assert.rejects(..., { message: \"charge must be positive\" })",
     );
-    for broad in &assertions[2..] {
+    // RIPR-SPEC-0243 rule 20: an unanchored regex of plain text is a
+    // substring test of `String(err)`; the change guard decides credit.
+    assert_oracle(
+        &assertions[2],
+        OracleKind::ExactErrorVariant,
+        OracleStrength::Strong,
+        "assert.throws(..., /blank/)",
+    );
+    for broad in &assertions[3..] {
         assert_eq!(broad.oracle_kind, OracleKind::BroadError, "{broad:?}");
         assert!(broad.error_payload.is_none(), "{broad:?}");
+    }
+}
+
+/// RIPR-SPEC-0243 rule 10: `assert.match` with a regex that matches one
+/// string (anchored, plain text, no flags but `u`) is a string equality
+/// check; any wider regex stays a weak relational check.
+#[test]
+fn node_assert_match_anchored_plain_regex_is_exact_value() {
+    let assertions = only_assertions(
+        "test/slug.test.ts",
+        r#"
+import test from "node:test";
+import assert from "node:assert/strict";
+import { slugify } from "../src/slugify";
+
+test("slug", () => {
+  assert.match(slugify("Hello World"), /^hello-world$/);
+  assert.match(slugify("Hello World"), /hello-world/);
+  assert.match(slugify("Hello World"), /^hello-world$/i);
+  assert.match(slugify("Hello World"), /^hello.world$/);
+  assert.match(slugify("Hello World"), /^hello-(world|there)$/);
+  assert.match(slugify("Hello World"), pattern);
+  assert.doesNotMatch(slugify("Hello World"), /^hello-world$/);
+});
+"#,
+    );
+    assert_eq!(assertions.len(), 7, "{assertions:?}");
+    assert_eq!(assertions[0].oracle_kind, OracleKind::ExactValue);
+    assert_eq!(assertions[0].oracle_strength, OracleStrength::Strong);
+    assert_eq!(
+        assertions[0].expected_value_or_variant.as_deref(),
+        Some("\"hello-world\"")
+    );
+    for weak in &assertions[1..] {
+        assert_eq!(weak.oracle_kind, OracleKind::RelationalCheck, "{weak:?}");
+        assert_eq!(weak.oracle_strength, OracleStrength::Weak, "{weak:?}");
     }
 }
 
@@ -1022,7 +1081,7 @@ fn node_test_context_assert_follows_the_registration_binding() {
                 "t.assert.equal(...)",
             );
         } else {
-            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+            assert!(tests.is_empty(), "{label}: {tests:?}");
             assert!(read.is_empty(), "{label}: {read:?}");
         }
     }
@@ -1095,6 +1154,10 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", (t) => {{\n  {body}\n}});\n"
         );
         let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        if label == "registered through another runner" {
+            assert!(tests.is_empty(), "{label}: {tests:?}");
+            continue;
+        }
         assert_eq!(tests.len(), 1, "{label}: {tests:?}");
         assert!(
             tests[0].assertions.is_empty(),

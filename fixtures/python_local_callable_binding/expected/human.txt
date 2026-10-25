@@ -21,12 +21,19 @@ Start here:
   Canonical gap: gap:python:src/stop.py:stop_after_attempt.__call__:predicate_boundary:predicate:attempt_number>=self.max_attempt_number
   Changed behavior: return attempt_number >= self.max_attempt_number
   Missing discriminator (1 of 2): Related Python test reaches `__call__` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_stop.py:7 test_stop_after_attempt
+  Related test: tests/test_stop.py:7 test_stop_after_attempt (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_stop.py
   Suggested test: test_stop_after_attempt
   Verify command: python -m unittest tests.test_stop.StopTest.test_stop_after_attempt (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `attempt_number == self.max_attempt_number`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `__call__`
     - infection yes: Changed Python expression can alter preview-classified predicate behavior: `return attempt_number >= self.max_attempt_number`
     - 5 more detail line(s) in --format human-full
@@ -34,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_local_callable_binding/input --diff <cwd>/fixtures/python_local_callable_binding/diff.patch --mode fast probe:src_stop.py:python_preview:87705a2c
   ripr context --root <cwd>/fixtures/python_local_callable_binding/input --diff <cwd>/fixtures/python_local_callable_binding/diff.patch --mode fast --at probe:src_stop.py:python_preview:87705a2c
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_stop.py:python_preview:87705a2c --root <cwd>/fixtures/python_local_callable_binding/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/stop.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

@@ -1,0 +1,45 @@
+{
+  "case_id": "grid-constant-table",
+  "subject_id": "authored-grid-constants",
+  "diff": "cases/grid-constant-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "table_driven_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "days * 6",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::late_fee_table",
+        "equivalence_review": "not equivalent: one day costs 6 instead of 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: constant x table loop. Rows 1 and 4 pin the daily fee.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

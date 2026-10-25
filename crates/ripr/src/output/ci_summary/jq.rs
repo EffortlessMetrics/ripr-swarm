@@ -403,3 +403,292 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .windows(needle.len())
         .position(|window| window == needle)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parsed(text: &str) -> Doc {
+        let doc = Doc::parse(text.as_bytes());
+        assert!(!doc.broken, "fixture must parse: {text}");
+        doc
+    }
+
+    #[test]
+    fn an_unreadable_file_is_broken_and_a_readable_one_parses()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("ripr-jq-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let present = dir.join("present.json");
+        std::fs::write(&present, "{\"a\":\"x\"} 2")?;
+        let read = Doc::read(&present);
+        assert_eq!(read.values, vec![json!({"a": "x"}), json!(2)]);
+        assert!(!read.broken);
+        // A missing file and a directory both read as broken and empty, so a
+        // field falls back to its word instead of an error shape.
+        let missing = Doc::read(&dir.join("missing.json"));
+        let directory = Doc::read(&dir);
+        std::fs::remove_dir_all(&dir)?;
+        for unreadable in [&missing, &directory] {
+            assert!(unreadable.values.is_empty());
+            assert!(unreadable.broken);
+            assert_eq!(unreadable.field(&["a"], "d", "unknown"), "unknown");
+            assert_eq!(unreadable.length("a"), "0");
+            assert_eq!(unreadable.optional(&["a"]), "");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn doc_field_optional_and_length_follow_the_retired_queries() {
+        let doc = parsed("{\"a\":{\"b\":\"deep\"},\"c\":null,\"d\":[1,2,3],\"e\":false}");
+        assert_eq!(doc.field(&["a.b"], "dflt", "unknown"), "deep");
+        assert_eq!(doc.field(&["c", "a.b"], "dflt", "unknown"), "deep");
+        assert_eq!(doc.field(&["c", "e"], "dflt", "unknown"), "dflt");
+        // A path through a scalar is a type error and takes the fail word.
+        assert_eq!(doc.field(&["d.x"], "dflt", "unknown"), "unknown");
+        assert_eq!(doc.optional(&["c", "e"]), "");
+        assert_eq!(doc.optional(&["a.b"]), "deep");
+        assert_eq!(doc.length("d"), "3");
+        assert_eq!(doc.length("c"), "0");
+        assert_eq!(doc.length("missing"), "0");
+        // `false` has no length: the query fails and prints `0` anyway.
+        assert_eq!(doc.length("e"), "0");
+        assert_eq!(doc.length("a"), "1");
+        // An empty fail word prints nothing, as `|| true` did.
+        assert_eq!(doc.text(|value| at(value, "d.x").cloned(), ""), "");
+    }
+
+    #[test]
+    fn raw_and_interpolated_print_the_way_jq_does() {
+        assert_eq!(raw(&json!("s")), "s");
+        assert_eq!(raw(&json!(7)), "7");
+        assert_eq!(raw(&json!(null)), "null");
+        assert_eq!(raw(&json!(true)), "true");
+        assert_eq!(raw(&json!([1])), "[\n  1\n]");
+        assert_eq!(raw(&json!({"k": "v"})), "{\n  \"k\": \"v\"\n}");
+        assert_eq!(interpolated(&json!("s")), "s");
+        assert_eq!(interpolated(&json!([1, "a"])), "[1,\"a\"]");
+        assert_eq!(interpolated(&json!(null)), "null");
+        assert_eq!(inline("a`b\r\nc"), "a\\`b  c");
+        assert_eq!(captured("x\n\n"), "x");
+        assert_eq!(captured("\nx"), "\nx");
+    }
+
+    #[test]
+    fn indexing_distinguishes_null_pass_through_from_type_errors() {
+        let object = json!({"a": {"b": 1}, "n": null});
+        assert_eq!(index(&Value::Null, "k"), Ok(&Value::Null));
+        assert_eq!(index(&object, "missing"), Ok(&Value::Null));
+        assert_eq!(index(&json!("s"), "k"), Err(Fail));
+        assert_eq!(index(&json!([1]), "k"), Err(Fail));
+        assert_eq!(at(&object, "a.b"), Ok(&json!(1)));
+        assert_eq!(at(&object, "n.x.y"), Ok(&Value::Null));
+        assert_eq!(at(&object, "a.b.c"), Err(Fail));
+        assert!(!truthy(&Value::Null));
+        assert!(!truthy(&json!(false)));
+        assert!(truthy(&json!(0)));
+        assert!(truthy(&json!("")));
+        assert!(truthy(&json!([])));
+        // An error on the left of `//` is not suppressed.
+        assert_eq!(alt(&object, &["a.b.c", "n"], json!("d")), Err(Fail));
+        assert_eq!(alt(&object, &["n", "a.b"], json!("d")), Ok(json!(1)));
+        assert_eq!(alt(&object, &["n"], json!("d")), Ok(json!("d")));
+    }
+
+    #[test]
+    fn length_follows_jq_for_every_value_kind() {
+        assert_eq!(length(&Value::Null), Ok(json!(0)));
+        assert_eq!(length(&json!(true)), Err(Fail));
+        assert_eq!(length(&json!(false)), Err(Fail));
+        assert_eq!(length(&json!(-5)), Ok(json!(5)));
+        assert_eq!(length(&json!(u64::MAX)), Ok(json!(u64::MAX)));
+        assert_eq!(length(&json!(-2.5)), Ok(json!(2.5)));
+        assert_eq!(length(&json!("héé")), Ok(json!(3)));
+        assert_eq!(length(&json!([1, 2])), Ok(json!(2)));
+        assert_eq!(length(&json!({"a": 1})), Ok(json!(1)));
+    }
+
+    #[test]
+    fn add_follows_jq_for_every_pairing() {
+        assert_eq!(add(Value::Null, json!("x")), Ok(json!("x")));
+        assert_eq!(add(json!(3), Value::Null), Ok(json!(3)));
+        assert_eq!(add(Value::Null, Value::Null), Ok(Value::Null));
+        assert_eq!(add(json!("a"), json!("b")), Ok(json!("ab")));
+        assert_eq!(add(json!(1), json!(2)), Ok(json!(3)));
+        assert_eq!(add(json!(1.5), json!(2)), Ok(json!(3.5)));
+        // Integer overflow falls back to floating point instead of wrapping.
+        assert_eq!(
+            add(json!(i64::MAX), json!(1)),
+            Ok(json!(i64::MAX as f64 + 1.0))
+        );
+        assert_eq!(add(json!([1]), json!([2])), Ok(json!([1, 2])));
+        assert_eq!(
+            add(json!({"a": 1, "b": 1}), json!({"b": 2})),
+            Ok(json!({"a": 1, "b": 2}))
+        );
+        for (left, right) in [
+            (json!("a"), json!(1)),
+            (json!(1), json!("a")),
+            (json!([1]), json!({"a": 1})),
+            (json!(true), json!(true)),
+            (json!(true), json!("a")),
+        ] {
+            assert_eq!(
+                add(left.clone(), right.clone()),
+                Err(Fail),
+                "{left} + {right}"
+            );
+        }
+    }
+
+    #[test]
+    fn iteration_takes_array_items_and_object_values_only() {
+        let doc = json!({"list": [1, 2], "map": {"a": 3, "b": 4}, "scalar": 5});
+        assert_eq!(each_at(&doc, "list"), Ok(vec![&json!(1), &json!(2)]));
+        assert_eq!(each_at(&doc, "map"), Ok(vec![&json!(3), &json!(4)]));
+        assert_eq!(each_at(&doc, "scalar"), Ok(Vec::new()));
+        assert_eq!(each_at(&doc, "missing"), Ok(Vec::new()));
+        // The `?` covers the iteration, not the index.
+        assert_eq!(each_at(&json!("s"), "list"), Err(Fail));
+        assert!(each(&json!("s")).is_empty());
+    }
+
+    #[test]
+    fn location_names_the_path_and_the_line_only_when_present() {
+        let at_line = json!({"path": "src/a.rs", "line": 4});
+        assert_eq!(
+            location(&at_line, "path", "unknown"),
+            Ok(json!("src/a.rs:4"))
+        );
+        let no_line = json!({"path": "src/a.rs"});
+        assert_eq!(location(&no_line, "path", "unknown"), Ok(json!("src/a.rs")));
+        let false_line = json!({"path": "src/a.rs", "line": false});
+        assert_eq!(
+            location(&false_line, "path", "unknown"),
+            Ok(json!("src/a.rs"))
+        );
+        let zero_line = json!({"line": 0});
+        assert_eq!(
+            location(&zero_line, "path", "unknown"),
+            Ok(json!("unknown:0"))
+        );
+        assert_eq!(
+            location(&json!({}), "path", "unknown"),
+            Ok(json!("unknown"))
+        );
+        assert_eq!(location(&json!("s"), "path", "unknown"), Err(Fail));
+    }
+
+    #[test]
+    fn join_prints_scalars_and_fails_on_containers() {
+        let items = [json!("a"), Value::Null, json!(2), json!(true), json!("z")];
+        assert_eq!(join(&items, ","), Ok("a,,2,true,z".to_string()));
+        assert_eq!(join(&[], ","), Ok(String::new()));
+        assert_eq!(join(&[json!(1), json!([2])], ","), Err(Fail));
+        assert_eq!(join(&[json!({"a": 1})], ","), Err(Fail));
+        assert_eq!(join_or_none(&[]), Ok(json!("none")));
+        assert_eq!(join_or_none(&[json!("a"), json!("b")]), Ok(json!("a, b")));
+        assert_eq!(join_or_none(&[json!([1])]), Err(Fail));
+    }
+
+    #[test]
+    fn compare_orders_by_jq_kind_rank_then_by_value() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let ranked = [
+            Value::Null,
+            json!(false),
+            json!(true),
+            json!(-1),
+            json!(2.5),
+            json!("a"),
+            json!("b"),
+            json!([]),
+            json!([1]),
+            json!([1, 2]),
+            json!([2]),
+            json!({"a": 1}),
+        ];
+        for pair in ranked.windows(2) {
+            assert_eq!(
+                compare(&pair[0], &pair[1]),
+                Less,
+                "{} < {}",
+                pair[0],
+                pair[1]
+            );
+            assert_eq!(compare(&pair[1], &pair[0]), Greater);
+        }
+        assert_eq!(compare(&json!(1), &json!(1.0)), Equal);
+        assert_eq!(compare(&json!({"a": 1}), &json!({"a": 1})), Equal);
+        assert_eq!(compare(&json!({"a": 1}), &json!({"a": 2})), Less);
+    }
+
+    #[test]
+    fn tally_and_unique_group_equal_values_in_jq_order() {
+        assert_eq!(tally(Vec::new()), json!("none"));
+        assert_eq!(
+            tally(vec![
+                json!("b"),
+                json!("a"),
+                json!("b"),
+                json!(1),
+                json!("a"),
+                json!("b")
+            ]),
+            json!("1=1, a=2, b=3")
+        );
+        assert_eq!(tally(vec![json!([1]), json!([1])]), json!("[1]=2"));
+        assert_eq!(
+            unique(vec![
+                json!("b"),
+                json!("a"),
+                json!("b"),
+                json!(2),
+                Value::Null
+            ]),
+            vec![Value::Null, json!(2), json!("a"), json!("b")]
+        );
+        assert!(unique(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn objects_are_collected_in_document_order_through_arrays_and_maps() {
+        let doc = json!({"a": {"b": [{"c": 1}, 2, [{"d": 3}]]}, "e": "s"});
+        let mut found = Vec::new();
+        objects(&doc, &mut found);
+        let keys = found
+            .iter()
+            .map(|map| map.keys().cloned().collect::<Vec<_>>().join("+"))
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["a+e", "b", "c", "d"]);
+        let mut none = Vec::new();
+        let scalars = json!([1, "x", null]);
+        objects(&scalars, &mut none);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn repo_relative_leaves_text_alone_when_no_root_applies() {
+        let none = RepoRelative::default();
+        assert_eq!(none.value("cd /w/repo"), "cd /w/repo");
+        assert_eq!(none.file(b"a\nb"), b"a\nb\n");
+        let relative = RepoRelative {
+            physical: b"/w/repo".to_vec(),
+            logical: Vec::new(),
+        };
+        // Every whole-token position the workflow's sed accepted.
+        assert_eq!(relative.value("'/w/repo'"), "'.'");
+        assert_eq!(relative.value("\"/w/repo\""), "\".\"");
+        assert_eq!(relative.value("`/w/repo`"), "`.`");
+        assert_eq!(relative.value("(/w/repo):x"), "(.):x");
+        assert_eq!(relative.value("/w/repo:12"), ".:12");
+        // A neighbouring word character on either side is not a token edge.
+        assert_eq!(relative.value("x/w/repo"), "x/w/repo");
+        assert_eq!(relative.value("/w/repo-2"), "/w/repo-2");
+        assert_eq!(relative.value("/w/repo/a /w/repo/b"), "./a ./b");
+        // A rewrite never reads outside the line that holds it.
+        assert_eq!(relative.file(b"/w/repo\n/w/repox\n"), b".\n/w/repox\n");
+    }
+}

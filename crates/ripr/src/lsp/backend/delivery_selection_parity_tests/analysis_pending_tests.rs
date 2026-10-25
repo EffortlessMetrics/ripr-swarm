@@ -255,3 +255,175 @@ fn analysis_pending_blocked_root_names_its_own_recovery_route() -> Result<(), St
     assert_eq!(result_id(&restored)?, ANALYSIS_PENDING_RESULT_ID);
     assert_pending_marker(&restored["items"])
 }
+
+const WITHDRAWN_FIX_CONFIGURATION_RESULT_ID: &str =
+    "ripr:analysis-pending:fix_configuration:withdrawn";
+
+/// The #8731 withdrawal marker: a configuration failure latched after a
+/// snapshot committed must serve a typed marker that names the pause, not
+/// the never-analyzed state (a snapshot exists and stays retained).
+fn assert_withdrawal_marker(items: &serde_json::Value) -> Result<(), String> {
+    let items = items
+        .as_array()
+        .ok_or_else(|| format!("items missing: {items}"))?;
+    if items.len() != 1 {
+        return Err(format!(
+            "expected exactly one analysis-pending marker, got {items:?}"
+        ));
+    }
+    let marker = &items[0];
+    if marker["severity"] != 3 {
+        return Err(format!(
+            "marker must be Information (3), got {}",
+            marker["severity"]
+        ));
+    }
+    if marker["code"] != DIAGNOSTIC_ANALYSIS_PENDING_CODE {
+        return Err(format!("wrong marker code: {marker}"));
+    }
+    if marker["data"]["kind"] != "delivery_limitation" {
+        return Err(format!("marker must be a delivery limitation: {marker}"));
+    }
+    if marker["data"]["state"] != "withdrawn_configuration_failure" {
+        return Err(format!(
+            "withdrawal must name its state, not the never-analyzed one: {marker}"
+        ));
+    }
+    if marker["data"]["recovery"] != "fix_configuration" {
+        return Err(format!("wrong marker recovery: {marker}"));
+    }
+    if marker["data"]["diagnostic_id"].is_string() {
+        return Err(format!(
+            "pending marker must never carry a finding identity: {marker}"
+        ));
+    }
+    let message = marker["message"]
+        .as_str()
+        .ok_or_else(|| format!("marker message missing: {marker}"))?;
+    if !message.contains("withdrawn") {
+        return Err(format!(
+            "marker must name the withdrawal, not a never-analyzed state: {message}"
+        ));
+    }
+    if !message.contains("not evidence of a clean workspace") {
+        return Err(format!(
+            "marker must refuse the clean-workspace claim: {message}"
+        ));
+    }
+    if !message.contains("Fix the workspace configuration") {
+        return Err(format!(
+            "marker must name the actual recovery route: {message}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn analysis_pending_document_pull_withdraws_committed_snapshot_when_configuration_failure_latched()
+-> Result<(), String> {
+    // #8731: a configuration failure latched after a snapshot committed left
+    // the pre-failure findings served at full weight with no in-editor signal
+    // that analysis is paused. The committed snapshot stays retained (the
+    // retrieval routes can still read it), but the pull handlers must serve
+    // the typed pending marker under the FixConfiguration recovery route
+    // instead of the stale payload.
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("committed.rs")?;
+    commit(
+        harness.service.inner(),
+        parity_workspace_diagnostics(vec![(
+            uri.clone(),
+            vec![parity_diagnostic("gap:committed", true)],
+        )]),
+    )?;
+    let served = document_report(&harness, &uri, None)?;
+    let served_id = result_id(&served)?;
+    if served_id == WITHDRAWN_FIX_CONFIGURATION_RESULT_ID {
+        return Err(format!(
+            "pre-failure serving must not use the pending identity: {served_id}"
+        ));
+    }
+
+    harness
+        .service
+        .inner()
+        .set_configuration_failure("changed ripr.toml input is invalid");
+    let withdrawn = document_report(&harness, &uri, None)?;
+    assert_eq!(
+        result_id(&withdrawn)?,
+        WITHDRAWN_FIX_CONFIGURATION_RESULT_ID
+    );
+    assert_withdrawal_marker(&withdrawn["items"])?;
+    // The stale served identity must not answer `unchanged` behind the
+    // withdrawal: the client re-renders the marker instead of keeping the
+    // pre-failure payload.
+    let transitioned = document_report(&harness, &uri, Some(served_id))?;
+    assert_eq!(transitioned["kind"], "full");
+    assert_eq!(
+        result_id(&transitioned)?,
+        WITHDRAWN_FIX_CONFIGURATION_RESULT_ID
+    );
+    Ok(())
+}
+
+#[test]
+fn analysis_pending_workspace_pull_withdraws_committed_snapshot_when_configuration_failure_latched()
+-> Result<(), String> {
+    // #8731: the workspace pull path serves the same withdrawal marker per
+    // tracked URI; a cached pending identity answers `unchanged` while the
+    // stale snapshot identity re-renders.
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("committed.rs")?;
+    commit(
+        harness.service.inner(),
+        parity_workspace_diagnostics(vec![(
+            uri.clone(),
+            vec![parity_diagnostic("gap:committed", true)],
+        )]),
+    )?;
+    harness
+        .service
+        .inner()
+        .set_configuration_failure("changed ripr.toml input is invalid");
+    let report = workspace_report(
+        &harness,
+        vec![PreviousResultId {
+            uri: uri.clone(),
+            value: String::new(),
+        }],
+    )?;
+    let items = report["items"]
+        .as_array()
+        .ok_or_else(|| format!("workspace items missing: {report}"))?;
+    if items.len() != 1 {
+        return Err(format!("expected one withdrawal item, got {report}"));
+    }
+    if items[0]["uri"] != serde_json::json!(uri.to_string()) {
+        return Err(format!(
+            "withdrawal item must ride the tracked URI: {report}"
+        ));
+    }
+    assert_eq!(
+        items[0]["resultId"],
+        serde_json::json!(WITHDRAWN_FIX_CONFIGURATION_RESULT_ID)
+    );
+    assert_withdrawal_marker(&items[0]["items"])?;
+
+    let cached = workspace_report(
+        &harness,
+        vec![PreviousResultId {
+            uri: uri.clone(),
+            value: WITHDRAWN_FIX_CONFIGURATION_RESULT_ID.to_string(),
+        }],
+    )?;
+    let cached_items = cached["items"]
+        .as_array()
+        .ok_or_else(|| format!("workspace items missing: {cached}"))?;
+    if cached_items.len() != 1 {
+        return Err(format!("expected one unchanged item, got {cached}"));
+    }
+    assert_eq!(cached_items[0]["kind"], "unchanged");
+    Ok(())
+}

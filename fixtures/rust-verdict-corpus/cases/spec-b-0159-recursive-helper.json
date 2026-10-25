@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0159-recursive-helper",
+  "subject_id": "authored-spec-b-value",
+  "diff": "cases/spec-b-0159-recursive-helper.diff",
+  "anchor": {
+    "file": "src/h_recursion.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_chain_recursion",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "3 <= input.len()",
+        "mutated_line": "3 <= input.len()",
+        "outcome": "tests_failed",
+        "failing_test": "h_recursion::tests::rows_straddle_four_recursion_h_recursion",
+        "equivalence_review": "not equivalent: h_recursion::tests::rows_straddle_four_recursion_h_recursion fails on it"
+      },
+      {
+        "replacement": "4 < input.len()",
+        "mutated_line": "4 < input.len()",
+        "outcome": "tests_failed",
+        "failing_test": "h_recursion::tests::rows_straddle_four_recursion_h_recursion",
+        "equivalence_review": "not equivalent: h_recursion::tests::rows_straddle_four_recursion_h_recursion fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "wide_r calls itself before it compares, so the chain is not acyclic. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#7.",
+  "labeling_observation": {
+    "ripr_commit": "f88e3952",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#7"
+  ]
+}

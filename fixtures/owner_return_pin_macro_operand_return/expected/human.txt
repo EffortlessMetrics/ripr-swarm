@@ -19,12 +19,19 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
   Changed behavior: input * 3
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  Related test: tests/weight_tests.rs:4 checks_weight (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Related test: tests/weight_tests.rs:4 checks_weight (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:5; the
     "not credited" note says why. That shape can keep the assertion from checking the change, so
     this is not a static limit: make the check run on every default test run, as the standard
     `assert_eq!`, in a test expected to pass
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full

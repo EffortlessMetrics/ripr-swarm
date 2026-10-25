@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-7976-rewritten-binding",
+  "origin": "authored",
+  "version_label": "authored 2026-10-19; paired guard evidence for #7976 / #8866",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "9fc30ed89d04d344895297520377636e9a5b5c12b51839ed7e0fce1b96a3b93a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "178ad8ef6d8009d1e16785e4a2a365e6f866dcc874b3681d5bf77c3b0e6d5510"
+    }
+  ]
+}

@@ -42,7 +42,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+    agent, before_phase_stdout, resolve_agent_repair_root, run_before_repair_with_identity,
+    translate_agent_repair_seam_id,
 };
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
@@ -133,10 +134,15 @@ mod check_fanout;
 pub(super) use check::check;
 #[cfg(unix)]
 pub(super) use check::check_with_interrupt_flags;
+pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root};
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
 pub(super) use review_comments::review_comments;
+
+#[path = "commands/capabilities.rs"]
+mod capabilities;
+pub(super) use capabilities::capabilities;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
@@ -243,8 +249,8 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let rendered_md = output::evidence_health::render_evidence_health_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -498,8 +504,14 @@ pub(super) fn first_action(args: &[String]) -> Result<(), String> {
     let rendered_md = output::first_useful_action::render_first_useful_action_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
+    // Missing-input warnings ride stderr like every other advisory surface
+    // (#9856): a run that routed from nothing must not look like a healthy
+    // run in the terminal or in `2>&1` CI logs.
+    emit_report_warnings(output::first_useful_action::first_useful_action_warnings(
+        &report,
+    ));
     Ok(())
 }
 
@@ -552,8 +564,8 @@ fn report_packet_index(args: &[String]) -> Result<(), String> {
     let rendered_md = output::report_packet_index::render_report_packet_index_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -608,8 +620,8 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let rendered_md = output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -644,8 +656,8 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
         output::typescript_limitations::render_typescript_limitation_leaderboard_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -674,8 +686,8 @@ fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
         );
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -737,8 +749,12 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     let rendered_md = output::ripr_zero_status::render_ripr_zero_status_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
+    // Missing-input warnings ride stderr like every other advisory surface
+    // (#9856): a run that routed from nothing must not look like a healthy
+    // run in the terminal or in `2>&1` CI logs.
+    emit_report_warnings(output::ripr_zero_status::ripr_zero_status_warnings(&report));
     Ok(())
 }
 
@@ -842,8 +858,8 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
         options.out_jsonl.as_deref(),
         &output::pr_evidence_ledger::render_pr_evidence_ledger_jsonl_record(&report)?,
     )?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -888,8 +904,8 @@ fn pr_comments_plan(args: &[String]) -> Result<(), String> {
         output::pr_inline_comment_publish_plan::render_comment_publish_plan_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1013,8 +1029,8 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     let rendered_md = output::pr_review_front_panel::render_pr_review_front_panel_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1067,8 +1083,8 @@ fn coverage_grip_frontier(args: &[String]) -> Result<(), String> {
         output::coverage_grip_frontier::render_coverage_grip_frontier_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1157,8 +1173,8 @@ fn assistant_loop_proof(args: &[String]) -> Result<(), String> {
         output::test_oracle_assistant_proof::render_test_oracle_assistant_proof_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1187,8 +1203,8 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
     let rendered_md = output::assistant_loop_health::render_assistant_loop_health_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     println!(
         "Proofs: {}",
         output::assistant_loop_health::assistant_loop_health_proof_count(&report)
@@ -1224,18 +1240,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         &repo_exposure_json,
         &mutants_json,
     )?;
-    // Disclose on stderr (machine JSON output on stdout is unchanged) what
-    // can actually be said about artifact identity. The join is file/line
-    // capable and cargo-mutants JSON usually carries no head, so a silent
-    // success lets a foreign same-line mutant inherit the static seam's
-    // authority. Mirror `ripr outcome`'s disclosure (#7449 / #1942).
-    eprintln!(
-        "{}",
-        output::mutation_calibration::calibrate_head_provenance_disclosure(
-            &repo_exposure_json,
-            &mutants_json,
-        )
-    );
+    // The report owns the input-head projection and its qualification on every surface.
+    eprintln!("{}", report.head_provenance_disclosure());
     let rendered = match options.format {
         CalibrateFormat::Markdown => {
             output::mutation_calibration::render_mutation_calibration_md(&report)
@@ -2775,6 +2781,33 @@ fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, Str
     })
 }
 
+/// Render report warnings in the sibling `baseline create` stderr style
+/// (#9824): a `Warnings: <n>` count line followed by one `Warning: <text>`
+/// line per entry. Returns an empty string when there is nothing to warn
+/// about. Split from emission so tests can pin the non-empty-stderr contract
+/// without capturing process stderr.
+fn render_report_warnings(warnings: &[String]) -> String {
+    if warnings.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("Warnings: {}\n", warnings.len());
+    for warning in warnings {
+        out.push_str(&format!("Warning: {warning}\n"));
+    }
+    out
+}
+
+/// Echo a report's warnings to stderr. The recovery-router commands (#9856)
+/// reuse this so a run that routed from missing inputs is visible to
+/// interactive users and `2>&1` CI logs, not only inside the written report.
+/// Exit codes and report contents are unchanged.
+pub(super) fn emit_report_warnings(warnings: &[String]) {
+    let rendered = render_report_warnings(warnings);
+    if !rendered.is_empty() {
+        eprint!("{rendered}");
+    }
+}
+
 fn read_optional_manifest_for_report(
     root: &Path,
     manifest: &Path,
@@ -2836,6 +2869,9 @@ enum DiffReportFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiffOptions {
     root: PathBuf,
+    /// `true` when `--root` was typed, so implicit workspace-root resolution
+    /// must not rewrite `.` (#8872). Same opt-out as `ripr check`.
+    root_explicit: bool,
     /// `None` when `--base` was omitted; resolved by the loader's base
     /// authority at run time, never defaulted to a literal branch here.
     base: Option<String>,
@@ -2858,8 +2894,25 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
         help::print_diff_help();
         return Ok(());
     }
-    let options = parse_diff_options(args)?;
+    let mut options = parse_diff_options(args)?;
     let json = matches!(options.format, DiffReportFormat::Json);
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
+    // resolution failure is a post-argv failure, so a JSON run still gets the
+    // refusal envelope (#7331), keyed to the root as typed.
+    let typed_root = options.root.clone();
+    if let Err(error) = resolve_implicit_command_root(&mut options.root, options.root_explicit) {
+        if !json {
+            return Err(error);
+        }
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &typed_root,
+            options.base.as_deref(),
+            crate::core_error::CoreError::from(error),
+        ));
+    }
     // #7331: every post-argv-parse failure of a JSON diff run writes the
     // shared refusal envelope (the diff report's own schema version) to
     // stdout before the prose error reaches stderr. Argv usage errors above
@@ -2954,6 +3007,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
     let mut options = DiffOptions {
         root: PathBuf::from("."),
+        root_explicit: false,
         base: None,
         head: "HEAD".to_string(),
         mode: Mode::Draft,
@@ -2968,6 +3022,7 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
             "--root" => {
                 i += 1;
                 options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                options.root_explicit = true;
             }
             "--base" => {
                 i += 1;
@@ -3037,6 +3092,7 @@ fn run_diff_check_from_file(
         suppression_policy: None,
         git_timeout: None,
         git_candidate: None,
+        scope: crate::analysis::DiffScopeFilter::default(),
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)
@@ -3127,6 +3183,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
     let mut root_explicitly_provided = false;
@@ -3153,6 +3210,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--mode" => {
                 i += 1;
                 input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
@@ -3205,21 +3263,37 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("explain"));
     }
-    worktree_scope_conflict(
+    drill_in_scope_conflict(
         "explain",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(missing_selector_error(
             "missing finding selector",
             "ripr check --json",
         ));
     }
-    resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
+    // #8872: the implicit workspace root `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory.
+    let prefix = resolve_implicit_command_root(&mut input.root, root_explicitly_provided)?;
+    // With `--from` or `--diff` the named file need not exist in the working
+    // tree (for example a file the diff deletes), so a selector that binds to
+    // nothing is not refused. It is anchored to the invocation directory
+    // instead (never left as a bare suffix that could match a sibling member's
+    // finding); with an unmoved root it is used as typed.
+    let replay = from_artifact.is_some() || input.diff_file.is_some();
+    let selector = selector
+        .map(|item| bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay))
+        .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
+    let worktree_from_default =
+        !worktree && dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree = worktree || worktree_from_default;
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3267,6 +3341,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &config,
                 explicit.mode,
                 worktree,
+                worktree_from_default,
                 progress_sink,
             )?
         }
@@ -3292,29 +3367,89 @@ pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
     )
 }
 
-/// A `--worktree` drill-in without `--root` resolves the implicit project
-/// root the same way `ripr check --worktree` does, so a manual invocation
-/// from a project subdirectory analyzes the scope that listed the finding.
-/// An explicit `--root` is kept as given.
-pub(super) fn resolve_worktree_root(
-    input: &mut CheckInput,
-    worktree: bool,
-    root_explicitly_provided: bool,
-) -> Result<(), String> {
-    if worktree && !root_explicitly_provided {
-        check::resolve_implicit_workspace_root(input)?;
+/// #8872/#8902: bind a member-relative `file:line` drill-in selector (`explain`
+/// and `context`) to the invocation directory. With `--from`/`--diff`
+/// (`replay`) the named file need not exist in the working tree (for example a
+/// file the diff deletes), so a selector that binds to nothing is not refused:
+/// it is anchored to the invocation directory instead (never left as a bare
+/// suffix that could match a sibling member's finding); with an unmoved root it
+/// is used as typed.
+fn bind_member_drill_in_selector(
+    prefix: Option<&str>,
+    root: &Path,
+    item: String,
+    replay: bool,
+) -> Result<String, String> {
+    match check::bind_member_selector_item(prefix, root, &item) {
+        Err(_) if replay => match prefix {
+            Some(prefix) => {
+                // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                let bare = item.trim_start_matches("./");
+                let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                    bare.to_string()
+                } else {
+                    format!("{prefix}/{bare}")
+                };
+                match anchored.rsplit_once(':') {
+                    Some((file, _)) => {
+                        check::refuse_root_shadowed_selector(root, file).map(|()| anchored)
+                    }
+                    None => Ok(anchored),
+                }
+            }
+            None => Ok(item),
+        },
+        bound => bound,
     }
-    Ok(())
 }
 
-/// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
-/// beside `--diff`, and an artifact from `--from` already fixes the scope.
-pub(super) fn worktree_scope_conflict(
+/// `ripr check` reads the working tree by default when it holds uncommitted
+/// tracked edits, and prints finding ids from that run. `explain`/`context`
+/// must resolve those ids against the same subject, so a live-repository
+/// drill-in without a supplied scope (`--diff`, `--from`, candidate tree)
+/// follows the shared `app::diff_source` default instead of re-analysing
+/// committed history only.
+pub(super) fn dirty_tree_default_is_worktree(
+    input: &CheckInput,
+    from_artifact: bool,
+    committed: bool,
+) -> bool {
+    !committed
+        && !from_artifact
+        && input.diff_file.is_none()
+        && input.git_candidate.is_none()
+        && app::diff_source::select_live_diff_source(
+            &input.root,
+            app::diff_source::DiffSourceRequest::Default,
+            input.git_timeout,
+        )
+        .is_working_tree()
+}
+
+/// Explicit live sources are mutually exclusive and cannot override a supplied
+/// diff or an artifact. These are argv errors, before root or input reads.
+pub(super) fn drill_in_scope_conflict(
     command: &str,
     worktree: bool,
+    committed: bool,
     diff_file: bool,
     from_artifact: bool,
 ) -> Result<(), String> {
+    if committed && worktree {
+        return Err(format!(
+            "{command} --committed and --worktree select different diff sources; pass one"
+        ));
+    }
+    if committed && diff_file {
+        return Err(format!(
+            "{command} --committed cannot be combined with --diff"
+        ));
+    }
+    if committed && from_artifact {
+        return Err(format!(
+            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        ));
+    }
     if worktree && diff_file {
         return Err(format!(
             "{command} --worktree cannot be combined with --diff"
@@ -3329,6 +3464,19 @@ pub(super) fn worktree_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
+    lsp_with_serve(args, crate::lsp::serve)
+}
+
+/// Argument dispatch for `ripr lsp`, separated from the blocking stdio
+/// transport so unit tests can prove accepted-argument/dispatch semantics
+/// without entering the real server (issue #1387: the server owns tokio
+/// stdin/stdout and waits indefinitely while stdin stays open, so a test
+/// that calls `lsp(&["--stdio"])` hangs). Production always passes
+/// `crate::lsp::serve`; tests inject a nonblocking stub.
+fn lsp_with_serve(
+    args: &[String],
+    serve: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     for arg in args {
         match arg.as_str() {
             "--stdio" => {}
@@ -3343,7 +3491,7 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
             other => return Err(unknown_argument("lsp", other)),
         }
     }
-    crate::lsp::serve()
+    serve()
 }
 
 /// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).
@@ -3684,6 +3832,35 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn reports_gap_ledger_hinted_recovery_route_parses_and_root_only_does_not() -> Result<(), String>
+    {
+        // #9851 review follow-up: the producer command named in the
+        // missing-gap-ledger diagnostics must parse — the old root-only
+        // example was rejected by this parser, so following the hint
+        // reached another usage error and wrote nothing.
+        let options = parse_gap_decision_ledger_options(&args(&[
+            "--root",
+            ".",
+            "--repo-exposure",
+            "target/ripr/reports/repo-exposure.json",
+            "--out",
+            "gap-ledger.json",
+        ]))
+        .map_err(|err| format!("hinted recovery route must parse: {err}"))?;
+        assert_eq!(options.out, std::path::PathBuf::from("gap-ledger.json"));
+        // Negative control: the retired root-only example still returns
+        // the required-source diagnostic.
+        assert_eq!(
+            parse_gap_decision_ledger_options(&args(&["--root", "."])),
+            Err(
+                "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
+                    .to_string()
+            )
+        );
+        Ok(())
     }
 
     #[test]
@@ -6352,6 +6529,128 @@ language = "rust"
     }
 
     #[test]
+    fn render_report_warnings_is_empty_without_warnings() {
+        assert_eq!(render_report_warnings(&[]), "");
+    }
+
+    #[test]
+    fn render_report_warnings_names_the_missing_input() {
+        // The exact stderr surface a missing-input router run must produce
+        // (#9856): non-empty, count line, one line per warning, each naming
+        // the input the run could not read.
+        let rendered = render_report_warnings(&[
+            "required baseline debt delta input missing.json is invalid: not found".to_string(),
+        ]);
+        assert_eq!(
+            rendered,
+            "Warnings: 1\nWarning: required baseline debt delta input missing.json is invalid: not found\n"
+        );
+        assert!(rendered.contains("missing.json"), "{rendered}");
+    }
+
+    #[test]
+    fn first_action_missing_input_completes_with_warnings() -> Result<(), String> {
+        // A missing required input must keep the documented exit-0 contract
+        // (docs/EXIT_CODES.md: the command completed its typed answer) while
+        // the warning that was previously report-only becomes visible: the
+        // report carries it and the CLI echoes the same text to stderr
+        // (#9856).
+        let dir = unique_command_test_dir("first-action-missing-input");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create first-action missing-input dir: {err}"))?;
+        let missing = dir.join("missing-pr-guidance.json");
+        let out = dir.join("first-useful-action.json");
+        let out_md = dir.join("first-useful-action.md");
+        first_action(&args(&[
+            "--pr-guidance",
+            &missing.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .map_err(|err| format!("missing-input first-action must complete (exit 0): {err}"))?;
+        let json = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read first-action JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("first-action JSON must parse: {err}"))?;
+        let warnings = value
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("first-action JSON must carry a warnings array")?;
+        assert!(!warnings.is_empty(), "warnings must not be empty: {json}");
+        let missing_display = output::first_useful_action::display_path(&missing);
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains(&missing_display))),
+            "warnings must name the missing input {missing_display}: {json}"
+        );
+        // The stderr surface renders the same warnings: non-empty and naming
+        // the missing input.
+        let texts: Vec<String> = warnings
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect();
+        let rendered = render_report_warnings(&texts);
+        assert!(!rendered.is_empty(), "stderr warnings must be non-empty");
+        assert!(rendered.contains(&missing_display), "{rendered}");
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove first-action missing-input dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn zero_status_missing_delta_completes_with_warnings() -> Result<(), String> {
+        // Same #9856 contract as first-action: exit 0, report keeps its
+        // warnings, and stderr renders the same non-empty warning text.
+        let dir = unique_command_test_dir("zero-status-missing-delta");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create zero status missing-delta dir: {err}"))?;
+        let missing = dir.join("missing-delta.json");
+        let out = dir.join("ripr-zero-status.json");
+        let out_md = dir.join("ripr-zero-status.md");
+        zero(&args(&[
+            "status",
+            "--delta",
+            &missing.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .map_err(|err| format!("missing-input zero status must complete (exit 0): {err}"))?;
+        let json =
+            std::fs::read_to_string(&out).map_err(|err| format!("read zero status JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("zero status JSON must parse: {err}"))?;
+        let warnings = value
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("zero status JSON must carry a warnings array")?;
+        assert!(!warnings.is_empty(), "warnings must not be empty: {json}");
+        let missing_display = output::ripr_zero_status::display_path(&missing);
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains(&missing_display))),
+            "warnings must name the missing input {missing_display}: {json}"
+        );
+        let texts: Vec<String> = warnings
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect();
+        let rendered = render_report_warnings(&texts);
+        assert!(!rendered.is_empty(), "stderr warnings must be non-empty");
+        assert!(rendered.contains(&missing_display), "{rendered}");
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove zero status missing-delta dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn ripr_zero_status_writes_json_and_markdown_reports() -> Result<(), String> {
         let dir = unique_command_test_dir("ripr-zero-status");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create zero status dir: {err}"))?;
@@ -7096,7 +7395,7 @@ language = "rust"
 
         let rendered = std::fs::read_to_string(&out)
             .map_err(|err| format!("read calibration output: {err}"))?;
-        assert!(rendered.contains(r#""schema_version": "0.2""#));
+        assert!(rendered.contains(r#""schema_version": "0.3""#));
         assert!(rendered.contains(r#""static_gap_and_runtime_signal": 1"#));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -7440,6 +7739,76 @@ language = "rust"
         assert!(combined.contains("outcomes"));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// A headed cargo-mutants directory keeps its head identity through the
+    /// CLI combine: agreeing members surface the shared head, and
+    /// disagreeing members are disclosed as a conflict instead of a
+    /// missing head.
+    #[test]
+    fn calibrate_directory_preserves_member_head_identity() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-dir-heads");
+        let mutants_dir = dir.join("cargo-mutants");
+        std::fs::create_dir_all(&mutants_dir)
+            .map_err(|err| format!("create mutants dir: {err}"))?;
+        let head = "1111111111111111111111111111111111111140";
+        std::fs::write(
+            mutants_dir.join("outcomes.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","outcome":"missed"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("write outcomes.json: {err}"))?;
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            r#"{"mutants":[{"id":"m1","operator":"replace"}]}"#,
+        )
+        .map_err(|err| format!("write mutants.json: {err}"))?;
+
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains(head) && disclosure.contains("same commit"),
+            "agreeing directory members must surface the shared head: {disclosure}"
+        );
+
+        // Disagreeing members: rewrite mutants.json with a different head.
+        let other = "2222222222222222222222222222222222222241";
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{other}"}}}},"mutants":[{{"id":"m1","operator":"replace"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("rewrite mutants.json: {err}"))?;
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains("conflicting repository heads")
+                && disclosure.contains(head)
+                && disclosure.contains(other),
+            "disagreeing directory members must be disclosed as a conflict: {disclosure}"
+        );
+        assert!(
+            !disclosure.contains("does not carry a head SHA"),
+            "a disagreement must not be reported as an absent head: {disclosure}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn snapshot_with_head(head: &str) -> String {
+        serde_json::json!({
+            "schema_version": "0.3",
+            "artifact": { "repository": { "root": "/w", "head": head } },
+        })
+        .to_string()
     }
 
     #[test]
@@ -8561,8 +8930,46 @@ language = "rust"
 
     #[test]
     fn lsp_accepts_stdio_flag() {
-        // lsp function doesn't reject --stdio, it just processes it
-        assert_eq!(lsp(&args(&["--stdio"])), Ok(()));
+        // Must not enter the real blocking stdio server (issue #1387: it
+        // owns tokio stdin/stdout and waits indefinitely while stdin stays
+        // open). The injected stub proves `--stdio` is accepted and
+        // dispatches to the transport.
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected --stdio to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_default_args_enter_transport() {
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&[]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected default args to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_propagates_transport_errors() {
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
+            Err("transport down".to_string())
+        );
     }
 
     #[test]

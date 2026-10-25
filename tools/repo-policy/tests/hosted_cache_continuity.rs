@@ -86,7 +86,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     }
     for required in [
         "        if: ${{ !inputs.use-scratch }}\n",
-        "        uses: Swatinem/rust-cache@v2\n",
+        "        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2\n",
         "          save-if: ${{ github.ref == 'refs/heads/main' }}\n",
     ] {
         if !step.contains(required) {
@@ -115,7 +115,7 @@ fn retiring_main_push_is_not_cache_continuity() {
     // Dispatch still exists, but an available manual run is not an automatic
     // lifecycle and a pre-merge ref cannot satisfy the producer's save guard.
     assert!(retired.contains("  workflow_dispatch:"));
-    assert!(retired.contains("types: [ready_for_review]"));
+    assert!(retired.contains("types: [labeled]"));
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn missing_caller_dependencies_cannot_supply_guard_outputs() {
 fn disabled_producer_or_additional_cache_is_not_writer_continuity() {
     for changed in [
         PRODUCER.replace("  rust-gates:\n", "  rust-gates:\n    if: false\n"),
-        PRODUCER.replace("      - name: Restore hosted Rust cache\n", "      - uses: Swatinem/rust-cache@v2\n        with:\n          save-if: true\n      - name: Restore hosted Rust cache\n"),
+        PRODUCER.replace("      - name: Restore hosted Rust cache\n", "      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2\n        with:\n          save-if: true\n      - name: Restore hosted Rust cache\n"),
     ] {
         assert_ne!(changed, PRODUCER);
         assert!(!continuity_findings(CALLER, &changed).is_empty());

@@ -1,14 +1,14 @@
 use super::render_helpers::push_path_field;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, powershell_form};
-use crate::output::path::display_path;
+use crate::output::path::{display_path, human_path};
 use crate::output::pilot::commands::{PilotCommands, suggested_retry_timeout_ms};
 use crate::output::pilot::{PILOT_SUMMARY_SCHEMA_VERSION, PilotSummaryContext};
 
 /// Human timeout reason. JSON keeps `timeout_ms` as the spent budget
-/// (schema `0.3`); the prose names the default and the automatic
-/// extension separately so a user who typed nothing is not told they
-/// asked for 270s (#7427).
+/// (per `PILOT_SUMMARY_SCHEMA_VERSION`); the prose names the default and
+/// the automatic extension separately so a user who typed nothing is not
+/// told they asked for 270s (#7427).
 fn analysis_timeout_reason(context: PilotSummaryContext<'_>) -> String {
     let spent_ms = context.timeout_ms;
     let extension_ms = context.timeout_extension_ms;
@@ -63,10 +63,10 @@ pub(crate) fn render_pilot_timeout_summary_json(context: PilotSummaryContext<'_>
     out.push_str("},\n");
 
     // `outputs` stays the packet path map (intended locations) so the
-    // timeout JSON shape remains schema `0.3`. `outputs_written` is the
-    // authority for what this run produced; the timeout command removes
-    // the unwritten siblings so those paths do not still hold a prior run
-    // (#7425).
+    // timeout JSON keeps the current `PILOT_SUMMARY_SCHEMA_VERSION` shape.
+    // `outputs_written` is the authority for what this run produced; the
+    // timeout command removes the unwritten siblings so those paths do not
+    // still hold a prior run (#7425).
     out.push_str("  \"outputs\": {\n");
     push_path_field(
         &mut out,
@@ -129,7 +129,9 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     out.push_str(&format!("- Root: `{}`\n", display_path(context.root)));
     out.push_str(&format!("- Mode: `{}`\n", context.mode.as_str()));
     match context.config_path {
-        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n\n", display_path(path))),
+        // #8696: same human-path rule as the completed-run renderers — a
+        // timed-out pilot still prints the canonical config path.
+        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n\n"),
     }
 
@@ -187,7 +189,9 @@ pub(crate) fn render_pilot_timeout_terminal(context: PilotSummaryContext<'_>) ->
     out.push_str(&format!("  {}\n\n", analysis_timeout_reason(context)));
     out.push_str("Config:\n");
     match context.config_path {
-        Some(path) => out.push_str(&format!("  loaded: {}\n", display_path(path))),
+        // #8696: the timed-out terminal shows the same plain spelling as
+        // the completed-run terminal.
+        Some(path) => out.push_str(&format!("  loaded: {}\n", human_path(path))),
         None => out.push_str("  missing: using built-in defaults\n"),
     }
     out.push('\n');

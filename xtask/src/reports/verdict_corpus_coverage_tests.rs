@@ -11,6 +11,7 @@ fn bare_corpus() -> Result<Corpus, String> {
     let mut corpus = load_corpus(&repo_path(CORPUS_DIR))?;
     for case in &mut corpus.cases {
         case.spec_examples.clear();
+        case.axes.clear();
     }
     Ok(corpus)
 }
@@ -23,7 +24,12 @@ fn cite(corpus: &mut Corpus, index: usize, ids: &[&str]) {
 
 fn specs(rows: &[(&str, &[usize])]) -> SpecExamples {
     rows.iter()
-        .map(|(id, numbers)| (id.to_string(), numbers.iter().copied().collect()))
+        .map(|(id, numbers)| {
+            (
+                id.to_string(),
+                numbers.iter().copied().map(ExampleKey::Number).collect(),
+            )
+        })
         .collect()
 }
 
@@ -59,6 +65,106 @@ fn fixture_specs() -> SpecExamples {
         ("RIPR-SPEC-0901", &[1, 2]),
         ("RIPR-SPEC-0902", &[]),
     ])
+}
+
+const AXIS_LEDGER: &str = r#"
+schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+
+[[axis]]
+id = "language_shape"
+description = "shapes"
+floor = 2
+
+[[axis]]
+id = "hostile_input"
+description = "hostile"
+floor = 1
+"#;
+
+fn tag(corpus: &mut Corpus, index: usize, axes: &[&str]) {
+    if let Some(case) = corpus.cases.get_mut(index) {
+        case.axes = axes.iter().map(|axis| axis.to_string()).collect();
+    }
+}
+
+#[test]
+fn axes_pass_at_their_floor_and_fail_below_it() -> Result<(), String> {
+    let ledger = ledger(AXIS_LEDGER)?;
+    let mut corpus = bare_corpus()?;
+    tag(&mut corpus, 0, &["language_shape"]);
+    tag(&mut corpus, 1, &["language_shape", "hostile_input"]);
+    assert_eq!(axis_violations(&corpus, &ledger), Vec::<String>::new());
+    assert_eq!(
+        axis_counts(&corpus, &ledger),
+        vec![
+            ("language_shape".to_string(), 2, 2),
+            ("hostile_input".to_string(), 1, 1)
+        ]
+    );
+    tag(&mut corpus, 1, &["hostile_input"]);
+    let violations = axis_violations(&corpus, &ledger);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].contains("axis `language_shape` holds 1 cases, below its")
+            && violations[0].contains("floor 2"),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn coverage_violations_enforce_axis_floors_and_stay_quiet_without_axes() -> Result<(), String> {
+    let mut corpus = bare_corpus()?;
+    tag(&mut corpus, 0, &["language_shape"]);
+    let text = coverage_violations(&corpus, &ledger(AXIS_LEDGER)?, &SpecExamples::new()).join("\n");
+    assert!(
+        text.contains("axis `language_shape` holds 1 cases"),
+        "{text}"
+    );
+    assert!(
+        text.contains("axis `hostile_input` holds 0 cases"),
+        "{text}"
+    );
+    // A ledger with no [[axis]] declares nothing and prints nothing.
+    let plain = ledger(LEDGER)?;
+    assert!(axis_violations(&bare_corpus()?, &plain).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_blank_axis_id_is_rejected() -> Result<(), String> {
+    let text = "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n[[axis]]\nid = \" \"\ndescription = \"d\"\nfloor = 0\n";
+    let violations = axis_violations(&bare_corpus()?, &ledger(text)?);
+    assert!(
+        violations.iter().any(|v| v.contains("axis without an id")),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn undeclared_duplicate_and_repeated_axes_are_rejected() -> Result<(), String> {
+    let doubled = format!(
+        "{AXIS_LEDGER}\n[[axis]]\nid = \"hostile_input\"\ndescription = \" \"\nfloor = 0\n"
+    );
+    let mut corpus = bare_corpus()?;
+    tag(
+        &mut corpus,
+        0,
+        &["language_shape", "language_shape", "made_up"],
+    );
+    tag(&mut corpus, 1, &["language_shape"]);
+    let text = axis_violations(&corpus, &ledger(&doubled)?).join("\n");
+    for expected in [
+        "declares axis `hostile_input` twice",
+        "axis `hostile_input` without a description",
+        "carries axis `language_shape` twice",
+        "carries axis `made_up`, which spec-coverage.toml does not declare",
+    ] {
+        assert!(text.contains(expected), "missing `{expected}` in:\n{text}");
+    }
+    Ok(())
 }
 
 #[test]
@@ -103,7 +209,7 @@ fn spec_ids_come_from_the_spec_file_name() {
 fn example_ids_accept_only_the_canonical_spelling() {
     assert_eq!(
         parse_example_id("RIPR-SPEC-0227#10"),
-        Some(("RIPR-SPEC-0227".to_string(), 10))
+        Some(("RIPR-SPEC-0227".to_string(), ExampleKey::Number(10)))
     );
     for bad in [
         "RIPR-SPEC-0227",
@@ -139,10 +245,7 @@ fn citations_of_malformed_unknown_or_unnumbered_examples_are_rejected() -> Resul
         has("no docs/specs file carries `RIPR-SPEC-0999`"),
         "{violations:#?}"
     );
-    assert!(
-        has("has no numbered acceptance example 7"),
-        "{violations:#?}"
-    );
+    assert!(has("has no acceptance example 7"), "{violations:#?}");
     assert_eq!(violations.len(), 3, "{violations:#?}");
     Ok(())
 }
@@ -183,7 +286,10 @@ fn ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones() -> Re
     let ledger = ledger(LEDGER)?;
     let corpus = bare_corpus()?;
     let mut with_new = fixture_specs();
-    with_new.insert("RIPR-SPEC-0903".to_string(), [1].into_iter().collect());
+    with_new.insert(
+        "RIPR-SPEC-0903".to_string(),
+        [ExampleKey::Number(1)].into_iter().collect(),
+    );
     let violations = coverage_violations(&corpus, &ledger, &with_new);
     assert!(
         violations
@@ -207,7 +313,10 @@ fn ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones() -> Re
     );
 
     let mut numbered_now = fixture_specs();
-    numbered_now.insert("RIPR-SPEC-0902".to_string(), [1].into_iter().collect());
+    numbered_now.insert(
+        "RIPR-SPEC-0902".to_string(),
+        [ExampleKey::Number(1)].into_iter().collect(),
+    );
     let violations = coverage_violations(&corpus, &ledger, &numbered_now);
     assert!(
         violations
@@ -264,7 +373,7 @@ fn coverage_counts_cited_in_scope_examples_over_the_unwaived_ones() -> Result<()
     let row = coverage.by_spec.first().ok_or("no row")?;
     assert_eq!(row.spec, "RIPR-SPEC-0900");
     assert_eq!((row.covered, row.waived), (2, 1));
-    assert_eq!(row.uncovered, vec![2]);
+    assert_eq!(row.uncovered, vec![ExampleKey::Number(2)]);
     Ok(())
 }
 
@@ -501,5 +610,154 @@ scope = "in"
         err.contains("unknown subject") && err.contains("missing-subject"),
         "unknown subject must fail closed, got {err}"
     );
+    Ok(())
+}
+
+#[test]
+fn slug_examples_are_read_in_order_next_to_numbered_ones() {
+    let spec = "## Acceptance Examples\n\n1. **First**: legacy.\n\n- example `empty-table`: a slug item\n  continued here.\n- example `mock-count`: another.\n- example `Not_A_Slug`: prose.\n- example `trailing-`: prose.\n- example `double--hyphen`: prose.\n- example `9lives`: prose.\n\n```text\n- example `fenced-slug`: ignored\n```\n\n## Test Mapping\n\n- example `outside-slug`: ignored\n";
+    assert_eq!(
+        acceptance_items(spec),
+        vec![
+            ExampleKey::Number(1),
+            ExampleKey::Slug("empty-table".to_string()),
+            ExampleKey::Slug("mock-count".to_string()),
+        ]
+    );
+    // Slugs never leak into the numbered view.
+    assert_eq!(
+        numbered_examples(spec),
+        [1].into_iter().collect::<BTreeSet<_>>()
+    );
+}
+
+#[test]
+fn slug_examples_must_be_unique_and_alphabetical() {
+    let ordered =
+        acceptance_items("## Acceptance Examples\n\n- example `a-one`: x\n- example `b-two`: y\n");
+    assert_eq!(slug_order_violation(&ordered), None);
+    let swapped =
+        acceptance_items("## Acceptance Examples\n\n- example `b-two`: y\n- example `a-one`: x\n");
+    let problem = slug_order_violation(&swapped).unwrap_or_default();
+    assert!(
+        problem.contains("`b-two` is listed before `a-one`"),
+        "{problem}"
+    );
+    let twice =
+        acceptance_items("## Acceptance Examples\n\n- example `a-one`: x\n- example `a-one`: y\n");
+    let problem = slug_order_violation(&twice).unwrap_or_default();
+    assert!(problem.contains("`a-one` is listed twice"), "{problem}");
+}
+
+#[test]
+fn scanning_specs_rejects_unordered_slug_examples() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("slug-order");
+    let write = |name: &str, body: &str| crate::tests::write(&dir.join(name), body);
+    write(
+        "RIPR-SPEC-0910-ordered.md",
+        "# RIPR-SPEC-0910: x\n\n## Acceptance Examples\n\n- example `a-one`: x\n- example `b-two`: y\n",
+    );
+    let found = scan_specs(&dir)?;
+    assert_eq!(
+        found.get("RIPR-SPEC-0910").map(BTreeSet::len),
+        Some(2),
+        "{found:?}"
+    );
+    write(
+        "RIPR-SPEC-0911-unordered.md",
+        "# RIPR-SPEC-0911: x\n\n## Acceptance Examples\n\n- example `b-two`: y\n- example `a-one`: x\n",
+    );
+    let err = scan_specs(&dir).err().unwrap_or_default();
+    assert!(
+        err.contains("RIPR-SPEC-0911") && err.contains("alphabetical"),
+        "{err}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn slug_example_ids_parse_and_reject_near_misses() {
+    assert_eq!(
+        parse_example_id("RIPR-SPEC-0243#mock-call-count"),
+        Some((
+            "RIPR-SPEC-0243".to_string(),
+            ExampleKey::Slug("mock-call-count".to_string())
+        ))
+    );
+    for bad in [
+        "RIPR-SPEC-0243#Mock-Count",
+        "RIPR-SPEC-0243#mock_count",
+        "RIPR-SPEC-0243#mock--count",
+        "RIPR-SPEC-0243#mock-",
+        "RIPR-SPEC-0243#-mock",
+        "RIPR-SPEC-0243#9lives",
+    ] {
+        assert_eq!(parse_example_id(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn slug_examples_count_cite_waive_and_report_like_numbered_ones() -> Result<(), String> {
+    let ledger = ledger(
+        r#"
+schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 1
+
+[[spec]]
+id = "RIPR-SPEC-0900"
+scope = "in"
+
+[[spec.waived]]
+example = "equivalent-mutant"
+reason = "every mutant is equivalent"
+"#,
+    )?;
+    let mut specs = SpecExamples::new();
+    specs.insert(
+        "RIPR-SPEC-0900".to_string(),
+        [
+            ExampleKey::Number(1),
+            ExampleKey::Slug("empty-table".to_string()),
+            ExampleKey::Slug("equivalent-mutant".to_string()),
+            ExampleKey::Slug("mock-count".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let mut corpus = bare_corpus()?;
+    cite(
+        &mut corpus,
+        0,
+        &["RIPR-SPEC-0900#1", "RIPR-SPEC-0900#empty-table"],
+    );
+    assert!(coverage_violations(&corpus, &ledger, &specs).is_empty());
+    let coverage = spec_example_coverage(&corpus, &ledger, &specs);
+    assert_eq!(coverage.in_scope_examples, 4);
+    assert_eq!(coverage.covered_examples, 2);
+    assert_eq!(coverage.waived_examples, 1);
+    let row = coverage.by_spec.first().ok_or("no row")?;
+    assert_eq!(
+        row.uncovered,
+        vec![ExampleKey::Slug("mock-count".to_string())]
+    );
+    // Citing a slug the spec does not carry, or a waived one, is rejected.
+    cite(
+        &mut corpus,
+        0,
+        &["RIPR-SPEC-0900#missing", "RIPR-SPEC-0900#equivalent-mutant"],
+    );
+    let text = coverage_violations(&corpus, &ledger, &specs).join("\n");
+    assert!(text.contains("has no acceptance example missing"), "{text}");
+    assert!(
+        text.contains("`RIPR-SPEC-0900#equivalent-mutant` is both waived"),
+        "{text}"
+    );
+    // The report serializes numbers as numbers and slugs as strings.
+    let json = serde_json::to_string(&ExampleKey::Number(7)).map_err(|e| e.to_string())?;
+    assert_eq!(json, "7");
+    let json =
+        serde_json::to_string(&ExampleKey::Slug("a-b".to_string())).map_err(|e| e.to_string())?;
+    assert_eq!(json, "\"a-b\"");
     Ok(())
 }

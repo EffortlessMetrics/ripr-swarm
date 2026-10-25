@@ -14,7 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -41,6 +42,7 @@ pub(crate) use oxc_ast::ast::{
 };
 pub(crate) use oxc_parser::Parser;
 pub(crate) use oxc_span::{GetSpan, SourceType};
+pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
@@ -60,6 +62,10 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+#[cfg(test)]
+mod capability_disposition_tests;
+mod catch_arm_guard;
+mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -68,12 +74,23 @@ mod deleted_lines;
 mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
+mod enum_member_guard;
 mod error_payload_guard;
+mod extraction_cache;
+mod field_update_guard;
+mod guard_entry_guard;
+mod helper_inline;
+#[cfg(test)]
+mod helper_inline_tests;
+mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_eval;
+mod literal_mask;
 mod literal_matcher_guard;
 mod lookup_table_guard;
+mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -81,6 +98,7 @@ mod module_entries;
 mod negated_jest_assertion_tests;
 #[cfg(test)]
 mod new_declaration_tests;
+mod nullish_chain_guard;
 mod oracle;
 #[cfg(test)]
 mod owner_path_tests;
@@ -88,33 +106,53 @@ mod owners;
 mod package;
 #[cfg(test)]
 mod predicate_activation_tests;
+mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
 #[cfg(test)]
+mod assertion_form_tests;
+#[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_count_guard;
+mod loop_rows;
 mod parse;
 mod paths;
 mod probe_shape;
 #[cfg(test)]
 mod rejection_equality_tests;
 mod related_tests;
+mod relation_index;
 #[cfg(test)]
 mod replaced_block_tests;
+mod repo;
+#[cfg(test)]
+mod repo_tests;
+mod returned_state_guard;
+mod rounding_mode_guard;
+mod row_miss;
+#[cfg(test)]
+mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
+mod table_loop_rows;
 mod table_rows;
+mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
+mod assertion_helper;
+mod boolean_pin_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod rethrow_wrapper;
+mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
@@ -129,22 +167,29 @@ mod workspace_packages;
 pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
-pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
+pub(crate) use assertion_selection::{
+    TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
+};
+pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
+pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
+pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
+pub(crate) use nullish_chain_guard::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -152,9 +197,15 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use returned_state_guard::*;
+pub(crate) use rounding_mode_guard::*;
+pub(crate) use row_miss::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
+use suite_factory::SuiteFactoryExpansion;
+pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
+pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
@@ -163,6 +214,7 @@ pub(crate) use tsconfig::{
 };
 pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
+pub(crate) use value_hiding_guard::*;
 
 /// TypeScript / JavaScript preview adapter.
 ///
@@ -187,6 +239,99 @@ pub(crate) fn source_type_for(path: &Path) -> SourceType {
     }
 }
 
+/// First owner in source order whose span contains `line`, over a
+/// start-line-sorted slice and its prefix-max of end lines (#10021).
+/// `file_owners` must be sorted by `start_line` (stable, so equal start
+/// lines keep extraction order); `end_prefix_max[i]` is the maximum
+/// `end_line` over `file_owners[..=i]`. Two binary searches keep the
+/// per-changed-line lookup at O(log n) instead of the old O(n) scan of the
+/// workspace owner vec per line.
+fn owner_index_for_line(
+    file_owners: &[TypeScriptOwner],
+    end_prefix_max: &[usize],
+    line: usize,
+) -> Option<usize> {
+    debug_assert_eq!(file_owners.len(), end_prefix_max.len());
+    // Owners starting after `line` cannot contain it.
+    let hi = file_owners.partition_point(|owner| owner.start_line <= line);
+    // The first index whose prefix-max reaches `line` is the first owner in
+    // source order that can still be live at `line`; every earlier owner
+    // ended before it. Within the start-line-sorted prefix that owner
+    // contains `line` exactly when its own end line reaches it.
+    let idx = end_prefix_max[..hi].partition_point(|max_end| *max_end < line);
+    (idx < hi && line <= file_owners[idx].end_line).then_some(idx)
+}
+
+/// Per-file owner resolution for the changed-line classifier (#10021), with
+/// the extraction-faithfulness guard from the #10024 review.
+///
+/// The binary-search index is only faithful to the old extraction-order scan
+/// while the file's owners are already non-decreasing in start line. A
+/// normalized-path collision (e.g. `src/a/b.ts` and a literal `src/a\b.ts`,
+/// which `normalized_path` spells identically on every platform) or an
+/// extraction quirk can invert two overlapping owners; a start-line sort
+/// would then change which owner a changed line resolves to, changing the
+/// finding ID and its classification. A non-monotonic group keeps extraction
+/// order and the old linear scan — rare, and byte-identical to pre-index
+/// behavior.
+enum FileOwnerPlan {
+    /// Start-monotonic group: stable-sorted (a no-op on a monotonic group, so
+    /// extraction order survives) plus the prefix-max of end lines.
+    Indexed {
+        owners: Vec<TypeScriptOwner>,
+        end_prefix_max: Vec<usize>,
+    },
+    /// Non-monotonic group: extraction-order linear scan per changed line.
+    Linear(Vec<TypeScriptOwner>),
+}
+
+impl FileOwnerPlan {
+    fn build(file_owners: Vec<TypeScriptOwner>) -> Self {
+        let start_monotonic = file_owners
+            .iter()
+            .zip(file_owners.iter().skip(1))
+            .all(|(earlier, later)| earlier.start_line <= later.start_line);
+        if start_monotonic {
+            let mut owners = file_owners;
+            owners.sort_by_key(|owner| owner.start_line);
+            let mut end_prefix_max: Vec<usize> = Vec::with_capacity(owners.len());
+            let mut max_end_line = 0usize;
+            for owner in &owners {
+                max_end_line = max_end_line.max(owner.end_line);
+                end_prefix_max.push(max_end_line);
+            }
+            Self::Indexed {
+                owners,
+                end_prefix_max,
+            }
+        } else {
+            Self::Linear(file_owners)
+        }
+    }
+
+    fn owners(&self) -> &[TypeScriptOwner] {
+        match self {
+            Self::Indexed { owners, .. } => owners,
+            Self::Linear(owners) => owners,
+        }
+    }
+
+    /// First owner whose span contains `line`, exactly as the pre-index
+    /// extraction-order scan selected it: the binary-search index for a
+    /// monotonic group, a linear scan over extraction order otherwise.
+    fn owner_for_line(&self, line: usize) -> Option<&TypeScriptOwner> {
+        match self {
+            Self::Indexed {
+                owners,
+                end_prefix_max,
+            } => owners.get(owner_index_for_line(owners, end_prefix_max, line)?),
+            Self::Linear(owners) => owners
+                .iter()
+                .find(|owner| owner.start_line <= line && line <= owner.end_line),
+        }
+    }
+}
+
 impl LanguageAdapter for TypeScriptAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::TypeScript))
@@ -208,35 +353,27 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn analyze_repo(
         &self,
-        _options: &AnalysisOptions,
+        options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // The stub still returns an empty result, but it now discloses
-        // the partial run through `partial_reason` so the pipeline
-        // records a `Partial` language run on the shared `language_runs`
-        // channel (adapter.rs): human/JSON output renders the limitation
-        // and gates fail closed on the partial denominator. Without this
-        // disclosure the empty adapter result was silent — and in a mixed
-        // Rust+TypeScript repo the render-side `typescript_diff_first`
-        // guidance (output/render.rs) never fires because it requires an
-        // empty seam inventory AND no Rust files. See
-        // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
-        // the limitation contract.
-        Ok(LanguageRepoResult {
-            findings: Vec::new(),
-            harness_projections: Vec::new(),
-            production_files: 0,
-            skipped_files: 0,
-            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
-            rust_diagnostic_origins: Default::default(),
-            rust_consumed_sources: Default::default(),
-        })
+        // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
+        // unreadable or partially indexed run discloses itself through
+        // `partial_reason` on the shared `language_runs` channel.
+        repo::analyze_repo(options, &[])
     }
 }
 
 impl TypeScriptAdapter {
+    /// [`LanguageAdapter::analyze_repo`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386), so repo mode admits the same
+    /// declared hand-written sources diff mode does.
+    pub(crate) fn analyze_repo_with_handwritten_env(
+        options: &AnalysisOptions,
+        handwritten: &[String],
+    ) -> Result<LanguageRepoResult, String> {
+        repo::analyze_repo(options, handwritten)
+    }
+
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
     /// with the read caps injected (mirrors
     /// `PythonAdapter::analyze_diff_with_limits`: the trait method resolves
@@ -348,55 +485,6 @@ impl TypeScriptAdapter {
             skipped_files += 1;
             read_failures.push(TypeScriptReadFailure { file, error });
         }
-        for relative in &workspace_files {
-            let Some(source) = source_cache.get(relative) else {
-                continue;
-            };
-            if let Some(reason) = parse_error_reason(relative, source) {
-                // Disclose parse failures for CHANGED files of either role:
-                // a changed production file's added lines are never
-                // classified, and a changed test file's tests silently vanish
-                // from `all_tests` (which can flip owners to false
-                // `no_static_path`). Unchanged-file parse errors stay out of
-                // the diff-scoped limitation set; the per-file index effect is
-                // bounded to owners this diff touches.
-                if changed_paths
-                    .iter()
-                    .any(|changed| changed == &normalized_path(relative))
-                {
-                    parse_limits.push(TypeScriptParseLimit {
-                        file: relative.clone(),
-                        reason,
-                    });
-                }
-                continue;
-            }
-            if is_test_file(relative) {
-                let (mut tests, conditional_credit_gap) =
-                    extract_tests_and_conditional_credit_gap(relative, source);
-                // RIPR-SPEC-0258: a committed snapshot entry pins the value.
-                promote_committed_snapshots(&options.root, relative, source, &mut tests);
-                // A recognized test file that parses but registers test
-                // shapes the extractor drops (template-literal titles,
-                // tagged-template `.each`, tests generated in loops or
-                // callbacks) gets a partial-extraction disclosure so a
-                // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction(relative, source, &tests) {
-                    extraction_gaps.push(gap);
-                }
-                // #8714: an extracted assertion sitting under an unevaluated
-                // branch condition keeps its credit; the disclosure records
-                // that the branch (and the oracle) may never execute. The gap
-                // came out of the same parse as the extraction (one parse per
-                // file, not two).
-                if let Some(gap) = conditional_credit_gap {
-                    conditional_credit_gaps.push(gap);
-                }
-                all_tests.extend(tests);
-            } else {
-                all_owners.extend(extract_owners(relative, source));
-            }
-        }
         // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
         // fail-closed: None when the flag is explicitly set false, when tsconfig is absent, when extends/
         // references are present, or when any other parse/resolution failure occurs.
@@ -426,6 +514,105 @@ impl TypeScriptAdapter {
         };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
+        for relative in &workspace_files {
+            let Some(source) = source_cache.get(relative) else {
+                continue;
+            };
+            // #10071: ONE combined parse per file yields the parse status
+            // plus owners, export facts, and phase-2 facts; the re-export
+            // index and phase 2 then reuse the cached entry instead of
+            // re-parsing. A refused/failed parse (`Err`) and a parse error
+            // (`Some(parse_error)`) disclose exactly like the previous
+            // dedicated parse-error pass.
+            let facts = match extraction_cache::file_facts_cached(
+                relative,
+                source,
+                &options.root,
+                alias_map_ref,
+            ) {
+                Ok(facts) => facts,
+                Err(reason) => {
+                    // Disclose parse failures for CHANGED files of either role:
+                    // a changed production file's added lines are never
+                    // classified, and a changed test file's tests silently
+                    // vanish from `all_tests` (which can flip owners to false
+                    // `no_static_path`). Unchanged-file parse errors stay out
+                    // of the diff-scoped limitation set; the per-file index
+                    // effect is bounded to owners this diff touches.
+                    if changed_paths
+                        .iter()
+                        .any(|changed| changed == &normalized_path(relative))
+                    {
+                        parse_limits.push(TypeScriptParseLimit {
+                            file: relative.clone(),
+                            reason,
+                        });
+                    }
+                    continue;
+                }
+            };
+            if let Some(reason) = &facts.parse_error {
+                // Same changed-file disclosure contract as the `Err` arm:
+                // parse-error files are owned by the parse-limit lane.
+                if changed_paths
+                    .iter()
+                    .any(|changed| changed == &normalized_path(relative))
+                {
+                    parse_limits.push(TypeScriptParseLimit {
+                        file: relative.clone(),
+                        reason: reason.clone(),
+                    });
+                }
+                continue;
+            }
+            if is_test_file(relative) {
+                let (mut tests, conditional_credit_gap, expansion) =
+                    extract_tests_with_expansion(relative, source);
+                // RIPR-SPEC-0258: a committed snapshot entry pins the value.
+                // The tests of a suite-factory call carry the factory's
+                // snapshot call once per expansion, so the file's calls are
+                // counted the same way.
+                let counted = expansion
+                    .as_ref()
+                    .map(SuiteFactoryExpansion::snapshot_source);
+                promote_committed_snapshots(
+                    &options.root,
+                    relative,
+                    counted.as_deref().unwrap_or(source),
+                    &mut tests,
+                );
+                // A recognized test file that parses but registers test
+                // shapes the extractor drops (template-literal titles,
+                // tagged-template `.each`, tests generated in loops or
+                // callbacks) gets a partial-extraction disclosure so a
+                // confident `no_static_path` is known to be possibly false.
+                if let Some(gap) = detect_partial_test_extraction_expanded(
+                    relative,
+                    source,
+                    &tests,
+                    expansion.as_ref(),
+                ) {
+                    extraction_gaps.push(gap);
+                }
+                // #8714: an extracted assertion sitting under an unevaluated
+                // branch condition keeps its credit; the disclosure records
+                // that the branch (and the oracle) may never execute. The gap
+                // came out of the same parse as the extraction (one parse per
+                // file, not two).
+                if let Some(gap) = conditional_credit_gap {
+                    conditional_credit_gaps.push(gap);
+                }
+                all_tests.extend(tests);
+            } else {
+                // #10071/#10044: owners came out of the same single parse as
+                // the parse check; the process-lifetime cache lets an LSP
+                // session re-save without re-parsing the whole workspace.
+                // Test extraction stays uncached because committed snapshots
+                // read the filesystem.
+                all_owners.extend(facts.owners.clone());
+            }
+        }
+
         // Build the bounded re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
         // through `export { N } from` / `export * from` barrel chains.
@@ -437,6 +624,12 @@ impl TypeScriptAdapter {
             alias_map_ref,
             is_test_file,
         );
+
+        // #10028: invert the test corpus once so each owner's relation scans
+        // (pass-1 candidates, module-entry union, the two named-limitation
+        // passes) pre-filter by body-name / import-shape / re-export-exposure
+        // keys instead of scanning every workspace test per owner.
+        let relation_index = relation_index::RelationIndex::build(&all_tests, &reexport_index);
 
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
@@ -503,12 +696,33 @@ impl TypeScriptAdapter {
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
                 let changed_lines: Vec<usize> =
                     changed.added_lines.iter().map(|added| added.line).collect();
-                if let Some(gap) =
-                    detect_owner_extraction_gap(&changed.path, source, &changed_lines)
-                {
+                if let Some(gap) = detect_owner_extraction_gap(
+                    &changed.path,
+                    source,
+                    &changed_lines,
+                    &options.root,
+                    alias_map_ref,
+                ) {
                     owner_extraction_gaps.push(gap);
                 }
             }
+            // The gap disclosure above is file-level; a changed enum member
+            // also earns its own limited finding so the edit is not silent
+            // (#9436).
+            let enum_member_lines = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    let changed_lines: Vec<usize> =
+                        changed.added_lines.iter().map(|added| added.line).collect();
+                    changed_enum_member_lines(
+                        &changed.path,
+                        source,
+                        &changed_lines,
+                        &options.root,
+                        alias_map_ref,
+                    )
+                })
+                .unwrap_or_default();
 
             // Resolve package/workspace discovery facts for this changed file.
             // Evidence lines are injected into every finding generated below
@@ -542,7 +756,9 @@ impl TypeScriptAdapter {
             // identifier and can start a line inside a template literal.
             let ambient = source_by_normalized
                 .get(&normalized_path(&changed.path))
-                .map(|source| ambient_declaration_lines(&changed.path, source))
+                .map(|source| {
+                    ambient_declaration_lines(&changed.path, source, &options.root, alias_map_ref)
+                })
                 .unwrap_or_default();
             let is_probe_candidate = |line: usize, text: &str| {
                 !should_ignore_typescript_changed_line(text)
@@ -555,6 +771,32 @@ impl TypeScriptAdapter {
                 .iter()
                 .map(|removed| removed.text.as_str())
                 .collect();
+            // #10021: the per-line classifier used to scan the workspace
+            // owner vec for every changed line — O(changed lines x workspace
+            // owners), allocation-free per step only after the alloc-free
+            // file compare, still ~140 s for 10k lines in a 100k-owner file.
+            // `FileOwnerPlan` resolves against a per-file owner group in
+            // O(log file owners) per line for the common start-monotonic
+            // group, and falls back to the old extraction-order linear scan
+            // when a normalized-path collision or extraction quirk inverts
+            // the group (#10024 review).
+            let changed_norm = normalized_path(&changed.path);
+            // #10021 (memoization half): the four per-owner `all_tests` scans
+            // in the classifier depend on the owner, never on the changed
+            // line. Key them by the owner's identity (file, name, span) so a
+            // file with many changed lines — and the deleted-lines pass —
+            // computes each scan once per owner instead of once per line.
+            let mut owner_contexts: std::collections::HashMap<
+                (String, String, usize, usize),
+                OwnerLineContext<'_>,
+            > = std::collections::HashMap::new();
+            let owner_plan = FileOwnerPlan::build(
+                all_owners
+                    .iter()
+                    .filter(|owner| normalized_path(&owner.file) == changed_norm)
+                    .cloned()
+                    .collect(),
+            );
             // Every removed line of a replacement block shares the new-side
             // line where the added run starts, so matching on that coordinate
             // alone finds an old line only for the run's first added line
@@ -607,18 +849,39 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
-                if let Some(mut finding) = classify_change_with_alias_state(
-                    &changed.path,
-                    added.line,
-                    &added.text,
-                    old_line_text,
-                    &all_owners,
-                    &all_tests,
-                    Some(&options.root),
-                    &reexport_index,
-                    alias_map_ref,
-                    alias_load_gap.as_ref(),
-                ) {
+                let resolved_finding = owner_plan.owner_for_line(added.line).and_then(|owner| {
+                    let key = (
+                        changed_norm.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                        owner.end_line,
+                    );
+                    let context = owner_contexts.entry(key).or_insert_with(|| {
+                        owner_line_context(
+                            owner,
+                            &all_tests,
+                            Some(&options.root),
+                            &reexport_index,
+                            &relation_index,
+                            alias_map_ref,
+                        )
+                    });
+                    classify_resolved_owner(
+                        &changed.path,
+                        added.line,
+                        &added.text,
+                        old_line_text,
+                        owner,
+                        owner_plan.owners(),
+                        context,
+                        &all_tests,
+                        Some(&options.root),
+                        &reexport_index,
+                        alias_map_ref,
+                        alias_load_gap.as_ref(),
+                    )
+                });
+                if let Some(mut finding) = resolved_finding {
                     test_index_consumed = true;
                     finding.evidence.extend(discovery_evidence.clone());
                     // Inject verify-command evidence derived from the strongest
@@ -669,6 +932,11 @@ impl TypeScriptAdapter {
                         );
                     }
                     findings.push(finding);
+                } else if let Some(identity) = enum_member_lines.get(&added.line) {
+                    let mut finding =
+                        enum_member_finding(&changed.path, added.line, &added.text, identity);
+                    finding.evidence.extend(discovery_evidence.clone());
+                    findings.push(finding);
                 }
             }
             let deleted = deleted_lines::deleted_line_findings(
@@ -680,14 +948,39 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
-                    // Only the resolved owner is offered, so the classifier's
-                    // owner lookup cannot land on a different one.
-                    classify_change_with_alias_state(
+                    // The wrapper's owner lookup is the span check only: the
+                    // caller already resolved the sole owner this closure
+                    // receives (its file matched by normalized path), so a
+                    // line outside the owner's span classified nothing. Keep
+                    // that guard, then share the memoized per-owner context
+                    // with the added-lines pass above (#10021).
+                    if line < owner.start_line || line > owner.end_line {
+                        return None;
+                    }
+                    let key = (
+                        changed_norm.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                        owner.end_line,
+                    );
+                    let context = owner_contexts.entry(key).or_insert_with(|| {
+                        owner_line_context(
+                            owner,
+                            &all_tests,
+                            Some(&options.root),
+                            &reexport_index,
+                            &relation_index,
+                            alias_map_ref,
+                        )
+                    });
+                    classify_resolved_owner(
                         &changed.path,
                         line,
                         text,
                         None,
+                        owner,
                         std::slice::from_ref(owner),
+                        context,
                         &all_tests,
                         Some(&options.root),
                         &reexport_index,

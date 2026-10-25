@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Repo-exposure seam walks share one run-scoped `OwnerPinSyntax` instead of constructing a fresh instance per seam, so the trusted-macro ambiguity pass and the other whole-index facts it lazily computes are paid once per walk instead of once per seam (#8282). A ripr-swarm-sized `check --format repo-exposure-json` converges instead of re-paying the first full-index pass O(seams) times. Findings and converging inputs are unchanged.

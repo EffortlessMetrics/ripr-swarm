@@ -115,7 +115,15 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
     let mut touched = std::collections::BTreeSet::new();
     for (test, source) in generated {
         let key = (test.file.clone(), test.start_line);
-        if index.doctest_sources.contains_key(&key) {
+        // Idempotent re-registration (#8547 reuse): skip only while the
+        // doctest registered by an earlier pass is still live. A reused
+        // index re-runs every post-parse phase, and earlier phases can
+        // drop the synthetic test; the recorded source alone must not
+        // suppress registering it again, or reuse loses the example.
+        let already_live = index.tests().iter().any(|live| {
+            live.file == test.file && live.start_line == test.start_line && live.name == test.name
+        });
+        if already_live {
             continue;
         }
         index

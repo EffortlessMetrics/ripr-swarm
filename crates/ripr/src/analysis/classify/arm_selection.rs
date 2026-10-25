@@ -248,6 +248,9 @@ pub(in crate::analysis) struct ArmSelector {
     /// names the scrutinee's variant only when no import in the test's
     /// file binds that name from another enum.
     test_imports: Option<std::collections::BTreeMap<std::path::PathBuf, Vec<UsePath>>>,
+    /// The source of each test file, for the skip list a table loop opens
+    /// with (`syntax::skipping_table_column`).
+    test_sources: std::collections::BTreeMap<std::path::PathBuf, std::sync::Arc<str>>,
     /// The variants of the scrutinee's enum, once `in_workspace` finds its
     /// declaration in the owner's file (`declared_enum_variants`) or in the
     /// one workspace file the owner's import of it names
@@ -591,6 +594,7 @@ impl ArmSelector {
             local_roots,
             owner_file: owner.file.clone(),
             test_imports: None,
+            test_sources: std::collections::BTreeMap::new(),
             pattern_pins: std::collections::BTreeMap::new(),
             lent_selections: std::collections::BTreeSet::new(),
         })
@@ -650,6 +654,11 @@ impl ArmSelector {
                 imports
                     .entry(file.to_path_buf())
                     .or_insert_with(|| flattened_use_paths(&facts.source));
+                if facts.source.contains("contains(&") {
+                    self.test_sources
+                        .entry(file.to_path_buf())
+                        .or_insert_with(|| std::sync::Arc::clone(&facts.source));
+                }
             }
         }
         self.test_imports = Some(imports);
@@ -994,7 +1003,15 @@ impl ArmSelector {
                 .map(str::trim)
                 .filter(|input| is_identifier(input) && runs_in_table_loop(test, line, input))
                 .filter_map(|input| {
-                    crate::analysis::syntax::constant_table_column(&test.body, input)
+                    crate::analysis::syntax::constant_table_column(&test.body, input).or_else(
+                        || {
+                            self.test_sources.get(&test.file).and_then(|source| {
+                                crate::analysis::syntax::skipping_table_column(
+                                    &test.body, input, source,
+                                )
+                            })
+                        },
+                    )
                 })
                 .any(|cells| {
                     cells.iter().any(|cell| {
@@ -2628,7 +2645,7 @@ fn runs_in_table_loop(test: &TestSummary, line: usize, name: &str) -> bool {
             if close < statement_start {
                 return false;
             }
-            let before = &masked[open + 1..statement_start];
+            let before = strip_skip_guard(&masked[open + 1..statement_start]);
             let mut depth = 0i32;
             for byte in before.bytes() {
                 match byte {
@@ -2644,6 +2661,45 @@ fn runs_in_table_loop(test: &TestSummary, line: usize, name: &str) -> bool {
                     .all(|word| whole_word_offsets(before, word).is_empty())
                 && (before.trim().is_empty() || before.trim_end().ends_with([';', '}']))
         })
+}
+
+/// `before` without its opening `if SKIPPED.contains(&key) { continue; }`:
+/// the one skip guard `syntax::skipping_table_column` resolves. Whether the
+/// guard names a literal list and a loop key is that function's to
+/// establish; this only lets the text scan step over its `continue`.
+fn strip_skip_guard(before: &str) -> &str {
+    let trimmed = before.trim_start();
+    let Some(rest) = trimmed.strip_prefix("if") else {
+        return before;
+    };
+    let Some(open) = rest.find('{') else {
+        return before;
+    };
+    let condition: String = rest[..open]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let Some(call) = condition.strip_suffix(')') else {
+        return before;
+    };
+    let Some((list, key)) = call.split_once(".contains(&") else {
+        return before;
+    };
+    if !is_identifier(list) || !is_identifier(key) {
+        return before;
+    }
+    let Some(close) = matching_close_brace(rest, open) else {
+        return before;
+    };
+    let block: String = rest[open..=close]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if block == "{continue;}" {
+        &rest[close + 1..]
+    } else {
+        before
+    }
 }
 
 /// The offset of the `}` that closes the `{` at `open`.
@@ -3253,6 +3309,7 @@ mod tests {
                 .to_string(),
             parameters: vec!["input".to_string(), "want".to_string()],
             call_lines: vec![2],
+            eager_call_lines: Vec::new(),
         };
         let call_fact = || crate::analysis::facts::CallFact {
             line: 2,
@@ -4016,6 +4073,37 @@ mod tests {
                 "must not read the table: {unrun}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_skip_guard_over_a_literal_list_drops_only_the_listed_rows() -> Result<(), String> {
+        // RIPR-SPEC-0229 decision 7, opening skip guard.
+        let body = "pub fn default_port(scheme: &str) -> Option<u16> {\n    match scheme {\n        \"http\" => Some(80),\n        \"ftp\" => Some(21),\n        \"gopher\" => Some(70),\n        _ => None,\n    }\n}\n";
+        let assertion = "assert_eq!(default_port(scheme), expected, \"{scheme}\");";
+        let test = test_with(
+            "fn t() {\n    let table = [(\"http\", Some(80)), (\"ftp\", Some(21)), (\"gopher\", Some(71))];\n    for (scheme, expected) in table {\n        if SKIPPED.contains(&scheme) {\n            continue;\n        }\n        assert_eq!(default_port(scheme), expected, \"{scheme}\");\n    }\n}\n",
+        );
+        let line = 7;
+        let listed = |names: &str| {
+            let mut selector =
+                ArmSelector::establish(&arm_probe(names, 4), &owner(body, "default_port"))
+                    .ok_or_else(|| "premise: the arm reads scheme".to_string())?;
+            selector.test_sources.insert(
+                "src/lib.rs".into(),
+                std::sync::Arc::from("const SKIPPED: &[&str] = &[\"gopher\"];\n"),
+            );
+            Ok::<_, String>(selector)
+        };
+        // ftp is not listed, so its row runs and selects the changed arm.
+        assert!(listed("\"ftp\" => Some(21),")?.table_row_selects(&test, assertion, line));
+        // gopher is listed, so no row of the loop selects its arm.
+        let gopher = listed("\"gopher\" => Some(70),")?;
+        assert!(!gopher.table_row_selects(&test, assertion, line));
+        // Without a readable list the guard reads as an unknown skip.
+        let mut unlisted = listed("\"ftp\" => Some(21),")?;
+        unlisted.test_sources.clear();
+        assert!(!unlisted.table_row_selects(&test, assertion, line));
         Ok(())
     }
 

@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-template-plural-boundary",
+  "subject_id": "authored-ts-vitest-shapes",
+  "origin": "authored",
+  "anchor": "src/plural.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "vitest_template_literal_plural_pair",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

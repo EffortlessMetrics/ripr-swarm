@@ -36,6 +36,32 @@ pub(crate) struct Ledger {
     /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
     #[serde(default)]
     pub(crate) oracle: Option<super::oracle::OracleGate>,
+    /// The operator-grid and trap gate (`verdict_corpus_grid.rs`).
+    #[serde(default)]
+    pub(crate) grid: Option<super::grid::GridGate>,
+    /// Every false verdict the corpus still scores, each with its owner
+    /// (`verdict_corpus_known_false.rs`).
+    #[serde(default)]
+    pub(crate) known_false: Vec<super::known_false::KnownFalse>,
+    /// Most abstained rows whose tests do discriminate the change (missed
+    /// credit). A rise fails; a fall passes with a note to lower it
+    /// (`verdict_corpus_known_false.rs`).
+    #[serde(default)]
+    pub(crate) missed_credit_ceiling: Option<usize>,
+    /// Coverage axes beyond spec examples: language shapes, test-library
+    /// idioms and hostile inputs, each with the case count `check` protects.
+    #[serde(default)]
+    pub(crate) axis: Vec<LedgerAxis>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LedgerAxis {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    /// Fewest cases tagged with this axis. Raise it when coverage grows;
+    /// lowering it is a reviewed edit with a reason.
+    pub(crate) floor: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -59,7 +85,7 @@ pub(crate) enum Scope {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Waiver {
-    pub(crate) example: usize,
+    pub(crate) example: ExampleKey,
     pub(crate) reason: String,
 }
 
@@ -70,15 +96,45 @@ pub(crate) struct UnmeasuredSpec {
     pub(crate) reason: String,
 }
 
-/// Spec id to its numbered acceptance examples; a spec without any maps to
-/// an empty set.
-pub(crate) type SpecExamples = BTreeMap<String, BTreeSet<usize>>;
+/// One acceptance example of a spec: a legacy hand-numbered item (`K. `) or
+/// a slug-keyed item (``- example `slug`: ``). New examples take a slug, so two PRs
+/// adding examples never fight over the next number or the end of the list.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(untagged)]
+pub(crate) enum ExampleKey {
+    Number(usize),
+    Slug(String),
+}
 
-/// The numbers of the items written `K. ` at the start of a line between
-/// `## Acceptance Examples` and the next second-level heading. Continuation
+impl std::fmt::Display for ExampleKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number(number) => write!(f, "{number}"),
+            Self::Slug(slug) => f.write_str(slug),
+        }
+    }
+}
+
+/// Spec id to its acceptance examples (numbered and slug-keyed); a spec
+/// without any maps to an empty set.
+pub(crate) type SpecExamples = BTreeMap<String, BTreeSet<ExampleKey>>;
+
+/// A slug is lowercase ASCII words joined by single hyphens, starting with a
+/// letter, so one example has one spelling and never reads as a number.
+fn is_slug(text: &str) -> bool {
+    text.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && !text.ends_with('-')
+        && !text.contains("--")
+        && text
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// The items of `## Acceptance Examples` in file order: `K. ` numbered
+/// items and ``- example `slug`: `` slug items at the start of a line. Continuation
 /// lines are indented, so they never start an item; fenced code is skipped.
-pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
-    let mut found = BTreeSet::new();
+pub(crate) fn acceptance_items(markdown: &str) -> Vec<ExampleKey> {
+    let mut found = Vec::new();
     let mut inside = false;
     // The open fence's character and length: Markdown fences use backticks or
     // tildes, and only a run of the same character at least as long closes one.
@@ -107,6 +163,15 @@ pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
         if !inside {
             continue;
         }
+        if let Some(slug) = line
+            .strip_prefix("- example `")
+            .and_then(|rest| rest.split_once("`:"))
+            .map(|(slug, _)| slug)
+            .filter(|slug| is_slug(slug))
+        {
+            found.push(ExampleKey::Slug(slug.to_string()));
+            continue;
+        }
         let digits: String = line.chars().take_while(char::is_ascii_digit).collect();
         if !digits.is_empty()
             && line
@@ -114,10 +179,47 @@ pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
                 .is_some_and(|rest| rest.starts_with(". "))
             && let Ok(number) = digits.parse::<usize>()
         {
-            found.insert(number);
+            found.push(ExampleKey::Number(number));
         }
     }
     found
+}
+
+/// The numbers of the items written `K. ` under `## Acceptance Examples`.
+#[cfg(test)]
+pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
+    acceptance_items(markdown)
+        .into_iter()
+        .filter_map(|key| match key {
+            ExampleKey::Number(number) => Some(number),
+            ExampleKey::Slug(_) => None,
+        })
+        .collect()
+}
+
+/// Slug items must be unique and listed alphabetically: an example inserted
+/// where its slug sorts lands away from every other PR's insertion, so the
+/// list has no shared end to conflict on. Returns the first violation.
+fn slug_order_violation(items: &[ExampleKey]) -> Option<String> {
+    let slugs: Vec<&str> = items
+        .iter()
+        .filter_map(|key| match key {
+            ExampleKey::Slug(slug) => Some(slug.as_str()),
+            ExampleKey::Number(_) => None,
+        })
+        .collect();
+    slugs.windows(2).find_map(|pair| {
+        if pair[0] == pair[1] {
+            Some(format!("slug example `{}` is listed twice", pair[0]))
+        } else if pair[0] > pair[1] {
+            Some(format!(
+                "slug example `{}` is listed before `{}`; keep slug examples alphabetical",
+                pair[0], pair[1]
+            ))
+        } else {
+            None
+        }
+    })
 }
 
 /// The spec id a file name carries: `RIPR-SPEC-NNNN-<slug>.md` or
@@ -144,7 +246,14 @@ pub(crate) fn scan_specs(dir: &Path) -> Result<SpecExamples, String> {
         let path = entry.path();
         let text = fs::read_to_string(&path)
             .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
-        if specs.insert(id.clone(), numbered_examples(&text)).is_some() {
+        let items = acceptance_items(&text);
+        if let Some(problem) = slug_order_violation(&items) {
+            return Err(format!("{}: {problem}", normalize_path(&path)));
+        }
+        if specs
+            .insert(id.clone(), items.into_iter().collect())
+            .is_some()
+        {
             return Err(format!("two spec files carry the id `{id}`"));
         }
     }
@@ -155,27 +264,44 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
     let path = corpus_dir.join(LEDGER_FILE);
     let text = fs::read_to_string(&path)
         .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
-    toml::from_str(&text).map_err(|err| format!("parse {}: {err}", normalize_path(&path)))
+    let mut ledger: Ledger =
+        toml::from_str(&text).map_err(|err| format!("parse {}: {err}", normalize_path(&path)))?;
+    if !ledger.known_false.is_empty() {
+        return Err(format!(
+            "{} lists `[[known_false]]` inline; one file per row under `{}/` keeps parallel fixes from conflicting",
+            normalize_path(&path),
+            super::known_false::KNOWN_FALSE_DIR
+        ));
+    }
+    ledger.known_false = super::known_false::load_entries(corpus_dir)?;
+    Ok(ledger)
 }
 
-/// `RIPR-SPEC-NNNN#K` as (`RIPR-SPEC-NNNN`, K). K is a positive integer
-/// without leading zeros, so one example has one spelling.
-pub(crate) fn parse_example_id(id: &str) -> Option<(String, usize)> {
-    let (spec, number) = id.split_once('#')?;
+/// `RIPR-SPEC-NNNN#K` or `RIPR-SPEC-NNNN#slug` as (`RIPR-SPEC-NNNN`, key).
+/// K is a positive integer without leading zeros and a slug is lowercase
+/// hyphenated words, so one example has one spelling.
+pub(crate) fn parse_example_id(id: &str) -> Option<(String, ExampleKey)> {
+    let (spec, example) = id.split_once('#')?;
     let digits = spec.strip_prefix(SPEC_PREFIX)?;
-    let spec_ok = digits.len() == 4 && digits.chars().all(|c| c.is_ascii_digit());
-    let number_ok = !number.is_empty()
-        && !number.starts_with('0')
-        && number.chars().all(|c| c.is_ascii_digit());
-    if !spec_ok || !number_ok {
+    if digits.len() != 4 || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
-    Some((spec.to_string(), number.parse().ok()?))
+    let key = if is_slug(example) {
+        ExampleKey::Slug(example.to_string())
+    } else if !example.is_empty()
+        && !example.starts_with('0')
+        && example.chars().all(|c| c.is_ascii_digit())
+    {
+        ExampleKey::Number(example.parse().ok()?)
+    } else {
+        return None;
+    };
+    Some((spec.to_string(), key))
 }
 
 /// Every spec example a case cites, after id validation.
-fn citations(corpus: &Corpus) -> BTreeMap<(String, usize), Vec<String>> {
-    let mut cited: BTreeMap<(String, usize), Vec<String>> = BTreeMap::new();
+fn citations(corpus: &Corpus) -> BTreeMap<(String, ExampleKey), Vec<String>> {
+    let mut cited: BTreeMap<(String, ExampleKey), Vec<String>> = BTreeMap::new();
     for case in &corpus.cases {
         for id in &case.spec_examples {
             if let Some(key) = parse_example_id(id) {
@@ -186,13 +312,13 @@ fn citations(corpus: &Corpus) -> BTreeMap<(String, usize), Vec<String>> {
     cited
 }
 
-fn examples_text(examples: &BTreeSet<usize>) -> String {
+fn examples_text(examples: &BTreeSet<ExampleKey>) -> String {
     if examples.is_empty() {
         return "none".to_string();
     }
     examples
         .iter()
-        .map(usize::to_string)
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -250,7 +376,7 @@ pub(crate) fn coverage_violations(
         }
         let mut waived = BTreeSet::new();
         for waiver in &entry.waived {
-            if !waived.insert(waiver.example) {
+            if !waived.insert(waiver.example.clone()) {
                 violations.push(format!(
                     "{LEDGER_FILE} waives `{}#{}` twice",
                     entry.id, waiver.example
@@ -258,7 +384,7 @@ pub(crate) fn coverage_violations(
             }
             if !examples.contains(&waiver.example) {
                 violations.push(format!(
-                    "{LEDGER_FILE} waives `{}#{}`, which is not a numbered acceptance example (numbered: {})",
+                    "{LEDGER_FILE} waives `{}#{}`, which is not an acceptance example (examples: {})",
                     entry.id,
                     waiver.example,
                     examples_text(examples)
@@ -310,7 +436,7 @@ pub(crate) fn coverage_violations(
             }
             let Some((spec, number)) = parse_example_id(id) else {
                 violations.push(format!(
-                    "case `{}` spec example `{id}` is not `RIPR-SPEC-NNNN#K`",
+                    "case `{}` spec example `{id}` is not `RIPR-SPEC-NNNN#K` or `RIPR-SPEC-NNNN#slug`",
                     case.case_id
                 ));
                 continue;
@@ -324,7 +450,7 @@ pub(crate) fn coverage_violations(
             };
             if !examples.contains(&number) {
                 violations.push(format!(
-                    "case `{}` cites `{id}`, but `{spec}` has no numbered acceptance example {number} (numbered: {})",
+                    "case `{}` cites `{id}`, but `{spec}` has no acceptance example {number} (examples: {})",
                     case.case_id,
                     examples_text(examples)
                 ));
@@ -345,6 +471,7 @@ pub(crate) fn coverage_violations(
             }
         }
     }
+    violations.extend(axis_violations(corpus, ledger));
     let coverage = spec_example_coverage(corpus, ledger, specs);
     if ledger.floor > coverage.coverage.denominator {
         violations.push(format!(
@@ -353,6 +480,102 @@ pub(crate) fn coverage_violations(
         ));
     }
     violations
+}
+
+/// Cases per declared axis, in ledger order.
+fn axis_counts(corpus: &Corpus, ledger: &Ledger) -> Vec<(String, usize, usize)> {
+    ledger
+        .axis
+        .iter()
+        .map(|axis| {
+            let count = corpus
+                .cases
+                .iter()
+                .filter(|case| case.axes.iter().any(|tag| tag == &axis.id))
+                .count();
+            (axis.id.clone(), count, axis.floor)
+        })
+        .collect()
+}
+
+/// Axis law: every tag a case carries is declared once in the ledger, and
+/// no axis holds fewer cases than its floor. A deleted or retagged case
+/// fails here, so an axis cannot shrink silently.
+fn axis_violations(corpus: &Corpus, ledger: &Ledger) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut declared = BTreeSet::new();
+    for axis in &ledger.axis {
+        if !declared.insert(axis.id.as_str()) {
+            violations.push(format!("{LEDGER_FILE} declares axis `{}` twice", axis.id));
+        }
+        if axis.id.trim().is_empty() {
+            violations.push(format!("{LEDGER_FILE} declares an axis without an id"));
+        }
+        if axis.description.trim().is_empty() {
+            violations.push(format!(
+                "{LEDGER_FILE} declares axis `{}` without a description",
+                axis.id
+            ));
+        }
+    }
+    for case in &corpus.cases {
+        let mut seen = BTreeSet::new();
+        for tag in &case.axes {
+            if !seen.insert(tag.as_str()) {
+                violations.push(format!(
+                    "case `{}` carries axis `{tag}` twice",
+                    case.case_id
+                ));
+            }
+            if !declared.contains(tag.as_str()) {
+                violations.push(format!(
+                    "case `{}` carries axis `{tag}`, which {LEDGER_FILE} does not declare",
+                    case.case_id
+                ));
+            }
+        }
+    }
+    for (id, count, floor) in axis_counts(corpus, ledger) {
+        if count < floor {
+            violations.push(format!(
+                "axis `{id}` holds {count} cases, below its {LEDGER_FILE} floor {floor}"
+            ));
+        }
+    }
+    violations
+}
+
+/// The one-line axis summary `check` prints, for a ledgered corpus that
+/// declares axes. A `--cases` run (`selected`) prints the counts of what it
+/// ran without the floors, which it does not enforce.
+pub(crate) fn axis_note(
+    corpus_dir: &Path,
+    corpus: &Corpus,
+    selected: bool,
+) -> Result<Option<String>, String> {
+    if !corpus_dir.join(LEDGER_FILE).is_file() {
+        return Ok(None);
+    }
+    let ledger = load_ledger(corpus_dir)?;
+    if ledger.axis.is_empty() {
+        return Ok(None);
+    }
+    let parts: Vec<String> = axis_counts(corpus, &ledger)
+        .into_iter()
+        .map(|(id, count, floor)| {
+            if selected {
+                format!("{id} {count}")
+            } else {
+                format!("{id} {count} (floor {floor})")
+            }
+        })
+        .collect();
+    let scope = if selected {
+        " (selected cases only)"
+    } else {
+        ""
+    };
+    Ok(Some(format!("coverage axes{scope} {}", parts.join(", "))))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -379,7 +602,7 @@ pub(crate) struct SpecCoverageRow {
     pub(crate) in_scope_examples: usize,
     pub(crate) covered: usize,
     pub(crate) waived: usize,
-    pub(crate) uncovered: Vec<usize>,
+    pub(crate) uncovered: Vec<ExampleKey>,
 }
 
 /// Coverage for one corpus directory without going through `expected_report()`.
@@ -456,10 +679,10 @@ pub(crate) fn spec_example_coverage(
         }
         in_scope_specs += 1;
         let examples = specs.get(&entry.id).cloned().unwrap_or_default();
-        let waivers: BTreeSet<usize> = entry
+        let waivers: BTreeSet<ExampleKey> = entry
             .waived
             .iter()
-            .map(|w| w.example)
+            .map(|w| w.example.clone())
             .filter(|n| examples.contains(n))
             .collect();
         let mut row_covered = 0;
@@ -468,10 +691,10 @@ pub(crate) fn spec_example_coverage(
             if waivers.contains(number) {
                 continue;
             }
-            if cited.contains_key(&(entry.id.clone(), *number)) {
+            if cited.contains_key(&(entry.id.clone(), number.clone())) {
                 row_covered += 1;
             } else {
-                uncovered.push(*number);
+                uncovered.push(number.clone());
             }
         }
         total += examples.len();
@@ -561,7 +784,7 @@ pub(crate) fn render_coverage_markdown(coverage: &SpecExampleCoverage) -> String
             } else {
                 row.uncovered
                     .iter()
-                    .map(usize::to_string)
+                    .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             }

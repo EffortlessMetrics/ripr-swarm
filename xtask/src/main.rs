@@ -65,6 +65,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod termination_qualification;
 mod types;
 mod work_adapter_identity;
 mod work_burndown_identity;
@@ -87,6 +88,7 @@ mod schema_producer_sweep;
 mod verification_contracts;
 mod version;
 mod windows_advisory;
+mod windows_advisory_run;
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
@@ -298,8 +300,8 @@ use repo_readiness::{
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
-    release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
 };
 use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]
@@ -594,6 +596,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-identity-registry",
     "check-doc-artifacts",
     "check-doc-index",
+    "check-doc-roles",
     "check-changelog-fragments",
     "check-readme-state",
     "markdown-links",
@@ -635,7 +638,59 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_allow_attributes()?;
         check_local_context()?;
     }
-    check_file_policy()?;
+    // #8793: an infrastructure timeout in file policy (cargo lock wait or a
+    // slow enumeration) must not hide the later checks, but it is never a pass:
+    // the remaining checks run and the instrument failure is returned before
+    // any passing report is published.
+    let mut deferred = None;
+    check_file_policy_deferring(&mut deferred)?;
+    let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
+    finish_precommit_policy(deferred, remaining, collect_all)
+}
+
+/// Prefix of a `precommit` failure that is only a deferred file-policy
+/// instrument failure (no source or policy gate failed). `precommit-v2`
+/// classifies exactly these as infrastructure failures.
+const PRECOMMIT_INSTRUMENT_PREFIX: &str =
+    "precommit instrument failure (no source or policy gate failed): ";
+
+/// `check_file_policy`, except that an instrument failure (cargo lock wait or
+/// timeout) is stored in `deferred` instead of returned.
+fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
+    match check_file_policy() {
+        Err(error) if policy::is_covered_by_instrument_failure(&error) => {
+            *deferred = Some(error);
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+/// A deferred instrument failure never reads as a pass and never hides a real
+/// later failure: both are reported when both occur.
+fn finish_precommit_policy(
+    deferred: Option<String>,
+    remaining: Result<(), String>,
+    collect_all: bool,
+) -> Result<(), String> {
+    match (deferred, remaining) {
+        (None, remaining) => {
+            remaining?;
+            publish_precommit_policy_report(collect_all)
+        }
+        (Some(deferred), Ok(())) => Err(format!("{PRECOMMIT_INSTRUMENT_PREFIX}{deferred}")),
+        (Some(deferred), Err(error)) => Err(format!(
+            "{error}; also check-file-policy hit an instrument failure: {deferred}"
+        )),
+    }
+}
+
+/// Every gate after file policy. It stops at the first genuine policy error
+/// (intentional: only an instrument failure is deferred past later gates).
+fn precommit_policy_remaining(
+    collect_all: bool,
+    preflight_receipt: Option<std::ffi::OsString>,
+) -> Result<(), String> {
     if !collect_all {
         check_covered_by()?;
         check_executable_files()?;
@@ -667,6 +722,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_doc_roles()?;
     check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
@@ -683,7 +739,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_network_policy()?;
         check_lint_policy()?;
     }
-    publish_precommit_policy_report(collect_all)
+    Ok(())
 }
 
 /// Output-surface diffs must not reach review with stale goldens (#8421): main
@@ -973,14 +1029,17 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                         .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
                 })
         }),
+        // The retained Rust gates include workspace/all-target Clippy and
+        // test-source policy. Include package tests, examples and build scripts,
+        // with anchored roots so fixture lookalikes keep their own category.
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
                 || f.ends_with("/Cargo.toml")
                 || (f.ends_with(".rs")
-                    && (f.contains("crates/ripr/src")
-                        || f.contains("xtask/src")
-                        || f.starts_with("tools/repo-policy/")))
+                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+                        .iter()
+                        .any(|root| f.starts_with(root)))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
@@ -1092,6 +1151,51 @@ mod check_fast_selector_tests {
         Ok(())
     }
 
+    #[test]
+    fn workspace_rust_targets_select_existing_rust_gates() {
+        for path in [
+            "crates/ripr/src/lib.rs",
+            "crates/ripr/tests/agent_stub_compiles.rs",
+            "crates/ripr/tests/cli_smoke/workflow_directory.rs",
+            "crates/ripr/build.rs",
+            "crates/ripr/examples/check_diff.rs",
+            "xtask/src/main.rs",
+            "xtask/tests/spec_format_determinism.rs",
+            "xtask/examples/mandatory_partitions.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/ripr/Cargo.toml",
+        ] {
+            assert!(
+                categorize_changed_files(&[path.to_string()]).rust_src,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_workspace_rust_and_near_prefixes_keep_existing_categories() {
+        assert!(!categorize_changed_files(&[]).rust_src);
+        for path in [
+            "docs/selector.md",
+            "crates/ripr/tests/README.md",
+            "crates/ripr-not/src/lib.rs",
+            "xtask-not/src/main.rs",
+            "tools/repo-policy-not/src/lib.rs",
+            "fixtures/crates/ripr/src/lib.rs",
+            "fixtures/xtask/src/main.rs",
+            "fixtures/control/input/src/lib.rs",
+        ] {
+            let categories = categorize_changed_files(&[path.to_string()]);
+            assert!(!categories.rust_src, "{path}");
+            assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
+        }
+    }
+
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
         // raw spawn literal in this file (the gate-runner git-diff site),
@@ -1188,6 +1292,56 @@ mod check_fast_selector_tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn committed_workspace_test_changes_select_rust_gates() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-check-fast-workspace-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let git = |args: &[&str]| run_fixture_git(&root, args);
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(root.join("README.md"), "baseline\n")
+                .map_err(|error| error.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "baseline"])?;
+            git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+            if !changed_files_vs_base(&root)?.is_empty() {
+                return Err("clean selector fixture was not empty".to_string());
+            }
+            for path in ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                let file = root.join(path);
+                let parent = file.parent().ok_or("fixture path has no parent")?;
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                std::fs::write(file, "// changed Rust test\n")
+                    .map_err(|error| error.to_string())?;
+            }
+            git(&["add", "."])?;
+            git(&["commit", "-m", "workspace tests"])?;
+            let paths = changed_files_vs_base(&root)?;
+            if paths != ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                return Err(format!("unexpected native selector paths: {paths:?}"));
+            }
+            for path in paths {
+                if !categorize_changed_files(std::slice::from_ref(&path)).rust_src {
+                    return Err(format!(
+                        "workspace Rust test did not select Rust gates: {path}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
     }
 
     #[test]
@@ -1575,6 +1729,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_doc_roles()?;
     check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
@@ -3400,9 +3555,235 @@ pub(crate) fn pr_summary_impl() -> Result<(), String> {
 }
 
 fn check_pr_shape() -> Result<(), String> {
+    check_pr_shape_with_args(&[])
+}
+
+pub(crate) fn check_pr_shape_with_args(args: &[String]) -> Result<(), String> {
+    let body = pr_body_input(args)?;
     let changes = collect_pr_changes()?;
-    let warnings = pr_shape_warnings(&changes);
-    write_report("pr-shape.md", &pr_shape_report_body(&warnings))
+    let mut warnings = pr_shape_warnings(&changes);
+    let mut missing: Vec<&'static str> = Vec::new();
+    if let Some(body) = &body {
+        missing = pr_body_template_missing_lines(body);
+        for line in &missing {
+            warnings.push(format!(
+                "PR body is missing or has a placeholder value for `{line}`; add the line from .github/pull_request_template.md with a real value."
+            ));
+        }
+    }
+    write_report("pr-shape.md", &pr_shape_report_body(&warnings))?;
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(pr_body_template_missing_error(&missing))
+    }
+}
+
+/// Template lines an agent-authored PR body must carry verbatim, with real
+/// values, before first Ready (#8601). Mirrors the Source-of-truth Links and
+/// Candidate Relationships sections of `.github/pull_request_template.md`.
+const PR_BODY_TEMPLATE_LINES: [&str; 11] = [
+    "Proposal:",
+    "Spec:",
+    "ADR:",
+    "Plan item:",
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+    "Candidate branch (GitHub PR head is authoritative after publication):",
+    "Stack parent or prerequisite PR (if any):",
+    "Proposed replacement of PR (if any; not yet accepted):",
+    "Acceptance retained from a replaced candidate (if any):",
+    "Accepted winner and losing candidate disposition (when decided):",
+];
+
+/// Lines admission gates on (`claim_identity_missing`): a placeholder counts
+/// as missing, mirroring `candidate_admission.py`'s placeholder set.
+const PR_BODY_GATED_LINES: [&str; 2] = [
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+];
+
+const PR_BODY_PLACEHOLDERS: [&str; 11] = [
+    "",
+    "n/a",
+    "na",
+    "none",
+    "not applicable",
+    "tbd",
+    "todo",
+    "unknown",
+    "pending",
+    "-",
+    "\u{2014}",
+];
+
+fn pr_body_template_missing_error(missing: &[&'static str]) -> String {
+    format!(
+        "claim_identity_missing: missing or placeholder PR body line(s): {}; add the line(s) from .github/pull_request_template.md with a real value",
+        missing.join(", ")
+    )
+}
+
+fn pr_body_template_missing_lines(body: &str) -> Vec<&'static str> {
+    PR_BODY_TEMPLATE_LINES
+        .iter()
+        .copied()
+        .filter(|line| {
+            let Some(value) = pr_body_template_line_value(body, line) else {
+                return true;
+            };
+            if value.is_empty() {
+                return true;
+            }
+            if PR_BODY_GATED_LINES.contains(line) {
+                return pr_body_value_is_placeholder(value);
+            }
+            pr_body_value_is_unfilled_placeholder(value)
+        })
+        .collect()
+}
+
+/// Labels admission accepts for a template line, in admission's order.
+/// Mirrors `LABELS` in `candidate_admission.py:32-49`: the canonical
+/// template label first, then any shorter/alternate label admission
+/// also accepts at line start.
+fn pr_body_template_labels(template_line: &str) -> Vec<&str> {
+    let primary = template_line.trim_end_matches(':');
+    let mut labels = vec![primary];
+    match template_line {
+        "Governing issue or accepted claim:" => labels.push("Owner / governing claim"),
+        "Acceptance delta (one sentence):" => labels.push("Acceptance delta"),
+        "Proposed replacement of PR (if any; not yet accepted):" => {
+            labels.push("Proposed replacement of PR");
+        }
+        "Accepted winner and losing candidate disposition (when decided):" => {
+            labels.push("Accepted winner and losing candidate disposition");
+        }
+        _ => {}
+    }
+    labels
+}
+
+fn pr_body_template_line_value<'a>(body: &'a str, template_line: &str) -> Option<&'a str> {
+    // Mirror `extract_fields` in `candidate_admission.py:62-75` exactly:
+    // a line counts only when its whitespace-stripped form starts with
+    // `label:` (case-insensitive). Bulleted (`- Label: ...`) and spaced
+    // (`Label : ...`) forms therefore do not count. The first non-empty
+    // value wins; a blank occurrence does not mask a later filled one.
+    let labels: Vec<String> = pr_body_template_labels(template_line)
+        .iter()
+        .map(|label| format!("{}:", label.to_lowercase()))
+        .collect();
+    let mut saw_match = false;
+    for raw in body.lines() {
+        let line = raw.trim().trim_start_matches('\u{feff}');
+        let folded = line.to_lowercase();
+        for prefix in &labels {
+            if folded.starts_with(prefix.as_str()) {
+                saw_match = true;
+                let Some(value) = line.get(prefix.len()..) else {
+                    continue;
+                };
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+                break;
+            }
+        }
+    }
+    saw_match.then_some("")
+}
+
+fn pr_body_normalized_value(value: &str) -> String {
+    // Mirror `normalize` in `candidate_admission.py:57-59`.
+    value
+        .trim()
+        .trim_matches('`')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn pr_body_value_is_placeholder(value: &str) -> bool {
+    // Mirror `invalid` in `candidate_admission.py:78-80` over
+    // `PLACEHOLDERS` (`candidate_admission.py:19-31`).
+    let normalized = pr_body_normalized_value(value);
+    PR_BODY_PLACEHOLDERS.contains(&normalized.as_str()) || normalized.starts_with('<')
+}
+
+/// Unfilled-template markers for the non-gated template lines. Unlike
+/// the admission-gated lines, these lines may legitimately record an
+/// explicit non-applicable value such as `none` or `n/a`; only the
+/// still-unfilled markers (`TBD`, `<...>`, ...) count as missing.
+fn pr_body_value_is_unfilled_placeholder(value: &str) -> bool {
+    let normalized = pr_body_normalized_value(value);
+    normalized.starts_with('<')
+        || matches!(normalized.as_str(), "tbd" | "todo" | "pending" | "unknown")
+}
+
+/// Resolve the optional offline PR-body input for `check-pr-shape`.
+/// `--body-file <path>` reads raw Markdown or `gh pr view --json body`
+/// JSON; `--body-env <var>` reads the same from an environment variable.
+/// No network or `gh` call happens inside xtask.
+fn pr_body_input(args: &[String]) -> Result<Option<String>, String> {
+    let mut body_file: Option<String> = None;
+    let mut body_env: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--body-file" => {
+                body_file =
+                    Some(iter.next().cloned().ok_or_else(|| {
+                        "check-pr-shape: --body-file requires a path".to_string()
+                    })?);
+            }
+            "--body-env" => {
+                body_env = Some(iter.next().cloned().ok_or_else(|| {
+                    "check-pr-shape: --body-env requires a variable name".to_string()
+                })?);
+            }
+            other => {
+                return Err(format!(
+                    "check-pr-shape: unknown argument `{other}`; usage: cargo xtask check-pr-shape [--body-file <path> | --body-env <var>]"
+                ));
+            }
+        }
+    }
+    match (body_file, body_env) {
+        (Some(_), Some(_)) => {
+            Err("check-pr-shape: pass only one of --body-file or --body-env".to_string())
+        }
+        (Some(path), None) => {
+            let text = std::fs::read_to_string(&path).map_err(|err| {
+                format!("check-pr-shape: cannot read --body-file `{path}`: {err}")
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, Some(var)) => {
+            let text = std::env::var(&var).map_err(|err| {
+                format!(
+                    "check-pr-shape: environment variable `{var}` named by --body-env is not set: {err}"
+                )
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+/// Accept raw Markdown, or the JSON object emitted by
+/// `gh pr view --json body` (its `body` field carries the Markdown).
+fn pr_body_from_input_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(body) = value.get("body").and_then(serde_json::Value::as_str)
+    {
+        return Ok(body.to_string());
+    }
+    Ok(text.to_string())
 }
 
 pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
@@ -5200,7 +5581,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -10394,7 +10775,7 @@ fn repo_exposure_file_fact_cache_from_stderr(
                             .split('/')
                             .any(|part| part == "." || part == ".." || part.is_empty())
                         || path.contains('\\')
-                        || path.contains(':')
+                        || has_windows_drive_prefix(path)
                         || path.chars().any(char::is_control)
                 })
         })
@@ -10404,7 +10785,66 @@ fn repo_exposure_file_fact_cache_from_stderr(
     (Some(value), None)
 }
 
+/// A Windows drive-qualified path (letter, colon, slash) is an absolute, non-portable
+/// receipt identity. A `:` elsewhere is an ordinary Unix file-name character
+/// (`a:b.rs`) and must not invalidate the whole receipt (#9503).
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+
+/// Output parity (cache-served output equal to a cold recomputation) is not
+/// observed by this report: it runs each format once. Until a cold-vs-served
+/// comparison exists, no run set can earn `pass` (#9503).
+const REPO_EXPOSURE_OUTPUT_PARITY: &str = "not_checked";
+const REPO_EXPOSURE_OUTPUT_PARITY_CHECKED: bool = false;
+
+/// Named reasons a completed run set cannot be called `pass`. Empty means
+/// every completed run carried a clean cache receipt and parity was checked.
+fn repo_exposure_latency_status_reasons(
+    runs: &[RepoExposureLatencyRun],
+    parity_checked: bool,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for run in runs {
+        match &run.file_fact_cache {
+            Some(cache) => {
+                if cache.store_errors > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_store_errors={}",
+                        run.format, cache.store_errors
+                    ));
+                }
+                if cache.corrupt_ignored > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_corrupt_ignored={}",
+                        run.format, cache.corrupt_ignored
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{}: file_fact_cache_{}",
+                run.format,
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("not_observed")
+            )),
+        }
+    }
+    if !parity_checked {
+        reasons.push("output_parity_not_checked".to_string());
+    }
+    reasons
+}
+
 fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
+    repo_exposure_latency_status_with_parity(runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED)
+}
+
+fn repo_exposure_latency_status_with_parity(
+    runs: &[RepoExposureLatencyRun],
+    parity_checked: bool,
+) -> String {
     if runs.iter().any(|run| run.status == "fail") {
         return "fail".to_string();
     }
@@ -10412,6 +10852,12 @@ fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
         .iter()
         .any(|run| run.status == "timeout" || run.status == "skipped_after_json_timeout")
     {
+        return "warn".to_string();
+    }
+    // `pass` is evidence about the cache path and output, not only exit codes:
+    // cache store errors, ignored corrupt entries, an unobserved cache phase
+    // or unchecked output parity are all `warn`.
+    if !repo_exposure_latency_status_reasons(runs, parity_checked).is_empty() {
         return "warn".to_string();
     }
     "pass".to_string()
@@ -10448,13 +10894,24 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     body.push_str("{\n");
     // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
     // because the JSON gained fields a 0.2 reader does not know; nothing in
-    // the 0.2 shape changed.
-    body.push_str("  \"schema_version\": \"0.3\",\n");
+    // the 0.2 shape changed. 0.4 adds `output_parity` and `status_reasons`
+    // (#9503); no 0.3 field changed.
+    body.push_str("  \"schema_version\": \"0.4\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
         "  \"status\": \"{}\",\n",
         json_escape(&report.status)
+    ));
+    body.push_str(&format!(
+        "  \"output_parity\": \"{REPO_EXPOSURE_OUTPUT_PARITY}\",\n"
+    ));
+    body.push_str(&format!(
+        "  \"status_reasons\": {},\n",
+        serde_json::json!(repo_exposure_latency_status_reasons(
+            &report.runs,
+            REPO_EXPOSURE_OUTPUT_PARITY_CHECKED
+        ))
     ));
     body.push_str(&format!("  \"timeout_ms\": {},\n", report.timeout_ms));
     body.push_str(&format!(
@@ -10528,6 +10985,18 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
     let mut body = String::new();
     body.push_str("# Repo Exposure Latency Report\n\n");
     body.push_str(&format!("Status: `{}`\n\n", report.status));
+    body.push_str(&format!(
+        "Output parity: `{REPO_EXPOSURE_OUTPUT_PARITY}`\n\n"
+    ));
+    let reasons =
+        repo_exposure_latency_status_reasons(&report.runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED);
+    if !reasons.is_empty() {
+        body.push_str("Status reasons (`pass` requires none):\n\n");
+        for reason in &reasons {
+            body.push_str(&format!("- `{reason}`\n"));
+        }
+        body.push('\n');
+    }
     body.push_str(&format!(
         "Timeout: `{}` ms per format\n\n",
         report.timeout_ms
@@ -12939,7 +13408,12 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
+        (
+            "crates/ripr/src/output/related_test_role_tests.rs",
+            "\"#[cfg(test)]\"",
+            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
+        ),
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -13009,7 +13483,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 13] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -13038,6 +13512,10 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9982: a facade crate's integration test is a file under `tests/**`
+        // of the facade package; the layout authority stays `is_test_file`
+        // and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/facade_reach.rs",
     ];
 
     let files = tracked_files()?;
@@ -13516,6 +13994,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "value_context"
             | "oracle_alignment"
             | "related_test_miss"
+            | "related_test_role"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"
@@ -19957,11 +20436,30 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
 }
 
 fn pr_shape_report_body(warnings: &[String]) -> String {
-    let status = if warnings.is_empty() { "pass" } else { "warn" };
+    // A PR-body template failure is a failed check, not an advisory
+    // warning: `check_pr_shape_with_args` returns `Err` for it, so the
+    // report status must agree (`fail`) in body-file mode. Other shape
+    // warnings remain advisory (`warn`).
+    let body_failed = warnings
+        .iter()
+        .any(|warning| warning.contains("PR body is missing or has a placeholder value for"));
+    let status = if body_failed {
+        "fail"
+    } else if warnings.is_empty() {
+        "pass"
+    } else {
+        "warn"
+    };
     let mut body = format!("# ripr PR shape report\n\nStatus: {status}\n\n");
-    body.push_str(
-        "This report is advisory. It highlights likely missing evidence before review.\n\n",
-    );
+    if body_failed {
+        body.push_str(
+            "This report records a failed PR-body check. It highlights likely missing evidence before review.\n\n",
+        );
+    } else {
+        body.push_str(
+            "This report is advisory. It highlights likely missing evidence before review.\n\n",
+        );
+    }
     body.push_str("## Warnings\n\n");
     if warnings.is_empty() {
         body.push_str("None detected.\n");
@@ -20796,13 +21294,13 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
         error.set_input(Some(&text));
         format!("{path}: invalid non-Rust allowlist TOML: {error}")
     })?;
-    let line_number = |offset| {
-        text.bytes()
-            .take(offset)
-            .filter(|byte| *byte == b'\n')
-            .count()
-            + 1
-    };
+    // Spans use byte offsets. Index line breaks once instead of rescanning
+    // every prefix for every entry and field in the allowlist.
+    let newline_offsets = text
+        .match_indices('\n')
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    let line_number = |offset| newline_offsets.partition_point(|newline| *newline < offset) + 1;
     let mut entries = Vec::new();
     for (key, value) in document.get_ref().iter() {
         let key = key.get_ref().as_ref();
@@ -21092,7 +21590,7 @@ fn guarded_allow_attributes_in_text(
             cursor += 1;
         }
         let kind = &text[ident_start..cursor];
-        if kind != "allow" && kind != "expect" {
+        if kind != "allow" && kind != "expect" && kind != "cfg_attr" {
             index += 1;
             continue;
         }
@@ -21107,6 +21605,20 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        if kind == "cfg_attr" {
+            // #9501: `#[cfg_attr(<predicate>, allow(..), expect(..))]` is the
+            // same suppression under a condition; it spends the same budget
+            // as the plain attribute.
+            let mut line = None;
+            for (wrapped, lint) in cfg_attr_suppressed_lints(&text[content_start..content_end]) {
+                if guarded.contains(lint.as_str()) {
+                    let line = *line.get_or_insert_with(|| byte_line_number(text, index));
+                    findings.push((line, format!("{wrapped}({lint})")));
+                }
+            }
+            index = next_index;
+            continue;
+        }
         let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
@@ -21120,11 +21632,135 @@ fn guarded_allow_attributes_in_text(
     findings
 }
 
+/// `allow`/`expect` lints named by the attributes a `cfg_attr(<predicate>, ..)`
+/// conditionally applies, including nested `cfg_attr` wrappers. Splitting is
+/// parenthesis- and string-aware so predicates such as `all(a, b)` and reason
+/// strings do not shift the attribute boundaries.
+fn cfg_attr_suppressed_lints(content: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    // The first top-level part is the predicate; the rest are attributes.
+    for part in split_top_level_commas(content).into_iter().skip(1) {
+        let part = part.trim();
+        let Some((name, rest)) = part.split_once('(') else {
+            continue;
+        };
+        let inner = rest.trim_end().strip_suffix(')').unwrap_or(rest);
+        match name.trim() {
+            "allow" => found.extend(attribute_lints(inner).into_iter().map(|l| ("allow", l))),
+            "expect" => found.extend(attribute_lints(inner).into_iter().map(|l| ("expect", l))),
+            "cfg_attr" => found.extend(cfg_attr_suppressed_lints(inner)),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn split_top_level_commas(content: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let bytes = content.as_bytes();
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            index = attribute_string_end(bytes, index);
+            continue;
+        }
+        if bytes[index] == b'\''
+            && let Some(end) = attribute_char_end(bytes, index)
+        {
+            index = end;
+            continue;
+        }
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(&content[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&content[start..]);
+    parts
+}
+
+/// Read a string from its opening quote. Raw strings close only at a quote
+/// followed by the opening hash suffix; backslashes escape only cooked strings.
+fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
+    let mut marker = quote;
+    while marker > 0 && bytes[marker - 1] == b'#' {
+        marker -= 1;
+    }
+    let raw_suffix = (marker > 0 && bytes[marker - 1] == b'r').then_some(&bytes[marker..quote]);
+    let mut index = quote + 1;
+    while index < bytes.len() {
+        if raw_suffix.is_none() && bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'"' {
+            let after_quote = index + 1;
+            if let Some(hashes) = raw_suffix {
+                if bytes[after_quote..].starts_with(hashes) {
+                    return after_quote + hashes.len();
+                }
+            } else {
+                return after_quote;
+            }
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
+/// End (exclusive) of a char literal starting at the opening tick, or `None`
+/// when the tick is not one (for example a lifetime), so callers keep scanning.
+fn attribute_char_end(bytes: &[u8], tick: usize) -> Option<usize> {
+    let first = *bytes.get(tick + 1)?;
+    if first == b'\\' {
+        // Escape (`'\''`, `'\n'`, `'\x41'`, `'\u{1F980}'`): the closing tick is
+        // the first one after the escaped character, within a short window.
+        let limit = (tick + 12).min(bytes.len());
+        return (tick + 3..limit)
+            .find(|&i| bytes[i] == b'\'')
+            .map(|i| i + 1);
+    }
+    if first == b'\'' || first == b'\n' {
+        return None;
+    }
+    let width = match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    };
+    let close = tick + 1 + width;
+    (bytes.get(close) == Some(&b'\'')).then_some(close + 1)
+}
+
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
     let mut depth = 0usize;
     let mut index = open;
     while index < bytes.len() {
         match bytes[index] {
+            // A parenthesis inside a `reason = ")"` string is not attribute
+            // syntax; skipping the literal keeps a later suppression in the
+            // same attribute visible to the budget.
+            b'"' => {
+                index = attribute_string_end(bytes, index);
+                continue;
+            }
+            // A char literal such as `')'` or `'"'` is not attribute syntax;
+            // a lifetime tick has no closing quote and falls through.
+            b'\'' => {
+                if let Some(end) = attribute_char_end(bytes, index) {
+                    index = end;
+                    continue;
+                }
+            }
             b'(' => depth += 1,
             b')' => {
                 depth = depth.saturating_sub(1);
@@ -22275,6 +22911,84 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]
 mod sorted_allowlist_content_tests;
+
+/// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`
+/// (as `bench_agent_surfaces` and the DX scoreboard admission do).
+pub(crate) const CHECK_FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
+
+/// Whether a `ripr check --format json` document reports a complete analysis
+/// (#9010). `analysis_outcome.analysis_complete` is the analysis verdict, but a
+/// findings array cut by the byte budget adds `document_complete: false`; that
+/// document holds only a prefix of the findings and is never complete for a
+/// consumer. Returns `Some(false)` for it, otherwise the producer's boolean
+/// (`None` when absent or non-boolean). A non-boolean `document_complete` also
+/// fails closed.
+pub(crate) fn check_document_analysis_complete(check: &serde_json::Value) -> Option<bool> {
+    let outcome = check.get("analysis_outcome")?;
+    if let Some(document_complete) = outcome.get("document_complete")
+        && document_complete.as_bool() != Some(true)
+    {
+        return Some(false);
+    }
+    // Legacy shape: the bound disclosed only in `run_limitations[]`.
+    if check
+        .get("run_limitations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|limitations| {
+            limitations.iter().any(|entry| {
+                ["run_status", "category"].iter().any(|key| {
+                    entry.get(key).and_then(serde_json::Value::as_str)
+                        == Some(CHECK_FINDINGS_BOUND_RUN_STATUS)
+                })
+            })
+        })
+    {
+        return Some(false);
+    }
+    outcome
+        .get("analysis_complete")
+        .and_then(serde_json::Value::as_bool)
+}
+
+#[cfg(test)]
+mod check_document_completeness_tests {
+    use super::check_document_analysis_complete;
+    use serde_json::json;
+
+    #[test]
+    fn bounded_document_is_never_complete_but_unbounded_control_is() {
+        let bounded = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": false,
+            "findings_rendered": 1, "findings_total": 3}});
+        assert_eq!(check_document_analysis_complete(&bounded), Some(false));
+        let corrupt = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": "false"}});
+        assert_eq!(check_document_analysis_complete(&corrupt), Some(false));
+        let legacy = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"category": "limited_findings_bound"}]});
+        assert_eq!(check_document_analysis_complete(&legacy), Some(false));
+        let legacy_status = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"run_status": "limited_findings_bound"}]});
+        assert_eq!(
+            check_document_analysis_complete(&legacy_status),
+            Some(false)
+        );
+        let other_limitation = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"category": "limited_partial_scope"}]});
+        assert_eq!(
+            check_document_analysis_complete(&other_limitation),
+            Some(true)
+        );
+        let control = json!({"analysis_outcome": {"analysis_complete": true}});
+        assert_eq!(check_document_analysis_complete(&control), Some(true));
+        let incomplete = json!({"analysis_outcome": {"analysis_complete": false}});
+        assert_eq!(check_document_analysis_complete(&incomplete), Some(false));
+        assert_eq!(check_document_analysis_complete(&json!({})), None);
+    }
+}
 
 #[cfg(test)]
 mod inherited_failure_tests {

@@ -24,6 +24,9 @@ pub(crate) struct MockCallFacts {
     module_calls: Vec<spy::ModuleObjectCall>,
     /// Rule 4: related test files that may spy on a `module_calls` object.
     spy_targets: Vec<spy::SpyTarget>,
+    /// The changed line has no removed counterpart, so it adds a call and a
+    /// mock call count can see the change (RIPR-SPEC-0243 decision 22).
+    line_added: bool,
 }
 
 /// A call `p(...)` or `p.m(...)` through the owner parameter `p` at
@@ -40,6 +43,14 @@ struct ParameterCall {
 const TEST_FRAMEWORK_MODULES: [&str; 2] = ["@jest/globals", "vitest"];
 
 impl MockCallFacts {
+    pub(crate) fn mark_line_added(&mut self, line_added: bool) {
+        self.line_added = line_added;
+    }
+
+    pub(crate) fn line_added(&self) -> bool {
+        self.line_added
+    }
+
     /// `owner_body` is the owner's source after the change; `None` (not
     /// readable) keeps no call, so rule 1 credits nothing.
     ///
@@ -99,7 +110,7 @@ impl MockCallFacts {
         owner_name: &str,
         owner_params: &[String],
         owner_start_line: usize,
-        module_source: Option<&str>,
+        module_source: Option<(&str, SourceType)>,
     ) {
         let (Some(owner_source), Some(module_source)) = (owner_source, module_source) else {
             return;
@@ -136,7 +147,9 @@ impl MockCallFacts {
                 continue;
             }
             seen.push(&test.file);
-            if !read_file(&test.file).is_some_and(|source| spy::spy_safe_test_file(&source)) {
+            if !read_file(&test.file)
+                .is_some_and(|source| spy::spy_safe_test_file(&source, source_type_for(&test.file)))
+            {
                 continue;
             }
             // Importing a module runs its top level before the test body, so
@@ -176,16 +189,20 @@ impl MockCallFacts {
         payload: &TypeScriptMockPayload,
         test: &TypeScriptTest,
     ) -> bool {
-        self.credits_with_factories(payload, &test.body_text, &test.mock_factories_in_file)
-            || (payload.kind == TypeScriptMockPayloadKind::CalledWith
-                && !ts_mask_literals_and_comments(&payload.expected).contains('{')
-                && spy::credits_spy(
-                    &self.spy_targets,
-                    &self.owner_name,
-                    &payload.target,
-                    &test.file,
-                    &test.body_text,
-                ))
+        self.credits_with_factories(
+            payload,
+            &test.body_text,
+            &test.mock_factories_in_file,
+            &test.mock_spread_sources_in_file,
+        ) || (payload.kind == TypeScriptMockPayloadKind::CalledWith
+            && !ts_mask_literals_and_comments(&payload.expected).contains('{')
+            && spy::credits_spy(
+                &self.spy_targets,
+                &self.owner_name,
+                &payload.target,
+                &test.file,
+                &test.body_text,
+            ))
     }
 
     /// `true` when `payload` is a primitive-literal `toHaveBeenCalledWith`
@@ -194,7 +211,7 @@ impl MockCallFacts {
     /// mentioned nowhere else but `expect(...)`.
     #[cfg(test)]
     pub(crate) fn credits(&self, payload: &TypeScriptMockPayload, test_body: &str) -> bool {
-        self.credits_with_factories(payload, test_body, &[])
+        self.credits_with_factories(payload, test_body, &[], &[])
     }
 
     /// [`Self::credits`], also reading `const p = f();` through the test
@@ -204,6 +221,7 @@ impl MockCallFacts {
         payload: &TypeScriptMockPayload,
         test_body: &str,
         factories: &[(String, String)],
+        spread_sources: &[(String, String)],
     ) -> bool {
         // Jest's recursive equality treats a property set to `undefined` as
         // absent, so an object payload does not pin every field.
@@ -241,7 +259,9 @@ impl MockCallFacts {
         };
         let made_in_test = match &call.method {
             None => test_local_mock_binding(scope, local),
-            Some(method) => test_local_mock_property(scope, local, method, factories),
+            Some(method) => {
+                test_local_mock_property(scope, local, method, factories, spread_sources)
+            }
         };
         made_in_test
             && identifier_mentions_outside_expect(test_body, local) == 2
@@ -552,6 +572,7 @@ fn test_local_mock_property(
     object: &str,
     property: &str,
     factories: &[(String, String)],
+    spread_sources: &[(String, String)],
 ) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].iter().any(|keyword| {
@@ -574,7 +595,7 @@ fn test_local_mock_property(
                 // `{ ... }.inner` or `{ ... } && other` binds something else.
                 return literal_body(literal).is_some_and(|body| {
                     ends_statement(&literal[body.len() + 1..])
-                        && keys_mock_once(body, property, is_closed_mock_call)
+                        && keys_mock_once(body, property, is_closed_mock_call, spread_sources)
                 });
             }
             factories.iter().any(|(name, returned)| {
@@ -583,7 +604,7 @@ fn test_local_mock_property(
                         .strip_prefix('{')
                         .and_then(literal_body)
                         .is_some_and(|literal| {
-                            keys_mock_once(literal, property, is_bare_mock_factory)
+                            keys_mock_once(literal, property, is_bare_mock_factory, &[])
                         })
             })
         })
@@ -625,9 +646,23 @@ fn is_closed_mock_call(value: &str) -> bool {
 
 /// `true` when every entry of a flat literal body is `key: value` with a
 /// plain key and `property` is keyed exactly once, to a mock factory call.
-fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> bool {
+/// An entry `...name` is allowed when `name` is a test-file spread source
+/// (`TypeScriptTest::mock_spread_sources_in_file`) that is itself flat and
+/// has no `property` key, so the copy cannot replace the mock.
+fn keys_mock_once(
+    literal: &str,
+    property: &str,
+    is_mock: fn(&str) -> bool,
+    spread_sources: &[(String, String)],
+) -> bool {
     let mut entries = Vec::new();
     for entry in top_level_entries(literal) {
+        if let Some(name) = entry.trim().strip_prefix("...") {
+            if !spread_source_lacks(name.trim(), property, spread_sources) {
+                return false;
+            }
+            continue;
+        }
         let Some((key, value)) = entry.split_once(':') else {
             return false;
         };
@@ -642,6 +677,30 @@ fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> b
         (keyed.next(), keyed.next()),
         (Some((_, value)), None) if is_mock(value)
     )
+}
+
+/// `true` when `name` is a test-file spread source whose literal is flat,
+/// plain-keyed, spread-free and has neither a `property` key nor `__proto__`.
+fn spread_source_lacks(name: &str, property: &str, spread_sources: &[(String, String)]) -> bool {
+    spread_sources
+        .iter()
+        .find(|(source, _)| source == name)
+        .and_then(|(_, literal)| {
+            ts_mask_literals_and_comments(literal)
+                .strip_prefix('{')
+                .and_then(|rest| literal_body(rest).map(str::to_string))
+        })
+        .is_some_and(|body| {
+            top_level_entries(&body).into_iter().all(|entry| {
+                entry.split_once(':').is_some_and(|(key, _)| {
+                    let key = key.trim();
+                    key.starts_with(is_identifier_start)
+                        && key.chars().all(is_identifier_part)
+                        && key != property
+                        && key != "__proto__"
+                })
+            })
+        })
 }
 
 /// The text after a mock factory call `jest.fn(...)` / `vi.fn<T>(...)` that
@@ -910,6 +969,10 @@ fn closing_offset(text: &str, open: char, close: char) -> Option<usize> {
 /// to the first top-level `{` or `=>`), or `None` when no body opens.
 pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
     let masked = ts_mask_literals_and_comments(owner_source);
+    owner_body_from_mask(&masked)
+}
+
+pub(super) fn owner_body_from_mask(masked: &str) -> Option<String> {
     let mut parens = 0usize;
     for (index, c) in masked.char_indices() {
         match c {
@@ -962,7 +1025,7 @@ fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str)
 /// Matching `()` pairs are indexed in one forward pass, and each brace
 /// prefix is classified once, so nested control blocks are near-linear in
 /// depth instead of walking every enclosing `{` again for every nested `{`.
-fn has_method_like_block(body: &str) -> bool {
+pub(super) fn has_method_like_block(body: &str) -> bool {
     const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
     let open_of = matching_parens(body);
     let mut memo = BraceMemo::new(body.len());
@@ -1190,7 +1253,7 @@ fn matching_open_paren(text: &str) -> Option<usize> {
 }
 
 /// The identifier `text` ends with, or `""`.
-fn trailing_identifier(text: &str) -> &str {
+pub(super) fn trailing_identifier(text: &str) -> &str {
     let start = text
         .char_indices()
         .rev()

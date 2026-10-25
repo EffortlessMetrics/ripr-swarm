@@ -1614,16 +1614,17 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
         coverage.floor,
         coverage.covered_examples
     );
-    // Every RIPR-SPEC-0243 example has a case: 33 (#7099) through
-    // `jest-spec0243-ex33-two-files-one-mocked`, 30 through a non-literal
-    // `db`, and 34 and 35 through edits that change the pinned message.
+    // Every RIPR-SPEC-0243 example has a case. The example count is not
+    // pinned: a PR that adds an example would otherwise renumber against
+    // every concurrent one (#9859). A new example nobody cites shows up in
+    // `uncovered`, and a lost citation does the same.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0243")
         .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
-    assert_eq!(spec.in_scope_examples, 35);
-    assert_eq!(spec.uncovered, Vec::<usize>::new());
+    assert!(spec.in_scope_examples >= 42);
+    assert_eq!(spec.uncovered, Vec::<coverage::ExampleKey>::new());
     assert_eq!(spec.waived, 0);
     let corpus = load_corpus(&dir)?;
     assert!(

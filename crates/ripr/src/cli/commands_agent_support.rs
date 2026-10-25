@@ -198,10 +198,33 @@ pub(super) fn validate_agent_verify_snapshot_path(
         root.join(path)
     };
     let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent verify {flag} {} failed: {err}",
+        // #9855: name the unreadable input and the recovery route, not the
+        // internal `canonicalize` operation (the same failure class `explain
+        // --diff` already phrases in user vocabulary). The producer command
+        // is only named for the workflow snapshot pair the dispatch loop
+        // owns: a custom --before/--after path's producing run is unknowable
+        // here, so it gets the shared producer shape without a fabricated
+        // command (mirrors the #4307 receipt anchoring).
+        let failure = format!(
+            "failed to read agent verify {flag} snapshot {}: {err}",
             path.display()
-        )
+        );
+        let workflow_artifact = if flag == "--before" {
+            crate::agent::loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT
+        } else {
+            crate::agent::loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT
+        };
+        if candidate != root.join(workflow_artifact) {
+            return format!(
+                "{failure}; produce it with: ripr check --format repo-exposure-json > <path> (see `ripr agent verify --help`)"
+            );
+        }
+        let producer = crate::agent::loop_commands::check_repo_exposure_command(
+            &crate::agent::loop_commands::root_path_display(&root),
+            "draft",
+            workflow_artifact,
+        );
+        format!("{failure}; produce it with: {producer}")
     })?;
 
     if !candidate.starts_with(&root) {
@@ -243,7 +266,7 @@ pub(super) fn resolve_agent_brief_working_set(
         crate::cli::agent::AgentBriefWorkingSet::Diff(path) => {
             let diff_path = validate_agent_brief_diff_path(root, path)?;
             let diff_text = analysis::load_diff_core(root, None, Some(&diff_path), None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
+            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::diff(
                 path.clone(),
@@ -253,7 +276,7 @@ pub(super) fn resolve_agent_brief_working_set(
         }
         crate::cli::agent::AgentBriefWorkingSet::Base(base) => {
             let diff_text = analysis::load_diff_core(root, Some(base.as_str()), None, None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
+            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::base(
                 base.clone(),
@@ -286,8 +309,14 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
         root.join(path)
     };
     let candidate = candidate.canonicalize().map_err(|err| {
+        // #9855: the same failure class `explain --diff` phrases as
+        // "failed to read diff file …; pass the path of an existing unified
+        // diff file": name the input and the recovery route, not the
+        // internal `canonicalize` operation. The brief names its working set
+        // several ways, so the route points at --help rather than one
+        // producer command.
         format!(
-            "canonicalize agent brief diff {} failed: {err}",
+            "failed to read agent brief --diff file {}: {err}; pass the path of an existing unified diff file, or name the working set with --base or --files (see `ripr agent brief --help`)",
             path.display()
         )
     })?;
@@ -299,6 +328,46 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
         ));
     }
     Ok(candidate)
+}
+
+/// Refuse parser-limited input before owner lookup or repository fallback can
+/// turn unexamined changed lines into a successful brief. The compatibility
+/// projection below remains available to the separate review-comments route.
+fn agent_brief_checked_lines_from_diff(
+    root: &Path,
+    diff_text: &str,
+) -> Result<Vec<AgentBriefLine>, crate::core_error::CoreError> {
+    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)
+        .map_err(crate::core_error::CoreError::diff_input_unsupported)?;
+    if let Some(limitation) = parsed.limitations.first() {
+        return Err(crate::core_error::CoreError::diff_input_unsupported(
+            format!(
+                "agent brief cannot select a working set from this diff: {}. {}",
+                limitation.kind.as_str(),
+                limitation.recovery.detail,
+            ),
+        ));
+    }
+    if parsed.truncated_file_sections > 0 {
+        return Err(crate::core_error::CoreError::diff_input_unsupported(
+            format!(
+                "agent brief cannot select a working set from this diff: malformed_diff: \
+                 {} file section(s) parsed a header but no hunk body; the diff appears \
+                 truncated. Re-run with the complete diff stream.",
+                parsed.truncated_file_sections,
+            ),
+        ));
+    }
+    Ok(parsed
+        .changed_files
+        .into_iter()
+        .flat_map(|file| {
+            let path = normalize_agent_brief_path(root, &file.path);
+            file.added_lines
+                .into_iter()
+                .map(move |line| AgentBriefLine::new(path.clone(), line.line))
+        })
+        .collect())
 }
 
 pub(super) fn agent_brief_lines_from_diff(root: &Path, diff_text: &str) -> Vec<AgentBriefLine> {
@@ -779,17 +848,29 @@ mod tests {
         let _restore = RestoreMode(dir.path.clone());
         std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod root 000: {error}"))?;
+        // Probe the OS independently of the code under test, so a wrong
+        // implementation cannot declare the denial ineffective for itself.
+        // A privileged process can still traverse mode 000; skip visibly
+        // rather than fail production behavior that stays correct for
+        // unprivileged users.
+        let denied = crate::testing::access_denial::denied_by_permission(
+            std::fs::symlink_metadata(dir.path.join("ripr.toml")),
+        )?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unreadable_ripr_toml_lookup_is_not_built_in_defaults",
+            denied,
+        ) {
+            return Ok(());
+        }
         match agent_receipt_config_fingerprint(&dir.path) {
             Ok(None) => Err(
                 "an unreadable ripr.toml lookup must not fingerprint as absent built-in defaults"
                     .to_string(),
             ),
-            Ok(Some(_)) => {
-                // A privileged process can still traverse mode 000. Skip rather
-                // than fail the production behavior that remains correct for
-                // unprivileged users.
-                Ok(())
-            }
+            Ok(Some(_)) => Err(
+                "an unreadable ripr.toml lookup must not fingerprint as if it were readable"
+                    .to_string(),
+            ),
             Err(error) if error.contains("ripr.toml") => Ok(()),
             Err(error) => Err(format!(
                 "an unreadable ripr.toml lookup must name ripr.toml: {error}"

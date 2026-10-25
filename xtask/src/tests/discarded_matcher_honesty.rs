@@ -211,9 +211,12 @@ fn discarded_matcher_canonical_gate_rejects_dishonest_and_empty_reblesses() -> R
                 }
             }
             if case["id"] == selected_id {
+                // Path identity, not text: the manifest's relative route and
+                // the selected report join with different separators on
+                // Windows.
                 assert_eq!(
-                    case["source_report"],
-                    selected_report.to_string_lossy().as_ref()
+                    case["source_report"].as_str().map(Path::new),
+                    Some(selected_report.as_path())
                 );
                 case["source_report"] = controlled_report.to_string_lossy().into_owned().into();
                 found_selected = true;

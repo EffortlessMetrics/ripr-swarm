@@ -1,0 +1,12 @@
+diff --git a/grid_returns/core.py b/grid_returns/core.py
+--- a/grid_returns/core.py
++++ b/grid_returns/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def greeting(name):
+-    return f"Hello, {name}!"
++    return "Hello, {}!".format(name)
+ 
+ 
+ def initial(name):

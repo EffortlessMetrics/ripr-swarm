@@ -29,7 +29,7 @@ Evidence
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion
-  - local flow reaches unknown sink (line 15)
+  - local flow reaches unknown sink (line 15) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test tests/lower.rs:4 lower_ast_preserves_storage uses strong exact value oracle: assert_eq!(statement.storage, Storage::Our);
   - source enum variant value Storage::Our at line 6
 

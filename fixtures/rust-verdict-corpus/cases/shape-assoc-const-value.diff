@@ -1,0 +1,12 @@
+diff --git a/src/traits.rs b/src/traits.rs
+--- a/src/traits.rs
++++ b/src/traits.rs
+@@ -55,7 +55,7 @@
+ pub struct Small;
+ 
+ impl Limits for Small {
+-    const MAX: u32 = 10;
++    const MAX: u32 = 5 + 5;
+ }
+ 
+ #[cfg(test)]

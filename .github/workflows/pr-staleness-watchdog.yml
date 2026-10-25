@@ -10,18 +10,19 @@ name: PR Staleness Watchdog
 #
 # This watchdog is alert-only (#4986; issue #4937 option ii). It used to
 # dispatch `routed-rust.yml` on a dark head's branch, but routed-rust.yml now
-# admits pull requests only on the native Draft -> Ready transition
-# (`pull_request: types: [ready_for_review]`). A non-draft head with no
-# required check is therefore a Ready-triggered run GitHub dropped, a push made
-# after Ready, or a conflicting head with no merge ref (#7079). Nothing visible
-# to this sweep tells a dropped delivery from a post-Ready push, but the
-# mergeable_state column separates the conflicted mode from both: a `dirty` PR
-# has no merge ref, so no pull_request run can exist for it.
-# A post-Ready push has revoked its own admission and must not be qualified by
-# a lighter branch-head dispatch (no `pull_request`-scoped PR evidence): the
-# author merges main first when conflicted, then returns the PR to Draft and
-# marks it Ready again, which re-runs the
-# full Ready-triggered qualification and also recovers a dropped delivery.
+# admits a pull request only on an explicit `merge-ready` label event
+# (`pull_request: types: [labeled]`). A merge-ready head with no required check
+# is therefore a label-triggered run GitHub dropped, a push made after the
+# request, or a conflicting head with no merge ref (#7079). PRs without the
+# label made no request and are skipped. Nothing visible to this sweep tells a
+# dropped delivery from a post-request push, but the mergeable_state column
+# separates the conflicted mode from both: a `dirty` PR has no merge ref, so no
+# pull_request run can exist for it.
+# A post-request push has revoked its own admission and must not be qualified
+# by a lighter branch-head dispatch (no `pull_request`-scoped PR evidence): the
+# author merges main first when conflicted, then removes and re-applies
+# `merge-ready`, which re-runs the full qualification and also recovers a
+# dropped delivery.
 #
 # - Every 30 minutes, list open PRs and, for each head SHA, ask the checks
 #   API whether the required `Ripr Rust Small Result` check run exists on
@@ -30,20 +31,31 @@ name: PR Staleness Watchdog
 #   judged by the presence of the exact check branch protection requires.
 # - The required check run is created only when the `result` job starts, after
 #   every implementation job finishes (up to 120 minutes). A head with no
-#   required check but a queued or in-progress Ready-triggered
+#   required check but a queued or in-progress merge-ready
 #   (`event=pull_request`) routed-rust.yml run is reported as in flight, not
-#   dark: re-toggling Draft -> Ready would cancel that run
+#   dark: re-applying the label would cancel that run
 #   (`cancel-in-progress` for pull_request) and restart the qualification.
 # - Dark heads are reported in the step summary with the remedy (merge main
-#   first when `mergeable_state` is `dirty`, then Draft -> Ready). The watchdog
+#   first when `mergeable_state` is `dirty`, then re-apply merge-ready). The watchdog
 #   never dispatches a workflow, so it needs no
 #   `actions: write` and cannot create a duplicate or lighter required gate.
-# - Drafts are skipped (Draft iteration never carries the required check);
+# - Drafts and PRs without the merge-ready label are skipped (they made no
+#   qualification request);
 #   fork PRs (head repo != this repository) are skipped, matching
 #   routed-rust.yml's own untrusted-PR guard.
 #
-# No PR comments are posted; each sweep's summary table (PR | head |
-# mergeable_state | disposition) is the audit trail.
+# - The one write is the conflict report (#10136). A merge-ready PR that is
+#   `dirty` and whose head has no `merge-ready conflict` failure from this
+#   repository's actions bot gets one comment per head and base plus that failing
+#   commit status, the same marker and context merge-ready-conflict-notice.yml
+#   uses at label time, so a PR labeled before that workflow existed, or one that
+#   conflicts after main moves, is told within one interval. A PR that is no
+#   longer conflicting and still carries that failure gets a success status. The
+#   job holds `pull-requests: write` and `statuses: write` only; it still never
+#   dispatches or checks out anything.
+#
+# Each sweep's summary table (PR | head | mergeable_state | disposition) is the
+# audit trail.
 
 on:
   schedule:
@@ -59,17 +71,25 @@ permissions:
 
 jobs:
   watchdog:
-    name: Report dark Ready PR heads
+    name: Report dark merge-ready PR heads
     if: github.repository == 'EffortlessMetrics/ripr-swarm'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The only writes are the conflict report: one comment per head and base and
+    # a `merge-ready conflict` commit status (#10136). Never `actions: write`.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: write
+      statuses: write
     # Serialize overlapping fires. Do not cancel: an in-progress sweep must
     # finish writing its summary.
     concurrency:
       group: pr-staleness-watchdog-${{ github.repository }}
       cancel-in-progress: false
     steps:
-      - name: Report open Ready PR heads missing the required check
+      - name: Report merge-ready PR heads missing the required check
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -77,51 +97,99 @@ jobs:
         run: |
           set -euo pipefail
 
-          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring)] | @tsv')"
+          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref] | @tsv')"
 
           {
             echo "### PR Staleness Watchdog (alert-only)"
             echo ""
-            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress Ready-triggered"
-            echo "routed-rust.yml run on a Ready PR head SHA (#4937, #4986). In flight = the run exists"
+            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready"
+            echo "routed-rust.yml run on a merge-ready PR head SHA (#4937, #4986). In flight = the run exists"
             echo "but has not reached its result job yet; leave it alone."
-            echo "This sweep never dispatches. Remedy for a dark head: convert the PR to Draft,"
-            echo "then mark it Ready for review again to run the Ready-triggered qualification."
-            echo "First check before re-toggling: merge conflicts (#7079). A conflicting (\`dirty\`)"
+            echo "This sweep never dispatches. Remedy for a dark head: remove and re-apply the"
+            echo "merge-ready label to request the qualification again."
+            echo "First check before re-applying the label: merge conflicts (#7079). A conflicting (\`dirty\`)"
             echo "PR has no merge ref, so no pull_request run can exist for it: merge main into"
-            echo "the branch first, and only then re-toggle Draft -> Ready."
+            echo "the branch first, and only then re-apply merge-ready."
             echo ""
             echo "| PR | head | mergeable_state | disposition |"
             echo "| --- | --- | --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          scanned=0 dark=0 in_progress=0
-          while IFS=$'\t' read -r number head_sha head_ref head_repo draft; do
+          # A conflicting PR has no merge ref, so no pull_request run can exist for it
+          # (#9842, #10136). The label-event workflow tells a PR once at request time;
+          # this sweep tells the ones it could not reach and clears its own failure
+          # when the conflict is gone. Same marker and context, so they never double up.
+          ours_state() {
+            gh api "repos/$REPOSITORY/commits/$1/statuses?per_page=100" --jq '[.[] | select(.context == "merge-ready conflict" and .creator.login == "github-actions[bot]")][0].state // "none"'
+          }
+          report_conflict() {
+            marker="<!-- merge-ready-conflict:$2:$3 -->"
+            # Match the marker as a fixed string; it embeds a branch name, which must
+            # never be spliced into a jq filter.
+            known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
+            if [ "$known" = "0" ]; then
+              gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
+          \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$3\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null || return 1
+            fi
+            gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null || return 1
+          }
+
+          scanned=0 dark=0 in_progress=0 reported=0 cleared=0
+          while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
             mergeable_state="n/a"
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
+            elif [ "$requested" != "true" ]; then
+              disposition="skip: no merge-ready request"
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              mergeable_state="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '.mergeable_state // "unknown"')"
+              # mergeable_state is computed lazily and reset whenever the base moves, so
+              # the first read of a quiet PR is often "unknown"; that read starts the work.
+              for _ in 1 2 3; do
+                live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref] | join(" ")')"
+                read -r mergeable_state live_head live_base <<<"$live"
+                [ "$mergeable_state" != "unknown" ] && break
+                sleep 5
+              done
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"
               else
-                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed")] | length' | awk '{s+=$1} END{print s+0}')"
+                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')"
                 if [ "$in_flight" != "0" ]; then
                   in_progress=$((in_progress + 1))
-                  disposition="in flight ($in_flight Ready-triggered run(s) not yet at result; do not re-toggle)"
+                  disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)"
                 elif [ "$mergeable_state" = "dirty" ]; then
                   dark=$((dark + 1))
-                  disposition="DARK (conflicted); merge main into \`$head_ref\`, then Draft -> Ready"
-                  echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then convert to Draft and mark Ready again."
+                  disposition="DARK (conflicted); merge main into \`$head_ref\`, then re-apply merge-ready"
+                  echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then remove and re-apply the merge-ready label."
                 else
                   dark=$((dark + 1))
-                  disposition="DARK; needs Draft -> Ready (\`$head_ref\`)"
-                  echo "::warning title=Dark Ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress Ready-triggered run (pushed after Ready, or the Ready event was dropped); convert to Draft and mark Ready again."
+                  disposition="DARK; needs merge-ready re-applied (\`$head_ref\`)"
+                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply the merge-ready label."
+                fi
+              fi
+              ours="$(ours_state "$head_sha")"
+              if [ "$live_head" != "$head_sha" ] || [ "$live_base" != "$base_ref" ]; then
+                # Pushed or retargeted since the list call: the next sweep reads the new head.
+                disposition="$disposition; head or base moved, left for the next sweep"
+              elif [ "$mergeable_state" = "dirty" ] && [ "$ours" != "failure" ]; then
+                if report_conflict "$number" "$head_sha" "$base_ref"; then
+                  reported=$((reported + 1))
+                  disposition="$disposition; conflict reported"
+                else
+                  disposition="$disposition; conflict report failed"
+                  echo "::warning title=Conflict report failed::PR #$number head ${head_sha:0:8}: a comment or status write failed; the next sweep retries."
+                fi
+              elif [ "$ours" = "failure" ] && [ "$mergeable_state" != "dirty" ] && [ "$mergeable_state" != "unknown" ]; then
+                if gh api "repos/$REPOSITORY/statuses/$head_sha" -f state=success -f context="merge-ready conflict" -f description="No conflict with $base_ref" > /dev/null; then
+                  cleared=$((cleared + 1))
+                  disposition="$disposition; conflict status cleared"
+                else
+                  disposition="$disposition; conflict status clear failed"
                 fi
               fi
             fi
@@ -129,4 +197,4 @@ jobs:
           done <<<"$prs"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark Ready heads reported: $dark." >> "$GITHUB_STEP_SUMMARY"
+          echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared." >> "$GITHUB_STEP_SUMMARY"

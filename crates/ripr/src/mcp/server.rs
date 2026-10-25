@@ -10,7 +10,12 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+
+/// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
+/// or commit id approaches it, and it keeps a hostile argument out of Git.
+const MAX_BASE_REVISION_BYTES: usize = 256;
 
 /// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
 /// initialize-session `ping`: method name wins over `params._meta` so a
@@ -103,7 +108,24 @@ impl McpServer {
         )
     }
 
-    async fn refresh_tool(&self, max_envelope_bytes: usize) -> Result<CallToolResponse, ErrorData> {
+    async fn refresh_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["base"])?;
+        let base = optional_nonempty_string_argument(&arguments, "base")?;
+        if let Some(base) = &base
+            && base.len() > MAX_BASE_REVISION_BYTES
+        {
+            return Err(ErrorData::invalid_params(
+                format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
+                Some(serde_json::json!({
+                    "argument": "base",
+                    "expected": format!("a revision of at most {MAX_BASE_REVISION_BYTES} bytes"),
+                })),
+            ));
+        }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
             Ok(root) => root.to_path_buf(),
             Err(failure) => {
@@ -118,15 +140,16 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "poll ripr_workspace_status until attempt_state leaves in_flight",
+                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
             session.in_flight = true;
+            session.desired_base = base.clone();
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -184,7 +207,48 @@ impl McpServer {
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
+        // An unknown class token would narrow to an empty page that reads like
+        // "no such gaps"; name the vocabulary instead (a typo like `weak`).
+        if let Some(token) = class.as_deref()
+            && !crate::domain::ExposureClass::ALL
+                .iter()
+                .any(|known| known.as_str() == token)
+        {
+            let allowed = crate::domain::ExposureClass::ALL
+                .iter()
+                .map(crate::domain::ExposureClass::as_str)
+                .collect::<Vec<_>>();
+            // The echoed token is caller-controlled and unbounded; cap it so
+            // the error stays well under the writer's response bound.
+            const ECHO_CHARS: usize = 32;
+            let echoed: String = token.chars().take(ECHO_CHARS).collect();
+            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
+                "..."
+            } else {
+                ""
+            };
+            return Err(ErrorData::invalid_params(
+                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
+            ));
+        }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
+        if let Some(language) = language.as_deref()
+            && crate::domain::LanguageId::display_name_for_wire(language).is_none()
+        {
+            // A typo would otherwise read as "no gaps in that language".
+            let allowed: Vec<&str> = crate::domain::LanguageId::ALL
+                .iter()
+                .map(crate::domain::LanguageId::as_str)
+                .collect();
+            // Echo only a short value: a huge one would push the error past
+            // the response cap and replace -32602 with a generic -32603.
+            let shown: String = language.chars().take(32).collect();
+            return Err(ErrorData::invalid_params(
+                format!("unknown language {shown:?}; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "allowed": allowed })),
+            ));
+        }
         let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;
         match session.list_gaps(
@@ -266,7 +330,11 @@ impl McpServer {
         reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
         let requested = optional_string_argument(&arguments, "inventory_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
-        let limit = optional_positive_argument(&arguments, "limit")?;
+        let limit = optional_capped_page_limit(
+            &arguments,
+            "limit",
+            super::attempt_inventory::MAX_PAGE_ITEMS,
+        )?;
         // `max_envelope_bytes` reserves the JSON-escaped request ID plus the
         // fixed outer overhead (#7768): the pinned rmcp adds the JSON-RPC
         // fields and the modern resultType after the tool envelope is
@@ -503,7 +571,7 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
 }
@@ -517,7 +585,7 @@ fn optional_nonempty_string_argument(
     match optional_string_argument(arguments, name)? {
         Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
             format!("{name} must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )),
         other => Ok(other),
     }
@@ -537,7 +605,7 @@ fn optional_bool_argument(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a boolean"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
 }
@@ -548,20 +616,7 @@ fn optional_nonnegative_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    let Some(arguments) = arguments else {
-        return Ok(None);
-    };
-    match arguments.get(name) {
-        None => Ok(None),
-        Some(value) => {
-            let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)
-            })?;
-            usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(format!("{name} is out of range: {error}"), None)
-            })
-        }
-    }
+    optional_integer_argument(arguments, name, 0, u64::MAX)
 }
 
 /// A paging limit (#6021): a JSON integer `>= 1`.
@@ -569,12 +624,224 @@ fn optional_positive_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_nonnegative_argument(arguments, name)? {
-        Some(0) => Err(ErrorData::invalid_params(
-            format!("{name} must be at least 1"),
-            None,
-        )),
-        other => Ok(other),
+    optional_integer_argument(arguments, name, 1, u64::MAX)
+}
+
+/// The shared integer validator behind `offset` and `limit` (#9895). Every
+/// refusal names the real constraint (a whole JSON integer from `minimum` to
+/// the effective maximum: the declared maximum capped at this platform's
+/// `usize::MAX`, so `data.maximum`, the message and the recovery never
+/// disagree on a 32-bit build), why this value misses it, and a
+/// `data.recovery`. A negative number, a non-number, a fractional or exponent-form number and an integer
+/// past `u64::MAX` are different mistakes that used to share the single wrong
+/// sentence "must be a non-negative integer". A JSON number that does not fit
+/// `u64` reaches this adapter as a float, so `18446744073709551616` and `1e30`
+/// are reported as too large instead of as non-integers.
+fn optional_integer_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<Option<usize>, ErrorData> {
+    optional_integer_argument_for_platform(
+        arguments,
+        name,
+        minimum,
+        maximum,
+        u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+    )
+}
+
+/// The bound a request is actually held to: the declared maximum, never above
+/// what the platform's `usize` can represent.
+fn effective_integer_maximum(declared: u64, platform_max: u64) -> u64 {
+    declared.min(platform_max)
+}
+
+/// `optional_integer_argument` with the platform's largest `usize` as a
+/// parameter so the effective-bound behavior is testable on any target.
+fn optional_integer_argument_for_platform(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    declared_maximum: u64,
+    platform_max: u64,
+) -> Result<Option<usize>, ErrorData> {
+    let maximum = effective_integer_maximum(declared_maximum, platform_max);
+    let Some(value) = arguments.as_ref().and_then(|arguments| arguments.get(name)) else {
+        return Ok(None);
+    };
+    let expected = if maximum != u64::MAX {
+        format!("integer at most {maximum}")
+    } else if minimum == 0 {
+        "non-negative integer".to_string()
+    } else {
+        "integer at least 1".to_string()
+    };
+    let refuse = |message: String, recovery: String| {
+        ErrorData::invalid_params(
+            message,
+            Some(serde_json::json!({
+                "argument": name,
+                "expected": expected,
+                "minimum": minimum,
+                "maximum": maximum,
+                "recovery": recovery,
+            })),
+        )
+    };
+    let in_range = format!("send {name} as an integer from {minimum} to {maximum}, or omit it");
+    let Value::Number(number) = value else {
+        let kind = match value {
+            Value::String(_) => "a string",
+            Value::Bool(_) => "a boolean",
+            Value::Null => "null",
+            Value::Array(_) => "an array",
+            _ => "an object",
+        };
+        return Err(refuse(
+            format!("{name} must be a whole JSON integer from {minimum} to {maximum}, not {kind}"),
+            in_range,
+        ));
+    };
+    let raw = if let Some(raw) = number.as_u64() {
+        raw
+    } else if number.as_i64().is_some() || number.as_f64().is_some_and(f64::is_sign_negative) {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}; {number} is negative"),
+            in_range,
+        ));
+    } else if number.as_f64().is_some_and(|float| {
+        // `u64::MAX as f64` rounds up to 2^64, which no `u64` equals.
+        float > maximum as f64 || (maximum == u64::MAX && float >= maximum as f64)
+    }) {
+        return Err(refuse(
+            format!(
+                "{name} is larger than the largest accepted integer {maximum}{}",
+                if maximum == u64::MAX {
+                    " (u64 maximum)"
+                } else {
+                    ""
+                }
+            ),
+            format!(
+                "{in_range}; a smaller value is enough because replies are byte-bounded and continuation walks the rest"
+            ),
+        ));
+    } else {
+        return Err(refuse(
+            format!(
+                "{name} must be a whole JSON integer from {minimum} to {maximum} without a fraction or exponent, not {number}"
+            ),
+            in_range,
+        ));
+    };
+    if raw < minimum {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}"),
+            in_range,
+        ));
+    }
+    if raw > maximum {
+        return Err(refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range,
+        ));
+    }
+    // The effective maximum already caps at `usize::MAX`, so this checked
+    // conversion cannot fail for an in-range value; it stays as the guard and
+    // reports the same bound if it ever does.
+    usize::try_from(raw).map(Some).map_err(|_error| {
+        refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range.clone(),
+        )
+    })
+}
+
+/// Protocol-level list pagination (#9895): these catalog lists are static and
+/// small, so the server returns the complete list in one response and never
+/// issues a `nextCursor`. A client-supplied cursor can only be stale or
+/// fabricated; ignoring it would let an agent believe paging worked, so the
+/// request fails closed with the recovery spelled out.
+fn reject_pagination_cursor(
+    params: Option<PaginatedRequestParams>,
+    method: &str,
+) -> Result<(), ErrorData> {
+    if params
+        .as_ref()
+        .is_some_and(|params| params.cursor.is_some())
+    {
+        return Err(pagination_cursor_error(method));
+    }
+    Ok(())
+}
+
+fn pagination_cursor_error(method: &str) -> ErrorData {
+    ErrorData::invalid_params(
+        format!(
+            "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+        ),
+        Some(serde_json::json!({
+            "argument": "cursor",
+            "expected": "omit; the complete list fits one page",
+        })),
+    )
+}
+
+/// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
+/// A request above the cap stays invalid params at the dispatch edge instead
+/// of being silently clamped, so the typed `page.limit` echo always names a
+/// limit the server actually honors (#8735).
+fn optional_capped_page_limit(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    max: usize,
+) -> Result<Option<usize>, ErrorData> {
+    optional_integer_argument(arguments, name, 1, u64::try_from(max).unwrap_or(u64::MAX))
+}
+
+/// Resolve one captured resource-id segment through an exact-id lookup with
+/// the #8736 URI-decoding rules and the collision fail-closed follow-up:
+///
+/// - the raw capture is tried first (legacy raw URI support);
+/// - when the raw capture misses with `item_not_found`, the segment decodes
+///   once and the decoded form is tried instead;
+/// - when the raw capture succeeds *and* the segment also decodes to a
+///   different existing id, both spellings name two distinct items (for
+///   example `a%20b.py` raw versus `a b.py` decoded), so the route fails
+///   closed with `id_ambiguous` instead of silently picking one — the wire
+///   form cannot say which file the client meant.
+///
+/// Recovery for every ambiguous or unresolved read names the equivalent
+/// tool route, which takes the canonical id as a plain JSON string with no
+/// URI encoding.
+fn resource_id_document(
+    captured: &str,
+    lookup: impl Fn(&str) -> Result<Value, workspace::AttemptFailure>,
+) -> Result<Value, workspace::AttemptFailure> {
+    match lookup(captured) {
+        Ok(document) => {
+            if let Some(decoded) = gaps::percent_decode_resource_id(captured)
+                && lookup(&decoded).is_ok()
+            {
+                return Err(workspace::AttemptFailure::new(
+                    workspace::CODE_ID_AMBIGUOUS,
+                    format!(
+                        "the resource id is ambiguous: the captured segment resolves both as sent ({captured}) and as its percent-decoded form ({decoded}), which name two distinct canonical items"
+                    ),
+                    "read the item through the equivalent tool (ripr_get_gap or ripr_get_repair_card) with the canonical_id as a plain JSON string, which carries no URI encoding",
+                ));
+            }
+            Ok(document)
+        }
+        Err(failure) if failure.code == workspace::CODE_ITEM_NOT_FOUND => {
+            match gaps::percent_decode_resource_id(captured) {
+                Some(decoded) => lookup(&decoded),
+                None => Err(failure),
+            }
+        }
+        Err(failure) => Err(failure),
     }
 }
 
@@ -592,7 +859,7 @@ fn reject_unknown_arguments(
         if !allowed.contains(&name.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
             ));
         }
     }
@@ -607,7 +874,7 @@ fn required_string_argument(
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )
     })
 }
@@ -665,13 +932,27 @@ impl ServerHandler for McpServer {
     /// custom request and the default answers `-32601` with only the method
     /// name. A method this server serves is not missing: report the shape
     /// violation as `-32602` so a client can tell a bad call from a bad
-    /// method (#8504).
+    /// method (#8504). `initialize` is served too: a repeated `initialize`
+    /// without its required params is a params error, not a missing method.
+    /// A method that is missing says so conventionally (`Method not found:`).
     async fn on_custom_request(
         &self,
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
-        const SERVED_METHODS: [&str; 8] = [
+        if matches!(
+            request.method.as_str(),
+            "tools/list" | "prompts/list" | "resources/list" | "resources/templates/list"
+        ) && request
+            .params
+            .as_ref()
+            .and_then(|params| params.get("cursor"))
+            .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+        {
+            return Err(pagination_cursor_error(&request.method));
+        }
+        const SERVED_METHODS: [&str; 9] = [
+            "initialize",
             "server/discover",
             "completion/complete",
             "tools/call",
@@ -682,36 +963,56 @@ impl ServerHandler for McpServer {
             "prompts/list",
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
+            let message = if request.method == "initialize" {
+                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                    .to_owned()
+            } else {
+                format!("invalid params for `{}`", request.method)
+            };
             return Err(ErrorData::invalid_params(
-                format!("invalid params for `{}`", request.method),
-                None,
+                message,
+                Some(serde_json::json!({ "method": request.method })),
             ));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
-            request.method,
+            format!("Method not found: {}", request.method),
             None,
         ))
     }
     async fn list_tools(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
+    }
+    async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        // #9895: the SDK default returns an empty catalog and would silently
+        // ignore a client-supplied cursor; the static catalog rule is the
+        // same one tools/list and resources/list enforce.
+        reject_pagination_cursor(params, "prompts/list")?;
+        Ok(ListPromptsResult::default())
     }
     async fn list_resources(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/list")?;
         Ok(self.resources.clone())
     }
     async fn list_resource_templates(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/templates/list")?;
         Ok(self.resource_templates.clone())
     }
     async fn call_tool(
@@ -732,23 +1033,14 @@ impl ServerHandler for McpServer {
                 {
                     return Err(ErrorData::invalid_params(
                         "ripr_workspace_status does not accept arguments",
-                        None,
+                        Some(serde_json::json!({ "allowed": [] })),
                     ));
                 }
                 self.status_tool(max_envelope_bytes).await
             }
             protocol::REFRESH_TOOL_NAME => {
-                if request
-                    .arguments
-                    .as_ref()
-                    .is_some_and(|arguments| !arguments.is_empty())
-                {
-                    return Err(ErrorData::invalid_params(
-                        "ripr_refresh does not accept arguments",
-                        None,
-                    ));
-                }
-                self.refresh_tool(max_envelope_bytes).await
+                self.refresh_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             protocol::LIST_GAPS_TOOL_NAME => {
                 self.list_gaps_tool(request.arguments, max_envelope_bytes)
@@ -778,8 +1070,10 @@ impl ServerHandler for McpServer {
                 self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
                     .await
             }
+            // MCP: an unknown tool is a protocol error with Invalid Params
+            // (-32602), not Method Not Found; the method `tools/call` exists.
             _other => Err(ErrorData::new(
-                ErrorCode::METHOD_NOT_FOUND,
+                ErrorCode::INVALID_PARAMS,
                 "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
@@ -805,7 +1099,11 @@ impl ServerHandler for McpServer {
         // The same id-aware budget the tool path uses (#7768): a resource
         // read answers one request whose echoed id rides the same wire cap.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        if request.uri == protocol::STATUS_RESOURCE_URI {
+        // The well-known status resource gets the same one-trailing-slash
+        // tolerance the id routes normalize (#9895); the id parsers trim
+        // their own captures, so `uri` is used only for this exact match.
+        let uri = gaps::trim_one_trailing_slash(&request.uri);
+        if uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
                 &self.status,
@@ -852,7 +1150,8 @@ impl ServerHandler for McpServer {
         }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.get_gap(canonical_id, None) {
+            let result = resource_id_document(canonical_id, |id| session.get_gap(id, None));
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -886,8 +1185,11 @@ impl ServerHandler for McpServer {
         }
         if let Some(item_id) = repair_card::repair_card_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.repair_card_document(item_id, None, self.analysis_root.as_deref())
-            {
+            let root = self.analysis_root.clone();
+            let result = resource_id_document(item_id, |id| {
+                session.repair_card_document(id, None, root.as_deref())
+            });
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -978,9 +1280,23 @@ fn json_envelope(uri: &str, text: String) -> Value {
     })
 }
 
-/// Standard resource-miss semantics with the typed failure as data: the
+/// Typed resource-failure semantics with the typed failure as data: the
 /// message stays bounded and human-readable, and `data.code` carries the
 /// typed state (`no_snapshot`, `stale_snapshot`, `item_not_found`, …).
+///
+/// #9854: the JSON-RPC code now categorizes the failure instead of reading
+/// "not found" for every kind. Identity misses — the requested id does not
+/// exist (`item_not_found`, `attempt_not_found`) — keep ResourceNotFound
+/// (`-32002`, upgraded to `-32602` for 2026-07-28 peers by the SDK, keeping
+/// `current_snapshot_id` disclosure). Every other kind is a server state or
+/// a bound, not an identity claim: `no_snapshot`, `stale_snapshot`,
+/// `analysis_in_flight`, `workspace_unavailable`, `result_too_large`,
+/// `attempt_invalid`, `superseded`, `seam_not_found`, … answer InternalError
+/// (`-32603`), the closest standard JSON-RPC code, with the same `data`
+/// payload and the same human sentence. `data.code` stays the stable
+/// machine signal for existing clients, so a client branching on the
+/// JSON-RPC code no longer mistakes a retryable state for a missing
+/// namespace.
 fn resource_failure(
     kind: &str,
     failure: &workspace::AttemptFailure,
@@ -995,10 +1311,13 @@ fn resource_failure(
     if let Some(snapshot_id) = current_snapshot_id {
         data["current_snapshot_id"] = Value::from(snapshot_id);
     }
-    ErrorData::resource_not_found(
-        format!("unavailable {kind} resource: {}", failure.code),
-        Some(data),
-    )
+    let message = format!("unavailable {kind} resource: {}", failure.code);
+    match failure.code {
+        workspace::CODE_ITEM_NOT_FOUND | repair::CODE_ATTEMPT_NOT_FOUND => {
+            ErrorData::resource_not_found(message, Some(data))
+        }
+        _ => ErrorData::internal_error(message, Some(data)),
+    }
 }
 
 /// Serve adapter that answers `ping` by method name on an `initialize`
@@ -1008,6 +1327,7 @@ fn resource_failure(
 /// keep ping as method-not-found.
 pub(super) struct InitializeSessionService {
     inner: McpServer,
+    handshake_seen: AtomicBool,
 }
 
 impl InitializeSessionService {
@@ -1017,6 +1337,7 @@ impl InitializeSessionService {
     ) -> Result<Self, ErrorData> {
         Ok(Self {
             inner: McpServer::new(status, analysis_root)?,
+            handshake_seen: AtomicBool::new(false),
         })
     }
 }
@@ -1051,6 +1372,17 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         if matches!(request, ClientRequest::PingRequest(_)) {
             return answer_initialize_session_ping(&self.inner, context).await;
         }
+        if matches!(request, ClientRequest::InitializeRequest(_))
+            && self.handshake_seen.swap(true, Ordering::SeqCst)
+        {
+            // The first `initialize` is the handshake itself and flows
+            // through this adapter; any later one is a lifecycle violation
+            // on a live session, not a missing method (#9895).
+            return Err(ErrorData::invalid_request(
+                ALREADY_INITIALIZED_MESSAGE,
+                None,
+            ));
+        }
         <McpServer as rmcp::Service<RoleServer>>::handle_request(&self.inner, request, context)
             .await
     }
@@ -1076,6 +1408,8 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         <McpServer as rmcp::Service<RoleServer>>::supported_protocol_versions(&self.inner)
     }
 }
+
+const ALREADY_INITIALIZED_MESSAGE: &str = "session already initialized: `initialize` is accepted once per connection; continue with the existing session or restart `ripr mcp --stdio`";
 
 #[cfg(test)]
 #[path = "server_tests.rs"]

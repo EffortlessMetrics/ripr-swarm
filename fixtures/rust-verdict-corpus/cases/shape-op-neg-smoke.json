@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-op-neg-smoke",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-op-neg-smoke.diff",
+  "anchor": {
+    "file": "src/ops.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "operator_overload_smoke_no_assert",
+  "hard_case": "The test evaluates `-Money(1)` and discards it; the operator is reached and nothing is read.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Money(self.0)",
+        "mutated_line": "Money(self.0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `Money(0 - self.0)` becomes `Money(self.0)`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "Money(self.0 + 1)",
+        "mutated_line": "Money(self.0 + 1)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `Money(0 - self.0)` becomes `Money(self.0 + 1)`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "negation_is_only_exercised never compares the result, so both mutants pass. Shape: operator overload reached through the operator with no oracle.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

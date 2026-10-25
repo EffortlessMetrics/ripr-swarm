@@ -26,6 +26,13 @@ Linked issues:
 - [#8165](https://github.com/EffortlessMetrics/ripr-swarm/issues/8165) -
   the bounded default verdict uses plain language only; schema tokens stay
   in `human-full`, JSON, and `explain`.
+- [#9346](https://github.com/EffortlessMetrics/ripr-swarm/issues/9346) -
+  Start-here selection ranks changed-file role first, so an unknown probe
+  seeded by a test-file edit cannot lead over a decisive production
+  verdict.
+- [#9373](https://github.com/EffortlessMetrics/ripr-swarm/issues/9373) -
+  item 1 explains the bounded Evidence stages and conservative state words
+  beside the selected finding.
 
 Linked PRs:
 
@@ -149,6 +156,10 @@ When the hidden identity list exceeds its 20-finding window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
 opt-out recovers the full finding set without changing either display cap.
+When that JSON budget engages, it keeps the highest-priority findings
+(candidate-current first, then the strongest gap classes) rather than a
+file-order prefix, and its `limited_findings_bound` message names the dropped
+counts per class and file (#10093).
 
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
@@ -162,13 +173,45 @@ decisive stages behind a remainder count (#4324):
 
 ```text
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
 ```
 
+The seven-line legend immediately follows the compact line, once for the selected
+digest, including an exposed finding when selected. It explains static evidence,
+not execution or test adequacy. `weak` means partial evidence across the stages,
+and `no` means evidence was not found, never that a behavior is impossible.
+The final two lines define the words the `Summary:` count line prints (probe,
+exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
+the `unknown` count is already defined by the `States` line (`unknown/opaque =
+analysis limited`). They claim no runtime mutation outcome.
+No legend renders when there is no selected digest (empty, all-suppressed,
+base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
+seven lines; it does not expand the per-stage detail window. Full human and
+machine formats retain their existing contracts. This addresses item 1 and #9244
+item 4 only; the shared class vocabulary and per-class discoverability in items 2
+and 3 are unchanged.
+
+Stages summarize independent static signals. Observation can reflect a
+matching assertion, an extracted test check, or a preview adapter's related-test
+evidence. An observation `yes` alone establishes neither changed-arm execution
+nor observation of its changed effect; consult the infection and discriminator
+evidence.
+
 Every stage always carries an evidence line, so the compact line names all
-five stages for every finding and never silently drops one. The discriminator
-token keeps the full evidence line's semantic: the `discriminate` stage grades
-the strongest related oracle, so on a non-`exposed` finding a `yes` grade
-renders as `missing` (a named missing discriminating input exists) or
+five stages for every finding and never silently drops one. The `missing` state
+covers absent inputs and absent assertions, such as an exact error
+variant assertion when the test already supplies the relevant input.
+
+The discriminator token keeps the full evidence line's semantic: the
+`discriminate` stage grades the strongest related oracle, so on a non-`exposed`
+finding a `yes` grade
+renders as `missing` (a named missing discriminator exists) or
 `not established` rather than claiming a discriminator the digest
 simultaneously reports missing. The per-stage prose detail stays in the
 bounded window beneath it: the first two detail lines render verbatim, and
@@ -220,13 +263,59 @@ lines rendered beneath it:
 The bounded renderer selects at most one visible unsuppressed finding. The
 selector is deterministic:
 
-1. Non-preview findings outrank preview-language findings.
-2. Non-exposed findings with repair routes outrank findings without repair
+1. Findings are ranked by changed-file role first (#9346). The role is
+   the producer-owned source-role model
+   (`analysis::workspace::source_role`), built at this surface from
+   layout plus the configured `[analysis] production_like_targets`
+   opt-in (triage holds no Cargo target metadata, so declared targets,
+   build scripts, and declared crate roots are not recorded here).
+   Three tiers: (a) files that seed production findings — production
+   subjects and opted-in production-like targets, the opt-in winning
+   over the `tests/` layout exactly as the producer ordered it;
+   (b) diff-only seeders (`seeds_diff_probes`) — reviewed behavior that
+   seeds when changed but stays out of the production seam inventory,
+   of which repository automation under root `xtask/src/` is the shape
+   derivable at this surface; (c) evidence-role files (integration
+   tests, benches, examples, fixtures). The demoted pair is
+   (evidence-role file, unknown verdict): an unknown probe seeded by a
+   test-file edit cannot lead over the decisive or weak production
+   finding it accompanies.
+2. Within production findings, an unknown probe (`static_unknown`,
+   `infection_unknown`, `propagation_unknown`) shadowed by a decisive
+   (`exposed` or `weakly_exposed`) production verdict covering the same
+   changed behavior ranks behind that verdict (#9346). Owner identity is
+   the producer-owned `probe.owner` (`<file>::<owner>`), with the
+   canonical gap's `file`/`owner` pair as the same identity for findings
+   that carry only the gap — but owner alone never shadows. Shadowing
+   requires the same changed behavior (same changed file and line and
+   the same behavior subject: the canonical gap's
+   `file`/`owner`/`normalized_discriminator`, or the probe's changed
+   expression where no gap is carried), or an unknown carrying no
+   distinct change of its own (its recorded before/after delta is
+   absent or behavior-neutral, as in the witnessed whole-function
+   `static_unknown` seeded by re-adding the signature line unchanged
+   or comment-only). Two independent edits in one function — for
+   example a changed signature type bound and a changed predicate —
+   name different subjects on different lines with substantive deltas,
+   so the unknown keeps its lead and its limitation headline. A lone
+   production unknown, or one whose decisive sibling covers a
+   different owner, is likewise not shadowed.
+3. Non-preview findings outrank preview-language findings.
+4. Non-exposed findings with repair routes outrank findings without repair
    routes.
-3. `exposed` findings do not outrank non-exposed findings merely because they
+5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-4. Class, gap metadata, related tests, missing evidence, confidence, path, and
+6. Class, gap metadata, related tests, missing evidence, confidence, path, and
    line provide stable tie-breakers.
+
+Apart from the same-behavior shadowing in step 2, verdict order within one
+file role is unchanged: an unshadowed production unknown still leads a
+production `exposed` finding, so `no_actionable_gap` keeps meaning
+only-exposed-selected (or only shadowed unknowns remain), a production
+unknown keeps its lead over a decisive test-file finding, and when every
+probe is unknown the selected unknown still yields the `static_limited`
+state. Classification is unchanged; only the selection order moves
+(#9346).
 
 The selected finding's `Next step` is never truncated, because the guidance
 ends with its remedy (#4323). Text within the digest line budget stays on one
@@ -238,7 +327,12 @@ whose probe family is `predicate`, `return_value`, `error_path`, or
 `ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
 #5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. Side-effect, call-deletion,
+compiling test stub, or a named refusal. When the finding line holds no seam
+of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
+seam's own line rather than the finding line, and only when asking for that
+line resolves to the same seam with no substitution note; otherwise no route
+is printed. A changed constant routed through a consuming function follows the
+same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.
 
@@ -275,14 +369,27 @@ a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
 `FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
 suggestions are filtered to that family before the five-entry limit is
 applied. If the file contains only other families, the suggestions are empty.
+An empty list renders as `nearest: none`. A suffix selector searches reported
+gaps rather than every seam shape; an empty list must not claim that a filtered
+family has no seam in the file.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
-(`selector_ambiguous`). Both remain decisions (exit 3), with empty stdout,
-the schema `0.2` refused envelope then human guidance on stderr, and no stub
+(`selector_ambiguous`). Both remain decisions (exit 3), with the schema
+`0.2` refused envelope on stdout, human guidance on stderr, and no stub
 write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
+
+For an integration-file stub, `run_command` names the effective cargo test
+target (#8794): an explicit `[[test]]` entry for the file supplies the name,
+otherwise the auto-discovered name when discovery is enabled for the package
+edition. When the target name is not established (`autotests = false` without
+an entry, edition-2015 packages whose explicit entries disable discovery,
+`harness = false`, a name-only entry whose `tests/<n>.rs` and
+`tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
+`required-features`, which is omitted conservatively without default-feature
+resolution) the command is `null` and the human output says so.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -363,6 +470,18 @@ content. Shared CLI blocks use compact section spacing; only empty separators
 are removed, never a content line. Consecutive references preserve evidence
 order and repeated entries.
 No finding or evidence fact is removed to shorten the report (#7394).
+
+One presentation exception applies to a `no_static_path` finding: its Weakness
+list omits the three generic `missing` entries ("No static test path reaches
+the changed owner", "No relevant oracle was detected", "No strong
+discriminator was detected") while the matching Evidence stage (reach,
+observation, discriminator) reads `no`, because the Evidence block already
+states the same fact. A distinct entry, such as a missing boundary input, and
+any entry whose stage is not `no` stay. The finding's JSON `missing` list is
+unchanged. The default digest skips the same restated entries when it names its one
+`Missing discriminator` entry, and labels a `Typed static limitation (...)`
+entry as an `Analyzer limit`, so it never presents an analyzer limit as a test
+gap or names an entry the exhaustive form dropped as a restatement (#9033).
 
 Sharing requires established identical full source ownership, source file,
 language/status/owner kind, currentness and raw test context/counts. An evidence
@@ -472,6 +591,82 @@ because the write run resolves it the same way; when nothing resolves, the
 command carries `--base <ref>` followed by the resolution error, so the
 suggested write cannot fail on the same missing base.
 
+### Plain wording for an unconfirmed observation (#9244)
+
+The producer's `observation` and `discriminator` stage summaries carry the
+machine marker `observation_unverified`. Both human evidence routes, the
+per-finding lines (the single-finding blocks of bounded and `human-full`
+output, and `ripr explain`) and the grouped rows of the shared multi-finding
+catalogue, remove only the producer-appended marker, at the fixed
+position each producer emits it: the trailing ` (observation_unverified)`
+suffix, the Python adapter's fixed `(observation_unverified).` sentence forms,
+and the TypeScript adapter's exact strong-oracle-no-flow summary (whose token
+reads "the observation is unconfirmed"). The words before the marker
+("Discriminator unconfirmed: no assertion text references this probe's changed
+expression") already say it in prose. No substring or token scanning is done,
+so source text a summary embeds (identifiers, quoted literals, backticks of
+any parity) is never modified. The JSON stage summaries and the shared
+discriminator evidence line keep the marker unchanged, because downstream
+consumers key on it. With two or more owner-bearing findings, `human-full`
+renders every evidence row through the shared catalogue; those rows apply the
+same rewrite as the per-finding lines. The TypeScript controls run the built
+binary on the boundary-gap shape with the token as a parameter name and as part
+of a longer identifier; the Python controls
+run it on the error-path shape with the raised message as an unpaired-backtick
+string and as the bare token. All require the producer's `missing proof`
+expression to print unchanged in the human Evidence row.
+
+
+The human Weakness list (`weakness_lines`, shown by `human-full`) applies the
+same anchored rewrite to the structured `missing` entries, so the Python
+adapter's reason text prints without the producer marker while the JSON
+`missing` strings keep it (#9929). The digest's "Missing discriminator" line
+prints the raw `missing` text truncated at 180 characters and is not rewritten;
+the marker sits past that window for the current producer forms. This item does
+not rewrite pilot output or the agent packet routes, which remain tracked in
+#9929.
+
+The LSP hover (finding hover, line hover and classified-seam hover) is prose for
+a person and applies the same anchored rewrite to its stage lines, the
+discriminator line's related-oracle summary, its Weakness list, and the seam
+hover's Strong/Weak evidence lists and missing-discriminator reasons; the
+structured finding and JSON keep the machine value (#9929).
+
+### Next step for an unmapped infection input (#9244)
+
+For an `infection_unknown` finding whose related-test inputs ripr cannot map to
+the changed operand, the Next step text states a concrete action: open the
+related test, trace its input through the local or computed operand (including
+default and empty cases) to see which side of the changed condition it
+exercises, then name an input that would exercise the other side. It does not
+restate that the classification is unknown as the instruction, and it keeps the
+existing statement that `ripr.toml` has no fixture/builder value mappings and
+the instruction to add or strengthen a test only when the inspection finds a
+gap. The wording is static guidance only; it does not claim a runtime outcome.
+The assertion-shaped owner reframing (RIPR-SPEC-0133) is unchanged.
+
+### Match-arm after row names a head-only text (#9244)
+
+A match-arm probe keeps the parser's arm head (`Tier::Pro =>`) as its `after`
+text while its `before` can be the whole old arm (`Tier::Pro => seats * 20 + 5,`).
+When the human `Changed` block would print a head-only `after:` beside a
+`before:` that carries an arm body, and the head text is identical on both
+sides, it adds one continuation row stating that the row is the arm head only
+and naming the `file:line` at which to open the arm to read its new body. That
+line is the probe's head line, not a body coordinate. Arrows are located on the
+comment- and string-masked text, so `"a=>b" =>` and `0 /* => */ =>` are one
+head. A changed head prints no note: the producer joins the old body into
+`before` for a multiline head, so a pattern-only edit and a pattern-and-body edit
+cannot be told apart from the probe. A complete after arm, a nested arrow and
+every other probe family print no note either. The probe fields and every
+machine output are unchanged; the note is static guidance only and claims no
+runtime outcome.
+
+Body presence includes a string or character literal even without a trailing
+comma. Comment-only text, including the producer's `/* old body unread */`
+placeholder, does not establish a body. A complete literal `after:` body is
+not a head-only row and prints no note.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -498,6 +693,14 @@ suggested write cannot fail on the same missing base.
   advisory)` for `exposed` findings with an observation rationale; `Missing
   discriminator` otherwise) and for both `preview_limited` safe-next-action
   arms (complete-but-advisory packet versus missing packet fields).
+- Tests for the held repair start (#8738): the default check screen does not
+  list `ripr repair <seam>` as a bare runnable action when the selected
+  edit target (an existing test target or a producer-proposed inline file)
+  is a production Rust file whose worktree or index copy differs from HEAD;
+  it prints one `Repair start (needs a committed ...)` line stating the
+  commit-or-stash requirement, naming the test route only when a stub is
+  rendered. The predicate is the edit cage's own committed-file law, deferring
+  (no hold) when it cannot be established.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.
@@ -509,9 +712,32 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row`
+- `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
+- `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments`
+- `crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row`
+- `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_preserves_literal_body_presence`
+- `crates/ripr/tests/cli_smoke.rs::check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma`
+- `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
+- `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
+- `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
+- `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_python_literals.rs::bare_token_message_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_equal_to_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
+- `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_suffix_refusal_does_not_claim_filtered_family_is_absent`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
@@ -551,6 +777,7 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/src/output/human.rs::tests::evidence_window_observed_values_pointer_names_json_cap_beyond_it`
 - `crates/ripr/src/output/human.rs::tests::digest_related_test_line_carries_the_total`
 - `crates/ripr/src/output/human.rs::tests::digest_missing_discriminator_discloses_one_of_n_window`
+- `crates/ripr/tests/cli_smoke/discarded_matches.rs::bounded_legend_capture_projection_is_exact_and_preserves_evidence`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_lists_omitted_findings_by_file_line_and_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_all_base_side_run_names_base_side_evidence`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`

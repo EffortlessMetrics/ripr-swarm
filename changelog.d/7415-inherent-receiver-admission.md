@@ -33,3 +33,10 @@
   complete test/owner/type-or-trait answers. Executable callers and assertion
   operands reuse immutable syntax while retaining original lexical anchors and
   conservative execution and binding refusals (#7415, #8004).
+- Receiver construction is credited from indexed evidence rather than
+  constructor-sounding names: `Ty::name()` needs a declaration returning
+  `Self`/`Ty`, `Ty::default()` an `impl Default`/`#[derive(Default)]`,
+  `Ty::from(..)` an `impl From`, a free `fixture()` a unique declared return
+  type, and a bare unit struct a verified declaration. Qualified paths
+  (`foreign::Site::new()`) and a shadowing local binding are refused. The three
+  corpus rows above are listed under `known-false/` with owner #8782 (#7415).

@@ -17,13 +17,21 @@ Start here:
   Changed behavior: let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Related test: tests/controls.rs:4 map_or_else_boundary_stays_unresolved
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach via_map_or_else: map_or_else_boundary_stays_unresolved
     - infection unknown: The only literals ripr reads in related tests are char literals ['x'], which ripr does not compare with the changed numeric boundary [1]; activation/infection…
     - 7 more detail line(s) in --format human-full
@@ -33,7 +41,7 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/binding_value_fail_closed/input --diff <cwd>/fixtures/binding_value_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:d9aa811b
   no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:d9aa811b --root <cwd>/fixtures/binding_value_fail_closed/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/binding_value_fail_closed/input --at src/lib.rs:2 --kind predicate
+  ripr agent stub --root <cwd>/fixtures/binding_value_fail_closed/input --at src/lib.rs:4 --kind predicate
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

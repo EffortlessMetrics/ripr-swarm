@@ -201,6 +201,57 @@ describe.sequential("serial suite", () => {
 }
 
 #[test]
+fn recurses_playwright_describe_members_of_the_test_root() {
+    let tests = extract_tests(
+        Path::new("tests/pricing.spec.ts"),
+        r#"
+test.describe("plain suite", () => {
+    test("plain case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.serial("serial suite", () => {
+    test("serial case", () => {
+        expect(add(1, 2)).toBe(3);
+    });
+});
+test.describe.parallel.only("focused suite", () => {
+    test("focused case", () => {
+        expect(normalize("x")).toBe("x");
+    });
+});
+test.describe.skip("skipped suite", () => {
+    test("skipped case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.fixme("fixme suite", () => {
+    test("fixme case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.only.skip("active then disabled suite", () => {
+    test("disabled case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.configure({ mode: "serial" });
+runner.describe("unknown root", () => {
+    test("unknown case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+"#,
+    );
+
+    assert_eq!(tests.len(), 3);
+    assert_eq!(tests[0].name, "plain suite plain case");
+    assert_eq!(tests[1].name, "serial suite serial case");
+    assert_eq!(tests[2].name, "focused suite focused case");
+    assert!(tests.iter().all(|test| test.describe_names.len() == 1));
+}
+
+#[test]
 fn recurses_bare_and_modified_parameterized_suites() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -366,13 +417,23 @@ test.only("discount boundary", () => {
         params: Vec::new(),
         exported_as_default: false,
         class_default_export: false,
+        default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         arity: None,
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -767,7 +828,7 @@ fn report_snippet_partial_owner_disclosure_preserves_selected_source_identity() 
             "class Decoy {{ ordinary() {{ return 0; }} }}{newline}class Selected {{{newline}  chosen = ({newline}{}value: number{newline}  ) => value + 1;{newline}}}{newline}",
             " ".repeat(100)
         );
-        let gap = detect_owner_extraction_gap(file, &source, &[4])
+        let gap = detect_owner_extraction_gap(file, &source, &[4], Path::new("."), None)
             .ok_or_else(|| "expected a real unsupported class-field owner".to_string())?;
         assert_eq!(gap.file, file);
         assert_eq!(gap.sample_line, 4);
@@ -911,4 +972,123 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     };
     assert_eq!(script("const o = {};"), vec!["wrap".to_string()]);
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
+}
+
+/// RIPR-SPEC-0243 rule 17 (#9497): a `node:test` callback that calls
+/// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
+/// have gone, so it registers no discriminator. Negative: the same body
+/// without the call, a `skip` on another receiver, and a callback with no
+/// context parameter stay extracted.
+#[test]
+fn context_skip_and_todo_withdraw_the_test_but_other_receivers_do_not() {
+    let source = r#"
+import test from "node:test";
+test("skips", (t) => {
+    t.skip("not ready");
+    assert.equal(price(150), 130);
+});
+test("todo", (ctx) => {
+    ctx.todo();
+    assert.equal(price(150), 130);
+});
+test("plain", (t) => {
+    assert.equal(price(150), 130);
+});
+test("other receiver", (t) => {
+    other.skip("not ready");
+    assert.equal(price(150), 130);
+});
+test("longer name", (t) => {
+    wt.skip();
+    t.skipped();
+    assert.equal(price(150), 130);
+});
+test("no context", () => {
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["plain", "other receiver", "longer name", "no context"],
+        "{tests:?}"
+    );
+}
+
+#[test]
+fn context_skip_in_a_comment_string_or_nested_subtest_does_not_withdraw_the_test() {
+    let source = r#"
+import test from "node:test";
+test("comment", (t) => {
+    // t.skip() when CI
+    assert.equal(price(150), 130);
+});
+test("string", (t) => {
+    const note = "t.todo()";
+    assert.equal(price(150), 130);
+});
+test("parent", async (t) => {
+    await t.test("sub", (t) => {
+        t.skip();
+    });
+    assert.equal(price(150), 130);
+});
+test("real skip", (t) => {
+    if (process.env.CI) {
+        t.skip();
+    }
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(names, ["comment", "string", "parent"], "{tests:?}");
+}
+
+/// Rule 17 is textual by contract: only the `t.skip(` / `t.todo(` spelling
+/// withdraws a test. Computed (`t["skip"]`) and optional-chained (`t?.skip()`)
+/// calls are not matched; changing that must be a deliberate, AST-precise edit.
+#[test]
+fn context_skip_through_computed_or_optional_access_is_not_matched() {
+    let source = r#"
+import test from "node:test";
+test("computed", (t) => {
+    t["skip"]("x");
+    assert.equal(price(150), 130);
+});
+test("optional", (t) => {
+    t?.skip();
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(names, ["computed", "optional"], "{tests:?}");
+}
+
+#[test]
+fn bare_parameter_callbacks_attribute_a_nested_subtest_skip_to_the_subtest() {
+    let source = r#"
+import test from "node:test";
+test("async parent", async t => {
+    await t.test("sub", t => {
+        t.skip();
+    });
+    assert.equal(price(150), 130);
+});
+test("plain parent", t => {
+    t.test("sub", async t => {
+        t.todo();
+    });
+    assert.equal(price(150), 130);
+});
+test("own skip", async t => {
+    t.skip();
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
 }

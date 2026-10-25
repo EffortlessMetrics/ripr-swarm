@@ -24,6 +24,8 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+mod native_artifacts;
 mod spec_0237;
 mod timeout_retry;
 
@@ -604,7 +606,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n\n"),
+        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
         "{md}"
     );
     assert!(
@@ -618,7 +620,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
     assert!(!md.contains("Seam limit reached"), "{md}");
     assert!(
-        md.contains("- Actionable seams: 3 total, showing up to 1\n"),
+        md.contains("- Actionable seams: 3 total, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n"),
         "{md}"
     );
     assert!(
@@ -837,6 +839,15 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         "{md}"
     );
     assert!(!md.contains("Withheld"), "{md}");
+    // #8766: with nothing ranked there is no focused test to run "after
+    // adding", so the terminal screen prints no snapshot/outcome commands.
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("Run after adding the focused test")
+            && !terminal.contains("ripr outcome")
+            && terminal.contains("No seam was ranked"),
+        "{terminal}"
+    );
 
     // A seam limit cut seams pilot never classified: they may hold gaps, so
     // the withheld count is a lower bound and "No gap to test" would claim an
@@ -868,6 +879,88 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     );
     assert!(terminal.contains(expected_next), "{terminal}");
     assert!(!terminal.contains("No gap to test:"), "{terminal}");
+}
+
+/// #9368: the terminal shows the top 1 seam; it must also disclose the
+/// #9368: the terminal shows the top 1 seam; it must also disclose the
+/// actionable total and where the full ranked list lives, so one unexplained
+/// pick out of an undisclosed count does not read as arbitrariness.
+#[test]
+fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
+    use crate::domain::LanguageId;
+
+    let entries = [
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 2),
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/c.rs", "c::h", 3),
+    ];
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let ranked =
+        "more ranked in target/ripr/pilot/pilot-summary.md; pass --max-seams N to rank more";
+
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(&format!(
+            "  actionable seams: 3 total, showing 1 ({ranked})\n"
+        )),
+        "{terminal}"
+    );
+
+    // A seam limit cut the classified seams, so the total is a lower bound,
+    // mirroring the JSON summary's predicate (#6739).
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let limited = PilotSummaryContext {
+        seam_limit: Some(&limit),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, limited);
+    assert!(
+        terminal.contains(&format!(
+            "  actionable seams: at least 3, showing 1 ({ranked})\n"
+        )),
+        "{terminal}"
+    );
+
+    // Declined Rust files also under-credit the run, so the total stays a
+    // lower bound without a seam limit.
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+            .with_declined_rust_files(declined);
+    let declined_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, declined_context);
+    assert!(
+        terminal.contains("  actionable seams: at least 3, showing 1"),
+        "{terminal}"
+    );
+
+    // A single actionable seam needs no pointer.
+    let single = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::f",
+        1,
+    )];
+    let terminal = render_pilot_terminal(&single, context);
+    assert!(
+        terminal.contains("  actionable seams: 1 total, showing 1\n"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("--max-seams N to rank more"),
+        "{terminal}"
+    );
 }
 
 #[test]
@@ -938,7 +1031,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
-        "## Ranked Seams\n\nExploratory seams, not ranked by expected mutant yield.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
+        "## Ranked Seams\n\nOrder: change-touched seams first, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -978,20 +1071,31 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
     let artifacts = pilot_artifacts();
 
     let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
+    // #9368 item 3: the mechanism leads, the precision limit follows.
     assert!(
-        md.contains("Exploratory seams, not ranked by expected mutant yield"),
+        md.contains("Order: change-touched seams first, then grip class"),
+        "{md}"
+    );
+    assert!(
+        md.contains("Static evidence, not measured fault yield"),
         "{md}"
     );
     // The label sits with the list it describes, not only in a header.
     let ranked = md.find("## Ranked").map_or("", |start| &md[start..]);
     assert!(
-        ranked.contains("Exploratory seams, not ranked by expected mutant yield."),
+        ranked.contains(
+            "Order: change-touched seams first, then grip class, then one pick per owning function per round"
+        ),
         "{md}"
     );
 
     let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
     assert!(
-        terminal.contains("Exploratory seams, not ranked by expected mutant yield"),
+        terminal.contains("Order: change-touched seams first, then grip class"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("Static evidence, not measured fault yield"),
         "{terminal}"
     );
 
@@ -1169,6 +1273,86 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     assert!(
         !terminal.contains("repair this seam:"),
         "a route-limited seam must not be offered a repair transaction:\n{terminal}"
+    );
+}
+
+/// #8696: the loaded config path arrives canonicalized (#7652), which on
+/// Windows carries the verbatim `\\?\` prefix. Both pilot human surfaces must
+/// render the plain spelling, matching the check header and doctor lines —
+/// the terminal line is what a new user reads, and the markdown line is what
+/// review links keep.
+#[cfg(windows)]
+#[test]
+fn pilot_human_surfaces_strip_verbatim_config_prefix_natively_on_windows() {
+    // `check-local-context` forbids drive-letter path literals, so the
+    // Windows shapes are assembled from parts.
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\demo\ripr.toml");
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.config_path = Some(Path::new(&verbatim));
+
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  config: loaded {drive}/tmp/demo/ripr.toml")),
+        "terminal must render the plain config spelling:\n{terminal}"
+    );
+    assert!(!terminal.contains("/?/"), "{terminal}");
+
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "markdown must render the plain config spelling:\n{md}"
+    );
+    assert!(!md.contains("/?/"), "{md}");
+
+    // The timed-out pilot uses its own renderers; they carry the same rule
+    // so a partial run does not resurrect the raw prefix.
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {drive}/tmp/demo/ripr.toml")),
+        "timeout terminal must render the plain config spelling:\n{timeout_terminal}"
+    );
+    assert!(!timeout_terminal.contains("/?/"), "{timeout_terminal}");
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "timeout markdown must render the plain config spelling:\n{timeout_md}"
+    );
+    assert!(!timeout_md.contains("/?/"), "{timeout_md}");
+}
+
+/// The Unix-native counterpart of the #8696 control: a verbatim-looking
+/// spelling is an ordinary relative filename there, so the human-path owner
+/// keeps it byte-for-byte and the pilot line carries the spelling as given.
+#[cfg(unix)]
+#[test]
+fn pilot_human_surfaces_keep_verbatim_looking_config_spelling_natively_on_unix() {
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\demo\ripr.toml");
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.config_path = Some(Path::new(&verbatim));
+
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  config: loaded {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{md}"
+    );
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_terminal}"
+    );
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_md}"
     );
 }
 
@@ -1391,7 +1575,7 @@ fn timeout_summary_after_default_extension_names_the_default_and_caps_retry() {
     let json = render_pilot_timeout_summary_json(context);
     assert!(
         json.contains("\"timeout_ms\": 270000"),
-        "JSON keeps the spent budget; schema 0.3 is unchanged:\n{json}"
+        "JSON keeps the spent budget; the schema version is unchanged:\n{json}"
     );
     assert!(
         json.contains("--timeout-ms 300000"),
@@ -1928,6 +2112,200 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// The repair start refuses only an inline-module target file that differs
+/// from HEAD (worktree or index), so the precondition appears exactly when the
+/// target file's own state is uncommitted and the repair targets an inline
+/// module (#9553); step 3 names the `continue --attempt ...` command that
+/// step 1 prints.
+#[test]
+fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() -> Result<(), String>
+{
+    use crate::analysis::new_test_target::{
+        InlineTestRegionAuthority, NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission,
+        NewTestTargetProposal,
+    };
+
+    fn vcs(root: &Path, args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|err| format!("run git {args:?}: {err}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-pilot-precondition-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    let fixture = Fixture(dir);
+    let root = fixture.0.as_path();
+    let write = |relative: &str, text: &str| {
+        std::fs::write(root.join(relative), text).map_err(|err| format!("write {relative}: {err}"))
+    };
+    write("src/pricing.rs", "pub fn price() {}\n")?;
+    write("tests/pricing.rs", "fn boundary() {}\n")?;
+    write("Cargo.toml", "[workspace]\n")?;
+    vcs(root, &["-c", "init.templateDir=", "init", "-q"])?;
+    vcs(root, &["config", "user.email", "ripr@example.invalid"])?;
+    vcs(root, &["config", "user.name", "RIPR Test"])?;
+    vcs(root, &["config", "commit.gpgSign", "false"])?;
+    vcs(root, &["config", "core.hooksPath", ".no-hooks"])?;
+    vcs(root, &["add", "."])?;
+    vcs(root, &["commit", "-qm", "baseline"])?;
+
+    let artifacts = pilot_artifacts();
+    let tests_dir_entry = route_ready_entry(&["tests/pricing.rs"]);
+    let mut inline_entry = route_ready_entry(&["src/pricing.rs"]);
+    let region = InlineTestRegionAuthority {
+        file: PathBuf::from("src/pricing.rs"),
+        module_name: "tests".to_string(),
+        parent_modules: Vec::new(),
+        body_start: 0,
+        close_brace_start: 0,
+        source_digest: String::new(),
+    };
+    inline_entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+        proposal: Some(NewTestTargetProposal {
+            kind: NewTestKind::InlineUnit,
+            file: PathBuf::from("src/pricing.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+        }),
+        region: Some(region.clone()),
+        blocker: None,
+        owner_inline_region: Some(region),
+    });
+    let precondition = "if `src/pricing.rs` has uncommitted edits, commit or stash them";
+    let change = changed("src/pricing.rs", 3);
+    let no_change = PilotCurrentChange::NoChange { base: None };
+
+    let render = |entry: &ClassifiedSeam, change: &PilotCurrentChange| -> Result<String, String> {
+        let route = commands::repair_start_command(root, entry)
+            .ok_or_else(|| "fixture seam must offer a repair start".to_string())?;
+        let mut context = pilot_context(&artifacts);
+        context.root = root;
+        context.current_change = Some(change);
+        let terminal = render_pilot_terminal(std::slice::from_ref(entry), context);
+        assert!(terminal.contains(&format!("  1. {route}\n")), "{terminal}");
+        Ok(terminal)
+    };
+    let render_md = |entry: &ClassifiedSeam, change: &PilotCurrentChange| {
+        let mut context = pilot_context(&artifacts);
+        context.root = root;
+        context.current_change = Some(change);
+        render_pilot_summary_md(std::slice::from_ref(entry), context)
+    };
+
+    // Committed target: no line, whatever the current change claims.
+    assert!(!render(&inline_entry, &change)?.contains("uncommitted edits"));
+
+    // Worktree edit: the line sits between heading and step 1.
+    write("src/pricing.rs", "pub fn price() { let _ = 1; }\n")?;
+    let route = commands::repair_start_command(root, &inline_entry)
+        .ok_or_else(|| "inline fixture must offer a repair start".to_string())?;
+    let inline_dirty = render(&inline_entry, &change)?;
+    let positions = (
+        inline_dirty.find("Next, in order:"),
+        inline_dirty.find(precondition),
+        inline_dirty.find(&format!("  1. {route}")),
+    );
+    assert!(
+        matches!(positions, (Some(head), Some(pre), Some(one)) if head < pre && pre < one),
+        "{inline_dirty}"
+    );
+    assert!(
+        inline_dirty.contains("  3. run the `continue --attempt ...` command that step 1 prints\n"),
+        "{inline_dirty}"
+    );
+
+    // The saved Markdown summary carries the same precondition, ahead of the
+    // repair introduction and without a placeholder command a user could run.
+    let markdown = render_md(&inline_entry, &change);
+    assert!(
+        markdown.contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("then run the `continue --attempt ...` command it prints:"),
+        "{markdown}"
+    );
+
+    // A tests/ target is not an inline target: no line under a dirty file.
+    let tests_dirty = render(&tests_dir_entry, &change)?;
+    assert!(!tests_dirty.contains("uncommitted edits"), "{tests_dirty}");
+    assert!(
+        tests_dirty.contains("  3. run the `continue --attempt ...`"),
+        "{tests_dirty}"
+    );
+
+    // Staged-only (#9553): the index differs from HEAD and the worktree
+    // matches the index, so pilot's worktree diff sees no change. The target
+    // file's own state still names the precondition `agent repair` enforces.
+    vcs(root, &["add", "src/pricing.rs"])?;
+    let staged = render(&inline_entry, &no_change)?;
+    assert!(staged.contains(precondition), "{staged}");
+    assert!(
+        render_md(&inline_entry, &no_change)
+            .contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits")
+    );
+    assert!(
+        !render(&tests_dir_entry, &no_change)?.contains("uncommitted edits"),
+        "a staged inline file must not leak into a tests/ target"
+    );
+
+    // Back at HEAD: a clean tree prints no line, with or without a change.
+    vcs(root, &["reset", "-q", "--hard", "HEAD"])?;
+    assert!(!render(&inline_entry, &no_change)?.contains("uncommitted edits"));
+    assert!(!render(&inline_entry, &change)?.contains("uncommitted edits"));
+    Ok(())
+}
+
+/// #8992: the offered repair start route renders the root through
+/// `root_path_display` before `bound_root`, so a Unix checkout whose path
+/// contains a literal backslash still names the user's checkout; `display_path`
+/// would have rewritten the backslash into a separator and the pasted command
+/// would target a different directory. On Windows `\` is a separator and the
+/// rendered root keeps stable `/` separators, exactly as before.
+#[test]
+fn pilot_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
+    let entry = route_ready_entry(&["tests/pricing.rs"]);
+    let root = Path::new("/tmp/team\\repo");
+    let route = commands::repair_start_command(root, &entry)
+        .ok_or_else(|| "eligible seam must offer a repair start".to_string())?;
+    if cfg!(unix) {
+        assert!(
+            route.contains("--root '/tmp/team\\repo'"),
+            "route must keep the literal backslash: {route}"
+        );
+    } else {
+        assert!(
+            route.contains("tmp/team/repo"),
+            "route must render stable separators on Windows: {route}"
+        );
+    }
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {
@@ -2324,6 +2702,69 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
         parsed["language_routes"],
         serde_json::json!({"state": "not_detected", "routes": []})
     );
+    Ok(())
+}
+
+#[test]
+fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    // #9308: a parse limit declined src/deep.rs. Pilot ranked what it could,
+    // but the summary must carry the limit in JSON, Markdown and terminal.
+    let artifacts = pilot_artifacts();
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget; parse refused to avoid a stack overflow".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+            .with_declined_rust_files(declined);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: None,
+        ..pilot_context(&artifacts)
+    };
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["declined_rust_files"]["file_count"], 1, "{json}");
+    assert_eq!(
+        parsed["declined_rust_files"]["files"][0]["path"],
+        "src/deep.rs"
+    );
+    assert!(
+        parsed["declined_rust_files"]["files"][0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+        "{json}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("## Rust Files Declined By A Parse Limit"),
+        "{md}"
+    );
+    assert!(md.contains("src/deep.rs"), "{md}");
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains("Rust files declined by a parse limit:"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("src/deep.rs"), "{terminal}");
+
+    // Nothing declined: the JSON shape is unchanged.
+    let plain =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[]);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            seam_limit: None,
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert!(parsed.get("declined_rust_files").is_none(), "{json}");
     Ok(())
 }
 
@@ -2748,6 +3189,87 @@ fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), Stri
         "{md}"
     );
     Ok(())
+}
+
+/// #9857: the scope line names the seam owners the recommendation below it
+/// actually is. A Python-only run (empty Rust ranking, Python repair card
+/// leading) must not claim only Rust seams ranked; a ranked Rust seam keeps
+/// the historical wording even when a Python card exists.
+#[test]
+fn pilot_scope_line_names_the_language_actually_ranked() {
+    let artifacts = pilot_artifacts();
+    let python = python_first_use();
+    let change = changed("pricing.py", 2);
+
+    // Empty Rust ranking + a leading Python repair card: Python ranked.
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &python)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n"
+        ),
+        "Python-only scope must name python, not Rust:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(
+            "- Scope: change-first (python (preview) seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "Python-only scope must name python, not Rust:\n{md}"
+    );
+
+    // A ranked Rust seam owns the recommendation: the scope keeps the
+    // historical Rust label even though a Python card also exists.
+    let entries = [classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    )];
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &python)
+    };
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "a ranked Rust seam keeps the Rust scope label:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains(
+            "- Scope: change-first (Rust seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "a ranked Rust seam keeps the Rust scope label:\n{md}"
+    );
+
+    // No Python card (no Python findings): an empty Rust ranking keeps the
+    // historical label, which the none-explanation lines below still use.
+    let no_python = PilotPythonFirstUse {
+        status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
+        findings_total: 0,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &no_python)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "no Python card keeps the Rust scope label:\n{terminal}"
+    );
 }
 
 /// A `-U0` unified diff that changes `line` of `file`, as the default
@@ -3258,7 +3780,7 @@ fn multiline_match_heads_follow_changed_lines_without_moving_seam_identity() -> 
                     .iter()
                     .zip([&[2, 3, 4, 5][..], &[6, 7, 8, 9][..], &[11][..]])
             {
-                assert!(head.span().is_none(), "calibration remains line-only");
+                assert_eq!(head.span().is_none(), head.display_line() == 2);
                 for line in 1..=14 {
                     let diff = format!(
                         "diff --git a/src/classify.rs b/src/classify.rs\n--- a/src/classify.rs\n+++ b/src/classify.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
@@ -3731,9 +4253,8 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The change touches the top seam.
     let (terminal, md, json) = render(Some(&changed("src/pricing.rs", 88)))?;
     assert!(
-        terminal.contains(
-            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
-        ),
+        terminal
+            .contains("Top recommendation:\n  Order: change-touched seams first, then grip class"),
         "{terminal}"
     );
     assert!(
@@ -3808,7 +4329,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The Inspected block names the change-first scope when there is a change.
     assert!(
         terminal.contains(
-            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n\n"
+            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n  actionable seams: 1 total, showing 1\n\n"
         ),
         "{terminal}"
     );

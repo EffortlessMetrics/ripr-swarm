@@ -47,30 +47,77 @@ pub(super) fn module_literal_constants(
     source: &SourceText<'_>,
     statements: &[Stmt],
 ) -> Vec<PythonModuleConstant> {
-    let mut bindings = ScopeBindings::default();
-    collect_scope_bindings(statements, &mut bindings);
-    if bindings.opaque || writes_namespace_dynamically(source) {
+    let Some(stable) = StableNames::of(source, statements) else {
         return Vec::new();
-    }
-    let mut globals = Vec::new();
-    collect_global_declarations(statements, &mut globals);
-    // `alias.NAME = ...` can rebind the constant through a self-import.
-    let globals: std::collections::HashSet<&str> = globals.iter().map(String::as_str).collect();
-    let attributes = assigned_attributes(source);
-    let attributes: std::collections::HashSet<&str> =
-        attributes.iter().map(String::as_str).collect();
-    let walrus = walrus_target_names(source);
-    let counts = bindings.counts();
+    };
     statements
         .iter()
         .filter_map(|stmt| literal_assignment(source, stmt))
-        .filter(|constant| {
-            counts.get(constant.name.as_str()) == Some(&1)
-                && !globals.contains(constant.name.as_str())
-                && !attributes.contains(constant.name.as_str())
-                && !walrus.contains(constant.name.as_str())
-        })
+        .filter(|constant| stable.holds(&constant.name))
         .collect()
+}
+
+/// The module-scope names bound once to a call result (`response =
+/// SimpleNamespace(status_code=200)`) and never rebound: objects a function
+/// can mutate through an attribute write that a test imports and reads back.
+/// The same no-rebinding conditions as [`module_literal_constants`] apply.
+pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt]) -> Vec<String> {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return Vec::new();
+    };
+    statements
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign(assign) => match (assign.targets.as_slice(), assign.value.as_ref()) {
+                ([Expr::Name(name)], Expr::Call(_)) => Some(name.id.to_string()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|name| stable.holds(name))
+        .collect()
+}
+
+/// The facts that decide whether a module-scope name can still be rebound.
+struct StableNames {
+    counts: std::collections::HashMap<String, usize>,
+    globals: Vec<String>,
+    attributes: Vec<String>,
+    walrus: Vec<String>,
+}
+
+impl StableNames {
+    /// None when the module binds names this walk cannot see.
+    fn of(source: &SourceText<'_>, statements: &[Stmt]) -> Option<Self> {
+        let mut bindings = ScopeBindings::default();
+        collect_scope_bindings(statements, &mut bindings);
+        if bindings.opaque || writes_namespace_dynamically(source) {
+            return None;
+        }
+        let mut globals = Vec::new();
+        collect_global_declarations(statements, &mut globals);
+        Some(Self {
+            counts: bindings
+                .counts()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            globals,
+            // `alias.NAME = ...` can rebind the name through a self-import.
+            attributes: assigned_attributes(source),
+            walrus: walrus_target_names(source)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        })
+    }
+
+    fn holds(&self, name: &str) -> bool {
+        self.counts.get(name) == Some(&1)
+            && !self.globals.iter().any(|global| global == name)
+            && !self.attributes.iter().any(|attribute| attribute == name)
+            && !self.walrus.iter().any(|target| target == name)
+    }
 }
 
 /// The constants still visible inside a function owner: those its parameters
@@ -101,6 +148,26 @@ pub(super) fn constants_visible_in_function(
         .collect()
 }
 
+/// The names a function body binds itself: its parameters, locals and walrus
+/// targets, so a module name spelled in it may refer to a local. None when the
+/// body nests a scope or lambda, or binds names the walk cannot enumerate.
+pub(super) fn function_bound_names(
+    args: &ast::Arguments,
+    body: &[Stmt],
+    body_text: &str,
+) -> Option<Vec<String>> {
+    if contains_nested_scope(body) || mentions_identifier(body_text, "lambda") {
+        return None;
+    }
+    let mut names = function_scope_names(args, body)?;
+    names.extend(
+        walrus_target_names(body_text)
+            .into_iter()
+            .map(str::to_string),
+    );
+    Some(names)
+}
+
 /// What a test file can do to a module constant's value, for one test.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct PythonTestRebinding {
@@ -112,6 +179,13 @@ pub(super) struct PythonTestRebinding {
     /// apart from `names` so a function-local import of an owner is not
     /// mistaken for a module-level replacement (#8247).
     pub(super) module_names: Vec<String>,
+    /// Every name the test's module binds at least once (imports, `def`,
+    /// `class`, assignments, loop and `with` targets), so a builtin it replaces
+    /// is visible even when bound a single time.
+    pub(super) module_bound: Vec<String>,
+    /// The module's bindings cannot be enumerated (a star import, a dynamic
+    /// namespace writer, a module-scope `match`): no builtin name is trusted.
+    pub(super) module_opaque: bool,
     /// Attribute names the test file assigns anywhere (`pricing.LIMIT = 5`),
     /// or `*` when it names a dynamic namespace writer (`setattr`,
     /// `sys.modules`, ...); either can rewrite another module's constant at
@@ -120,6 +194,12 @@ pub(super) struct PythonTestRebinding {
     /// The test or its module binds names this walk cannot enumerate, so no
     /// name is trusted.
     pub(super) opaque: bool,
+    /// Code outside the test function may run at the owner implicitly (#5491
+    /// `missing_input` fails closed on it): an autouse fixture, `pytestmark`,
+    /// a setup or teardown hook, a module-level call, or a `conftest.py` on
+    /// the directory chain that declares a fixture or hook. Decided by
+    /// existence, never by reading what that code calls.
+    pub(super) implicit_reach: bool,
 }
 
 impl PythonTestRebinding {
@@ -153,7 +233,10 @@ pub(super) fn python_test_rebinding(
         opaque: locals.is_none() || contains_nested_scope(body) || body_text.contains(":="),
         names: locals.unwrap_or_default(),
         module_names: Vec::new(),
+        module_bound: Vec::new(),
+        module_opaque: false,
         attributes: Vec::new(),
+        implicit_reach: false,
     }
 }
 
@@ -194,6 +277,10 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
             .extend(rebound.iter().map(|name| (*name).clone()));
         rebinding.module_names.sort();
         rebinding.module_names.dedup();
+        rebinding.module_opaque = module.opaque || dynamic;
+        rebinding.module_bound.clone_from(&module.names);
+        rebinding.module_bound.sort();
+        rebinding.module_bound.dedup();
         rebinding.attributes.clone_from(&attributes);
     }
 }

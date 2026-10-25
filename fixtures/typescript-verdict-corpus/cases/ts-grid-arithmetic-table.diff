@@ -1,0 +1,12 @@
+diff --git a/src/arithmetic.ts b/src/arithmetic.ts
+--- a/src/arithmetic.ts
++++ b/src/arithmetic.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function area(width: number, height: number): number {
+-  return width * height;
++  return height * width;
+ }
+ 
+ export function scaled(qty: number, unit: number): number {

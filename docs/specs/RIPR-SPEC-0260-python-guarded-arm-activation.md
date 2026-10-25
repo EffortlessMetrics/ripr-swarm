@@ -6,7 +6,10 @@ Owner: product-analysis
 
 Created: 2026-10-14
 
-Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392).
+Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392),
+[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002),
+[#9184](https://github.com/EffortlessMetrics/ripr-swarm/issues/9184),
+[#9429](https://github.com/EffortlessMetrics/ripr-swarm/issues/9429).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -37,7 +40,8 @@ bind:
   calls bind as observed values, the way the predicate boundary rule does.
 - A row with an unevaluable guard is never excluded: one unreadable input
   keeps the existing verdict. Shapes that fail open (keep the pre-gate
-  verdict) include `else` arms, `elif` chains read by their own condition,
+  verdict) include an `else` that closes a `for`/`while`/`try` rather than an
+  `if`/`elif` chain, `elif` arms read by their own condition,
   guards containing `or`/`not` boolean syntax anywhere in the WHOLE
   condition (the check runs before any `and` conjunct is evaluated, so a
   false leading conjunct cannot exclude a row a later `or` lets in,
@@ -47,6 +51,29 @@ bind:
   strong related call that binds no row (a `*args` unpack or unreadable
   argument list), and entries without source (repo mode, deleted lines,
   the old test harness).
+- Fallthrough (#9002): a changed return that follows a simple `if X:` in its
+  own block whose body ends in a top-level `return`/`raise` (no `elif`/`else`
+  chain) runs only for inputs that fail `X`. When every strong related call
+  provably satisfies at least one such preceding early-exit condition, the
+  finding fails closed to `weakly_exposed` with missing discriminator
+  `not (X)`; the reason says each call satisfies at least one early-exit
+  condition, since different calls may take different exits. Lines inside
+  triple-quoted strings are not code and are never read as early exits. A
+  call that misses every exit, a non-terminating or nested-only `return`
+  body, a chained `elif`/`else`, and unreadable guards keep the existing
+  verdict.
+- Else arm (#9184): a changed line inside the `else:` of an `if`/`elif`
+  chain runs only for inputs that fail every chain condition. When every
+  strong related call provably satisfies at least one condition of that chain
+  (the same readable-comparison evaluation as an early exit), the finding
+  fails closed to `weakly_exposed` with missing discriminator
+  `not (X)` (one `not (...)` per chain condition, joined by `and`); the reason
+  says the line sits in the else arm, which is entered only when none of the
+  chain conditions hold, and each strong related test input is kept off it by
+  this chain or an enclosing guard. A call that fails every chain condition enters the arm and keeps the
+  existing verdict, as do a chain condition containing `or`/`not` or a conditional expression
+  (`a if b else c`), an
+  unreadable row, and an `else` that closes a `for`/`while`/`try`.
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
   not excluded by a numeric guard (or vice versa).
@@ -56,6 +83,68 @@ bind:
   holds): both integer-form operands compare as `i128`, refusing on
   overflow, while float literals keep the f64 path because Python rounds
   them at parse time too (#7874).
+
+## Unreached `match` arms and `.get` defaults (#9429)
+
+The same all-rows-excluded rule covers two more branch shapes, in
+`arm_activation.rs`:
+
+- A changed line directly in a `case` arm of `match NAME:` where `NAME` is an
+  owner parameter the owner does not rebind. A row is excluded when its
+  literal binding matches an earlier unguarded arm, or does not match any
+  alternative of the changed arm. Patterns read: scalar literals (compared
+  with Python `==`, so `True` takes `case 1`), `None`/`True`/`False` by
+  identity, builtin `int()`, `float()`, `str()`, `bool()` class patterns,
+  `_`, a capture name and `|` alternatives. Any other pattern, or a guarded
+  earlier arm, leaves the row not excluded.
+- An edit that changes only the literal default of `TABLE.get(key, default)`,
+  where `TABLE` is one module-level dict literal of scalar keys that nothing
+  in the file but `.get` reads touches and no related test mentions or
+  rebinds. A row is excluded when its literal key equals a table key.
+
+Both fail open exactly like the guard rule: an unbound call row, a `*args`
+unpack, a non-literal input or any unreadable structure keeps the existing
+verdict. A derived observation (`Owner.make().method()` where the edited
+constructor argument only reaches the assertion through `method`) is not
+covered and still reads `exposed` (#9429, third shape).
+
+## Guarded self-field credit (#9833, #9868)
+
+A separate credit-side reader can admit an ordinary method's guarded
+`self.attr` write only when every readable strong call row enters every plain
+`if` ancestor. Unreadable rows and other ancestor forms withhold this new
+credit. The context-dunder collection shape uses the same entry fact.
+
+This reader uses native Python tokens for known flow escapes and binding
+changes. Escaped quotes cannot hide a return, and comments or multiline
+literal contents cannot invent an escape. Parenthesized, destructured,
+loop-target, declared or named-expression bindings of an input or receiver
+withhold credit. Formal parameters of an unused nested definition do not
+rebind the containing method's parameter. Non-space code indentation and a
+second statement on the changed physical line remain unsupported.
+
+The shared exclusion reader is not a native literal evaluator. Guard credit
+therefore withholds floating-point operands and escaped string values,
+including resolved call-row and constant operands, rather than assuming raw
+literal spelling establishes native equality or mixed numeric ordering.
+Unrelated prefix `or`/`not` expressions do not change that decision; these
+operators remain unsupported in the actual enclosing guard.
+
+The changed field must also survive explicit owner writes after the changed
+line and explicit test writes between the owner call and selected assertion.
+Same-named field assignments, augmented assignments, loop/comprehension
+targets or deletions, including writes through possible aliases, withhold
+credit. Native AST store contexts distinguish these writes from read-only
+truthiness conditions, dictionary keys, slices and call arguments. An
+annotation without a value does not store to the field. An assignment
+containing the owner call stores after that call, including when its target
+is spelled first; an earlier semicolon-separated setup remains outside the
+observation interval. Different-field writes and read-only uses preserve
+credit. A later write on an unresolved receiver can conservatively withhold
+credit even when that receiver is a fresh object.
+Arbitrary helper effects and general object-flow inference remain outside
+this bounded reader. Direct-write behavior and exclusion-side decisions are
+unchanged.
 
 ## Required Evidence
 
@@ -94,6 +183,21 @@ guard predicate (a pure-expression change).
 5. `if flag == 1:` with `quote(True)` stays `exposed` (`True == 1` in
    Python).
 
+## Call-Row Excerpt
+
+The strong call rows the gate reads carry display text (#8777, #8788). The
+text is display only and never feeds a decision:
+
+- A physical line of at most 240 bytes is shown whole (trimmed).
+- A longer line is cut to a window of at most 240 bytes that starts up to 60
+  bytes before the call name, on character boundaries.
+- A call that fits the window is kept whole: the lead shrinks by the exact
+  call extent (name through the closing parenthesis, whitespace before `(`
+  included), and the start rounds toward the call so a multibyte character
+  never costs the call its trailing bytes.
+- `...` marks a side only where visible text was cut, never for indentation
+  or trailing whitespace alone.
+
 ## Test Mapping
 
 - `analysis::language::python::guard_activation::tests` covers condition
@@ -102,9 +206,24 @@ guard predicate (a pure-expression change).
 - `analysis::language::python::classify::tests::guarded_arm_*` and the
   `or_guard_*`, `unreadable_strong_call_*`, `rebound_parameter_*`, and
   `bool_numeric_guard_*` cases cover the end-to-end verdicts.
+- `analysis::language::python::classify::tests::else_arm_*` (including
+  `else_text_inside_a_docstring_is_not_an_else_arm` and
+  `nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row`)
+  cover the else-arm verdicts and reason.
+- `analysis::language::python::guard_activation::tests::walk_guards_*` and
+  `conditional_expressions_are_not_a_single_comparison` cover the chain walk
+  (if/elif reading, no bridging across unrelated headers, loop-else fail-open)
+  and the conditional-expression fail-open.
+
+- `analysis::language::python::arm_activation_tests` covers the unreached
+  wildcard and literal arms, the controls that reach them, the fail-open
+  patterns, and the `.get` default with its table-mutation fail-opens.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/arm_activation.rs` owns the
+  `match` arm and `.get` default exclusion, chained after the guard rule in
+  `classify.rs`.
 - `crates/ripr/src/analysis/language/python/guard_activation.rs` owns the
   guard reading, row exclusion, and fail-open shapes.
 - `crates/ripr/src/analysis/language/python/boundary.rs::strong_owner_call_rows_with_gaps`

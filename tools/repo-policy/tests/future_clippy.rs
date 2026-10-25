@@ -23,7 +23,9 @@ fn step(name: &str) -> Result<String, String> {
 #[test]
 fn pinned_component_and_failure_evidence_are_wired() -> Result<(), String> {
     let text = workflow()?;
-    assert!(text.contains("uses: dtolnay/rust-toolchain@1.95.0\n"));
+    assert!(text.contains(
+        "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0\n"
+    ));
     assert!(text.contains("components: clippy\n"));
     assert!(step("Run future Clippy (advisory)")?.contains("cargo +1.95.0 clippy "));
     let (_, summary) = text

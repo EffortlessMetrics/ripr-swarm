@@ -101,6 +101,50 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn retired_unpinned_action_allowlist_cannot_be_reopened() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let baseline = fixture.run("check-workflows")?;
+    assert!(
+        baseline.status.success(),
+        "positive control: {}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
+    let ledger = fixture.0.join(repo_policy::UNPINNED_ACTION_ALLOWLIST);
+    let original = std::fs::read_to_string(&ledger).map_err(|e| e.to_string())?;
+    let workflow = fixture.0.join(".github/workflows/future-clippy.yml");
+    let pinned_workflow = std::fs::read_to_string(&workflow).map_err(|e| e.to_string())?;
+    for (label, reference, count, restore_tag) in [
+        ("zero-count stale row", "retired", 0, false),
+        ("positive-count stale row", "retired", 1, false),
+        ("restored action and matching row", "v2", 1, true),
+    ] {
+        let text = if restore_tag {
+            let pinned = "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2";
+            assert!(pinned_workflow.contains(pinned), "restored-tag setup");
+            pinned_workflow.replace(pinned, "Swatinem/rust-cache@v2")
+        } else {
+            pinned_workflow.clone()
+        };
+        std::fs::write(&workflow, text).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &ledger,
+            format!(
+                "{original}\n.github/workflows/future-clippy.yml|Swatinem/rust-cache@{reference}|{count}|regression control\n"
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        let output = fixture.run("check-workflows")?;
+        assert!(!output.status.success(), "{label} reopened the allowlist");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("must remain empty after burn-down"),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let nested = fixture.0.join("tools/repo-policy/src");

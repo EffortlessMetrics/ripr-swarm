@@ -386,9 +386,12 @@ fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), St
         ["help"].as_slice(),
     ] {
         let stdout = rendered_help(args)?;
-        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+        // Keep this constant in sync with `help_overview_fits_one_screen` in
+        // crates/ripr/src/cli/help.rs: #9865's exit-code/global-flag block
+        // owns six of the budget's lines, so the envelope is 48, not 40.
+        if stdout.replace("\r\n", "\n").lines().count() > 48 {
             return Err(format!(
-                "default help {args:?} exceeded the 40-line screen budget"
+                "default help {args:?} exceeded the 48-line screen budget"
             ));
         }
         canonical_first_run_command(&stdout)?;
@@ -708,7 +711,9 @@ const PORTABLE_TESTS: &[&str] = &[
     "calibrate_help_discloses_mutants_json_only_denominator",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
+    "agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
+    "agent_repair_phase_refusals_render_scoped_recovery_without_writes",
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",
     "agent_subcommand_typos_render_scoped_recovery",
     "agent_subcommand_far_and_sibling_misses_render_no_suggestion",
@@ -721,6 +726,10 @@ const PORTABLE_TESTS: &[&str] = &[
     "check_help_is_one_screen_and_all_is_the_full_reference",
     "check_help_all_is_a_parsed_flag_not_a_raw_scan",
     "check_help_wins_over_later_option_values",
+    "default_help_discloses_exit_codes_and_global_verbose",
+    "per_command_help_renders_the_catalog_example",
+    "help_all_rejects_trailing_arguments",
+    "help_all_flag_pair_is_rejected_outside_check",
 ];
 
 #[test]

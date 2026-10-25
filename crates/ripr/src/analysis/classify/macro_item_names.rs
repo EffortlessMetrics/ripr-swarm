@@ -43,6 +43,13 @@ const ITEM_KEYWORDS: [&str; 8] = [
     "fn", "const", "static", "struct", "enum", "type", "trait", "mod",
 ];
 
+#[cfg(test)]
+thread_local! {
+    /// Scans performed on this thread (#9086 work-unit regression pin).
+    pub(in crate::analysis) static SCAN_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// One parse of a file's macro definitions and its item- or statement-position
 /// invocations, so asking about many names parses the file once.
 #[derive(Clone, Debug)]
@@ -58,6 +65,8 @@ pub(in crate::analysis) enum MacroSites {
 
 impl MacroSites {
     pub(in crate::analysis) fn scan(source: &str) -> Self {
+        #[cfg(test)]
+        SCAN_COUNT.with(|count| count.set(count.get() + 1));
         let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
             return Self::Unparsed {
                 has_macro_rules: mask_comments_and_strings(source).contains("macro_rules!"),

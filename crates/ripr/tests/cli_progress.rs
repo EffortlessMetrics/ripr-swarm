@@ -245,13 +245,19 @@ fn check_progress_failure_emits_failed_not_completed() -> Result<(), String> {
         "missing diff must fail the command"
     );
     let stderr = stderr_text(&output);
+    // A mistyped `--diff` path is input the user can fix: the real error is the
+    // message, not an internal-failure progress line (#9922).
     assert!(
-        stderr.contains("ripr progress: failed [diff]"),
-        "failure must project failed: {stderr}"
+        !stderr.contains("ripr progress: failed"),
+        "a missing diff file must not project failed: {stderr}"
     );
     assert!(
         !stderr.contains("ripr progress: completed"),
         "failure must not project completed: {stderr}"
+    );
+    assert!(
+        stderr.contains("absent-progress.diff"),
+        "the real error must still name the missing file: {stderr}"
     );
     Ok(())
 }

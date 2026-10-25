@@ -57,6 +57,27 @@ sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
 
+# Larger workspaces, where the inner loop is judged. Warm checks on small
+# libraries meet the 2 s bar easily; these rows are the ones that can miss it.
+# One run each so far: a commit with no product Rust ran in well under a
+# second, cargo's Rust-editing pin in about 3 s, and a Rust-editing commit in
+# this repository in 49 to 87 s. The two rows below are a fast and a slow
+# Rust-editing case; no row tracks the no-Rust diff.
+[[corpus]]
+id = "cargo"
+url = "https://github.com/rust-lang/cargo"
+sha = "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928"
+base_sha = "0c38e943f4640efe8ade36f1034fdd8d87c26dcb"
+note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
+heavy = true
+
+[[corpus]]
+id = "ripr-swarm-2026-10"
+url = "https://github.com/EffortlessMetrics/ripr-swarm"
+sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
+note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
+heavy = true
+
 # ---------------------------------------------------------------- speed ----
 
 [[metric]]
@@ -107,6 +128,32 @@ direction = "lower_is_better"
 target = 512
 regression_pct = 15
 regression_floor = 64
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_ms"
+board = "speed"
+title = "Editor refresh after an edited save, from `ripr lsp --stdio`"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_unanswered_progress_ms"
+board = "speed"
+title = "Editor refresh when the client never answers progress creation"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
 runner_dependent = true
 source = "measured"
 per_repo = true
@@ -601,6 +648,21 @@ source = "ingest:first-run"
 review_on_change = true
 
 [[metric]]
+id = "first_run.decisive_verdicts"
+board = "first_run"
+title = "Simple boundary edits on unfamiliar crates where ripr gives a decisive verdict that agrees with what the tests catch (of the 3 first-run crates)"
+unit = "cases"
+direction = "higher_is_better"
+# #9276 acceptance: at least 2 of the 3 first-run crates. "Agrees" is the
+# walk's `verdict_reading`, so an `*_unknown` verdict never counts and neither
+# does false credit or a false gap. Any drop from the baseline regresses.
+target = 2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+
+[[metric]]
 id = "first_run.friction_events"
 board = "first_run"
 title = "Friction events logged during the scripted first run"
@@ -886,7 +948,12 @@ source = "ingest:rust-corpus-smoke"
 # (top-5 precision moves at least 0.04 per pick, top-10 precision 0.02, the
 # top-10 shares 0.02), and the confirmed and refuted counts allow no change in
 # the worse direction, because an unscored pick turning refuted moves precision by less than one
-# pick's step. Any pick that moves the wrong way fails. An intended trade-off
+# pick's step. The refuted counts alone may also rise by the picks the run
+# admitted beyond the baseline's (pick_growth_allowance, #7167): a larger
+# judged set adds picks of every verdict, and an absolute count would turn red
+# on growth that raises precision. At a flat or smaller pick count the margin
+# is zero, so a flipped pick still fails, and the precision and share rows
+# still judge the mix of the added picks. An intended trade-off
 # refreshes the baseline in the same pull request. Each row's repository is
 # the corpus version, so a baseline from another answer key is reported
 # uncompared rather than compared.
@@ -975,6 +1042,7 @@ direction = "lower_is_better"
 target = 8
 regression_pct = 0
 regression_floor = 0
+pick_growth_allowance = true
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
@@ -999,5 +1067,6 @@ direction = "lower_is_better"
 target = 16
 regression_pct = 0
 regression_floor = 0
+pick_growth_allowance = true
 runner_dependent = false
 source = "ingest:pilot-ranking"

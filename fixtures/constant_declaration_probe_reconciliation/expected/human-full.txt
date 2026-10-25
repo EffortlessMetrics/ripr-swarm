@@ -27,8 +27,8 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 1)
-  - related test src/lib.rs:34 observation_schema_generation_matches_policy uses unknown exact value oracle: assert_eq!(OBSERVATION_SCHEMA_GENERATION, 3);
+  - local flow reaches unknown sink (line 1) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/lib.rs:34 observation_schema_generation_matches_policy uses exact value oracle, not graded against this probe: assert_eq!(OBSERVATION_SCHEMA_GENERATION, 3);
   - source assertion argument value 3 at line 35
 
 Weakness

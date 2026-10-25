@@ -37,7 +37,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return [1, True] (line 2)
-  - related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True])
+  - related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence

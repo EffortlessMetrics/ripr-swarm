@@ -1,0 +1,12 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -19,7 +19,7 @@ def low_stock(count):
+ 
+ def overdrawn(balance):
+     if balance < 0:
+-        log.warning("overdrawn: %s", balance)
++        log.warning("account negative: %s", balance)
+         return False
+     return True
+ 
