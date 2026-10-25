@@ -138,23 +138,77 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
     Some(scope)
 }
 
-/// Whether every `name!` invocation in `source` sits directly in the file's
-/// top-level module. A `use` is not visible in a child module, so a macro
-/// named by one reaches no call nested in an inline module or a function.
-pub(crate) fn calls_only_at_top_level(source: &str, name: &str) -> bool {
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
-    parse
+/// How `source` calls one macro: bare (`name!`) or by the path
+/// `crate::name!`, at the file's top level or nested.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GeneratorCalls {
+    pub bare: bool,
+    /// A bare call inside an inline module or function. A `use` is not
+    /// visible in a child module, so a macro named by one reaches none.
+    pub nested_bare: bool,
+    /// Byte range of the `crate::` in front of each top-level `crate::name!`.
+    pub crate_prefixes: Vec<(usize, usize)>,
+}
+
+/// The calls `source` makes to each of `names`, keyed by name. Only a bare
+/// `name!` and a top-level `crate::name!` are recorded; any other path (a
+/// different macro by that name) is not this expander's to resolve. `None`
+/// when `source` does not parse cleanly.
+pub(crate) fn generator_calls(
+    source: &str,
+    names: &std::collections::BTreeSet<String>,
+) -> Option<std::collections::BTreeMap<String, GeneratorCalls>> {
+    let parse = parse_clean_source_file(source)?;
+    let mut calls = std::collections::BTreeMap::<String, GeneratorCalls>::new();
+    for call in parse
         .syntax_node()
         .descendants()
         .filter_map(ast::MacroCall::cast)
-        .filter(|call| call.path().is_some_and(|path| path.syntax().text() == name))
-        .all(|call| {
-            call.syntax()
-                .parent()
-                .is_some_and(|parent| parent.kind() == SyntaxKind::SOURCE_FILE)
-        })
+    {
+        let Some(path) = call.path() else {
+            continue;
+        };
+        let Some(name) = path
+            .segment()
+            .and_then(|segment| segment.name_ref())
+            .map(|name| name.text().to_string())
+            .filter(|name| names.contains(name))
+        else {
+            continue;
+        };
+        let top_level = call
+            .syntax()
+            .parent()
+            .is_some_and(|parent| parent.kind() == SyntaxKind::SOURCE_FILE);
+        let entry = calls.entry(name).or_default();
+        match path.qualifier() {
+            None => {
+                entry.bare = true;
+                entry.nested_bare |= !top_level;
+            }
+            Some(qualifier) if top_level && qualifier.qualifier().is_none() => {
+                let head: String = qualifier
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                let segment_start = path
+                    .segment()
+                    .map(|s| usize::from(s.syntax().text_range().start()));
+                if head == "crate"
+                    && let Some(end) = segment_start
+                {
+                    entry
+                        .crate_prefixes
+                        .push((usize::from(path.syntax().text_range().start()), end));
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    Some(calls)
 }
 
 /// The `name` of an attribute-free `use crate::name;`.
@@ -337,6 +391,17 @@ pub(crate) fn splice_imported_macros(source: &str, imported: &ImportedMacros) ->
             body.replace_range(import.start..import.end, &blanked);
         }
     }
+    for &(start, end) in &imported.blanked_prefixes {
+        let blanked: String = source
+            .get(start..end)?
+            .chars()
+            .flat_map(|c| {
+                let fill = if c == '\n' { '\n' } else { ' ' };
+                std::iter::repeat_n(fill, c.len_utf8())
+            })
+            .collect();
+        body.replace_range(start..end, &blanked);
+    }
     let mut spliced = String::with_capacity(body.len() + imported.definitions.len() + 1);
     spliced.push_str(body.get(..offset)?);
     spliced.push_str(&imported.definitions);
@@ -352,6 +417,9 @@ pub(crate) fn splice_imported_macros(source: &str, imported: &ImportedMacros) ->
 pub(crate) struct ImportedMacros {
     pub definitions: String,
     pub path_imports: Vec<String>,
+    /// Byte ranges of `crate::` in front of top-level `crate::name!` calls
+    /// the definitions answer; blanked so the call reads as the textual one.
+    pub blanked_prefixes: Vec<(usize, usize)>,
 }
 
 impl ImportedMacros {
@@ -425,21 +493,52 @@ mod tests {
         assert_eq!(first_macro_call("const S: &str = \"t!(x)\";", &names), None);
     }
 
+    fn calls_of(source: &str, name: &str) -> GeneratorCalls {
+        let names: std::collections::BTreeSet<String> = [name.to_string()].into();
+        generator_calls(source, &names)
+            .and_then(|mut calls| calls.remove(name))
+            .unwrap_or_default()
+    }
+
     #[test]
     fn a_path_import_reaches_only_top_level_calls() {
-        assert!(calls_only_at_top_level(
-            "use crate::t;\nt!(a);\nt!(b);\n",
-            "t"
-        ));
-        assert!(!calls_only_at_top_level(
-            "use crate::t;\nmod tests { t!(a); }\n",
-            "t"
-        ));
-        assert!(!calls_only_at_top_level(
-            "use crate::t;\nfn f() { t!(a); }\n",
-            "t"
-        ));
-        assert!(calls_only_at_top_level("use crate::t;\nu!(a);\n", "t"));
+        let top = calls_of("use crate::t;\nt!(a);\nt!(b);\n", "t");
+        assert!(top.bare && !top.nested_bare);
+        assert!(calls_of("use crate::t;\nmod tests { t!(a); }\n", "t").nested_bare);
+        assert!(calls_of("use crate::t;\nfn f() { t!(a); }\n", "t").nested_bare);
+        assert_eq!(
+            calls_of("use crate::t;\nu!(a);\n", "t"),
+            GeneratorCalls::default()
+        );
+    }
+
+    #[test]
+    fn crate_path_calls_record_the_prefix_only_at_top_level() {
+        let source = "crate::t!(a);\ncrate :: t!(b);\nother::t!(c);\nself::t!(d);\nfn f() { crate::t!(e); }\ncrate::x::t!(f);\n";
+        let calls = calls_of(source, "t");
+        assert!(!calls.bare, "no bare call: {calls:?}");
+        let prefixes: Vec<&str> = calls
+            .crate_prefixes
+            .iter()
+            .filter_map(|&(start, end)| source.get(start..end))
+            .collect();
+        assert_eq!(prefixes, vec!["crate::", "crate :: "]);
+    }
+
+    #[test]
+    fn blanking_a_crate_prefix_leaves_a_bare_call() {
+        let source = "crate::t!(a);\nfn f() {}\n";
+        let calls = calls_of(source, "t");
+        let imported = ImportedMacros {
+            definitions: "macro_rules! t { () => {} }".to_string(),
+            blanked_prefixes: calls.crate_prefixes,
+            ..ImportedMacros::default()
+        };
+        let spliced = splice_imported_macros(source, &imported).unwrap_or_default();
+        assert_eq!(
+            spliced,
+            "macro_rules! t { () => {} }\n       t!(a);\nfn f() {}\n"
+        );
     }
 
     #[test]
@@ -448,6 +547,7 @@ mod tests {
         let imported = ImportedMacros {
             definitions: "macro_rules! t { () => {} } macro_rules! u { () => {} }".to_string(),
             path_imports: vec!["t".to_string(), "u".to_string()],
+            ..ImportedMacros::default()
         };
         let spliced = splice_imported_macros(source, &imported).unwrap_or_default();
         assert!(
@@ -468,6 +568,7 @@ mod tests {
         let imported = ImportedMacros {
             definitions: "macro_rules! m { () => {} }".to_string(),
             path_imports: Vec::new(),
+            ..ImportedMacros::default()
         };
         let spliced = splice_imported_macros(source, &imported);
         assert_eq!(
@@ -477,6 +578,7 @@ mod tests {
         let single = |definitions: &str| ImportedMacros {
             definitions: definitions.to_string(),
             path_imports: Vec::new(),
+            ..ImportedMacros::default()
         };
         assert_eq!(
             splice_imported_macros("", &single("x")),

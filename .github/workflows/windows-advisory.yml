@@ -98,7 +98,12 @@ jobs:
     timeout-minutes: 270
 
     steps:
+      # Full history, like the Linux test lanes (ci, routed-rust, rust-gates):
+      # tests that resolve a default base against this checkout (pr-evidence,
+      # worktree check) otherwise refuse on a shallow clone (#10344).
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
