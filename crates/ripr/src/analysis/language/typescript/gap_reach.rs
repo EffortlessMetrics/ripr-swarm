@@ -83,9 +83,7 @@ impl<'a> GapReach<'a> {
         let bundler_alias = sources.iter().any(|(path, source)| {
             is_config_file(path)
                 && (source.contains("alias") || source.contains("moduleNameMapper"))
-        }) || package_json
-            .as_deref()
-            .is_some_and(|text| text.contains("moduleNameMapper") || text.contains("\"alias\""));
+        }) || resolution_config_hides_imports(root, alias_map);
         let mut needles: Vec<String> = owner_names
             .into_iter()
             .filter(|name| !name.is_empty())
@@ -213,6 +211,80 @@ enum Follow {
     External,
     Files(Vec<String>),
     MayReach,
+}
+
+/// Config that lets a bare or relative specifier resolve somewhere the import
+/// scan cannot see. Checked over every `tsconfig*` / `jsconfig*` / `package.json`
+/// within a few levels of the root, since a package-level config is not loaded
+/// by the alias map.
+fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) -> bool {
+    const ALWAYS: [&str; 5] = [
+        "rootDirs",
+        "moduleNameMapper",
+        "moduleDirectories",
+        "modulePaths",
+        "\"alias\"",
+    ];
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut visited = 0usize;
+    while let Some((dir, depth)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let skipped = name.starts_with('.')
+                    || matches!(name.as_str(), "node_modules" | "target" | "dist" | "build");
+                if !skipped && depth < 4 {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            let is_ts_config = (name.starts_with("tsconfig") || name.starts_with("jsconfig"))
+                && name.ends_with(".json");
+            if !is_ts_config && name != "package.json" {
+                continue;
+            }
+            visited += 1;
+            if visited > 200 {
+                return true;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return true;
+            };
+            if ALWAYS.iter().any(|marker| text.contains(marker)) {
+                return true;
+            }
+            if is_ts_config {
+                let resolves = text.contains("\"paths\"")
+                    || text.contains("\"baseUrl\"")
+                    || extends_a_workspace_config(&text);
+                // Only the root config feeds the alias map, and only when it
+                // loaded. Anything else that remaps resolution is invisible.
+                let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
+                if resolves && !loaded_root {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// `"extends"` naming a config in the workspace (`./base.json`, `../tsconfig`).
+/// A package base config (`@sindresorhus/tsconfig`) is shared compiler
+/// settings, not a path map for this workspace; the alias map ignores it too.
+fn extends_a_workspace_config(text: &str) -> bool {
+    text.match_indices("\"extends\"").any(|(at, key)| {
+        let rest = &text[at + key.len()..];
+        let window: String = rest.chars().take(120).collect();
+        window.contains("\"./") || window.contains("\"../")
+    })
 }
 
 fn is_config_file(path: &str) -> bool {
@@ -453,5 +525,71 @@ mod tests {
             true,
         );
         assert!(scoped.may_reach(Path::new("test/a.test.ts")));
+    }
+
+    fn temp_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-gap-reach-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("temp dir: {err}"))?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn resolution_config_that_remaps_imports_disables_scoping() -> Result<(), String> {
+        for (label, file, text, hides) in [
+            (
+                "pkg-extends",
+                "tsconfig.json",
+                r#"{"extends": "@scope/tsconfig", "include": ["src"]}"#,
+                false,
+            ),
+            (
+                "rel-extends",
+                "tsconfig.json",
+                r#"{"extends": "./base.json"}"#,
+                true,
+            ),
+            (
+                "paths",
+                "packages/a/tsconfig.json",
+                r#"{"compilerOptions": {"paths": {"x": ["./y"]}}}"#,
+                true,
+            ),
+            (
+                "root-dirs",
+                "tsconfig.json",
+                r#"{"compilerOptions": {"rootDirs": ["a", "b"]}}"#,
+                true,
+            ),
+            (
+                "jest-dirs",
+                "package.json",
+                r#"{"jest": {"moduleDirectories": ["src"]}}"#,
+                true,
+            ),
+            (
+                "plain",
+                "package.json",
+                r#"{"name": "x", "scripts": {}}"#,
+                false,
+            ),
+        ] {
+            let root = temp_root(label)?;
+            let path = root.join(file);
+            let parent = path.parent().ok_or("config path has a parent")?;
+            std::fs::create_dir_all(parent).map_err(|err| format!("dirs: {err}"))?;
+            std::fs::write(&path, text).map_err(|err| format!("write config: {err}"))?;
+            assert_eq!(
+                resolution_config_hides_imports(&root, None),
+                hides,
+                "{label}"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
     }
 }
