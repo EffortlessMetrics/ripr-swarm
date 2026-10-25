@@ -1,0 +1,11 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -47,6 +47,6 @@ def slow_query(millis):
+ 
+ def expiring(days):
+     if days < 7:
+-        log.warning("card expiring: %s", days)
++        log.warning("card expires: %s", days)
+         return False
+     return True

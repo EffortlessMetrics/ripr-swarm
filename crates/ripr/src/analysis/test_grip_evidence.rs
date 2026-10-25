@@ -21,9 +21,11 @@ pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_befo
 mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
-pub(in crate::analysis) use value_contradiction::change_is_invisible_to_every_assertion;
 use value_contradiction::{
     ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
+};
+pub(in crate::analysis) use value_contradiction::{
+    PointerReturnChange, change_is_invisible_to_every_assertion,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -48,9 +50,12 @@ use super::rust_index::{
 };
 use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
-use crate::domain::{
-    Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
-    SymbolId, ValueContext, ValueFact,
+use crate::{
+    domain::{
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
+        StageState, SymbolId, ValueContext,
+    },
+    value_origins::LocatedValueFact as ValueFact,
 };
 // Re-export so callers that import from this module continue to compile.
 pub(crate) use crate::domain::{RelationConfidence, RelationReason};

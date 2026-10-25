@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Wired `cargo xtask check-capability-producers` and `cargo xtask capability-docs --check` into the required lanes: unconditional `rust-gates.yml` steps on non-docs-only PRs, and a docs-gate step when a docs-only PR changes `docs/status/SUPPORT_TIERS.md` or `docs/specs/**`, so a hand-edited registry block or registry/producer drift now fails `Ripr Rust Small Result` (#5531). Not part of precommit; no new trigger, permission or secret.

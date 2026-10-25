@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An `async fn` owner pinned to a literal through a hand-written executor helper of the test's own file (`assert_eq!(block_on(add_tax(100)), 110)`) no longer reads as a `weakly_exposed` gap. The compared value comes out of the helper, which ripr does not read, so the finding becomes `static_unknown` under `rust_framework_oracle_unresolved` and credits nothing. The row `shape-async-fn-block-on` leaves the known-false ledger (#9443).

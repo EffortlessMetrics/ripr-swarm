@@ -1,0 +1,9 @@
+diff --git a/unnum/century.py b/unnum/century.py
+--- a/unnum/century.py
++++ b/unnum/century.py
+@@ -3,4 +3,4 @@ from functools import lru_cache
+ 
+ @lru_cache(maxsize=None)
+ def century_index(year):
+-    return year % 1000
++    return year % 100
