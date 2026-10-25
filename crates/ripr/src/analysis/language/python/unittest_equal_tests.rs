@@ -215,6 +215,7 @@ fn visible_class_override_withholds_authority_but_ordinary_setup_does_not() -> R
 #[test]
 fn unrelated_helper_and_standard_module_captures_preserve_authority() -> Result<(), String> {
     let cases = [
+        "import unittest.case\nfrom shop import fee\n\ncase = unittest.case.TestCase()\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.case.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
         "import unittest\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def assert_unused(self):\n        pass\n    def test_fee(self):\n        self.assertEqual(fee(10), 12)\n",
         "import unittest\nfrom shop import fee\n\ncase = unittest.TestCase()\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
         "from unittest import TestCase as Case\nfrom shop import fee\n\nassertEqual = Case().assertEqual\n\nclass TestFee(Case):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
@@ -233,6 +234,7 @@ fn unrelated_helper_and_standard_module_captures_preserve_authority() -> Result<
 #[test]
 fn replaced_module_capture_or_equality_dispatch_stays_unresolved() -> Result<(), String> {
     let cases = [
+        "import unittest.case\nfrom unittest import TestCase as Case\nfrom types import SimpleNamespace\nfrom helpers import Fake\nfrom shop import fee\n\nunittest = SimpleNamespace(case=SimpleNamespace(TestCase=Fake))\ncase = unittest.case.TestCase()\nassertEqual = case.assertEqual\n\nclass TestFee(Case):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
         "import unittest\nfrom shop import fee\nfrom helpers import Fake\n\ncase = Fake()\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
         "import unittest\nfrom shop import fee\nfrom helpers import noop\n\ncase = unittest.TestCase()\nassertEqual = case.assertEqual\nassertEqual = noop\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
         "import unittest\nfrom shop import fee\nfrom helpers import noop\n\ncase = unittest.TestCase()\ncase.assertEqual = noop\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",

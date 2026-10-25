@@ -273,7 +273,12 @@ pub(super) fn apply_module_bindings(
                 (matches!(import.source_module.as_str(), "unittest" | "unittest.case")
                     || (import.source_module.is_empty()
                         && matches!(import.imported.as_str(), "unittest" | "unittest.case")))
-                    && bindings.module_rebinds(&import.alias)
+                    && bindings.module_rebinds(if import.source_module.is_empty() {
+                        // A plain dotted import binds its first component.
+                        import.alias.split('.').next().unwrap_or(&import.alias)
+                    } else {
+                        &import.alias
+                    })
             })
             || source.contains("addTypeEqualityFunc")
             || source.contains("._type_equality_funcs");
