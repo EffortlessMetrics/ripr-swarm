@@ -114,11 +114,24 @@ fn update_aliases_for_binding(stmt: &Stmt, aliases: &mut Vec<String>) {
                 target_names(target, &mut bound);
             }
         }
-        Stmt::AnnAssign(assign) => target_names(&assign.target, &mut bound),
+        // A bare annotation (`fx: object`) binds nothing.
+        Stmt::AnnAssign(assign) if assign.value.is_some() => {
+            target_names(&assign.target, &mut bound);
+        }
         Stmt::AugAssign(assign) => target_names(&assign.target, &mut bound),
         Stmt::ClassDef(class) => bound.push(class.name.to_string()),
         Stmt::FunctionDef(function) => bound.push(function.name.to_string()),
         Stmt::AsyncFunctionDef(function) => bound.push(function.name.to_string()),
+        Stmt::Import(import) => {
+            for name in &import.names {
+                // `import a.b` binds `a`; `import a.b as c` binds `c`.
+                let local = name.asname.as_ref().map_or_else(
+                    || name.name.split('.').next().unwrap_or_default().to_string(),
+                    |alias| alias.to_string(),
+                );
+                bound.push(local);
+            }
+        }
         Stmt::ImportFrom(import) => {
             let from_pytest = import.level.is_none_or(|level| level.to_u32() == 0)
                 && import
