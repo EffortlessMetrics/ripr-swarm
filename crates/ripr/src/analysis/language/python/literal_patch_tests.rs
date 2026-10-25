@@ -276,6 +276,29 @@ fn an_empty_string_stand_in_keeps_the_limit() {
     }
 }
 
+/// A test input equal to the stand-in (`stamp("a")` under `return_value="a"`)
+/// makes a reorder of the call among the other operands invisible.
+#[test]
+fn a_reorder_around_an_equal_stand_in_keeps_the_limit() {
+    let same = clock_test("with patch(\"idioms.clock.time.time\", return_value=\"a\"):");
+    for (new, old) in [
+        (
+            "    return f\"{time.time()}{prefix}\"",
+            "    return f\"{prefix}{time.time()}\"",
+        ),
+        (
+            "    return time.time() + prefix",
+            "    return prefix + time.time()",
+        ),
+    ] {
+        assert_eq!(
+            limit(new, old, &same),
+            Some(StaticLimitKind::MockedModule),
+            "{new}"
+        );
+    }
+}
+
 /// With a zero stand-in `x + v` and `x - v` agree, so an operator flip is
 /// invisible; a nonzero one keeps it visible.
 #[test]

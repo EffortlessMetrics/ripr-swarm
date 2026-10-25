@@ -82,17 +82,28 @@ pub(super) fn literal_patch_calls(
     Some(spellings)
 }
 
-/// `(substituted calls, int-wrapped substituted calls)` of a line that is one
+/// `(substituted calls, int-wrapped calls, signed call count, operand counter,
+/// index of the call among the operands)`. Moving the call among the other operands
+/// is not an edit the exemption looks through: a stand-in equal to a neighbouring
+/// string (`prefix == "a"` under `return_value="a"`) makes the reorder invisible.
+type Shape = (usize, usize, i32, usize, usize);
+
+/// The shape of a line that is one
 /// `return` of an f-string or `+`/`-` expression over names, int and string
 /// literals, the substituted call and `int(<that call>)`. Addition and
 /// subtraction keep the edit visible whatever literal the patch returns;
 /// products, divisions, `max`/`min`, indexing, comparisons, branches and any
 /// other call can absorb it (`x * 0`, `x // 3600`, `max(x, 100)`).
-fn restricted_return(line: &str, qualified: &str, name: &str) -> Option<(usize, usize, i32)> {
+fn restricted_return(line: &str, qualified: &str, name: &str) -> Option<Shape> {
     let expression = line.trim().strip_prefix("return ")?;
     let expr = parse_expression(expression)?;
-    let mut counts = (0, 0, 0);
-    restricted_counts(&expr, qualified, name, 1, &mut counts).then_some(counts)
+    let mut counts = (0, 0, 0, 0, 0);
+    restricted_counts(&expr, qualified, name, 1, &mut counts).then(|| {
+        // Operands added after the call are an ordinary edit; only the call's
+        // own index is compared.
+        counts.3 = 0;
+        counts
+    })
 }
 
 fn restricted_counts(
@@ -100,11 +111,14 @@ fn restricted_counts(
     qualified: &str,
     name: &str,
     sign: i32,
-    counts: &mut (usize, usize, i32),
+    counts: &mut Shape,
 ) -> bool {
     match expr {
         Expr::JoinedStr(joined) => joined.values.iter().all(|part| match part {
-            Expr::Constant(_) => true,
+            Expr::Constant(_) => {
+                counts.3 += 1;
+                true
+            }
             Expr::FormattedValue(formatted) => {
                 formatted.format_spec.is_none()
                     && formatted.conversion == ast::ConversionFlag::None
@@ -122,15 +136,23 @@ fn restricted_counts(
                 && restricted_counts(&binop.left, qualified, name, sign, counts)
                 && restricted_counts(&binop.right, qualified, name, right_sign, counts)
         }
-        Expr::Name(_) => true,
-        Expr::Constant(constant) => matches!(
-            constant.value,
-            ast::Constant::Int(_) | ast::Constant::Str(_)
-        ),
+        Expr::Name(_) => {
+            counts.3 += 1;
+            true
+        }
+        Expr::Constant(constant) => {
+            counts.3 += 1;
+            matches!(
+                constant.value,
+                ast::Constant::Int(_) | ast::Constant::Str(_)
+            )
+        }
         Expr::Call(call) => {
             if is_substituted_call(call, qualified, name) {
                 counts.0 += 1;
                 counts.2 += sign;
+                counts.4 = counts.3;
+                counts.3 += 1;
                 return true;
             }
             let wraps_substituted = matches!(call.func.as_ref(), Expr::Name(f) if f.id.as_str() == "int")
@@ -140,6 +162,8 @@ fn restricted_counts(
                 counts.0 += 1;
                 counts.1 += 1;
                 counts.2 += sign;
+                counts.4 = counts.3;
+                counts.3 += 1;
             }
             wraps_substituted
         }
