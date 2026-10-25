@@ -34,7 +34,8 @@ use super::no_behavior::split_top_level_args;
 use super::related_tests::PythonRelatedCandidate;
 use super::static_limits::{CaplogRead, caplog_required_literals};
 use super::{PythonOwner, PythonTest, expr_full_name};
-use crate::domain::{OwnerKind, ValueContext, ValueFact};
+use crate::domain::{OwnerKind, ValueContext};
+use crate::value_origins::LocatedValueFact;
 use rustpython_parser::ast::{self, Expr};
 
 /// Module text that reconfigures a logger and so changes which records reach
@@ -74,7 +75,7 @@ pub(super) enum PythonLogVerdict {
 pub(super) struct PythonLogEvidence {
     pub(super) verdict: PythonLogVerdict,
     pub(super) discriminator: String,
-    pub(super) observed_values: Vec<ValueFact>,
+    pub(super) observed_values: Vec<LocatedValueFact>,
     pub(super) reason: String,
 }
 
@@ -157,8 +158,8 @@ pub(super) fn python_log_evidence(
             old_texts.extend(emitted_text(&old, row, pin.level)?);
             new_texts.extend(emitted_text(&new, row, pin.level)?);
             observed_values.extend(row.bindings.iter().filter(|(_, b)| !b.from_default).map(
-                |(parameter, binding)| ValueFact {
-                    file: None,
+                |(parameter, binding)| LocatedValueFact {
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),

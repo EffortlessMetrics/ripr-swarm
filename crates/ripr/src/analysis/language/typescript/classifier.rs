@@ -4658,11 +4658,12 @@ pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
 
 /// Expected-side liveness for a witnessed boundary assertion (#4102).
 ///
-/// Returns `Some(true)` when the expected literal can be the CHANGED
-/// behavior's value at the boundary input and differs from the UNCHANGED
-/// behavior's value there; `Some(false)` when it provably cannot (a dead test
-/// whose expectation is wrong under both behaviors, or one that pins the
-/// unchanged value and so discriminates nothing); `None` when the check is not
+/// Returns `Some(true)` when the expected literal equals exactly one of the
+/// CHANGED and UNCHANGED behaviors' values at the boundary input, so the
+/// assertion tells them apart (a test updated to the new value, or a test
+/// still pinning the old value, which fails against the changed code);
+/// `Some(false)` when it provably cannot (a dead test whose expectation is
+/// wrong under both behaviors, or equal under both); `None` when the check is not
 /// statically determinable (no owner body, unresolvable branches or bindings,
 /// non-numeric expectation) — the witness decision then stands unchanged.
 ///
@@ -4716,17 +4717,18 @@ pub(crate) fn expected_side_is_live(
     // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
     // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
     if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
-        return Some(
-            new_value.to_bits() == expected_value.to_bits()
-                && old_value.to_bits() != expected_value.to_bits(),
-        );
+        let matches_new = new_value.to_bits() == expected_value.to_bits();
+        let matches_old = old_value.to_bits() == expected_value.to_bits();
+        return Some(matches_new != matches_old);
     }
     let new_epsilon = 1e-9 * new_value.abs().max(1.0);
     let old_epsilon = 1e-9 * old_value.abs().max(1.0);
-    Some(
-        (expected_value - new_value).abs() <= new_epsilon
-            && (expected_value - old_value).abs() > old_epsilon,
-    )
+    let matches_new = (expected_value - new_value).abs() <= new_epsilon;
+    let matches_old = (expected_value - old_value).abs() <= old_epsilon;
+    // The expectation tells the two behaviors apart only when it equals
+    // exactly one of them. A test pinning the pre-change value at the
+    // boundary input fails against the changed code, so it notices the edit.
+    Some(matches_new != matches_old)
 }
 
 /// The operator of the changed comparison, probed in the same ordered list
