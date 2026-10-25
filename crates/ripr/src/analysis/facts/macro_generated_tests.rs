@@ -15,7 +15,7 @@ use crate::analysis::syntax::ra::summarize_file_with_parser;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-pub(super) fn register_macro_generated_tests(index: &mut RustIndex) {
+pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<(), String> {
     let mut generated: Vec<TestFact> = Vec::new();
     let visibility = MacroVisibility::new(
         index
@@ -24,6 +24,10 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) {
             .map(|(path, file)| (path.clone(), file.data.source.clone())),
     );
     for (path, file) in &index.files {
+        // Resolving a file's imported definitions re-parses it, so a large
+        // workspace spends its whole budget in this loop unless each file
+        // observes the run's token (#1604).
+        crate::analysis::cancellation::checkpoint()?;
         let imported = visibility.imported_macros(path);
         for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
             let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
@@ -41,7 +45,7 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) {
         }
     }
     if generated.is_empty() {
-        return;
+        return Ok(());
     }
     let mut known: BTreeSet<(PathBuf, usize, String)> = index
         .tests()
@@ -67,6 +71,7 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) {
             });
         }
     }
+    Ok(())
 }
 
 fn pin_to_invocation(test: &mut TestFact, path: &std::path::Path, start: usize, end: usize) {
@@ -220,6 +225,46 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, vec!["adult", "minor", "plain"]);
+        Ok(())
+    }
+
+    /// Resolving each file's imported macro definitions re-parses it, so the
+    /// registration loop must observe the run's token (#1604). A token whose
+    /// budget is already spent has to abort it and leave the index unchanged
+    /// (the test count must not grow). One file and an already-spent budget do not pin where
+    /// in the loop the checkpoint sits.
+    #[test]
+    fn registration_observes_an_expired_budget_per_file() -> Result<(), Box<dyn Error>> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let dir = temp_dir("macro-generated-cancel")?;
+        let root = dir.0.as_path();
+        fs::create_dir_all(root.join("tests"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"macrocancel\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! case {\n    ($name:ident) => {\n        #[test]\n        fn $name() {}\n    };\n}\n\ncase!(generated);\n",
+        )?;
+        let mut index = build_index(root, &[PathBuf::from("tests/gen.rs")])?;
+        let before = index.tests().len();
+
+        let started = Instant::now();
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(1),
+            Arc::new(move || started + Duration::from_millis(1)),
+        );
+        let result = with_token(&token, || super::register_macro_generated_tests(&mut index));
+        assert_eq!(
+            result.err().as_deref(),
+            Some("analysis cancelled: DeadlineExceeded")
+        );
+        assert_eq!(index.tests().len(), before);
         Ok(())
     }
 }
