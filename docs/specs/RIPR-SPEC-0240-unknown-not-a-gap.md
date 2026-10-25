@@ -642,8 +642,24 @@ hold, or the test is not related and the abstention above applies:
 - the result is used: `let _ = a + b;` or a `let` nothing reads again does not
   reach an assertion.
 
+A relation says the operator runs the owner, not that an assertion would
+notice the owner change. When no assertion shares a token with the changed
+expression (a result built through `Self(..)` or `Self { .. }` asserted
+against `Money(..)` operands, a destructured result), reveal reads the
+observation as unconfirmed and the finding would read `weakly_exposed`, a "add
+a test" signal for code the test pins. `withhold_implicit_call_gap` therefore
+also applies to a finding whose reach is established, when every test related
+by a direct call reaches the owner only through syntax (none spells the
+method's name) and the finding is `weakly_exposed` or `reachable_unrevealed`:
+it stays `static_unknown` under `rust_implicit_call_unresolved`. A confirmed
+credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
+and reads `exposed`.
+
 `Index`, `Drop` and the iterator traits keep the abstention until their own
-readings are added.
+readings are added. `Drop` and `Iterator::next` need more than a relation:
+the observed value (a counter behind a shared cell, a `collect`ed vector) shares
+no token with the changed line, so relating the test alone reads
+`weakly_exposed` on a test that pins the effect (#9567).
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.

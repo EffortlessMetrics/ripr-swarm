@@ -1,0 +1,33 @@
+//! One test row is longer than the 32-step unroll bound.
+
+pub fn scan_bound(input: &str) -> &'static str {
+    let mut state = "text";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            ("text", ' ') => "text",
+            ("text", _) => "word",
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    state
+}
+
+pub fn classify_bound(input: &str) -> &'static str {
+    let final_state = scan_bound(input);
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_bound() {
+        assert_eq!(classify_bound("abcdefghijklmnopqrstuvwxyzabcdefghijklmn"), "word");
+    }
+}

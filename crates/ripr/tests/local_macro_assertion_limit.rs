@@ -165,3 +165,31 @@ fn the_witness_comes_from_the_directly_related_test() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_generated_test_case_comparison_beside_a_proximity_oracle_keeps_its_limit() -> Result<(), String>
+{
+    // `#[test_case(4 => 12)]` generates the comparison on `rows`, which calls
+    // the owner behind an opaque no-op macro; the only recognized oracle sits
+    // in an unrelated test. That used to read as a bare `weakly_exposed` gap
+    // although the generated assertion fails when the owner changes.
+    let noop = "    macro_rules! note {\n        () => {\n            ()\n        };\n    }\n\n";
+    let rows = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        note!();\n        surcharge(base)\n    }\n\n";
+    let found = findings(&format!("{noop}{rows}{OTHER_PIN}"))?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    // The plain-argument form generates no comparison, so nothing is limited.
+    let plain = rows.replace("100 => 110", "100, 110");
+    let found = findings(&format!("{noop}{plain}{OTHER_PIN}"))?;
+    if found.iter().any(limited) {
+        return Err(format!(
+            "a row without `=>` must not be limited: {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
