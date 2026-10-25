@@ -3424,6 +3424,47 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
     assert!(report.contains("promoted to exposed"), "{report}");
 }
 
+// The three cases that moved from `corpus.json` to `cases/*.json` are no
+// longer listed in the manifest, so deleting the directory or one file would
+// leave a valid, smaller corpus that the gate passes. This pins them from
+// outside the case files, the way the Perl charter test pins its case.
+#[test]
+fn moved_python_charter_cases_stay_in_the_live_corpus() -> Result<(), String> {
+    let corpus_path = super::repo_rooted_fixture_path(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+    let corpus = super::read_evidence_promotion_corpus(&corpus_path)?;
+    let cases = corpus
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or("live honesty corpus has no `cases` array")?;
+    for id in [
+        "python_module_formatted_generator_test",
+        "python_multiline_literal_sibling_read",
+        "python_literal_value_inside_longer_number",
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| {
+                format!("live honesty corpus dropped charter case `{id}`; restore its cases/ file")
+            })?;
+        assert_eq!(
+            case.get("tier").and_then(Value::as_str),
+            Some("pure"),
+            "{id} must stay tier `pure`"
+        );
+        let promotes = case
+            .get("assertions")
+            .and_then(Value::as_array)
+            .is_some_and(|assertions| {
+                assertions.iter().any(|assertion| {
+                    assertion.get("type").and_then(Value::as_str) == Some("must_not_promote")
+                })
+            });
+        assert!(promotes, "{id} must keep its `must_not_promote` assertion");
+    }
+    Ok(())
+}
+
 #[test]
 fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> Result<(), String> {
     let dir = temp_dir("promotion-case-files");

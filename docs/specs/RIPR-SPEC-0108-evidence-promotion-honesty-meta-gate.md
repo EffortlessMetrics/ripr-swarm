@@ -130,7 +130,11 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
    per file appended after the `corpus.json` cases in file-name order, so a PR
    adds its case as a file of its own instead of editing the shared `cases`
    tail. A case file without an `id`, or an `id` already present, fails the
-   load.
+   load. Only an absent `cases/` directory is optional: a `cases` path that is
+   not a readable directory, or a directory entry that fails to enumerate,
+   fails the load instead of leaving a smaller corpus that passes. The three
+   consumers (the validator, the summary metadata and pinned-external
+   selection) share that one reader.
 2. For each pure case, reads exactly one byte-pinned source artifact:
    - `source_fixture` -> the fixture's `expected/check.json` (covered by
      `goldens check`);
