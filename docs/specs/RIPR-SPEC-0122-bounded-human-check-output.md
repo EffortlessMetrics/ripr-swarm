@@ -515,7 +515,15 @@ is no seam to start a repair from and sends the reader to the Next step above
 name without a Rust canonical gap); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
-the chosen seam without promising a listing; a classification failure says the
+the chosen seam without promising a listing; a repair route that is not ready
+says ripr cannot build a repair packet for the finding yet, lists the
+producer-owned missing evidence (or says the static evidence is not complete
+enough to name a safe test target when the list is empty), and sends the reader
+to the Next step above and the `ripr check` rerun, carrying the refusal kind
+and missing list as typed fields rather than parsing the reason text (the
+shared `repair route not ready` label that `ripr repair`, `ripr continue` and
+the MCP detail print is unchanged); other ineligible refusals keep their
+reason and gate pointer; a classification failure says the
 gate may print the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),
 but a refusal the pipeline did compute is still named there, so "the gate
