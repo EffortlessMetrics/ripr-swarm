@@ -16,7 +16,7 @@ Updated:
 ## Pending — python_caplog_builtin_beside_fixtures (2)
 
 Reason:
-RIPR-SPEC-0238: regenerate human.txt for the crossed #10444/#10426 caplog wording (main drift; same re-bless as #10351)
+RIPR-SPEC-0238 inherited main drift: #10444 fixture predates the #10426 evidence legend
 
 Command:
 `cargo xtask goldens bless python_caplog_builtin_beside_fixtures --reason "..."`
