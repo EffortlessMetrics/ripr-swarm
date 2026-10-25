@@ -99,6 +99,9 @@ fn owner_inputs(declaration: &ast::Fn, sink: &str) -> Option<(usize, String, Inp
             return None;
         }
         let name = pattern.name()?.text().to_string();
+        if name.starts_with("r#") {
+            return None;
+        }
         let ty = text(&parameter.ty()?);
         if name == sink {
             let trait_name = ty.strip_prefix("&mutdyn")?;
@@ -125,7 +128,11 @@ fn setup(statement: &ast::Stmt, sink: &str, known: &mut Inputs) -> Option<()> {
         return None;
     };
     let name = pattern.name()?.text().to_string();
-    if name == sink || pattern.ref_token().is_some() || pattern.pat().is_some() {
+    if name.starts_with("r#")
+        || name == sink
+        || pattern.ref_token().is_some()
+        || pattern.pat().is_some()
+    {
         return None;
     }
     let initializer = binding.initializer()?;
@@ -347,8 +354,9 @@ impl RecordingDouble {
                 || ast::MacroDef::cast(node.clone()).is_some()
                 || ast::TypeAlias::cast(node.clone()).is_some()
                 || ast::Fn::cast(node.clone()).is_some_and(|f| {
-                    f.name()
-                        .is_some_and(|n| matches!(n.text(), "clone" | "to_string"))
+                    f.name().is_some_and(|n| {
+                        matches!(n.text().trim_start_matches("r#"), "clone" | "to_string")
+                    })
                 })
                 || ast::Use::cast(node.clone()).is_some_and(|u| {
                     !u.syntax()
@@ -359,7 +367,7 @@ impl RecordingDouble {
                 || node
                     .children()
                     .filter_map(ast::Name::cast)
-                    .any(|n| matches!(n.text(), "Vec" | "String"))
+                    .any(|n| matches!(n.text().trim_start_matches("r#"), "Vec" | "String"))
         }) {
             return None;
         }
