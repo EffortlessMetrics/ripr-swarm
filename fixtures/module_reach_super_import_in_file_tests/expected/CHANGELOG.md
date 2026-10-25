@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_tests (3)
+
+Reason:
+RIPR-SPEC-0240: output wording only; #10291 added this fixture after #10382 reworded the not-ready repair-route line, so main's golden carried the old wording (no class change)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
