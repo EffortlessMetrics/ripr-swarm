@@ -61,6 +61,11 @@ struct FunctionAssertions {
     /// Why every assertion in this test is refused, when the refusal is a
     /// property of the whole test rather than of one invocation.
     refusal: Option<AssertionContextRefusal>,
+    /// Set when `refusal` is `MacroOperandExit` and the function is clean once
+    /// the [`COMPARISON_NESTED_MACROS`] count as plain expansions: `assertions`
+    /// then holds the per-assertion verdicts (#10389). The strict `refusal`
+    /// still answers every other query.
+    comparison_clean: bool,
     assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
     /// Assertions of test-local check helpers this test calls on an eager
@@ -210,6 +215,32 @@ impl OwnerPinAssertions {
         assertion: (usize, &str),
         ambiguous_macros: &BTreeSet<String>,
     ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, false)
+    }
+
+    /// [`Self::refusal`] with the [`COMPARISON_NESTED_MACROS`] read as plain
+    /// expansions: the first gate that refuses this assertion for a reason
+    /// other than the opaque nested comparison macro itself (#10389). The
+    /// function-level macro scan reports `MacroOperandExit` before any
+    /// per-assertion gate, which would hide a dead context.
+    pub(crate) fn refusal_trusting_comparison_macros(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+    ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, true)
+    }
+
+    fn refusal_trusting(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+        trust_comparison_macros: bool,
+    ) -> Option<AssertionContextRefusal> {
         let Some(facts) = self
             .functions
             .get(&(function.0, function.1, function.2.to_string()))
@@ -220,7 +251,11 @@ impl OwnerPinAssertions {
                 AssertionContextRefusal::UnparsedFile
             });
         };
-        if let Some(refusal) = &facts.refusal {
+        if let Some(refusal) = &facts.refusal
+            && !(trust_comparison_macros
+                && facts.comparison_clean
+                && matches!(refusal, AssertionContextRefusal::MacroOperandExit(_)))
+        {
             return Some(refusal.clone());
         }
         if facts.body != BodyFingerprint::of(body) {
@@ -2255,7 +2290,24 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         } else {
             item_context_refusal(function.syntax())
         };
-        if let Some(refusal) = refusal {
+        // #10389: a function refused only for a nested comparison macro keeps
+        // its per-assertion verdicts, so a caller that trusts those macros
+        // still sees a dead context the function-level scan reported first.
+        let comparison_clean =
+            matches!(refusal, Some(AssertionContextRefusal::MacroOperandExit(_)))
+                && has_escape_among(
+                    body.syntax(),
+                    trusted,
+                    &empty_macros,
+                    &json_uses,
+                    COMPARISON_NESTED_MACROS,
+                )
+                .is_none()
+                && function
+                    .attrs()
+                    .all(|attr| runs_body_unchanged(&attr, function.syntax()))
+                && item_context_refusal(function.syntax()).is_none();
+        if let (Some(refusal), false) = (&refusal, comparison_clean) {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
             // a refused helper still counts toward duplicate detection.
             if is_test_function(&function) {
@@ -2263,7 +2315,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     &mut result.functions,
                     key,
                     FunctionAssertions {
-                        refusal: Some(refusal),
+                        refusal: Some(refusal.clone()),
                         ..FunctionAssertions::default()
                     },
                 );
@@ -2397,7 +2449,8 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             key,
             FunctionAssertions {
                 body: BodyFingerprint::of(&body_source),
-                refusal: None,
+                refusal,
+                comparison_clean,
                 assertions,
                 macros,
                 helper_assertions,
@@ -3918,6 +3971,18 @@ fn has_escape(
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
 ) -> Option<AssertionContextRefusal> {
+    has_escape_among(body, trusted, empty, json_uses, &[])
+}
+
+/// [`has_escape`] with `plain_nested` names also read as plain nested
+/// expansions in a macro operand.
+fn has_escape_among(
+    body: &SyntaxNode,
+    trusted: &[&str],
+    empty: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
+    plain_nested: &[&str],
+) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             // Discarded arguments are not executed. Cross-file/import/shadow
@@ -3943,7 +4008,11 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && json_visible,
+                    plain_nested,
+                )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3983,10 +4052,14 @@ pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false)
+    opaque_macro_operand_with_json(tree, false, &[])
 }
 
-fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
+fn opaque_macro_operand_with_json(
+    tree: &ast::TokenTree,
+    literal_json: bool,
+    plain_nested: &[&str],
+) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
@@ -3994,7 +4067,10 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || nested_invocations(&tokens).any(|(name, plain)| {
-        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+        !(plain
+            && (NESTED_EXPANSIONS.contains(&name)
+                || plain_nested.contains(&name)
+                || name == "json" && literal_json))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"
@@ -4008,6 +4084,13 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
 /// token scan above already reads for exits; its binding is checked with the
 /// invoking macros'.
 const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
+
+/// Pure comparison macros of `float_cmp` and `approx` (#10389). They expand
+/// to a boolean over their operands, but ripr does not expand third-party
+/// macros, so the nested spelling is only read as plain by the return-value
+/// boolean-assert carve-out, which also proves the import by name.
+pub(crate) const COMPARISON_NESTED_MACROS: &[&str] =
+    &["approx_eq", "relative_eq", "abs_diff_eq", "ulps_eq"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()

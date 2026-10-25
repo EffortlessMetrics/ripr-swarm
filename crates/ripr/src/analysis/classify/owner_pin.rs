@@ -183,66 +183,53 @@ const KNOWN_COMPARISON_MACROS: [(&str, &str); 4] = [
     ("ulps_eq", "approx"),
 ];
 
-/// Whether every macro nested in the boolean assertion `text` is one of
-/// [`KNOWN_COMPARISON_MACROS`], imported by name from its crate in the test
-/// file and not defined by a `macro_rules!` anywhere in the index. A nested
-/// path-qualified, glob-imported or locally defined macro may hide an exit.
-fn nested_macros_are_known_comparisons(text: &str, test_file: &Path, index: &RustIndex) -> bool {
-    let masked = mask_comments_and_strings(text);
-    let mut names = Vec::new();
-    let bytes = masked.as_bytes();
-    for (at, _) in masked.match_indices('!') {
-        let after = masked[at + 1..].trim_start();
-        if !after.starts_with(['(', '[', '{']) {
-            continue;
-        }
-        let start = bytes[..at]
-            .iter()
-            .rposition(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'))
-            .map_or(0, |last| last + 1);
-        let name = &masked[start..at];
-        if name.is_empty() || bytes[..start].ends_with(b"::") {
-            return false;
-        }
-        names.push(name);
-    }
-    // The outer assertion is the first invocation; the rest are nested.
-    let Some((_, nested)) = names.split_first() else {
-        return false;
-    };
-    let Some(file) = index.files().get(test_file) else {
-        return false;
-    };
-    let imports = mask_comments_and_strings(&file.source);
-    nested.iter().all(|name| {
-        KNOWN_COMPARISON_MACROS
-            .iter()
-            .find(|(known, _)| known == name)
-            .is_some_and(|(_, krate)| {
-                imports.split(';').any(|statement| {
-                    let statement = statement.trim();
-                    statement
-                        .rsplit_once("use ")
-                        .map(|(_, tree)| tree)
-                        .is_some_and(|tree| {
-                            tree.trim_start().starts_with(&format!("{krate}::"))
-                                && !tree.contains('*')
-                                && !tree.contains(" as ")
-                                && !whole_word_offsets(tree, name).is_empty()
-                        })
-                }) && !index.files().values().any(|other| {
-                    let masked = mask_comments_and_strings(&other.source);
-                    whole_word_offsets(&masked, "macro_rules")
-                        .into_iter()
-                        .any(|at| {
-                            masked[at + "macro_rules".len()..]
-                                .trim_start()
-                                .strip_prefix('!')
-                                .is_some_and(|rest| rest.trim_start().starts_with(name))
-                        })
-                })
+/// The [`KNOWN_COMPARISON_MACROS`] names `source` imports by name from their
+/// crate (no glob, no `as` alias).
+fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
+    let imports = mask_comments_and_strings(source);
+    KNOWN_COMPARISON_MACROS
+        .iter()
+        .filter(|(name, krate)| {
+            imports.split(';').any(|statement| {
+                statement
+                    .trim()
+                    .rsplit_once("use ")
+                    .map(|(_, tree)| tree)
+                    .is_some_and(|tree| {
+                        tree.trim_start().starts_with(&format!("{krate}::"))
+                            && !tree.contains('*')
+                            && !tree.contains(" as ")
+                            && !whole_word_offsets(tree, name).is_empty()
+                    })
             })
-    })
+        })
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// Every name some `macro_rules!` in the index defines.
+fn macro_rules_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for file in index.files().values() {
+        let masked = mask_comments_and_strings(&file.source);
+        for at in whole_word_offsets(&masked, "macro_rules") {
+            let Some(rest) = masked[at + "macro_rules".len()..]
+                .trim_start()
+                .strip_prefix('!')
+            else {
+                continue;
+            };
+            let name: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+    }
+    names
 }
 
 /// The rooted spellings of every admitted assertion macro: each needs the
@@ -331,6 +318,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// made the entry depend on which probe reached the file first, which
     /// with workers is scheduling (#8797).
     by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// #10389: per test file, the known comparison macros it imports by name.
+    comparison_imports: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<&'static str>>>>,
+    /// #10389: every name a `macro_rules!` in the index defines, scanned once.
+    macro_rules_names: SyncMemo<Option<BTreeSet<String>>>,
     /// Per module-parent file, read with the plain trusted-macro list.
     module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
@@ -813,7 +804,10 @@ impl OwnerPinSyntax {
                             .eq("#[test]".chars())
                     })
                     && !operand_holds_exit_token(&assertion.text)
-                    && nested_macros_are_known_comparisons(&assertion.text, &test.file, index)
+                    && self.nested_macros_are_known_comparisons(&assertion.text, &test.file, index)
+                    && self
+                        .refusal_trusting_comparison_macros(test, assertion, index)
+                        .is_none()
             }
             Some(_) => false,
         }
@@ -1405,6 +1399,91 @@ impl OwnerPinSyntax {
         };
         let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
+    }
+
+    /// Whether every macro nested in the boolean assertion `text` is one of
+    /// [`KNOWN_COMPARISON_MACROS`], imported by name from its crate in the
+    /// test file and not defined by a `macro_rules!` anywhere in the index. A
+    /// nested path-qualified, glob-imported or locally defined macro may hide
+    /// an exit. The import and definition scans run once per file and index.
+    fn nested_macros_are_known_comparisons(
+        &self,
+        text: &str,
+        test_file: &Path,
+        index: &RustIndex,
+    ) -> bool {
+        let masked = mask_comments_and_strings(text);
+        let mut names = Vec::new();
+        for (at, _) in masked.match_indices('!') {
+            let after = masked[at + 1..].trim_start();
+            if !after.starts_with(['(', '[', '{']) {
+                continue;
+            }
+            let before = masked[..at].trim_end();
+            let start = before
+                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .map_or(0, |last| last + 1);
+            let name = &before[start..];
+            // A `!` with no identifier before it negates a parenthesized
+            // expression; it is not a macro invocation.
+            if name.is_empty() {
+                continue;
+            }
+            if before[..start].ends_with("::") {
+                return false;
+            }
+            names.push(name);
+        }
+        // The outer assertion is the first invocation; the rest are nested.
+        let Some((_, nested)) = names.split_first() else {
+            return false;
+        };
+        let Some(file) = index.files().get(test_file) else {
+            return false;
+        };
+        let imported = self
+            .comparison_imports
+            .get_or_build(&test_file.to_path_buf(), || {
+                imported_comparison_macros(&file.source)
+            });
+        let mut defined = self.macro_rules_names.borrow_mut();
+        let defined = defined.get_or_insert_with(|| macro_rules_names(index));
+        nested
+            .iter()
+            .all(|name| imported.contains(name) && !defined.contains(*name))
+    }
+
+    /// The file-text verdict for `assertion` with the known nested comparison
+    /// macros read as plain, so the function-level `MacroOperandExit` does not
+    /// hide a dead context (`return`, `loop {}`, an uncalled `fn`, `if
+    /// cfg!(any())`) the per-assertion gates would refuse (#10389). Anything
+    /// not read from the file's own text (doc examples, generated tests)
+    /// refuses.
+    fn refusal_trusting_comparison_macros(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionContextRefusal> {
+        if index.doctest_source(test).is_some() {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        };
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index) else {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        };
+        self.by_file
+            .get_or_build(&test.file, || {
+                owner_pin_assertions(&facts.source, &assertion_context_macros())
+            })
+            .refusal_trusting_comparison_macros(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (assertion.line, &assertion.text),
+                &ambiguous,
+            )
     }
 
     fn refusal(

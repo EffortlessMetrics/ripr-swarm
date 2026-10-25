@@ -341,6 +341,36 @@ fn boolean_assert_with_nested_macro_operand_credits_only_when_it_runs_and_cannot
             false,
         ),
         (
+            "live_nested_macro_with_negated_group",
+            "assert!(approx_eq!(i32, compute_score(4), 8) && !(compute_score(4) < 0));",
+            true,
+        ),
+        (
+            "uncalled_fn_holding_nested_macro",
+            "fn never() {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "loop_before_nested_macro",
+            "loop {}\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "cfg_any_branch_nested_macro",
+            "if cfg!(any()) {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "labeled_break_before_nested_macro_in_block",
+            "'a: {\nif true { break 'a; }\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "live_nested_after_unrelated_block",
+            "'a: {\nif true { break 'a; }\n}\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            true,
+        ),
+        (
             "live_nested_then_dead_plain",
             "assert!(approx_eq!(i32, compute_score(4), 8));\nreturn;\nassert!(compute_score(4) == 8);",
             true,

@@ -12478,3 +12478,18 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
         assert!(scalar_names_rebound("u32", source), "{source}");
     }
 }
+
+/// The classify side proves each nested comparison macro's import by name;
+/// the syntax side reads the same names as plain expansions (#10389). The
+/// two lists must name the same macros.
+#[test]
+fn known_comparison_macros_match_the_syntax_plain_nested_list() {
+    let mut classify: Vec<&str> = KNOWN_COMPARISON_MACROS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let mut syntax: Vec<&str> = crate::analysis::syntax::COMPARISON_NESTED_MACROS.to_vec();
+    classify.sort_unstable();
+    syntax.sort_unstable();
+    assert_eq!(classify, syntax);
+}
