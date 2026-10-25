@@ -119,20 +119,30 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
-/// Replace the repair-route advisory text with a fixed slot so the wording
-/// stays owned by `RepairRouteRefusal::advisory` (#9244).
-fn blank_repair_advisory(bytes: &[u8]) -> Vec<u8> {
-    String::from_utf8_lossy(bytes)
+/// Replace only the NoBindingSeam advisory sentence (the historical capture's
+/// or the current producer's) with a fixed slot, so that wording stays owned by
+/// `RepairRouteRefusal::advisory` (#9244). Every other advisory line, such as
+/// the captured Ineligible refusals, stays byte-exact. Returns the projected
+/// bytes and how many lines were blanked.
+fn blank_no_binding_seam_advisory(bytes: &[u8]) -> (Vec<u8>, usize) {
+    const OLD: &str =
+        "  no repair start offered: no seam in the finding's file binds this finding;";
+    const NEW: &str =
+        "  no repair start offered: ripr found no seam in this finding's file to bind it to,";
+    let mut blanked = 0;
+    let projected = String::from_utf8_lossy(bytes)
         .split_inclusive('\n')
         .map(|line| {
-            if line.starts_with("  no repair start offered:") {
-                "  no repair start offered:\n"
+            if line.starts_with(OLD) || line.starts_with(NEW) {
+                blanked += 1;
+                "  no repair start offered: <no-binding-seam advisory>\n"
             } else {
                 line
             }
         })
         .collect::<String>()
-        .into_bytes()
+        .into_bytes();
+    (projected, blanked)
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
@@ -338,15 +348,19 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     } else {
                         actual
                     };
-                    // The advisory wording is owned by
+                    // The NoBindingSeam advisory wording is owned by
                     // `RepairRouteRefusal::advisory` (#9244); the historical
-                    // human.txt capture keeps its original bytes and only the
-                    // advisory slot is compared.
+                    // human.txt capture keeps its original bytes and only that
+                    // slot is compared, present on both sides or neither.
                     let (actual, expected_bytes) = if file == "human.txt" {
-                        (
-                            blank_repair_advisory(&actual),
-                            blank_repair_advisory(&expected_bytes),
-                        )
+                        let (actual, actual_slots) = blank_no_binding_seam_advisory(&actual);
+                        let (expected, expected_slots) =
+                            blank_no_binding_seam_advisory(&expected_bytes);
+                        assert_eq!(
+                            actual_slots, expected_slots,
+                            "{id}: the NoBindingSeam advisory must appear on both sides"
+                        );
+                        (actual, expected)
                     } else {
                         (actual, expected_bytes)
                     };
