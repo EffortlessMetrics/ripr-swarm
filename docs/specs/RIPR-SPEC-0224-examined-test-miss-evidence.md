@@ -176,7 +176,7 @@ owner-call relation with a trusted import, the owner named exactly once in its
 own module and only in test bodies in the test file, every owner reference a
 plain call, closed body constants, and literal integer arguments that all miss
 the pinned boundary. The renderer words a TypeScript or JavaScript row as "no
-input this test passes was seen ...". Residuals that stay invisible: runner
+input this test passes was seen ...", naming the finding's boundary from the row's `miss_support` when the finding has one. Residuals that stay invisible: runner
 config the test never names (`setupFiles`, `moduleNameMapper`, global setup)
 and import-time effects of imported modules. Three reasons are withheld on
 purpose: `no_call_path` (a single-file reading cannot prove a call path

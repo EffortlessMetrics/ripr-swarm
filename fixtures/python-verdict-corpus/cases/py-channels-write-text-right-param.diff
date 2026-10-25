@@ -1,0 +1,12 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -10,7 +10,7 @@
+ 
+ 
+ def save_c1(a, b):
+-    a.write_text("one")
++    a.write_text("uno")
+     b.write_text("two")
+ 
+ 

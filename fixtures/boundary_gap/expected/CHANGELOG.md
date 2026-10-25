@@ -1167,6 +1167,13 @@ The same snapshots follow corpus cache generation 1.104 to 1.105 for
 (RIPR-SPEC-0117, #10298), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Exported macro_rules! crate-path calls classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.106 to 1.107 for
+top-level `crate::name!` calls to `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
@@ -1253,7 +1260,7 @@ content commitment, dependent verify commitments and receipt byte hashes only.
 
 ### indirect owner call limit classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.106 to 1.107 for owners
+The same snapshots follow corpus cache generation 1.107 to 1.108 for owners
 reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
