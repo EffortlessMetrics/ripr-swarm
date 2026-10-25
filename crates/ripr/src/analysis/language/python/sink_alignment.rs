@@ -364,24 +364,24 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
             _ => None,
         }
     }
+    fn result(expr: &Expr, callees: &[String], locals: &[String], test: &PythonTest) -> bool {
+        match expr {
+            Expr::Call(call) => {
+                callee_name(&call.func).is_some_and(|name| callees.contains(&name))
+                    || (matches!(call.func.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "list" | "tuple") && !super::related_tests::builtin_is_shadowed(test, name.id.as_str()))
+                        && call.keywords.is_empty()
+                        && call.args.len() == 1
+                        && call
+                            .args
+                            .first()
+                            .is_some_and(|arg| result(arg, callees, locals, test)))
+            }
+            Expr::Name(name) => locals.iter().any(|local| local == name.id.as_str()),
+            _ => false,
+        }
+    }
     fn observes(expr: &Expr, callees: &[String], locals: &[String], test: &PythonTest) -> bool {
         let display = |expr: &Expr| matches!(expr, Expr::Dict(_) | Expr::List(_));
-        fn result(expr: &Expr, callees: &[String], locals: &[String], test: &PythonTest) -> bool {
-            match expr {
-                Expr::Call(call) => {
-                    callee_name(&call.func).is_some_and(|name| callees.contains(&name))
-                        || (matches!(call.func.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "list" | "tuple") && !super::related_tests::builtin_is_shadowed(test, name.id.as_str()))
-                            && call.keywords.is_empty()
-                            && call.args.len() == 1
-                            && call
-                                .args
-                                .first()
-                                .is_some_and(|arg| result(arg, callees, locals, test)))
-                }
-                Expr::Name(name) => locals.iter().any(|local| local == name.id.as_str()),
-                _ => false,
-            }
-        }
         let result = |expr: &Expr| result(expr, callees, locals, test);
         match expr {
             Expr::BoolOp(boolean) if boolean.op == ast::BoolOp::And => boolean
@@ -438,16 +438,46 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
                 .map(|receiver| format!("{receiver}.{method}")),
         );
     }
-    // The shared alias reader also accepts these materializers. Its result is
-    // not whole-owner identity when a test binding can replace any of them.
-    let locals = if ["list", "tuple", "set", "frozenset", "sorted"]
-        .iter()
-        .any(|name| super::related_tests::builtin_is_shadowed(test, name))
-    {
-        Vec::new()
-    } else {
-        owner_result_locals(test, &callees)
+    // An alias needs both provenance and retention. Admit only an immediately
+    // adjacent, literal whole-value comparison of the same assertion unit.
+    // Broader lifetimes/mutations are not inferred by this new gate.
+    let pure_display = |expr: &Expr| match expr {
+        Expr::List(list) => list
+            .elts
+            .iter()
+            .all(|item| matches!(item, Expr::Constant(_))),
+        Expr::Dict(dict) => {
+            dict.keys
+                .iter()
+                .all(|key| matches!(key, Some(Expr::Constant(_))))
+                && dict
+                    .values
+                    .iter()
+                    .all(|value| matches!(value, Expr::Constant(_)))
+        }
+        _ => false,
     };
+    let alias = match &expression {
+        Expr::Compare(compare) if compare.ops.as_slice() == [ast::CmpOp::Eq] => {
+            match (compare.left.as_ref(), compare.comparators.as_slice()) {
+                (Expr::Name(name), [display]) if pure_display(display) => Some(name.id.as_str()),
+                (display, [Expr::Name(name)]) if pure_display(display) => Some(name.id.as_str()),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let candidates = owner_result_locals(test, &callees);
+    let source = dedent_python(&test.body_text);
+    let (_, body) = parse_test_function_scope(test).unwrap_or_default();
+    let locals = alias.filter(|alias| candidates.iter().any(|candidate| candidate == alias))
+        .filter(|alias| body.windows(2).any(|pair| {
+            let [Stmt::Assign(assign), Stmt::Assert(assertion)] = pair else { return false };
+            matches!(assign.targets.as_slice(), [Expr::Name(name)] if name.id.as_str() == *alias)
+                && result(&assign.value, &callees, &[], test)
+                && source.get(usize::from(assertion.range.start())..usize::from(assertion.range.end()))
+                    .is_some_and(|text| text.trim() == oracle.trim())
+        })).map(|alias| vec![alias.to_string()]).unwrap_or_default();
     observes(&expression, &callees, &locals, test)
 }
 

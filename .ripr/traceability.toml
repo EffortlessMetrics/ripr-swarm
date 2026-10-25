@@ -16629,6 +16629,8 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_result_alias_requires_adjacent_retained_observation",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_lossy_materializer_alias_is_not_the_whole_collection",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_shadowed_materializer_alias_cannot_supply_whole_observation",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_shadowed_materializer_cannot_supply_whole_observation",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_method_whole_result_keeps_receiver_identity",

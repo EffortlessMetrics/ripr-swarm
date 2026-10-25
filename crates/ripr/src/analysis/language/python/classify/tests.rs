@@ -3381,3 +3381,82 @@ fn multiline_collection_shadowed_materializer_alias_cannot_supply_whole_observat
     }
     Ok(())
 }
+
+#[test]
+fn multiline_collection_lossy_materializer_alias_is_not_the_whole_collection() -> Result<(), String>
+{
+    let source = "def labels():\n    return [\n        2,\n        1,\n        2,\n    ]\n";
+    for wrapper in ["set", "frozenset"] {
+        let tests = format!(
+            "from src.subject import labels\ndef test_labels():\n    result = list({wrapper}(labels()))\n    assert result == [1, 2]\n"
+        );
+        let owners = extract_owners(Path::new("src/subject.py"), source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let finding = classify_change_with_source(
+            Path::new("src/subject.py"),
+            3,
+            "        2,",
+            Some("        1,"),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or_else(|| format!("missing lossy-alias finding: {wrapper}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong)
+        );
+        assert_ne!(finding.class, ExposureClass::Exposed, "{wrapper}");
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_collection_result_alias_requires_adjacent_retained_observation() -> Result<(), String>
+{
+    let source = "def labels():\n    return [\n        2,\n        1,\n    ]\n";
+    for (between, oracle, expected) in [
+        ("", "result == [2, 1]", ExposureClass::Exposed),
+        (
+            "    result[0] = 2\n",
+            "result == [2, 1]",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "    result.clear()\n    result.extend([2, 1])\n",
+            "result == [2, 1]",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "",
+            "result.__setitem__(0, 2) is None and result == [2, 1]",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import labels\ndef test_labels():\n    result = labels()\n{between}    assert {oracle}\n"
+        );
+        let owners = extract_owners(Path::new("src/subject.py"), source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let finding = classify_change_with_source(
+            Path::new("src/subject.py"),
+            3,
+            "        2,",
+            Some("        1,"),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or_else(|| format!("missing retained-alias finding: {oracle}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong)
+        );
+        assert_eq!(finding.class, expected, "{between}{oracle}");
+    }
+    Ok(())
+}

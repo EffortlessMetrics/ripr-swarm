@@ -492,7 +492,9 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     appears anywhere in its text.
     Flat multiline return displays use the enclosing display to retain the
     changed key or index. Nested multiline elements, opener-line elements,
-    missing source or an unpaired member keep the existing fallback.
+    missing source or an unpaired member keep the existing fallback. Whole-result
+    alias credit additionally requires a verified owner-result assignment immediately
+    followed by its matching literal comparison; wider alias lifetimes are not inferred.
 11. **The f-string length gate reads the crediting assertion.** For a
     changed f-string whose literal text changed and whose interpolations
     did not, an assertion that is a pure `len(...)` aggregate cannot
