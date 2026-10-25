@@ -3803,12 +3803,15 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 
 /// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
 /// `Site(..)`, one of the conventional constructors (`Site::new(..)`,
-/// `Site::default()`, `Site::from(..)`), an enum tuple variant
-/// (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
+/// `Site::default()`, `Site::from(..)`, `Site::seeded()`), an enum tuple
+/// variant (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
 /// Any other associated call (`Site::make_cache()`) may return another type
 /// and fails closed. So do the `new_*`/`from_*`/`with_*` spellings: the prefix
 /// is a naming convention, not a return type, and `Site::with_cache()` may
-/// return a `Cache` (#8782 item 2). There is no return-type lookup here.
+/// return a `Cache` (#8782 item 2). `seeded` stays in the kept exact-name
+/// class: it names the constructed value's state, not another returned type
+/// (#8004 delegated decision: the RIPR-SPEC-0228 fixtures type their
+/// receivers with `Ledger::seeded()`). There is no return-type lookup here.
 /// Module-qualified heads stay unresolved: this matcher receives only a
 /// compact impl name, so the final segment cannot establish type identity.
 fn initializer_type_head(expr: &str) -> Option<&str> {
@@ -3838,7 +3841,14 @@ fn is_variant_name(name: &str) -> bool {
 }
 
 fn is_constructor_name(name: &str) -> bool {
-    matches!(name, "new" | "default" | "from")
+    // `seeded` (#8004 delegated decision): the RIPR-SPEC-0228 fixtures type
+    // their test receivers with `let mut ledger = Ledger::seeded()`. Like
+    // `new`/`default`/`from`, the name describes the constructed value's
+    // state, not a different returned type (#8782 item 2 removed the
+    // type-encoding `new_*`/`from_*`/`with_*` factories); it stays a naming
+    // convention with no return-type lookup, and every other spelling still
+    // fails closed.
+    matches!(name, "new" | "default" | "from" | "seeded")
 }
 
 /// Leading `a::B::c` path of `text` after `&`/`mut`/`dyn`/whitespace, and the
@@ -11270,6 +11280,20 @@ let r = try_parse_summary(\"x\");",
             ("let c = Cache::new(Site::default()); (&c).build();", false),
             ("let s = Site::new(); (s).build();", true),
             ("let s = Site::new(); (&mut s).build();", true),
+            // #8004 delegated decision: the #8203/#8213 RIPR-SPEC-0228
+            // fixtures type their receiver with `let mut ledger =
+            // Ledger::seeded()`, so the convention constructor joins
+            // `new`/`default`/`from` — still a naming convention with no
+            // return-type lookup.
+            ("let mut s = Site::seeded(); s.build();", true),
+            // The admission stays bounded: another type's `seeded` head does
+            // not credit this impl, a module-qualified head stays
+            // unresolved, a method form is not a path, and a chain after
+            // the constructor may change the type.
+            ("let s = Cache::seeded(); s.build();", false),
+            ("let s = m::Site::seeded(); s.build();", false),
+            ("let s = r.seeded(); s.build();", false),
+            ("let s = Site::seeded().cache(); s.build();", false),
             ("Site::new().build();", true),
             ("Site::with_langs(1).build();", false),
             ("Site { langs: 1 }.build();", true),
@@ -11344,6 +11368,45 @@ let r = try_parse_summary(\"x\");",
                 "{body}"
             );
         }
+    }
+
+    // #8004 delegated decision: RIPR-SPEC-0228 pins
+    // `fixtures/rust_pushed_element_last` as reading `exposed`, and its test
+    // types its receiver with `let mut ledger = Ledger::seeded()`. The
+    // convention constructor (`new`/`default`/`from`/`new_*`/`from_*`/
+    // `with_*`) gains `seeded`, so the bounded admission credits that shape
+    // without any return-type lookup. The refusal boundary moves for the
+    // convention name only: non-convention names, module-qualified heads,
+    // method forms and post-call chains still fail closed.
+    #[test]
+    fn seeded_convention_constructor_types_the_receiver_binding() {
+        assert_eq!(initializer_type_head("Ledger::seeded()"), Some("Ledger"));
+        assert_eq!(
+            initializer_type_head("Ledger::seeded::<u8>()"),
+            Some("Ledger")
+        );
+        assert!(let_binding_mentions_type(
+            "let mut ledger = Ledger::seeded();",
+            "ledger",
+            "Ledger",
+        ));
+        let prefix = "let l = Ledger::seeded();";
+        assert!(expr_ending_at_has_type(
+            &format!("{prefix} l.record(7);"),
+            prefix.len() - 1,
+            "Ledger",
+        ));
+        assert_eq!(initializer_type_head("Ledger::loaded()"), None);
+        assert_eq!(initializer_type_head("m::Ledger::seeded()"), None);
+        assert_eq!(initializer_type_head("ledger.seeded()"), None);
+        assert_eq!(initializer_type_head("Ledger::seeded_with(9)"), None);
+        // A chain after the constructor may change the type: the binding
+        // layer's one-head guard refuses it even with a convention name.
+        assert!(!let_binding_mentions_type(
+            "let l = Ledger::seeded().into();",
+            "l",
+            "Ledger",
+        ));
     }
 
     #[test]
