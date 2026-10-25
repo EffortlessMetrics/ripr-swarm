@@ -34,6 +34,48 @@
       ]
     },
     {
+      "id": "rust_qualified_foreign_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_qualified_foreign_receiver",
+      "probe_family": "return_value",
+      "vector": "qualified_receiver_initializer_cannot_borrow_a_compact_owner_type_name",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "unicode_module_receiver_is_not_the_local_type",
+          "file": "tests/size_hints.rs",
+          "line": 10,
+          "kind": "whole_object_equality",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
       "id": "rust_operand_callee_later_binding",
       "language": "rust",
       "tier": "pure",
@@ -3455,6 +3497,52 @@
         {
           "type": "expected_class",
           "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_owner_self_body_same_name_no_unseen_reach",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_self_body_same_name_no_unseen_reach",
+      "vector": "a_same_named_call_inside_the_owners_own_body_is_not_an_unseen_caller",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_owner_self_body_same_name_with_caller_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_self_body_same_name_with_caller_control",
+      "vector": "a_caller_outside_the_owners_body_keeps_reach_undecided",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
         }
       ]
     },
@@ -12862,6 +12950,305 @@
             "class": "exposed"
           }
         ]
-      }
+      },
+    {
+      "id": "python_module_reader_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_reader_replacement",
+      "vector": "repair_foreign_reader",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_conditional_version_attribute_write",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_conditional_version_attribute_write",
+      "vector": "repair_version_attribute",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_conditional_walrus_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_conditional_walrus_replacement",
+      "vector": "repair_walrus_callable",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_continuation_return",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_continuation_return",
+      "vector": "repair_continuation_return",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_backslash_return",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_backslash_return",
+      "vector": "repair_backslash_return",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_conditional_version_annotated_write",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_conditional_version_annotated_write",
+      "vector": "repair_version_annotation",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_conditional_foreign_version_write",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_conditional_foreign_version_write",
+      "vector": "version_foreign_write",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_conditional_foreign_callable_write",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_conditional_foreign_callable_write",
+      "vector": "conditional_foreign_callable",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_test_reader_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_test_reader_replacement",
+      "vector": "reader_test_unpacked",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_prior_failing_assert",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_prior_failing_assert",
+      "vector": "unreachable_after_failed_assert",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_generator_test",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_generator_test",
+      "vector": "unreached_generator_assignment",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_same_line_prior_assert",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_same_line_prior_assert",
+      "vector": "same_line_prior_assert",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_module_formatted_generator_test",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_module_formatted_generator_test",
+      "vector": "formatted_generator_deferred_assertion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    }
   ]
 }
