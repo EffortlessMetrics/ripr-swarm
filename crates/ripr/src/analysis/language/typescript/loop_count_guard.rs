@@ -1191,14 +1191,19 @@ fn without_receiver_casts(receiver: &str) -> String {
         let inner = &end[open + 1..];
         // Only a bare grouping paren is a cast group; `Svc(opts as any)` is an
         // argument list and `.retry` still belongs to the constructed `Svc`.
+        let spaced = end[..open].ends_with(char::is_whitespace);
         let before = end[..open].trim_end();
         let word = before
             .rsplit(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
             .next()
             .unwrap_or("");
-        let call_like = before.ends_with(['.', '>', ')', ']'])
+        // `=>` and a `)` or `]` after a space lead a body or statement, not a call.
+        let call_like = before.ends_with(['.'])
+            || (before.ends_with('>') && !before.ends_with("=>"))
+            || (before.ends_with([')', ']']) && !spaced)
             || (!word.is_empty()
-                && !matches!(word, "await" | "new" | "return" | "typeof" | "void"));
+                && !before.ends_with(['>', ')', ']'])
+                && !is_expression_keyword(word));
         if call_like {
             break;
         }
@@ -1210,6 +1215,29 @@ fn without_receiver_casts(receiver: &str) -> String {
         }
     }
     text
+}
+
+/// Keywords after which a parenthesized expression is a group, not an argument list.
+fn is_expression_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "await"
+            | "new"
+            | "return"
+            | "typeof"
+            | "void"
+            | "yield"
+            | "throw"
+            | "else"
+            | "do"
+            | "in"
+            | "of"
+            | "delete"
+            | "case"
+            | "default"
+            | "instanceof"
+            | "extends"
+    )
 }
 
 /// Receivers whose member calls only observe their arguments.
@@ -2040,6 +2068,40 @@ mod tests {
         );
         assert_eq!(without_receiver_casts("(svc as any)"), "svc");
         assert_eq!(without_receiver_casts("await (svc as any)"), "await svc");
+        for group in [
+            "=> (svc as any)",
+            "if (a) (svc as any)",
+            "while (a) (svc as any)",
+            "yield (svc as any)",
+            "throw (svc as any)",
+            "else (svc as any)",
+            "do (svc as any)",
+            "x in (svc as any)",
+            "delete (svc as any)",
+            "export default (svc as any)",
+        ] {
+            assert!(without_receiver_casts(group).ends_with("svc"), "{group}");
+        }
+        for call in [
+            "f(svc as any)",
+            "a[0](svc as any)",
+            "a()(svc as any)",
+            "f<T>(svc as any)",
+            "new Svc (opts as any)",
+        ] {
+            assert_eq!(without_receiver_casts(call), call, "{call}");
+        }
+        for stmt in [
+            "const go = () => (svc as any).retry(fn, 2);",
+            "if (a) (svc as any).retry(fn, 2);",
+            "yield (svc as any).retry(fn, 2);",
+            "else (svc as any).retry(fn, 2);",
+        ] {
+            assert!(
+                hands_mock_to_owner(stmt, &["retry"], Receivers::Members(&svc, "retry"), "fn"),
+                "{stmt}"
+            );
+        }
         assert!(!hands_mock_to_owner(
             "other (svc as any).retry(fn, 2);",
             &["retry"],
