@@ -178,7 +178,7 @@ fn a_bench_target_naming_the_file_keeps_it_compiled() -> Result<(), String> {
 
 #[test]
 fn a_module_building_macro_keeps_the_file_whatever_its_spacing() -> Result<(), String> {
-    // Generated module membership is unknown, not proven excluded: newline and
+    // Generated module membership is unknown, not shown excluded: newline and
     // comment trivia between `mod` and `$n` must read like the compact form.
     for builder in [
         "mod $n;",
