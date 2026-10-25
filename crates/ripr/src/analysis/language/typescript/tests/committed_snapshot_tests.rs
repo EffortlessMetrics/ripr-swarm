@@ -186,6 +186,59 @@ fn committed_jest_snapshot_entry_reads_strong() -> Result<(), String> {
     Ok(())
 }
 
+/// #10017: the extraction is cached by (path, bytes), but promotion reads the
+/// snapshot file on every run. An unchanged test file must see a snapshot
+/// entry added, changed or removed between two runs, and promotion on a
+/// clone must not leak into the cached tests.
+#[test]
+fn cached_extraction_still_sees_snapshot_file_changes() -> Result<(), String> {
+    let root = ts_unique_tempdir("snap-cached")?;
+    ts_write_file(&root.join(".git/HEAD"), "x\n")?;
+    ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+    let relative = Path::new("test/price.test.ts");
+    let strength_now = |root: &Path| {
+        let cached = super::super::extraction_cache::test_extraction_cached(relative, PRICE_TEST);
+        let mut tests = cached.0.clone();
+        promote_committed_snapshots(root, relative, PRICE_TEST, &mut tests);
+        let strengths: Vec<OracleStrength> = tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .map(|assertion| assertion.oracle_strength.clone())
+            .collect();
+        let unpromoted: Vec<OracleStrength> = cached
+            .0
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .map(|assertion| assertion.oracle_strength.clone())
+            .collect();
+        (strengths, unpromoted)
+    };
+    let (without_snapshot, unpromoted) = strength_now(&root);
+    assert!(
+        without_snapshot
+            .iter()
+            .all(|strength| *strength != OracleStrength::Strong),
+        "no committed entry yet: {without_snapshot:?}"
+    );
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("price 1", "140")]))?;
+    let (with_snapshot, still_unpromoted) = strength_now(&root);
+    assert_eq!(with_snapshot, vec![OracleStrength::Strong]);
+    assert_eq!(
+        unpromoted, still_unpromoted,
+        "promotion on a clone must not change the cached tests"
+    );
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("other 1", "1")]))?;
+    let (after_removal, _) = strength_now(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        after_removal
+            .iter()
+            .all(|strength| *strength != OracleStrength::Strong),
+        "the entry was replaced, so the cached extraction must not keep it strong: {after_removal:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn committed_snapshot_keys_join_describe_titles_per_runner() -> Result<(), String> {
     let test = "describe(\"price\", () => {\n  it(\"caps\", () => {\n    expect(price(150)).toMatchSnapshot();\n  });\n});\n";

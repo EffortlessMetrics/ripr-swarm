@@ -568,8 +568,16 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let (mut tests, conditional_credit_gap, expansion) =
-                    extract_tests_with_expansion(relative, source);
+                // #10017: extraction is a pure function of (path, source) and
+                // is served from the content-keyed cache; the clone below is
+                // what snapshot promotion mutates, so promotion still reads
+                // the filesystem on every run.
+                let extraction = extraction_cache::test_extraction_cached(relative, source);
+                let (mut tests, conditional_credit_gap, expansion) = (
+                    extraction.0.clone(),
+                    extraction.1.clone(),
+                    extraction.2.clone(),
+                );
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
                 // The tests of a suite-factory call carry the factory's
                 // snapshot call once per expansion, so the file's calls are
@@ -609,8 +617,8 @@ impl TypeScriptAdapter {
                 // #10071/#10044: owners came out of the same single parse as
                 // the parse check; the process-lifetime cache lets an LSP
                 // session re-save without re-parsing the whole workspace.
-                // Test extraction stays uncached because committed snapshots
-                // read the filesystem.
+                // Test extraction is cached separately (#10017): only its
+                // pure step, never snapshot promotion.
                 all_owners.extend(facts.owners.clone());
             }
         }

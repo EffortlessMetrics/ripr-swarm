@@ -35,9 +35,14 @@
 //!
 //! Unlike [`DirectoryModuleCacheScope`] this cache is deliberately NOT
 //! scoped per run: cross-run reuse on one thread is the entire point for
-//! the LSP. Test extraction is NOT routed through here because
-//! `promote_committed_snapshots` reads `__snapshots__` files — test
-//! extraction is not a pure function of the test file's content.
+//! the LSP. Test extraction is NOT routed through the combined facts
+//! because `promote_committed_snapshots` reads `__snapshots__` files, so the
+//! analysis of a test file is not a pure function of its content. The
+//! extraction itself (`extract_tests_with_expansion`) is: it reads only
+//! `(path, source)`. [`test_extraction_cached`] caches that pure step in a
+//! separate cache keyed by path and content, and the caller runs snapshot
+//! promotion on a clone of the cached tests every run, so a changed or new
+//! snapshot file is still seen (#10017).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -308,6 +313,109 @@ pub(crate) fn file_facts_cached(
         }
     });
     Ok(facts)
+}
+
+/// The result of `extract_tests_with_expansion` for one test file.
+pub(crate) type TestExtraction = (
+    Vec<super::types::TypeScriptTest>,
+    Option<super::types::TypeScriptConditionalCreditGap>,
+    Option<super::suite_factory::SuiteFactoryExpansion>,
+);
+
+struct TestExtractionCache {
+    entries: HashMap<CacheKey, Rc<TestExtraction>>,
+    approx_bytes: usize,
+}
+
+impl TestExtractionCache {
+    fn entry_bytes(key: &CacheKey, extraction: &TestExtraction) -> usize {
+        let tests_bytes: usize = extraction
+            .0
+            .iter()
+            .map(|test| {
+                std::mem::size_of::<super::types::TypeScriptTest>()
+                    .saturating_add(test.body_text.len())
+                    .saturating_add(test.reach_body_text.as_ref().map_or(0, String::len))
+            })
+            .sum();
+        let expansion_bytes = extraction
+            .2
+            .as_ref()
+            .map_or(0, |expansion| expansion.source.len());
+        key.source_len
+            .saturating_add(key.path.len())
+            .saturating_add(tests_bytes)
+            .saturating_add(expansion_bytes)
+    }
+
+    fn insert(&mut self, key: CacheKey, extraction: Rc<TestExtraction>) {
+        let entry_bytes = Self::entry_bytes(&key, &extraction);
+        if self.entries.len() >= MAX_ENTRIES
+            || self.approx_bytes.saturating_add(entry_bytes) > MAX_APPROX_BYTES
+        {
+            // Correctness-neutral: drop everything and start over.
+            self.entries.clear();
+            self.approx_bytes = 0;
+        }
+        self.approx_bytes = self.approx_bytes.saturating_add(entry_bytes);
+        self.entries.insert(key, extraction);
+    }
+}
+
+thread_local! {
+    static TEST_EXTRACTION_CACHE: RefCell<Option<TestExtractionCache>> =
+        const { RefCell::new(None) };
+}
+
+/// `extract_tests_with_expansion(relative, source)`, served from a
+/// process-lifetime cache keyed by normalized path, source length and a
+/// 128-bit content fingerprint (#10017). The extraction reads only its
+/// arguments, so a byte change misses and re-extracts; callers must still
+/// run filesystem-dependent steps (committed-snapshot promotion) on a clone
+/// of the returned tests. A reentrant or poisoned cell degrades to an
+/// uncached extraction. Test extraction costs about 4 s/MB in a debug build,
+/// which an unchanged test file used to pay again on every LSP save.
+pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestExtraction> {
+    let path = normalized_path(relative);
+    let key = CacheKey {
+        fingerprint: facts_fingerprint(Path::new(""), (0, 0), &path, source),
+        source_len: source.len(),
+        path,
+    };
+    let cached = TEST_EXTRACTION_CACHE.with(|cache| {
+        cache.try_borrow_mut().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.entries.get(&key).map(Rc::clone))
+        })
+    });
+    if let Some(extraction) = cached {
+        return extraction;
+    }
+    let extraction = Rc::new(super::tests_extract::extract_tests_with_expansion(
+        relative, source,
+    ));
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(|| TestExtractionCache {
+                entries: HashMap::new(),
+                approx_bytes: 0,
+            });
+            cache.insert(key, Rc::clone(&extraction));
+        }
+    });
+    extraction
+}
+
+/// Number of entries in the test-extraction cache (tests only).
+#[cfg(test)]
+fn test_extraction_cache_len() -> usize {
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .map_or(0, |cache| cache.entries.len())
+    })
 }
 
 /// Export facts for `(path, source)` under `(workspace_root, alias_map)`,
@@ -680,5 +788,45 @@ mod tests {
             facts_fingerprint(Path::new("."), (0, 0), "src/a.ts", "export const x = 1;\n"),
             "content must be part of the key"
         );
+    }
+
+    const TEST_FILE: &str = "import { add } from '../src/add';\nit('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n";
+
+    #[test]
+    fn test_extraction_cache_serves_unchanged_content_and_misses_on_any_edit() {
+        let path = Path::new("tests/cache_probe.test.ts");
+        let first = test_extraction_cached(path, TEST_FILE);
+        assert_eq!(first.0.len(), 1, "the fixture must extract its one test");
+        let again = test_extraction_cached(path, TEST_FILE);
+        assert!(
+            Rc::ptr_eq(&first, &again),
+            "unchanged path and bytes must be served from the cache"
+        );
+        let edited = TEST_FILE.replace("toBe(3)", "toBe(4)");
+        let after_edit = test_extraction_cached(path, &edited);
+        assert!(
+            !Rc::ptr_eq(&first, &after_edit),
+            "a changed byte must miss the cache"
+        );
+        assert!(
+            after_edit.0[0].body_text.contains("toBe(4)"),
+            "the edited extraction must reflect the new bytes, not the cached ones"
+        );
+        let other_path = test_extraction_cached(Path::new("tests/other_probe.test.ts"), TEST_FILE);
+        assert!(
+            !Rc::ptr_eq(&first, &other_path),
+            "the same bytes under another path must not share an entry"
+        );
+        assert!(test_extraction_cache_len() >= 3);
+    }
+
+    #[test]
+    fn test_extraction_cache_matches_the_uncached_extraction() {
+        let path = Path::new("tests/cache_parity.test.ts");
+        let cached = test_extraction_cached(path, TEST_FILE);
+        let direct = super::super::tests_extract::extract_tests_with_expansion(path, TEST_FILE);
+        assert_eq!(cached.0, direct.0);
+        assert_eq!(cached.1, direct.1);
+        assert_eq!(cached.2.is_some(), direct.2.is_some());
     }
 }
