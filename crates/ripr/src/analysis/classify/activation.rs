@@ -1483,26 +1483,23 @@ fn has_name_token(text: &str, name: &str) -> bool {
     })
 }
 
-/// Whether the text between two pipes can be a closure parameter list: its
-/// brackets balance and no `;` sits outside them. A destructured parameter
-/// (`|Foo { n }|`, `|(a, n): (u8, [u8; 2])|`) balances; the span between two
-/// unrelated pipes (a block body or statement) does not.
-fn closure_region_balanced(region: &str) -> bool {
+/// Whether the text between two adjacent pipes may hold closure parameters:
+/// it has no `;` outside brackets. Brackets are not required to balance: a
+/// parenthesized or-pattern (`|(A(n) | B(n))|`) puts an internal pipe between
+/// the real ones, so each fragment is unbalanced yet still holds a binding.
+/// A destructured parameter (`|Foo { n }|`, `|(a, n): (u8, [u8; 2])|`) is
+/// kept. Over-declining on a stray fragment is accepted.
+fn closure_region_may_bind(region: &str) -> bool {
     let mut depth = 0usize;
     for ch in region.chars() {
         match ch {
             '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => {
-                let Some(next) = depth.checked_sub(1) else {
-                    return false;
-                };
-                depth = next;
-            }
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
             ';' if depth == 0 => return false,
             _ => {}
         }
     }
-    depth == 0
+    true
 }
 
 /// Token-level, fail-closed scan of the masked body before the declaration
@@ -1564,7 +1561,7 @@ fn pattern_position_binds_before(
         .collect::<Vec<_>>();
     let closure_binds = pipes.windows(2).any(|pair| {
         let region = &prefix[pair[0] + 1..pair[1]];
-        closure_region_balanced(region) && has_name_token(region, name)
+        closure_region_may_bind(region) && has_name_token(region, name)
     });
     // Match arm pattern regions: back from each `=>` to the match's own `{`,
     // a `;` or the previous arm's `=>`. Braces are balanced on the way back so
@@ -9267,6 +9264,10 @@ assert_eq!(input.amount, 100);"#
                 "let f = |(a, b)| a + b;\n    ",
             ),
             ("let f = |&n| n;\n    ", "let f = |&a| a;\n    "),
+            (
+                "let f = |(Either::Left(n) | Either::Right(n))| n;\n    ",
+                "let f = |(Either::Left(a) | Either::Right(a))| a;\n    ",
+            ),
             (
                 "let f = |Foo { n }| { n };\n    ",
                 "let f = |Foo { a }| { a };\n    ",
