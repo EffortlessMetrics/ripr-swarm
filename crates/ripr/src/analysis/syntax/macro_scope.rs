@@ -449,10 +449,11 @@ mod tests {
             definitions: "macro_rules! t { () => {} } macro_rules! u { () => {} }".to_string(),
             path_imports: vec!["t".to_string(), "u".to_string()],
         };
-        let spliced = splice_imported_macros(source, &imported);
-        let Some(spliced) = spliced else {
-            panic!("premise: the source parses and splices");
-        };
+        let spliced = splice_imported_macros(source, &imported).unwrap_or_default();
+        assert!(
+            !spliced.is_empty(),
+            "premise: the source parses and splices"
+        );
         assert_eq!(
             spliced.matches('\n').count(),
             source.matches('\n').count() + 1
