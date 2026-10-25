@@ -14,10 +14,10 @@ Job object. The Job gives kill-on-close descendant cleanup and typed exit-code
 and start-failure markers (#5891), so a probe that hangs or leaves children
 cannot outlive the extension.
 
-The cost is paid on every cold resolution. Observed on Windows runners (ordered aggregate timings, see Consequences), an empty
-PowerShell start alone took 1.7 to 7 s cold and the full wrapper up to 14 s,
-while `ripr --version` itself takes 10 to 35 ms. The editor journey hung
-at the former 10 s budget (#9526). #9625 raised the Windows budget to 30 s and
+Every resolution pays for the wrapper. In the ordered trials on Windows
+runners (aggregate timings, see Consequences), empty PowerShell starts ranged
+from 1.7 to 7 s and the full wrapper reached 14 s, while `ripr --version`
+itself takes 10 to 35 ms. The editor journey hung at the former 10 s budget (#9526). #9625 raised the Windows budget to 30 s and
 #9654 added a timing diagnostic; both bound the damage, neither removes the
 cost.
 
@@ -31,8 +31,9 @@ documented exception.
    code. It cannot give kill-on-close if the extension host dies, and it loses
    the typed start-failure and exit-code markers the Job-contract tests pin.
 2. **Precompile the C# helper once and `Add-Type -Path` it.** Removes the
-   compile but not the PowerShell start, which is most of the measured cost.
-3. **Small native helper binary using the Win32 Job API.** Cold cost is a
+   compile but retains PowerShell startup; that startup's contribution to the
+   whole-wrapper cost remains unisolated.
+3. **Small native helper binary using the Win32 Job API.** Startup cost is one
    process start. Keeps the Job contract. Needs `unsafe` for the FFI calls.
 4. **A Node native addon.** Same `unsafe` need plus a per-ABI build matrix;
    rejected as heavier than option 3.
