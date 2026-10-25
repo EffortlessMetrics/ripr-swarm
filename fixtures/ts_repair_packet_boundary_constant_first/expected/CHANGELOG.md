@@ -493,6 +493,19 @@ Updated:
 ## Pending — ts_repair_packet_boundary_constant_first (38)
 
 Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (39)
+
+Reason:
 RIPR-SPEC-0224: TS missing_input rows carry the finding's boundary as row-owned miss_support, so the renderer names it (#5495)
 
 Command:
