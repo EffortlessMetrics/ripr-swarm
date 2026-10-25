@@ -19734,19 +19734,34 @@ fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<()
         .ok_or_else(|| "predicate seam present".to_string())?;
     let evidence = evidence_for_seam(predicate, &index);
 
-    let mut files_with_facts = evidence
+    // Same line, text, value and context on both sides: only the test file
+    // differs, so the pair isolates file as the identity discriminator.
+    let mut facts = evidence
         .observed_values
         .iter()
-        .filter_map(|fact| fact.file.clone())
+        .map(|fact| {
+            (
+                fact.file.clone(),
+                fact.line,
+                fact.text.as_str(),
+                fact.value.as_str(),
+                fact.context.clone(),
+            )
+        })
         .collect::<Vec<_>>();
-    files_with_facts.sort();
-    files_with_facts.dedup();
+    facts.sort_by(|a, b| a.0.cmp(&b.0));
+    let fact = |file: &str| {
+        (
+            Some(PathBuf::from(file)),
+            3,
+            "assert_eq!(discounted_total(100, 100), 90);",
+            "100",
+            ValueContext::FunctionArgument,
+        )
+    };
     assert_eq!(
-        files_with_facts,
-        vec![
-            PathBuf::from("tests/first_tests.rs"),
-            PathBuf::from("tests/second_tests.rs")
-        ],
+        facts,
+        vec![fact("tests/first_tests.rs"), fact("tests/second_tests.rs")],
         "facts: {:?}",
         evidence.observed_values
     );
