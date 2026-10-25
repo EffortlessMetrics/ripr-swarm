@@ -19299,6 +19299,7 @@ fn check_count_policy(
     is_candidate: fn(&str) -> bool,
 ) -> Result<(), String> {
     let allowlist = read_count_policy_allowlist(allowlist_path)?;
+    let fragment_dir = normalize_path(&Path::new(allowlist_path).with_extension("d"));
     let mut counts = BTreeMap::<(String, String), usize>::new();
 
     for normalized in tracked_files()? {
@@ -19322,7 +19323,7 @@ fn check_count_policy(
             .unwrap_or(0);
         if *count > allowed {
             violations.push(format!(
-                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add to {allowlist_path}:\n  {path}|{pattern}|{count}|owner|reason"
+                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add a file under {fragment_dir}/ (named for this PR, e.g. <issue>-<slug>.txt) holding:\n  {path}|{pattern}|{count}|owner|reason"
             ));
         } else if *count < allowed {
             // Stale bound: the allowlist grants more budget than the code
