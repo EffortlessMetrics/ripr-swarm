@@ -5959,7 +5959,11 @@ pub(crate) fn classify_resolved_owner(
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
     let changed_field = ts_changed_object_field(old_line_text, line_text);
-    let error_facts = ErrorChangeFacts::read(old_line_text, line_text);
+    let error_facts = ErrorChangeFacts::read(old_line_text, line_text).with_owner_source(
+        owner.source_text.as_deref(),
+        &owner.params,
+        line_text,
+    );
     // RIPR-SPEC-0247 rule 1 reads the owner body only when an effect seam
     // has a related mock payload to credit.
     let reads_mock_payload = matches!(

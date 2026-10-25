@@ -64,6 +64,7 @@ mod caplog_text;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod guard_credit;
 mod helper_inline;
 mod message_pin;
 mod wrapped_call;
