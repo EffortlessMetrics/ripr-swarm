@@ -21,8 +21,12 @@
 //! nested call resolves through the shared bounded context (the
 //! #3296 recursive row): distinct `(helper, bound inputs)` states
 //! unroll within the explicit hop bound, while a repeated state (a
-//! true cycle) or the bound itself refuses. Anything else — a guard,
-//! a computed value, a bare-identifier pattern, a range or path
+//! true cycle) or the bound itself refuses. An arm may carry a `if
+//! <expr>` guard: exactly resolvable guards (one comparison over the
+//! shared #3295 operands) are evaluated over the exact inputs and the
+//! arm is selected only when the comparison holds. Anything else — an
+//! unevaluable guard (chained, method-call or otherwise non-comparison
+//! shape), a computed value, a bare-identifier pattern, a range or path
 //! pattern, a pattern whose type differs from the scrutinee's, any
 //! statement after the closing brace — refuses the whole shape and
 //! returns `None`; the caller's
@@ -269,10 +273,58 @@ enum GuardCmp {
 /// comparisons on strings or chars, mixed types) refuses the whole
 /// match rather than guessing.
 fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
+    let guard = strip_outer_parens(guard);
     let (operator, lhs, rhs) = split_comparison(guard)?;
     let lhs = guard_operand(lhs, inputs)?;
     let rhs = guard_operand(rhs, inputs)?;
     compare_guard_operands(&lhs, operator, &rhs)
+}
+
+/// Strip balanced parentheses that wrap the whole expression, repeatedly
+/// (Rust permits `if (kind.len() > 2)` and doubly wrapped forms). Quotes
+/// are honored so a literal `(` stays content. Input whose outer parens
+/// do not balance around the whole expression, or whose quotes never
+/// close, is returned unchanged so the evaluators refuse it fail-closed.
+fn strip_outer_parens(text: &str) -> &str {
+    let mut text = text.trim();
+    loop {
+        if !text.starts_with('(') || !text.ends_with(')') {
+            return text;
+        }
+        let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        let mut wraps_whole = false;
+        for (index, character) in text.char_indices() {
+            match quote {
+                Some(open) => {
+                    if escaped {
+                        escaped = false;
+                    } else if character == '\\' {
+                        escaped = true;
+                    } else if character == open {
+                        quote = None;
+                    }
+                }
+                None => match character {
+                    '"' | '\'' => quote = Some(character),
+                    '(' => depth += 1,
+                    ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            wraps_whole = index == text.len() - 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+        if !wraps_whole || quote.is_some() {
+            return text;
+        }
+        text = text[1..text.len() - 1].trim();
+    }
 }
 
 /// Split `<lhs> <op> <rhs>` outside quotes, two-character operators
@@ -326,7 +378,7 @@ fn split_comparison(guard: &str) -> Option<(GuardCmp, &str, &str)> {
 /// chars, booleans and plain decimals, plus `str::len()` (Rust's byte
 /// length) on an exact string. Every other shape refuses.
 fn guard_operand(text: &str, inputs: &ExactInputs) -> Option<TypedValue> {
-    let text = text.trim();
+    let text = strip_outer_parens(text);
     if let Some(receiver) = text.strip_suffix(".len()") {
         return match evaluate_initializer(receiver.trim(), inputs) {
             EvalOutcome::Exact {
@@ -693,6 +745,53 @@ mod tests {
         );
         let helper_eq = match_fn("label", &eq_guarded);
         assert_eq!(returned(&helper_eq, "\"word\"")?, "alpha");
+        Ok(())
+    }
+
+    #[test]
+    fn parenthesized_guards_evaluate_like_bare_ones() -> Result<(), String> {
+        // Rust permits parentheses around the whole comparison, doubled
+        // too; stripping balanced outer parens keeps the guard exactly
+        // resolvable instead of downgrading the match to unknown.
+        for guard in [
+            "\"word\" if (kind.len() > 2) => \"alpha\",",
+            "\"word\" if ((kind.len() > 2)) => \"alpha\",",
+            "\"word\" if (kind.len()) > 2 => \"alpha\",",
+        ] {
+            let body = BODY.replace(
+                "        \"word\" => \"alpha\",",
+                &format!("        {guard}"),
+            );
+            assert_ne!(body, BODY, "the {guard} substitution must apply");
+            let helper = match_fn("label", &body);
+            assert_eq!(
+                returned(&helper, "\"word\"")?,
+                "alpha",
+                "{guard} must select the arm"
+            );
+        }
+
+        // An unbalanced paren is not rescued: the guard stays unevaluable
+        // and the whole match refuses fail-closed.
+        let unbalanced = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if (kind.len() > 2 => \"alpha\",",
+        );
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
+        let helper = match_fn("label", &unbalanced);
+        assert!(
+            match_return_value(&helper, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
+            "an unbalanced guard paren must refuse the match"
+        );
+
+        // A literal paren is content inside quotes, never structure.
+        let quoted = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"w(ord\" if kind == \"w(ord\" => \"alpha\",",
+        );
+        let helper_quoted = match_fn("label", &quoted);
+        assert_eq!(returned(&helper_quoted, "\"w(ord\"")?, "alpha");
         Ok(())
     }
 
