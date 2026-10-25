@@ -8839,3 +8839,24 @@ fn caplog_messages_and_records_outside_the_bounded_shape_keep_abstaining() -> Re
     );
     Ok(())
 }
+
+#[test]
+fn comprehension_over_other_output_keeps_its_assertion_shape() {
+    // Only `caplog.records` comprehensions became output observations; a loop
+    // over a subprocess result's lines is still the broad smoke it was.
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_cli(result):\n    assert any(\"low balance\" in line for line in result.stdout)\n    assert \"low balance\" in [line for line in result.stdout]\n",
+    );
+    let shapes: Vec<_> = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|a| a.oracle_shape))
+        .collect();
+    assert!(!shapes.is_empty(), "assertions must be extracted");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| *shape != PythonOracleShape::OutputAssertion),
+        "{shapes:?}"
+    );
+}

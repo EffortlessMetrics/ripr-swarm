@@ -605,12 +605,16 @@ fn any_over_captured_records(call: &ast::ExprCall) -> bool {
     expr_full_name(call.func.as_ref()).is_some_and(|name| name == "any")
         && matches!(
             call.args.as_slice(),
-            [Expr::GeneratorExp(generator)]
-                if generator
-                    .generators
-                    .iter()
-                    .any(|comprehension| expr_observes_output(&comprehension.iter))
+            [Expr::GeneratorExp(generator)] if iterates_captured_records(&generator.generators)
         )
+}
+
+/// Whether a comprehension loops over `caplog.records` itself. Looping over
+/// any other output (`result.stdout.splitlines()`) keeps its prior shape.
+fn iterates_captured_records(generators: &[ast::Comprehension]) -> bool {
+    generators.iter().any(|comprehension| {
+        expr_full_name(&comprehension.iter).as_deref() == Some("caplog.records")
+    })
 }
 
 fn oracle_for_assert_expr(
@@ -803,14 +807,8 @@ fn expr_observes_output(expr: &Expr) -> bool {
         Expr::BoolOp(bool_op) => bool_op.values.iter().any(expr_observes_output),
         // `any(... for record in caplog.records)` and `[... for record in
         // caplog.records]` read the captured records.
-        Expr::GeneratorExp(generator) => generator
-            .generators
-            .iter()
-            .any(|comprehension| expr_observes_output(&comprehension.iter)),
-        Expr::ListComp(list) => list
-            .generators
-            .iter()
-            .any(|comprehension| expr_observes_output(&comprehension.iter)),
+        Expr::GeneratorExp(generator) => iterates_captured_records(&generator.generators),
+        Expr::ListComp(list) => iterates_captured_records(&list.generators),
         _ => false,
     }
 }

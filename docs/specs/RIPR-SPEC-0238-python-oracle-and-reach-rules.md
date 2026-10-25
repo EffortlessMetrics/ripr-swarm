@@ -767,8 +767,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     `"<text>" in [r.message for r in caplog.records]` (or
     `r.getMessage()`) compare one whole message, and
     `any(<text> in r.message for r in caplog.records)` finds the text
-    inside one message (`any(r.message == <text> ...)` compares a whole
-    one). Indexed or whole-list forms (`caplog.records[0].message == ...`,
+    inside one message (`any(r.message == <text> ...)`, in either operand
+    order, compares a whole one). Indexed or whole-list forms (`caplog.records[0].message == ...`,
     `caplog.messages == [...]`), a filtered `any(...)`, and `not in`
     abstain when they share a word with the changed message. The
     membership is read from the parsed assertion, not its text layout:
