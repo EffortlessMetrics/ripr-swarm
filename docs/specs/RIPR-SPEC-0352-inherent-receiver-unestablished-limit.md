@@ -196,10 +196,16 @@ unchanged. Where that consumer reaches the same cause it already reads
   they are not covered. The corpus expectations and the Rust
   `missed_credit_ceiling` are not changed here and are recomputed at
   integration. They are not known-false rows.
-- Executed receipt: the same-file no-op `macro_rules! assert_eq` case
-  (`a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap`) was run on
-  the base `a45614b88` (without this rule) and reads a gap there; the previous
-  revision of this rule withheld it.
+- Executed receipt: with `crates/ripr/src` checked out from the base
+  `a45614b88` (no rule) and this revision's integration test, the same-file
+  no-op `macro_rules! assert_eq` case
+  (`a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap`) reads a gap
+  and passes; so do the weak-oracle, ignored-test, bare-macro, call-outside and
+  other-crate negatives, while the two positives
+  (`an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation`,
+  `an_unrelated_weak_assertion_does_not_lift_the_withhold`) fail, as they must
+  without the rule. That the previous revision of the rule withheld the no-op
+  macro case was a review finding and was not executed here.
 
 ## Acceptance Examples
 
