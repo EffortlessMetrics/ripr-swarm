@@ -564,7 +564,7 @@ fn storing_the_mock_on_a_callee_or_in_a_callback_abstains() -> Result<(), String
         ),
         (
             "loop-closure-install",
-            "mock.method(deps, \"fetch\", () => fn());\n  await assert.rejects(withRetry(() => deps.fetch(), 2), /down/);",
+            "mock.method(deps, \"load\", () => fn());\n  await assert.rejects(withRetry(() => deps.load(), 2), /down/);",
         ),
         (
             "loop-closure-stash",
@@ -572,7 +572,7 @@ fn storing_the_mock_on_a_callee_or_in_a_callback_abstains() -> Result<(), String
         ),
         (
             "loop-t-mock-method",
-            "t.mock.method(deps, \"fetch\", fn);\n  await assert.rejects(withRetry(() => deps.fetch(), 2), /down/);",
+            "t.mock.method(deps, \"load\", fn);\n  await assert.rejects(withRetry(() => deps.load(), 2), /down/);",
         ),
     ] {
         let body = format!(
