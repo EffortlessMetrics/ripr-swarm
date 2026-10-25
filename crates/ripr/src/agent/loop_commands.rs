@@ -68,16 +68,30 @@ pub(crate) fn bound_root(root: &str) -> String {
 /// Windows `\` is a separator and renders as `/`, like every other command
 /// path. On Unix `\` is an ordinary filename character, so rewriting it would
 /// name a different directory; the root renders exactly as the filesystem
-/// spells it.
+/// spells it. Literal percent signs are never identity-encoded (#10116).
+/// Reducible Windows verbatim roots fold; other verbatim roots keep their
+/// native spelling, matching `output::path::human_path_text`.
 pub(crate) fn root_path_display(path: &Path) -> String {
-    if cfg!(windows) {
-        return display_path(path);
-    }
-    let text = path.to_string_lossy();
+    root_path_text_for_host(&path.to_string_lossy(), cfg!(windows))
+}
+
+/// Executable command arguments preserve literal `%`, unlike encoded path
+/// identities. Keep the host explicit so Windows rendering is tested on Unix.
+/// This restates `output::path::human_path_text` because xtask includes this
+/// module without the product crate; the verbatim fold has one local owner.
+fn root_path_text_for_host(text: &str, windows: bool) -> String {
     if text.is_empty() {
-        ".".to_string()
+        return ".".to_string();
+    }
+    if !windows {
+        return text.to_string();
+    }
+    let folded = fold_verbatim_for_host(text.replace('\\', "/"), true);
+    if folded.starts_with("//?/") {
+        // Unknown verbatim forms have no plain spelling accepted by the OS.
+        text.to_string()
     } else {
-        text.into_owned()
+        folded
     }
 }
 
@@ -737,6 +751,46 @@ mod tests {
                 "unix keeps {unified}"
             );
         }
+    }
+
+    #[test]
+    fn root_path_rendering_preserves_percent_and_normalizes_only_windows() {
+        let drive = "F:";
+        for (input, expected) in [
+            (
+                format!(r"{drive}\a%b/with space\%25"),
+                format!("{drive}/a%b/with space/%25"),
+            ),
+            (format!(r"\\?\{drive}\a%b\%25"), format!("{drive}/a%b/%25")),
+            (
+                r"\\?\UNC\server\share 100%\%25".to_string(),
+                "//server/share 100%/%25".to_string(),
+            ),
+            (
+                r"\\?\unc\server\share\%COMSPEC%".to_string(),
+                "//server/share/%COMSPEC%".to_string(),
+            ),
+        ] {
+            assert_eq!(root_path_text_for_host(&input, true), expected);
+            assert_eq!(root_path_text_for_host(&input, false), input);
+            assert_eq!(
+                root_path_display(Path::new(&input)),
+                root_path_text_for_host(&input, cfg!(windows))
+            );
+        }
+        assert_eq!(
+            root_path_text_for_host(r"/repo 100%\%25", false),
+            r"/repo 100%\%25"
+        );
+        assert_eq!(root_path_text_for_host("", true), ".");
+        assert_eq!(root_path_text_for_host("", false), ".");
+    }
+
+    #[test]
+    fn root_path_rendering_preserves_unfoldable_verbatim_spelling() {
+        let root = r"\\?\Volume{1}\repo 100%\%25";
+        assert_eq!(root_path_text_for_host(root, true), root);
+        assert_eq!(root_path_text_for_host(root, false), root);
     }
 
     /// Hold a stable process CWD across one render-and-compare (#7034).
