@@ -38,3 +38,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_qualified_foreign_receiver (4)
+
+Reason:
+RIPR-SPEC-0319 next-step lines: fixture goldens blessed without them (#10235 after #9449 combined-tree drift)
+
+Command:
+`cargo xtask goldens bless rust_qualified_foreign_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
