@@ -827,6 +827,7 @@ impl TypeScriptAdapter {
                     .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
                     && is_new_owner_opening_line(
                         &changed.path,
+                        &changed_norm,
                         added.line,
                         &added.text,
                         &all_owners,
