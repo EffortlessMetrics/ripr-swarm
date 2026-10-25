@@ -616,7 +616,7 @@ under `rust_indirect_owner_call_unresolved`:
 
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
-  (`.map(inc)`) or a binding (`let f: fn(u32) -> u32 = inc; f(2)`). A call
+  (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115). A call
   `inc(..)`, a macro `inc!`, a method `.inc`, a `use` line, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the

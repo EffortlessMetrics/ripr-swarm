@@ -6,8 +6,10 @@
 //! `owner(..)` call it can pair with the assertion:
 //!
 //! - **function value**: the test names the owner without calling it
-//!   (`.map(owner)`, `let f: fn(u32) -> u32 = owner; f(2)`), so the call
-//!   happens inside machinery ripr does not follow;
+//!   (`.map(owner)`, an untyped `let f = owner; f(2)`), so the call
+//!   happens inside machinery ripr does not follow; a typed
+//!   `let f: fn(..) -> .. = owner;` binding is left to the typed
+//!   function-pointer reading (RIPR-SPEC-0115, #9478);
 //! - **generated owner**: the changed line is an item-position macro
 //!   invocation (`def_add!(add_five, 2 + 3);`) that defines the owner, and the
 //!   expansion is not source ripr reads;
