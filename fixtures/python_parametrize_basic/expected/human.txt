@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/tax.py:tax_band:predicate_boundary:predicate:amount>=100
   Changed behavior: if amount >= 100:
   Missing discriminator (1 of 2): Related Python test reaches `tax_band` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_tax.py:7 test_tax_band
+  Related test: tests/test_tax.py:7 test_tax_band (has no assertion)
   Suggested test file: tests/test_tax.py
   Suggested test: test_tax_band
   Test node: tests/test_tax.py::test_tax_band
@@ -33,6 +33,8 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `tax_band`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= 100:`
     - 5 more detail line(s) in --format human-full

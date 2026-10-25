@@ -306,6 +306,8 @@ pub(super) fn related_tests_for_candidates(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()
@@ -750,9 +752,10 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
 }
 
 /// Whether the `var` occurrence just after `before` and just before `after`
-/// binds it through a chained assignment (`x = r = [1]`), or a single-element
-/// bracketed target (`[r] = ...`, `(r) = ...`, `for (r) in ...`,
-/// `with a as [r]`). A bare call argument `f(r)` is not a binding.
+/// binds it through a chained assignment (`x = r = [1]`), or a bracketed target
+/// of one or more nested single-element brackets (`[r] = ...`, `( r), x = ...`,
+/// `((r), x) = ...`, `for ((r), x) in ...`, `with a as [r]`). A bare call
+/// argument `f(r)` is not a binding.
 fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
     let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
     let not_line_start = !body[line_start..idx].trim().is_empty();
@@ -760,31 +763,162 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     if not_line_start && plain_assign(after) {
         return true;
     }
-    let Some(closer) = after.chars().next().filter(|c| matches!(c, ']' | ')')) else {
-        return false;
-    };
-    let opener = if closer == ']' { '[' } else { '(' };
-    if !before.ends_with(opener) {
+    // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
+    // spacing, nesting (`(( r ))`) and a split across lines do not change the
+    // reading.
+    let mut head_end = before.len();
+    let mut rest = after.trim_start();
+    let mut peeled = false;
+    while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
+        let opener = if closer == ']' { '[' } else { '(' };
+        let Some(open_at) = body
+            .get(..head_end)
+            .map(str::trim_end)
+            .filter(|head| head.ends_with(opener))
+            .map(|head| head.len() - 1)
+        else {
+            break;
+        };
+        head_end = body
+            .get(..open_at)
+            .map_or(open_at, |head| head.trim_end_matches([' ', '\t']).len());
+        rest = rest[1..].trim_start();
+        peeled = true;
+    }
+    if !peeled {
         return false;
     }
-    let rest = after[1..].trim_start_matches([' ', '\t']);
+    let head = body.get(..head_end).unwrap_or("");
+    let head_line = head
+        .get(head.rfind('\n').map_or(0, |at| at + 1)..)
+        .unwrap_or("");
     plain_assign(rest)
-        || (rest.starts_with(',') && opener_is_target_position(&body[line_start..idx - 1]))
-        || rest.starts_with("in ")
-        || before[..before.len() - 1].trim_end().ends_with(" as")
+        || (rest.starts_with(',') && opener_is_target_position(head_line))
+        // `in` binds only inside a `for` target list (`for (r) in items`,
+        // `for x, (r) in items`); a membership test such as
+        // `assert ((r)) in items` rebinds nothing.
+        || (rest.starts_with("in ") && is_inside_for_target(head_line))
+        || head.trim_end().ends_with(" as")
+}
+
+/// Whether `head` (the text of a line before a peeled target) sits in the
+/// target list of a `for` statement: the last whole word `for` has no `in`,
+/// `=` or `:` after it.
+fn is_inside_for_target(head: &str) -> bool {
+    let mut search = head.len();
+    while let Some(at) = head[..search].rfind("for") {
+        let boundary_before = !head[..at].ends_with(is_python_identifier_char);
+        let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
+        if boundary_before && boundary_after {
+            let targets = &head[at + 3..];
+            return !targets.contains(['=', ':'])
+                && !targets
+                    .split(|ch: char| !is_python_identifier_char(ch))
+                    .any(|word| word == "in");
+        }
+        search = at;
+    }
+    false
 }
 
 /// Whether text before a bracket opener puts it in a binding-target position
-/// (line start, or after `for`, `as`, `,` or `*`) rather than a call argument
-/// list (`len(r), 0` in `self.assertEqual(len(r), 0)`).
+/// (line start, or after `for`, `as`, `,`, `*`, `;`, a compound-header `:` or another opener that is itself
+/// in target position) rather than a call argument list (`len(r), 0` in
+/// `self.assertEqual(len(r), 0)`).
 fn opener_is_target_position(head: &str) -> bool {
-    let head = head.trim_end();
+    let mut head = head.trim_end();
+    while let Some(outer) = head.strip_suffix(['(', '[']) {
+        head = outer.trim_end();
+    }
     head.is_empty()
-        || head.ends_with([',', '*'])
+        || head.ends_with([',', '*', ';'])
+        || (head.ends_with(':') && is_compound_header_colon(head))
         || head
             .rsplit(|ch: char| !is_python_identifier_char(ch))
             .next()
             .is_some_and(|word| word == "for" || word == "as")
+}
+
+/// Whether the `:` that ends `head` closes a compound-statement header
+/// (`if c:`, `else:`, `for x in y:`) rather than a dict value, slice or
+/// annotation colon: the line starts with a header keyword and the brackets
+/// opened before the colon are balanced.
+fn is_compound_header_colon(head: &str) -> bool {
+    let first = head
+        .trim_start()
+        .split(|ch: char| !is_python_identifier_char(ch))
+        .next()
+        .unwrap_or("");
+    let header = matches!(
+        first,
+        "if" | "elif"
+            | "else"
+            | "try"
+            | "except"
+            | "finally"
+            | "while"
+            | "for"
+            | "with"
+            | "def"
+            | "class"
+            | "async"
+            | "match"
+            | "case"
+    );
+    header && brackets_balanced_outside_strings(head)
+}
+
+/// Whether every bracket opened in `text` is closed by its own kind, ignoring
+/// string-literal contents (`")"`, `'}'`, `""" } """`) and a trailing `#`
+/// comment. A mismatch, an unmatched closer or an unterminated string is not
+/// balanced, so the caller does not treat the head as a compound-statement
+/// header and the receiver keeps its credit.
+fn brackets_balanced_outside_strings(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut stack: Vec<char> = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        index += 1;
+        match ch {
+            '(' => stack.push(')'),
+            '[' => stack.push(']'),
+            '{' => stack.push('}'),
+            ')' | ']' | '}' if stack.pop() != Some(ch) => return false,
+            '"' | '\'' => {
+                // A tripled quote opens a string closed only by the same
+                // complete delimiter; otherwise one quote delimits it.
+                let width = if chars.get(index..index + 2) == Some(&[ch, ch][..]) {
+                    3
+                } else {
+                    1
+                };
+                index += width - 1;
+                let mut closed = false;
+                while index < chars.len() {
+                    let inner = chars[index];
+                    if inner == '\\' {
+                        index += 2;
+                    } else if inner == ch
+                        && chars[index..].iter().take(width).all(|c| *c == ch)
+                        && chars.len() - index >= width
+                    {
+                        index += width;
+                        closed = true;
+                        break;
+                    } else {
+                        index += 1;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            '#' => break,
+            _ => {}
+        }
+    }
+    stack.is_empty()
 }
 
 /// Whether the construction at `idx` is the whole right-hand side of its
@@ -802,7 +936,7 @@ fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool 
 /// Whether the test rebinds the builtin `name` (an import, an assignment,
 /// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
 /// `name(...)` is no longer the builtin.
-fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+pub(super) fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
     test.imports.iter().any(|import| import.alias == name)
         || test_rebinds_import_alias(test, name)
         || test.constant_rebinding.rebinds(name)
@@ -1959,24 +2093,118 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    owner
-        .route_paths
-        .iter()
-        .any(|route| body_calls_api_client_route(&test.body_text, route))
+    let receivers = super::route_client::client_receivers(&test.body_text);
+    owner.route_paths.iter().enumerate().any(|(index, route)| {
+        // An empty or missing verb list is an unknown verb, which keeps the
+        // path-only match; a known list must contain the verb the test called.
+        let verbs = owner.route_methods.get(index).map(Vec::as_slice);
+        receivers
+            .iter()
+            .filter(|receiver| {
+                !client_targets_rival_app(
+                    test,
+                    owner,
+                    receiver,
+                    owner.route_receivers.get(index).map(String::as_str),
+                )
+            })
+            .any(|receiver| {
+                body_calls_api_client_route(
+                    &test.body_text,
+                    receiver,
+                    route,
+                    verbs.unwrap_or_default(),
+                )
+            })
+    })
 }
 
-fn body_calls_api_client_route(body_text: &str, route: &str) -> bool {
-    [
-        "client.get",
-        "client.post",
-        "client.put",
-        "client.patch",
-        "client.delete",
-        "client.options",
-        "client.head",
-    ]
-    .into_iter()
-    .any(|callee| contains_python_call_with_first_string_argument(body_text, callee, route))
+/// Whether the request client demonstrably targets a different application
+/// than the owner's route decorator. Only the case this adapter can decide from
+/// the pair is withheld: the client is built over an application name imported
+/// from a module that is not the owner's module, and that name equals the
+/// decorator's receiver, so two modules each defining `app` cannot both take the
+/// credit. A client built elsewhere (a fixture, an unresolved name, a router
+/// the application includes under another name) stays unknown and keeps the
+/// path-and-verb match.
+fn client_targets_rival_app(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    receiver: &str,
+    owner_receiver: Option<&str>,
+) -> bool {
+    let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
+        return false;
+    };
+    let Some(app_name) = super::route_client::client_app_name(&test.body_text, receiver) else {
+        return false;
+    };
+    // Where the owner's file itself got the receiver: a shared application
+    // imported from a third module is the same object the test imports from there.
+    let owner_origin = owner
+        .imports
+        .iter()
+        .find(|import| import_bound_name(import) == owner_receiver)
+        .map(|import| (import.source_module.as_str(), import.imported.as_str()));
+    test.imports.iter().any(|import| {
+        if import_bound_name(import) != app_name || import.source_module.is_empty() {
+            return false;
+        }
+        match owner_origin {
+            // Same module, different symbol (`from common import other_app as app`)
+            // is a different application under the same bound name.
+            Some((origin, symbol)) => {
+                if import.source_module == origin {
+                    import.imported != symbol
+                } else {
+                    import.imported == owner_receiver || import.imported == symbol
+                }
+            }
+            // Defined in the owner's own module: the test's import must name that
+            // module or a package above it (`from pkg import app` re-exports
+            // `pkg/main.py`'s `app`).
+            None => {
+                let names_owner_module =
+                    import_source_module_matches_owner(import, owner, &test.file)
+                        || owner_module_paths(&owner.file)
+                            .iter()
+                            .any(|path| path.starts_with(&format!("{}.", import.source_module)));
+                if names_owner_module {
+                    import.imported != owner_receiver
+                } else {
+                    import.imported == owner_receiver
+                }
+            }
+        }
+    })
+}
+
+fn import_bound_name(import: &PythonImport) -> &str {
+    if import.alias.is_empty() {
+        import.imported.as_str()
+    } else {
+        import.alias.as_str()
+    }
+}
+
+fn body_calls_api_client_route(
+    body_text: &str,
+    receiver: &str,
+    route: &str,
+    route_verbs: &[String],
+) -> bool {
+    ["get", "post", "put", "patch", "delete", "options", "head"]
+        .into_iter()
+        .filter(|verb| {
+            route_verbs.is_empty() || route_verbs.iter().any(|accepted| accepted == verb)
+        })
+        .any(|verb| {
+            contains_python_call_with_first_string_argument(
+                body_text,
+                &format!("{receiver}.{verb}"),
+                route,
+            )
+        })
 }
 
 fn contains_python_call_with_first_string_argument(
@@ -2083,7 +2311,18 @@ fn converter_accepts(converter: &str, value: &str) -> bool {
 pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> {
     let body = text.strip_prefix('(')?.trim_start();
     let literal = first_python_string_literal(body)?;
-    body.starts_with(&literal)
+    // The literal must be the whole argument: `"/items" + suffix`, `"/x" % v`,
+    // `"/x".format(..)` and adjacent literals name a different path.
+    let mut after = body.strip_prefix(&literal)?.trim_start();
+    // A comment between the literal and the delimiter does not extend it.
+    while after.starts_with('#') {
+        after = after
+            .split_once('\n')
+            .map_or("", |(_, rest)| rest)
+            .trim_start();
+    }
+    let whole_argument = after.starts_with([',', ')']);
+    whole_argument
         .then(|| python_string_literal_value(&literal))
         .flatten()
 }
@@ -2571,7 +2810,7 @@ pub(super) fn text_binds_name(text: &str, name: &str) -> bool {
 /// [`test_binds_local`] for an imported alias: the test body's own
 /// `import pkg.mod as alias` statement is the import being checked (#4567
 /// records it among the test's imports), not a rebinding of it.
-fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
+pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)

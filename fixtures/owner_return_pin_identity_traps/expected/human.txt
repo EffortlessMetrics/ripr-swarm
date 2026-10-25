@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_identity_traps/input
 
-Summary: 6 probes (0 exposed, 4 weak, 0 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed (2 base-side evidence, not candidate edit targets)
+Summary: 6 probes (0 exposed, 3 weak, 1 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 6 probe(s), 6 finding(s)
@@ -17,15 +17,18 @@ Start here:
   Changed behavior: self.base() * 3
   Missing discriminator: No strong discriminator was detected
   Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `fixed_reader_overrides_next_word` already asserts an exact value; the
-    gap is not the assertion shape. Add a test input where the changed branch behaves differently
-    and keep the exact assertion
+  Next step: The related test `fixed_reader_overrides_next_word` already has an exact assertion;
+    this does not establish observation of the returned value. Check whether the change can affect
+    the returned value. If it can, add a separating input and assert the exact returned value. If it
+    cannot, test the changed effect separately; another input cannot distinguish unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach next_word: fixed_reader_overrides_next_word
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -38,7 +41,7 @@ No test stub here: the owner is a trait default method or nested function, sits 
 
 Hidden:
   5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:7 (weak, lower-priority candidate)
+    - ./src/lib.rs:7 (unrevealed, lower-priority candidate)
     - ./src/lib.rs:7 (unknown, base-side)
     - ./src/lib.rs:50 (weak, lower-priority candidate)
     - ./src/lib.rs:55 (weak, lower-priority candidate)

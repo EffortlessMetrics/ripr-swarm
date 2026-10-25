@@ -26,6 +26,22 @@ impl ProbeFamily {
         !matches!(self, ProbeFamily::StaticUnknown)
     }
 
+    /// Inverse of [`ProbeFamily::as_str`] for projections that hold only the
+    /// wire token (`ContextPacketProbe::family`). `None` for an unknown token.
+    pub(crate) fn from_wire(token: &str) -> Option<Self> {
+        Some(match token {
+            "predicate" => ProbeFamily::Predicate,
+            "return_value" => ProbeFamily::ReturnValue,
+            "error_path" => ProbeFamily::ErrorPath,
+            "call_deletion" => ProbeFamily::CallDeletion,
+            "field_construction" => ProbeFamily::FieldConstruction,
+            "side_effect" => ProbeFamily::SideEffect,
+            "match_arm" => ProbeFamily::MatchArm,
+            "static_unknown" => ProbeFamily::StaticUnknown,
+            _ => return None,
+        })
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             ProbeFamily::Predicate => "predicate",
@@ -467,19 +483,97 @@ pub struct RelatedTest {
     pub relation_confidence: Option<crate::domain::RelationConfidence>,
     /// Why this test does not catch the changed behavior, when ripr can say.
     /// `None` for a test whose oracle supports the finding's class, and for
-    /// findings from producers that do not record it. Evidence only: no
-    /// classification decision reads this field.
+    /// findings from producers that do not record it. Explanation only: no
+    /// decision helper reads this field; row eligibility is [`Self::role`]
+    /// (#5563).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
+    /// Whether this row belonged to the legacy decision set or was retained
+    /// only so an examined test can be listed (#5563). Independent of `miss`:
+    /// any miss value may be attached to a row of either role without
+    /// changing which decision paths consume it. Absent in older artifacts,
+    /// which read as `contributing` (every row they carry was part of that
+    /// artifact's decision set).
+    #[serde(default, skip_serializing_if = "RelatedTestRole::is_contributing")]
+    pub role: RelatedTestRole,
+    /// The one typed fact the producer established for **this row** that
+    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564).
+    /// `None` when the producer could not establish row ownership; renderers
+    /// then use generic wording and never borrow a finding-wide
+    /// `missing_discriminators` entry. Evidence only: no decision reads it
+    /// and it is not part of finding identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_support: Option<RelatedTestMissSupport>,
+}
+
+/// Row-owned supporting fact for a discriminator-backed [`RelatedTestMiss`]
+/// (#5564). Semantic data, not prose: the shared renderer chooses the wording
+/// from the miss, the finding's probe family and this record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedTestMissSupport {
+    /// The value or boundary the row misses (`amount == threshold`).
+    pub value: String,
+    /// The sink the fact was established against, when the producer knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_sink: Option<FlowSinkFact>,
+}
+
+impl RelatedTestMissSupport {
+    /// Support carrying the value and sink of a discriminator fact the
+    /// producer has established applies to the row it attaches this to.
+    pub(crate) fn from_fact(fact: &MissingDiscriminatorFact) -> Self {
+        Self {
+            value: fact.value.clone(),
+            flow_sink: fact.flow_sink.clone(),
+        }
+    }
+}
+
+/// The decision role of one related-test row, separate from why it is listed
+/// (`relation_reason`) and why it misses the changed behavior (`miss`).
+///
+/// Registered in `policy/output_contracts.txt` and documented in
+/// `docs/OUTPUT_SCHEMA.md`. Not runtime execution evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelatedTestRole {
+    /// The row is part of the decision set gates, fix-site selection and
+    /// repair routing read. The compatibility default.
+    #[default]
+    Contributing,
+    /// The row was retained only to show an examined test whose assertions
+    /// matched nothing; decision paths skip it.
+    ExaminedOnly,
+}
+
+impl RelatedTestRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Contributing => "contributing",
+            Self::ExaminedOnly => "examined_only",
+        }
+    }
+
+    /// `serde` skip predicate: the default role is not serialized.
+    pub fn is_contributing(&self) -> bool {
+        matches!(self, Self::Contributing)
+    }
 }
 
 impl RelatedTest {
+    /// True for a row in the decision set. Reads the explicit [`RelatedTestRole`],
+    /// never `miss`.
+    pub fn is_contributing(&self) -> bool {
+        self.role.is_contributing()
+    }
+
     /// True for a test ripr examined whose assertions it matched against the
     /// changed behavior and found none that apply. Such a test is listed as
     /// evidence, but it supplied no oracle row, so gates that ask "did any
-    /// related test survive oracle matching" must skip it.
-    pub fn is_unmatched(&self) -> bool {
-        matches!(self.miss, Some(RelatedTestMiss::AssertionNotObserving))
+    /// related test survive oracle matching" must skip it. Reads the explicit
+    /// role, never `miss`.
+    pub fn is_examined_only(&self) -> bool {
+        !self.is_contributing()
     }
 }
 
@@ -723,12 +817,12 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 
 impl Finding {
     /// Related tests that supplied an oracle row or a refusal, skipping tests
-    /// listed only as examined misses (see [`RelatedTest::is_unmatched`]).
+    /// listed only as examined misses (see [`RelatedTest::is_examined_only`]).
     /// Gates that predate #5344 asked whether this set was empty.
     pub fn oracle_related_tests(&self) -> impl Iterator<Item = &RelatedTest> {
         self.related_tests
             .iter()
-            .filter(|test| !test.is_unmatched())
+            .filter(|test| test.is_contributing())
     }
 
     /// Public count projection without changing retained evidence or selection.

@@ -15,7 +15,16 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 51
+floor = 57
+
+# Most abstained rows whose tests do catch the change (missed credit). A
+# regression fails `verdict-corpus check`; an improvement passes with a note
+# to lower this number (not a failure, so concurrent fixes do not collide).
+# Raising it is a reviewed edit with a reason.
+# 31: `unnum-0028-ex3-decorator-indirection` abstains by design (RIPR-SPEC-0028
+# example 3: a decorator that may wrap the call is not credited) although its
+# test catches the change.
+missed_credit_ceiling = 28
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
@@ -488,6 +497,30 @@ id = "RIPR-SPEC-0243"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 
+# TypeScript Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0027"
+scope = "out"
+reason = "TypeScript adapter facts; a Python case cannot label them"
+
+# TypeScript Bounded Re-Export Test Discovery
+[[spec]]
+id = "RIPR-SPEC-0095"
+scope = "out"
+reason = "TypeScript re-export chains; a Python case cannot label them"
+
+# TypeScript toThrow Exact-Payload Oracle Upgrade
+[[spec]]
+id = "RIPR-SPEC-0097"
+scope = "out"
+reason = "TypeScript toThrow payloads; a Python case cannot label them"
+
+# TypeScript Exposed Observation Guard
+[[spec]]
+id = "RIPR-SPEC-0098"
+scope = "out"
+reason = "TypeScript observation guard; a Python case cannot label it"
+
 # TypeScript corpus oracle amendments
 [[spec]]
 id = "RIPR-SPEC-0246"
@@ -592,7 +625,7 @@ reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a 
 # Test Efficiency and Vacuity Signals
 [[unmeasured]]
 id = "RIPR-SPEC-0004"
-reason = "acceptance examples are prose, not numbered; Python corpus cases cite the spec without an example number"
+reason = "acceptance examples are prose, not numbered, and describe the test-efficiency report (smoke_only, useful_but_broad, duplicative), which a corpus row does not carry; the diff verdicts that report grades are measured through their owning specs"
 
 # Evidence Quality Benchmark Corpus
 [[unmeasured]]
@@ -600,9 +633,9 @@ id = "RIPR-SPEC-0035"
 reason = "acceptance examples are prose, not numbered; Python corpus cases cite the spec without an example number"
 
 # Python Preview Static Facts
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0028"
-reason = "acceptance examples are prose and code blocks, not numbered; Python corpus cases cite the spec in their reasoning"
+scope = "in"
 
 # Owner call shape projection for drill-in surfaces
 [[spec]]
@@ -643,6 +676,11 @@ reason = "doctor/repo-input framework-scan admission, ordering, and string-aware
 [[unmeasured]]
 id = "RIPR-SPEC-0291"
 reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
 
 [[spec]]
 id = "RIPR-SPEC-0290"
@@ -689,11 +727,21 @@ id = "RIPR-SPEC-0318"
 scope = "out"
 reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0347"
+scope = "out"
+reason = "stderr disclosure of changed trybuild fixtures; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0351"
+scope = "out"
+reason = "Rust-only out-parameter oracle credit; not a python verdict example"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
@@ -713,3 +761,33 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot lab
 id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
+
+# Rust spec 0164
+[[spec]]
+id = "RIPR-SPEC-0164"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
+
+# Rust spec 0165
+[[spec]]
+id = "RIPR-SPEC-0165"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
+
+# Rust unsafe boundary probes
+[[spec]]
+id = "RIPR-SPEC-0168"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
+
+# Cargo path-dependency diff scope
+[[spec]]
+id = "RIPR-SPEC-0171"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
+
+# Cargo cross-crate dependency edges
+[[spec]]
+id = "RIPR-SPEC-0172"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"

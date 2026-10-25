@@ -185,6 +185,48 @@ fn pins_error_payload() {
     }
 
     #[test]
+    fn compile_time_marker_calls_are_not_assertions() {
+        // #10091: a zero-argument turbofish call checks a trait bound at
+        // compile time and passes no value to observe.
+        for line in [
+            "assert_send_sync::<Wrapper>();",
+            "assert_send::<Vec<u8>>();",
+            "common::assert_sync::<Wrapper>();",
+            "assert_send_sync::< Wrapper >( );",
+            // Known fail-closed over-refusal: refused by shape, not callee.
+            "checker.assert_ready::<Wrapper>();",
+        ] {
+            assert!(
+                !patterns::is_custom_assertion_helper(line),
+                "{line} must not read as a helper call"
+            );
+            let facts = extract_assertions(line, 3);
+            assert!(facts.is_empty(), "{line} yields no oracle: {facts:?}");
+        }
+        // Discriminating controls: an argument, a missing turbofish, or a
+        // method form keeps the established name-only recognition.
+        for line in [
+            "assert_send_sync::<Wrapper>(value);",
+            "assert_send_sync(value);",
+            "assert_payload_eq::<Wrapper>(actual, expected);",
+            "checker.assert_ready::<Wrapper>(state);",
+        ] {
+            assert!(
+                patterns::is_custom_assertion_helper(line),
+                "{line} must stay a helper call"
+            );
+            assert_eq!(extract_assertions(line, 3).len(), 1, "{line}");
+        }
+        // The same body with a real assertion beside the marker keeps it.
+        let facts = extract_assertions(
+            "assert_send_sync::<Wrapper>();\nassert_eq!(wrapper.read(), 1);",
+            3,
+        );
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert_eq!(facts[0].kind, OracleKind::ExactValue);
+    }
+
+    #[test]
     fn macro_invocations_and_non_helper_lines_are_not_helper_calls() {
         for line in [
             "println!(\"{}\", checker.assert_ok(1));",

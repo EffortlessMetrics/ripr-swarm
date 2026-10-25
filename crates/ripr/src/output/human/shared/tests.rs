@@ -118,6 +118,7 @@ fn raw_test_and_context_metadata_cannot_borrow_display_identical_facts() {
     input.truncate(2);
     for finding in &mut input {
         finding.related_tests[0].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        finding.related_tests[0].role = crate::domain::RelatedTestRole::ExaminedOnly;
     }
     input[1].related_tests[0].oracle = Some("assert_eq!(actual,   expected)".to_string());
     let report = render(input);

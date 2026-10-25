@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
   Changed behavior: if amount >= DISCOUNT_THRESHOLD:
   Missing discriminator (1 of 2): A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary `amount == DISCOUNT_THRESHOLD`. No…
-  Related test (1 of 2 matched rows): tests/test_pricing.py:8 test_discounts_far_above_threshold
+  Related test (1 of 2 matched rows): tests/test_pricing.py:8 test_discounts_far_above_threshold (no test input reaches `amount == DISCOUNT_THRESHOLD`)
   Suggested test file: tests/test_pricing.py
   Suggested test: test_discounts_far_above_threshold
   Test node: tests/test_pricing.py::test_discounts_far_above_threshold
@@ -33,6 +33,8 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 2 related Python test(s) found for owner `discounted_total`
     - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
     - 8 more detail line(s) in --format human-full

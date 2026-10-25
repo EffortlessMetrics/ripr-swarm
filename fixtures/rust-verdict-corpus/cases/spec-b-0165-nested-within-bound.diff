@@ -1,0 +1,12 @@
+diff --git a/src/r_nested.rs b/src/r_nested.rs
+--- a/src/r_nested.rs
++++ b/src/r_nested.rs
+@@ -10,7 +10,7 @@
+ 
+ pub fn classify_nested(input: &str) -> &'static str {
+     let final_label = label_nested(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"
