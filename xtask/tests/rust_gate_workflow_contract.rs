@@ -30,6 +30,10 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ),
     ("capability_docs", "cargo xtask capability-docs --check"),
     ("verdict_corpus", "cargo xtask verdict-corpus check-all"),
+    (
+        "missed_credit_ceilings",
+        "cargo nextest run --workspace --bins -E 'test(committed_ceilings_equal_the_blessed_missed_credit)' --no-tests=fail",
+    ),
     // After the fast gates so main-side drift fails within minutes (#10341).
     ("rust-tests", "cargo nextest run --workspace --profile ci"),
 ];
@@ -180,6 +184,7 @@ fn rust_gate_workflow_pins_fast_gates_before_workspace_tests() {
         "capability_producers",
         "capability_docs",
         "verdict_corpus",
+        "missed_credit_ceilings",
     ] {
         let changed = WORKFLOW
             .replace(&format!("        id: {id}"), "        id: swap")

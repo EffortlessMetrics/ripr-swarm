@@ -287,6 +287,15 @@ jobs:
         id: verdict_corpus
         run: cargo xtask verdict-corpus check-all
 
+      # The ceiling equality test is the check that goes red when a parallel corpus
+      # PR merges and moves a blessed missed-credit count. It reads committed files
+      # and needs no `ripr` run, so it runs here instead of ~18 minutes into the full
+      # test step (#10341). `--no-tests=fail` keeps a rename from passing as zero
+      # tests; the full run below still executes it with everything else.
+      - name: Missed-credit ceilings
+        id: missed_credit_ceilings
+        run: cargo nextest run --workspace --bins -E 'test(committed_ceilings_equal_the_blessed_missed_credit)' --no-tests=fail
+
       - name: Required Rust tests
         id: rust-tests
         run: |
@@ -451,6 +460,7 @@ jobs:
           CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
           CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
+          MISSED_CREDIT_CEILINGS_RESULT: ${{ steps.missed_credit_ceilings.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
           SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
         run: |
@@ -477,6 +487,7 @@ jobs:
             printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
             printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
+            printf '| missed_credit_ceilings | %s |\n' "${MISSED_CREDIT_CEILINGS_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"
             echo ""
