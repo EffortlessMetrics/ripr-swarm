@@ -517,8 +517,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `rust_indirect_owner_call_unresolved`; `#[cfg_attr(<true>, test)]` is a
 /// test (a `cfg_attr` that also adds `ignore` or `should_panic` is not, and a
 /// separate `cfg_attr(ignore)` marks the test ignored); a comment after the
-/// tail no longer defeats the owner pin (RIPR-SPEC-0240, #9442, #9443). Old
-/// entries keep the weak reading.
+/// tail no longer defeats the owner pin (RIPR-SPEC-0240, #9442, #9443). The
+/// cross-package wrapper reach limit of #10163, which landed at `1.102` without
+/// its own bump, is invalidated by this generation too. Old entries keep the
+/// weak reading.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.103";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass

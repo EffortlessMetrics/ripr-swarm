@@ -125,9 +125,10 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    find_related_tests_with_candidate_index, impl_self_type_name, is_partial_eq_method,
-    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, resolves_method_in_prefix, test_calls_free_function,
+    declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
+    impl_self_type_name, is_partial_eq_method, manifests_with_unindexed_files,
+    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
+    package_prefix, resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
