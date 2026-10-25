@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-caplog-absence",
+  "origin": "authored",
+  "version_label": "authored@9ca14aac",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "absence/__init__.py",
+      "sha256": "893462d3d6051b156ffbf8794319bc88f32f5640c72553288cd16c4dda2769b4"
+    },
+    {
+      "path": "absence/audit.py",
+      "sha256": "2b6fbfd1094522ca68506b274e2f76c1dba513a45048394a923d435ff3ad51a5"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "14de89f2bb240ea7ff59006f0b8a4d9ad8ed822aeca128be2d3cd39f1c4967ea"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_audit.py",
+      "sha256": "2a2d0be2a3ab7843cfdbc68fb6a0e00d7fa582c57aeb876190e93f9103d55ef3"
+    }
+  ]
+}
