@@ -5,6 +5,34 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "py_dunder_truthiness_replaced_test",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dunder_truthiness_replaced_test",
+      "vector": "superseded_test_definition_cannot_credit_truthiness",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "py_dunder_truthiness_header_effect",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dunder_truthiness_header_effect",
+      "vector": "definition_time_header_effect_cannot_replace_the_observed_dunder",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
       "id": "py_dunder_truthiness_integer",
       "language": "python",
       "tier": "pure",

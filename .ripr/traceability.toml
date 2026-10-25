@@ -16645,6 +16645,7 @@ spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_credits_only_a_changed_truth_value",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_test_rebinding_activation_and_wrappers",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_replaced_tests_and_definition_effects",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_owner_body_is_deferred_then_no_changed_effect_is_credited",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_deferred_owner_is_only_a_method_token_then_no_branch_restores_credit",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_synchronous_field_helper_when_body_runs_then_changed_effect_stays_credited",
@@ -16669,6 +16670,8 @@ fixtures = [
   "fixtures/python_assertion_helper_field",
   "fixtures/python_dunder_truthiness_integer",
   "fixtures/python_dunder_truthiness_foreign_import",
+  "fixtures/python_dunder_truthiness_replaced_test",
+  "fixtures/python_dunder_truthiness_header_effect",
   "fixtures/python_assertion_helper_wrong_receiver",
   "fixtures/python_assertion_helper_wrong_field",
   "fixtures/python_assertion_helper_weak_comparison",
@@ -16681,6 +16684,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/dunder_truthiness.rs",
+  "crates/ripr/src/analysis/language/python/module_constants.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/message_pin.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",
