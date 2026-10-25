@@ -42,6 +42,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown)
+    - ./src/lib.rs:2 (unknown); kind: side_effect; reason: No clear propagation path from changed behavior to an observable sink
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

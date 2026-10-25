@@ -46,9 +46,9 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).
-    - src/b_observed.py:2 (exposed)
-    - src/d_isolated.py:2 (no path)
-    - src/a_dynamic.py:2 (unknown)
+    - src/b_observed.py:2 (exposed); kind: return_value; reason: Related Python test reaches `calculate_fee` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
+    - src/d_isolated.py:2 (no path); kind: return_value; reason: No Python test references `isolated_total(`; add a pytest or unittest test that calls the changed owner.
+    - src/a_dynamic.py:2 (unknown); kind: return_value; reason: Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

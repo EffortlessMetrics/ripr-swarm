@@ -41,8 +41,8 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (no path)
-    - ./src/lib.rs:20 (no path)
+    - ./src/lib.rs:12 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
+    - ./src/lib.rs:20 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

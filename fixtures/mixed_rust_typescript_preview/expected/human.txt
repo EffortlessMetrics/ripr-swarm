@@ -42,7 +42,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - web/discount.ts:2 (weak)
+    - web/discount.ts:2 (weak); kind: predicate; reason: Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

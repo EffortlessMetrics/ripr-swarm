@@ -43,10 +43,10 @@ Write a test for it:
 
 Hidden:
   5 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (exposed)
-    - ./src/lib.rs:17 (unknown)
-    - ./src/lib.rs:22 (unknown)
-    - ./src/lib.rs:27 (unknown)
-    - ./src/lib.rs:32 (unknown)
+    - ./src/lib.rs:3 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:17 (unknown); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:22 (unknown); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:27 (unknown); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:32 (unknown); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -46,6 +46,6 @@ No test stub here: the change shows up as a side effect or call, which needs an 
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/sensors/ripr_limits.rs:137 (unrevealed)
+    - ./src/sensors/ripr_limits.rs:137 (unrevealed); kind: call_deletion; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

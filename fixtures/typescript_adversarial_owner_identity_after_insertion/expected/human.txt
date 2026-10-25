@@ -42,7 +42,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/pricing.ts:14 (no path)
+    - src/pricing.ts:14 (no path); kind: predicate; reason: No test references `applyDiscount(` — add a test that calls the changed owner.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

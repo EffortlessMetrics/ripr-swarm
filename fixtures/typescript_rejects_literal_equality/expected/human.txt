@@ -43,7 +43,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/load.ts:3 (exposed)
+    - src/load.ts:3 (exposed); kind: error_path; reason: Related test reaches `load` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

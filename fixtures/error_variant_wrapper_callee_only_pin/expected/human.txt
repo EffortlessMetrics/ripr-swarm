@@ -39,7 +39,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:26 (no path)
+    - ./src/lib.rs:26 (no path); kind: error_path; reason: No relevant oracle was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

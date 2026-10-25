@@ -13,9 +13,9 @@ Start here:
 
 Hidden:
   All 3 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
-    - ./src/lib.rs:13 (no path)
-    - ./src/lib.rs:13 (no path)
-    - ./src/lib.rs:13 (no path)
+    - ./src/lib.rs:13 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
+    - ./src/lib.rs:13 (no path); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:13 (no path); kind: static_unknown; reason: No relevant oracle was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

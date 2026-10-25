@@ -38,6 +38,6 @@ No test stub here: the changed field is set on a struct literal the owner does n
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:13 (weak)
+    - ./src/lib.rs:13 (weak); kind: return_value; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

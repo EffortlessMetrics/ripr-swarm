@@ -323,3 +323,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_named_constant (28)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/human.txt`

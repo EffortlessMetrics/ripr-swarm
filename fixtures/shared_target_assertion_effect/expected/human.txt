@@ -41,6 +41,6 @@ No test stub here: the change shows up as a side effect or call, which needs an 
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/shared.rs:2 (unrevealed)
+    - ./src/shared.rs:2 (unrevealed); kind: side_effect; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -41,8 +41,8 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:8 (no path)
-    - ./src/lib.rs:13 (no path)
+    - ./src/lib.rs:8 (no path); kind: predicate; reason: This owner is exposed across a language boundary (FFI or binding); whether an external-language test observes the change is not statically known — verify the external oracle…
+    - ./src/lib.rs:13 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

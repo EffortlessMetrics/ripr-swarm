@@ -38,7 +38,7 @@ No test stub here: the changed field is set on a struct literal the owner does n
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:13 (exposed)
-    - ./src/lib.rs:13 (exposed)
+    - ./src/lib.rs:13 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:13 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

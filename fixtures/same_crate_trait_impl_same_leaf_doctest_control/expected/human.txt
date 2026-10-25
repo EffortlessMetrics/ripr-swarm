@@ -42,7 +42,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./util/src/stream/take.rs:10 (no path)
+    - ./util/src/stream/take.rs:10 (no path); kind: return_value; reason: No relevant oracle was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

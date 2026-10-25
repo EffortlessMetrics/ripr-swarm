@@ -40,6 +40,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:9 (weak)
+    - ./src/lib.rs:9 (weak); kind: return_value; reason: Missing discriminator value: ParseError::InvalidData
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

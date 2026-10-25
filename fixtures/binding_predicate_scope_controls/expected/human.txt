@@ -38,10 +38,10 @@ Next: drill into the top finding:
 
 Hidden:
   4 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (no path)
-    - ./src/lib.rs:21 (no path)
-    - ./src/lib.rs:27 (no path)
-    - ./src/lib.rs:34 (no path)
+    - ./src/lib.rs:12 (no path); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:21 (no path); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:27 (no path); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:34 (no path); kind: static_unknown; reason: No relevant oracle was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

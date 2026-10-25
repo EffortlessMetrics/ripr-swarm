@@ -39,6 +39,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (weak)
+    - ./src/lib.rs:2 (weak); kind: return_value; reason: Missing discriminator value: n == 0xFF
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -41,8 +41,8 @@ Next: drill into the top finding:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (Python preview: 2).
-    - src/cart.py:7 (exposed)
-    - src/cart.py:13 (exposed)
+    - src/cart.py:7 (exposed); kind: side_effect; reason: Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
+    - src/cart.py:13 (exposed); kind: side_effect; reason: Related Python test reaches `floored_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -37,6 +37,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (weak)
+    - ./src/lib.rs:12 (weak); kind: return_value; reason: Strong oracle found: exact error variant assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -52,8 +52,8 @@
       "stop_reasons": ["transitive_reach_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
-      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
+      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
       "language": "rust",
       "static_limit_kind": "rust_integration_public_api_path_unresolved",
       "static_limitation": {
@@ -108,8 +108,8 @@
       "stop_reasons": ["transitive_reach_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
-      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
+      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
       "language": "rust",
       "static_limit_kind": "rust_integration_public_api_path_unresolved",
       "static_limitation": {

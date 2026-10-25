@@ -38,6 +38,6 @@ No test stub here: the change shows up as a side effect or call, which needs an 
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:13 (exposed)
+    - ./src/lib.rs:13 (exposed); kind: call_deletion; reason: Strong oracle found: exact value or pattern assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

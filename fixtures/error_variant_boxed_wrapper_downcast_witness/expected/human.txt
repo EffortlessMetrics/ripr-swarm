@@ -39,20 +39,20 @@ Write a test for it:
 
 Hidden:
   15 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:45 (exposed)
-    - ./src/lib.rs:45 (exposed)
-    - ./src/lib.rs:48 (exposed)
-    - ./src/lib.rs:48 (exposed)
-    - ./src/lib.rs:56 (weak)
-    - ./src/lib.rs:56 (weak)
-    - ./src/lib.rs:67 (weak)
-    - ./src/lib.rs:67 (weak)
-    - ./src/lib.rs:81 (weak)
-    - ./src/lib.rs:81 (weak)
-    - ./src/lib.rs:95 (weak)
-    - ./src/lib.rs:95 (weak)
-    - ./src/lib.rs:109 (weak)
-    - ./src/lib.rs:109 (weak)
-    - ./src/lib.rs:123 (unrevealed)
+    - ./src/lib.rs:45 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:45 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:48 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:48 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:56 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:56 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:67 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:67 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:81 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:81 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:95 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:95 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:109 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:109 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:123 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

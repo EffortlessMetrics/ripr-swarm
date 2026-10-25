@@ -39,7 +39,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/b.rs:6 (no path)
+    - ./src/b.rs:6 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

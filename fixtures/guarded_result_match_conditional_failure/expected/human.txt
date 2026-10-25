@@ -38,7 +38,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:18 (no path)
+    - ./src/lib.rs:18 (no path); kind: return_value; reason: Missing discriminator value: ParseError::InvalidData
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

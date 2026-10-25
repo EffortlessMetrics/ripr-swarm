@@ -38,6 +38,6 @@ No test stub here: the change shows up as a side effect or call, which needs an 
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:4 (weak)
+    - ./src/lib.rs:4 (weak); kind: side_effect; reason: Missing discriminator value: if x > 10
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

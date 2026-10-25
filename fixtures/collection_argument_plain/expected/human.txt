@@ -34,6 +34,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (exposed)
+    - ./src/lib.rs:3 (exposed); kind: side_effect; reason: Strong oracle found: exact value or pattern assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

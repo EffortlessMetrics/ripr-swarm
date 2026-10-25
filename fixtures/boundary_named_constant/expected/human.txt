@@ -45,7 +45,7 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (exposed)
-    - ./src/lib.rs:21 (exposed)
+    - ./src/lib.rs:12 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:21 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

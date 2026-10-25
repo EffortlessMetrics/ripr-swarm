@@ -34,7 +34,7 @@ Next: drill into the top finding:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (unrevealed)
-    - ./src/lib.rs:5 (weak)
+    - ./src/lib.rs:5 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
+    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

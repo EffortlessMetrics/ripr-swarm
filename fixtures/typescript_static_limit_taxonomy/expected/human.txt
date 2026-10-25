@@ -43,9 +43,9 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 1, JavaScript preview: 2).
-    - src/decorated.tsx:7 (no path)
-    - src/label.jsx:3 (weak)
-    - src/proxy.js:2 (weak)
+    - src/decorated.tsx:7 (no path); kind: return_value; reason: A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
+    - src/label.jsx:3 (weak); kind: return_value; reason: The import graph could not be resolved (for example a relative or dynamic import), so ripr cannot connect a test to this change.
+    - src/proxy.js:2 (weak); kind: return_value; reason: Metaprogramming (macros or code generation) produces calls ripr cannot see in the source, so the reaching path is not statically resolvable.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

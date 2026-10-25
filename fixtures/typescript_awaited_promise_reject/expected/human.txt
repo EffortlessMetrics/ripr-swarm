@@ -44,7 +44,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/profile.ts:10 (weak)
+    - src/profile.ts:10 (weak); kind: error_path; reason: Only heuristic TypeScript test links were found for `publishProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

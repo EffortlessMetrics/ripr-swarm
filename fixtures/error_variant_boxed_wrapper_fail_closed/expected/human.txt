@@ -41,8 +41,8 @@ Write a test for it:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:29 (weak)
-    - ./src/lib.rs:43 (weak)
-    - ./src/lib.rs:43 (weak)
+    - ./src/lib.rs:29 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:43 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:43 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

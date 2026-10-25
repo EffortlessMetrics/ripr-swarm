@@ -46,9 +46,9 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).
-    - pricing.py:11 (no path)
-    - pricing.py:12 (no path)
-    - pricing.py:13 (no path)
+    - pricing.py:11 (no path); kind: predicate; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
+    - pricing.py:12 (no path); kind: return_value; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
+    - pricing.py:13 (no path); kind: return_value; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

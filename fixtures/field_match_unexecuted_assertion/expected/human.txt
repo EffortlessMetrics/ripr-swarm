@@ -41,7 +41,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:4 (unrevealed)
-    - ./src/lib.rs:4 (unrevealed)
+    - ./src/lib.rs:4 (unrevealed); kind: match_arm; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+    - ./src/lib.rs:4 (unrevealed); kind: return_value; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

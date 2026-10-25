@@ -41,15 +41,15 @@ Next: drill into the top finding:
 
 Hidden:
   9 lower-priority finding(s) omitted from default human output (TypeScript preview: 7, JavaScript preview: 2).
-    - src/ambiguous.ts:5 (weak)
-    - src/errors.ts:3 (weak)
-    - src/notify.js:2 (weak)
-    - src/pricing.ts:2 (weak)
-    - src/pricing.ts:3 (weak)
-    - src/profile.ts:4 (weak)
-    - src/profile.ts:5 (weak)
-    - src/view.jsx:2 (weak)
-    - src/widget.tsx:4 (weak)
+    - src/ambiguous.ts:5 (weak); kind: side_effect; reason: Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
+    - src/errors.ts:3 (weak); kind: error_path; reason: Only heuristic TypeScript test links were found for `parseToken`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/notify.js:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `notify`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/pricing.ts:2 (weak); kind: predicate; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/pricing.ts:3 (weak); kind: return_value; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/profile.ts:4 (weak); kind: field_construction; reason: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/profile.ts:5 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/view.jsx:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `StatusView`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/widget.tsx:4 (weak); kind: field_construction; reason: Only heuristic TypeScript test links were found for `PriceBadge`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -41,6 +41,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:4 (unknown)
+    - ./src/lib.rs:4 (unknown); kind: return_value; reason: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

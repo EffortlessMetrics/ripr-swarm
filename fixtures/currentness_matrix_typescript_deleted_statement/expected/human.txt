@@ -40,8 +40,8 @@ Next: drill into the top finding:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (TypeScript preview: 2).
-    - src/cart.ts:6 (exposed)
-    - src/cart.ts:12 (exposed)
+    - src/cart.ts:6 (exposed); kind: field_construction; reason: Related test reaches `cappedTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/cart.ts:12 (exposed); kind: field_construction; reason: Related test reaches `flooredTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -41,8 +41,8 @@ Next: drill into the top finding:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:6 (unknown)
-    - ./src/lib.rs:7 (unknown)
+    - ./src/lib.rs:6 (unknown); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:7 (unknown); kind: static_unknown; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

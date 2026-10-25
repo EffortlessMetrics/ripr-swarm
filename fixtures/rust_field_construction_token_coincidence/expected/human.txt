@@ -43,6 +43,6 @@ Write a test for it:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:9 (weak)
+    - ./src/lib.rs:9 (weak); kind: field_construction; reason: Missing discriminator value: retries: 1,
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

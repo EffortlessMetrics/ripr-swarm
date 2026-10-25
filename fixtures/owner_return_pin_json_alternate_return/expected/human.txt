@@ -42,7 +42,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:6 (weak)
-    - ./src/lib.rs:6 (weak)
+    - ./src/lib.rs:6 (weak); kind: error_path; reason: No exact error variant discriminator was detected
+    - ./src/lib.rs:6 (weak); kind: return_value; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

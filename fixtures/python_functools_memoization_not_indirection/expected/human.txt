@@ -46,7 +46,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - src/memo.py:6 (exposed)
+    - src/memo.py:6 (exposed); kind: return_value; reason: Related Python test reaches `format_year` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

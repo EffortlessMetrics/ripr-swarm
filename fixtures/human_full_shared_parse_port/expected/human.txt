@@ -39,11 +39,11 @@ Write a test for it:
 
 Hidden:
   6 finding(s) omitted: 4 lower-priority, 2 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:3 (weak, base-side)
-    - ./src/lib.rs:3 (weak, lower-priority candidate)
-    - ./src/lib.rs:3 (weak, lower-priority candidate)
-    - ./src/lib.rs:3 (weak, base-side)
-    - ./src/lib.rs:4 (weak, lower-priority candidate)
-    - ./src/lib.rs:4 (weak, lower-priority candidate)
+    - ./src/lib.rs:3 (weak, base-side); kind: match_arm; reason: No strong discriminator was detected
+    - ./src/lib.rs:3 (weak, lower-priority candidate); kind: predicate; reason: Missing discriminator value: p == 0
+    - ./src/lib.rs:3 (weak, lower-priority candidate); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:3 (weak, base-side); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:4 (weak, lower-priority candidate); kind: error_path; reason: No exact error variant discriminator was detected
+    - ./src/lib.rs:4 (weak, lower-priority candidate); kind: match_arm; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

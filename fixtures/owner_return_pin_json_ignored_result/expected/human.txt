@@ -39,7 +39,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (unrevealed)
-    - ./src/lib.rs:5 (unrevealed)
+    - ./src/lib.rs:5 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
+    - ./src/lib.rs:5 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

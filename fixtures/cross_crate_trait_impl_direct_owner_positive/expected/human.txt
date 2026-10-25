@@ -39,7 +39,7 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./util/src/stream/take.rs:15 (unknown)
-    - ./util/src/stream/take.rs:15 (weak)
+    - ./util/src/stream/take.rs:15 (unknown); kind: predicate; reason: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…
+    - ./util/src/stream/take.rs:15 (weak); kind: return_value; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
