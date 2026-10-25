@@ -406,25 +406,62 @@ fn delegates_to_other_config(text: &str) -> bool {
 
 /// JSON string escapes for the whitespace and quotes a `package.json`
 /// script may put around a flag (`"jest\t-u"`, `"jest \"-u\""`).
-const JSON_ESCAPES: [&str; 11] = [
-    "\\t", "\\n", "\\r", "\\f", "\\v", "\\u0020", "\\u0009", "\\u000a", "\\u000d", "\\\"", "\\'",
-];
-
-/// `text` with each JSON escape for whitespace or a quote read as a space,
-/// so a script's flags split the way the shell sees them.
-fn unescape_json_separators(text: &str) -> String {
-    JSON_ESCAPES
-        .iter()
-        .fold(text.to_string(), |acc, escape| acc.replace(escape, " "))
+/// Decode once, preserving escaped literal backslashes.
+/// Unicode hex digits are case-insensitive; the JSON decoder also handles
+/// UTF-16 surrogate pairs. Keep the existing JS `\v` / `\'` spellings.
+fn unescape_json_command_text(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('\\') {
+        let (plain, escape) = rest.split_at(start);
+        decoded.push_str(plain);
+        if escape.starts_with("\\u") {
+            // One BMP escape is six bytes; a surrogate pair is twelve.
+            let unicode = [6, 12].into_iter().find_map(|length| {
+                let (value, after) = escape.split_at_checked(length)?;
+                serde_json::from_str::<String>(&format!("\"{value}\""))
+                    .ok()
+                    .map(|value| (value, after))
+            });
+            if let Some((value, after)) = unicode {
+                decoded.push_str(&value);
+                rest = after;
+                continue;
+            }
+        }
+        let mut chars = escape.chars();
+        let _ = chars.next();
+        match chars.next() {
+            Some('t') => decoded.push('\t'),
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('b') => decoded.push('\u{0008}'),
+            Some('f') => decoded.push('\u{000c}'),
+            Some('v') => decoded.push('\u{000b}'),
+            Some(ch @ ('\\' | '"' | '\'' | '/')) => decoded.push(ch),
+            Some(ch) => {
+                decoded.push('\\');
+                decoded.push(ch);
+            }
+            None => decoded.push('\\'),
+        }
+        rest = chars.as_str();
+    }
+    decoded.push_str(rest);
+    decoded
 }
 
-/// `true` when `text` holds the short update flag, alone or inside a
+/// `true` when decoded command text holds `--update` or the short update
+/// flag, alone or inside a
 /// combined cluster, after whitespace, a shell quote or a JSON escape of
 /// either: `jest -u`, `jest\t-u`, `jest '-u'`, `jest \"-u\"`, `jest -iu`.
 /// A single dash only: `--ci` and `eslint-plugin-unicorn` do not match.
 /// Over-matching a cluster that merely contains `u` only refuses.
-fn mentions_short_update_flag(text: &str) -> bool {
-    let text = unescape_json_separators(text);
+fn mentions_script_update_flag(text: &str) -> bool {
+    let text = unescape_json_command_text(text);
+    if text.contains("--update") {
+        return true;
+    }
     text.match_indices('-').any(|(index, _)| {
         let before = text.get(..index).unwrap_or_default();
         let boundary = before
@@ -462,7 +499,7 @@ const CONFIG_FLAGS: [&str; 7] = [
 fn passes_config_by_path(text: &str) -> bool {
     text.contains("\"projects\"")
         || text.contains("\"rootDir\"")
-        || unescape_json_separators(text)
+        || unescape_json_command_text(text)
             .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
             .any(|token| {
                 let flag = token.split('=').next().unwrap_or(token);
@@ -522,7 +559,7 @@ fn scan_config_directory_uncached(directory: &Path, allow_symlink: bool) -> Opti
         if SNAPSHOT_OVERRIDES
             .iter()
             .any(|override_text| text.contains(override_text))
-            || mentions_short_update_flag(&text)
+            || mentions_script_update_flag(&text)
             // Vitest reads `update` from its own config only; a
             // `package.json` script may be named `update`.
             || (file_name != "package.json" && mentions_update_key(&text))

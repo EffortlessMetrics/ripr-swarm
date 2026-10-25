@@ -203,6 +203,23 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    title, which credits an assertion a hook's or another call's entry
    satisfies.
 
+### JSON command escapes
+
+Before checking package-script command flags, decode JSON escapes once.
+`\uXXXX` accepts either case of hexadecimal digit, including a UTF-16
+surrogate pair. Encoded whitespace, dash, flag letters and shell quotes have
+exactly their decoded command-text meaning: `jest\u000A-u`,
+`jest \u002d\u0075`, `jest\u0022-u\u0022` and
+`jest\u000D--config cfg/jest.js` refuse snapshot credit. The same decoding
+applies to long update flags and config-path flag separators.
+
+An escaped literal backslash stays literal: JSON script text
+`jest\\u000A-u`, `jest\\n-u` and `jest\u005cu000A-u` do not manufacture
+whitespace or an update flag by decoding again. Flag-free commands and
+`--ci` retain their earlier reading. This is lexical command normalization;
+config inheritance, project delegation and shell evaluation retain their
+existing rules and limits.
+
 ### Known limits
 
 - The snapshot file and configs are read from the working tree. A
@@ -385,6 +402,12 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `credited`; and
   `jest-spec0258-ex06-spaced-call` (example 6's spaced call) reads
   `credited`.
+
+- `unicode_json_update_flags_stay_medium`,
+  `unicode_json_config_flag_separators_stay_medium` and
+  `unicode_json_literal_escapes_keep_snapshot_credit` in
+  `crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs`
+  pin the #9951 command-decoding rule and escaped-literal controls.
 
 ## Implementation Mapping
 
