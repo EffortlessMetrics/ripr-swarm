@@ -1422,6 +1422,11 @@ pub(crate) fn helper_return_value(
                     .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
                     .any(|token| token == name)
             };
+            // A `;` makes it a discarded expression statement, not the
+            // value the helper yields; the binding tail below decides.
+            if raw_line.trim().ends_with(';') {
+                continue;
+            }
             if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
                 || helper.body.contains("r#")
                 || helper.body.contains("r\"")

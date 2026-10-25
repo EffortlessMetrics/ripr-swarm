@@ -686,6 +686,31 @@ mod tests {
     }
 
     #[test]
+    fn a_discarded_literal_statement_does_not_displace_a_binding_tail() {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {\n    match kind {\n        \"word\" => pick(kind),\n        _ => \"other\",\n    }\n}",
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                label.clone(),
+                match_fn(
+                    "pick",
+                    "fn pick(_k: &str) -> &'static str {\n    \"unused\";\n    let value = \"alpha\";\n    value\n}",
+                ),
+            ],
+            ..Default::default()
+        });
+        let eval = root_eval(&index);
+        let value = super::super::helper_transfer::helper_return_value(
+            &label,
+            &inputs(&[("kind", "\"word\"")]),
+            &eval,
+        );
+        assert!(value.is_some(), "the let-bound tail must still resolve");
+    }
+
+    #[test]
     fn raw_string_interiors_async_bodies_and_early_returns_are_not_literal_tails() {
         let label = match_fn(
             "label_of",

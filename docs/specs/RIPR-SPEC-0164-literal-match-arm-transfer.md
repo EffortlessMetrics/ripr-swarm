@@ -37,7 +37,9 @@ related test row pins the exact label per arm.
   parser, so an escape decodes the way the caller's argument does and
   a `|` inside a literal is part of the string. Every literal has the
   scrutinee's type; a literal of the other type refuses the whole
-  match, as it would not compile. Values are plain string literals or
+  match, as it would not compile. The shared char parser still rejects
+  an escaped char (`'\n'`), so an escaped char pattern or argument
+  refuses; escapes resolve for string literals only. Values are plain string literals or
   one nested direct call. A guard (`if`), a bare binding, a range, a
   path, or a value the shared authorities cannot evaluate refuses the
   whole match: an unresolved pattern could match anything and a
