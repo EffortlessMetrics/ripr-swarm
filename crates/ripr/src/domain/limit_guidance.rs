@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 30] = [
+    pub(crate) const ALL: [StaticLimitKind; 31] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -48,6 +48,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
+        StaticLimitKind::RustInherentReceiverUnestablished,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -179,6 +180,11 @@ impl StaticLimitKind {
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "Add a test that drives the iterator with one concrete input and asserts the \
                  changed arm's item directly, rather than only comparing the collected sequence."
+            }
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "Assert on the changed method's result with the standard `assert_eq!`, in a \
+                 test whose Cargo target ripr can place, so the assertion macro binding can be \
+                 verified."
             }
         }
     }
@@ -330,9 +336,10 @@ mod tests {
                 StaticLimitKind::RustImplicitCallUnresolved => 27,
                 StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
                 StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
+                StaticLimitKind::RustInherentReceiverUnestablished => 30,
             }
         }
-        const COUNT: usize = 30;
+        const COUNT: usize = 31;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

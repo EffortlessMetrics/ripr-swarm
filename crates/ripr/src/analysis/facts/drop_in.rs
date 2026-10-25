@@ -57,6 +57,12 @@ pub(crate) struct DropInManifests {
 }
 
 impl DropInManifests {
+    /// The workspace root the manifests are read under, `None` for an index
+    /// assembled without one.
+    pub(crate) fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
     pub(crate) fn new(root: &Path) -> Self {
         Self {
             root: Some(root.to_path_buf()),
