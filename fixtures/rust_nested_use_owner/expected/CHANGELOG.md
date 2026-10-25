@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (3)
+
+Reason:
+RIPR-SPEC-0197 #10047 compose accepted main next-step guidance (#9449)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
