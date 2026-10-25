@@ -785,7 +785,13 @@ pub(crate) fn is_item_header(text: &str) -> bool {
     // opening with `impl` that holds no body brace or `;` is the first line
     // of a rustfmt-wrapped header (`impl<T, const N: usize> Drop`) and also
     // declares only: its generic bounds are not fields or calls.
-    if word_after("impl") && !text.contains("fn ") {
+    // A const-generic block, a macro or an array-length call in the header
+    // (`impl Foo<[u8; width()]>`) is an expression that can call code, so it
+    // keeps its call probe exactly as for the other item headers below.
+    if word_after("impl")
+        && !text.contains("fn ")
+        && !generics_hold_expression(text.strip_prefix("impl").unwrap_or(text))
+    {
         return true;
     }
     // #9170: a `struct`/`enum`/`union`/`trait` header declares generic bounds
@@ -932,6 +938,9 @@ mod tests {
             "impl Tr for K where Self: Sized;",
             "impl_len += 1",
             "impl<T: Debug> Tr for K<T>; let x = 1",
+            "impl Foo<[u8; width()]>",
+            "impl Foo<{ width() }> for K",
+            "impl Foo<m!()> for K",
             "impl<const N: usize> K { Foo { a: 1 } }",
             "impl K { const A: u32 = 1; }",
             "impl K where Self: Sized { const A: u32 = 1; }",

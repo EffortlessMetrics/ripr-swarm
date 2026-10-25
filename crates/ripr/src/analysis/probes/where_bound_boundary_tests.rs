@@ -768,6 +768,16 @@ fn wrapped_impl_header_first_line_seeds_only_static_unknown() -> Result<(), Stri
             );
         }
     }
+    // A header whose generics hold an array-length call can run code: the
+    // wrapped first line keeps its call probe (Devin finding on #10265).
+    let result = added(
+        "const fn width() -> usize { 4 }\nstruct Foo<T>(T);\nimpl Foo<[u8; width()]>\n{\n}\n",
+        3,
+    )?;
+    assert!(
+        result.iter().any(|p| p.family == ProbeFamily::CallDeletion),
+        "const-call header lost its call probe: {result:?}"
+    );
     // A statement that merely starts with the letters `impl` keeps its probes.
     let result = added("fn impl_run(x: u32) {}\nfn f() {\n    impl_run(3);\n}\n", 3)?;
     assert!(
