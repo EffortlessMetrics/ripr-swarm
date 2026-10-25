@@ -1,0 +1,57 @@
+{
+  "subject_id": "authored-spec-b-layout",
+  "origin": "authored",
+  "version_label": "authored 2026-10-24 for the RIPR-SPEC-0153 and RIPR-SPEC-0169 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "af5ba523d586de4fd722efbade4ea644e2c1e7d9925cfd696b8d88360f653614"
+    },
+    {
+      "path": "src/contract_test.rs",
+      "sha256": "f3228d1168116d71782a66be3560c12a058072722f95e49293fa367c29922f67"
+    },
+    {
+      "path": "src/l_include.rs",
+      "sha256": "d6287a13ab553c9f2af9027b3cc4dec293148b4efc4703027fa2cfc9b542d35d"
+    },
+    {
+      "path": "src/l_include_fragment.rs",
+      "sha256": "9bcf8659cbcb5499588aabbacc34ade132bbe959970c7dd69c6cdbf07e0cb28f"
+    },
+    {
+      "path": "src/l_outline.rs",
+      "sha256": "38a7192d3cb109594278156103933cac45c029fe0c026c48ff296dcc8bf32ce4"
+    },
+    {
+      "path": "src/l_outline/tests.rs",
+      "sha256": "fab5270db34d509396f51787ced0878a4a57d37e3668a16fd1b4e53e654d64ae"
+    },
+    {
+      "path": "src/l_rawpath.rs",
+      "sha256": "fdd4409605ddf8842ca94b3ef681e19bcf1923b1aedff4e9d654c979a29ac603"
+    },
+    {
+      "path": "src/l_target.rs",
+      "sha256": "cbdad87279fc2d8d92a773040e9c98a107c54c1c0c27fe5751acfebecbcbfaef"
+    },
+    {
+      "path": "src/l_unconfirmed_test.rs",
+      "sha256": "e2596f06dae2847da440c86618230d053197453de26a7cc42340097ed374debc"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c33cf548af68355357f408a85d24bc7903df014730137fe432935801f5ebebae"
+    },
+    {
+      "path": "src/support/raw.rs",
+      "sha256": "3dc5524f3968bb1fca09e9fa687842c8176cc558a2a66f327951dcf06e57cc94"
+    },
+    {
+      "path": "src/test_named.rs",
+      "sha256": "77aab83d08142268c768a064faca5edc11e701088069f82b84b3e7139a528fca"
+    }
+  ]
+}

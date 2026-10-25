@@ -1,0 +1,10 @@
+//! Source-role layout cells (RIPR-SPEC-0153, RIPR-SPEC-0169): a test-only
+//! helper edit reaches ripr through a declared test target or a cfg(test)
+//! module edge, and must not seed a production probe.
+
+pub mod l_include;
+pub mod l_outline;
+pub mod l_rawpath;
+pub mod l_target;
+pub mod l_unconfirmed_test;
+pub mod test_named;

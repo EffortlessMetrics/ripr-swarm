@@ -389,6 +389,10 @@ case = "shop-discount-path-dependent-test"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec-b-0153-declared-test-target-helper"
+reason = "Truth is discriminated but the edit is a test-only helper, so ripr reads silent (no probe seeded), which RIPR-SPEC-0153/0169 require; silent counts as abstained, not a false verdict (#10126 review)."
+
+[[entry]]
 case = "spec-b-0158-dynamic-default"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -463,6 +467,18 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "spec-b-0165-non-unique-nested-callee"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "spec-b-0169-cfg-test-include-helper"
+reason = "Truth is discriminated but the edit is a test-only helper, so ripr reads silent (no probe seeded), which RIPR-SPEC-0153/0169 require; silent counts as abstained, not a false verdict (#10126 review)."
+
+[[entry]]
+case = "spec-b-0169-out-of-line-cfg-test-helper"
+reason = "Truth is discriminated but the edit is a test-only helper, so ripr reads silent (no probe seeded), which RIPR-SPEC-0153/0169 require; silent counts as abstained, not a false verdict (#10126 review)."
+
+[[entry]]
+case = "spec-b-0169-raw-path-cfg-test-helper"
+reason = "Truth is discriminated but the edit is a test-only helper, so ripr reads silent (no probe seeded), which RIPR-SPEC-0153/0169 require; silent counts as abstained, not a false verdict (#10126 review)."
 
 [[entry]]
 case = "spec0048-label-rendered-observed"

@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0153-test-prefixed-production-file",
+  "subject_id": "authored-spec-b-layout",
+  "diff": "cases/spec-b-0153-test-prefixed-production-file.diff",
+  "anchor": {
+    "file": "src/test_named.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "test_prefixed_file_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base + 12",
+        "mutated_line": "base + 12",
+        "outcome": "tests_failed",
+        "failing_test": "test_named::tests::the_named_shift_is_thirteen_l_named",
+        "equivalence_review": "not equivalent: test_named::tests::the_named_shift_is_thirteen_l_named fails on it"
+      },
+      {
+        "replacement": "base + 14",
+        "mutated_line": "base + 14",
+        "outcome": "tests_failed",
+        "failing_test": "test_named::tests::the_named_shift_is_thirteen_l_named",
+        "equivalence_review": "not equivalent: test_named::tests::the_named_shift_is_thirteen_l_named fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The file name starts with test_ but it holds production code, so the name alone does not exclude it and the edited line is a probe. Its own unit test pins shifted_named(1) == 14, so either neighbor fails. Spec cells: RIPR-SPEC-0153#9.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0153#9"
+  ]
+}

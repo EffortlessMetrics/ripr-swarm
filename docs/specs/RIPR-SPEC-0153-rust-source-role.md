@@ -383,25 +383,28 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 
 ## Acceptance Examples
 
-- Accept: `benches/exposure.rs` changed → indexed, counted as a changed
-  file, zero production findings.
-- Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
-  probes seeded and the editor pins them; a `build.rs` under
-  `build = false` or outside any package seeds nothing; `fixtures/**/build.rs`,
-  `metrics/**/source.after.rs`, and `benches/common/mod.rs` stay evidence.
-- Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
-  evidence; `src/unconfirmed_test.rs` without a declaration → production.
-- Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
-  file analyzed as production; `tests/other.rs` stays evidence.
-- Accept: a `custom_harness` registration on a declared
-  `harness = false` target (explicit custom path or name-only entry on
-  the conventional layout) → file-wide evidence role with adapter
-  subjects; the same registration against an undeclared or
-  `harness = true` target → typed limitation, no demotion, and a
-  production-classified target keeps seeding production seams while an
-  evidence-layout target keeps its evidence role (#3608).
-- Reject: a bench harness call (`criterion_main!`) becoming an
-  obligation; a `test_*.rs` name alone excluding a production file.
+1. Accept: `benches/exposure.rs` changed → indexed, counted as a changed
+   file, zero production findings.
+2. Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
+   probes seeded and the editor pins them.
+3. Accept: a `build.rs` under `build = false` or outside any package seeds
+   nothing; `fixtures/**/build.rs`, `metrics/**/source.after.rs`, and
+   `benches/common/mod.rs` stay evidence.
+4. Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
+   evidence.
+5. Accept: `src/unconfirmed_test.rs` without a declaration → production.
+6. Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
+   file analyzed as production; `tests/other.rs` stays evidence.
+7. Accept: a `custom_harness` registration on a declared
+   `harness = false` target (explicit custom path or name-only entry on
+   the conventional layout) → file-wide evidence role with adapter
+   subjects; the same registration against an undeclared or
+   `harness = true` target → typed limitation, no demotion, and a
+   production-classified target keeps seeding production seams while an
+   evidence-layout target keeps its evidence role (#3608).
+8. Reject: a bench harness call (`criterion_main!`) becoming an
+   obligation.
+9. Reject: a `test_*.rs` name alone excluding a production file.
 
 ## Test Mapping
 

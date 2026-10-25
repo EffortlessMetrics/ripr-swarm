@@ -1,0 +1,8 @@
+fn include_base() -> u32 {
+    6
+}
+
+#[test]
+fn the_include_shift_is_five_l_include() {
+    assert_eq!(shifted_include(include_base()), 11);
+}

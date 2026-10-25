@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0169-raw-path-cfg-test-helper",
+  "subject_id": "authored-spec-b-layout",
+  "diff": "cases/spec-b-0169-raw-path-cfg-test-helper.diff",
+  "anchor": {
+    "file": "src/support/raw.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "cfg_test_raw_path_helper_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "1",
+        "mutated_line": "1",
+        "outcome": "tests_failed",
+        "failing_test": "l_rawpath::raw::the_raw_shift_is_seven_l_rawpath",
+        "equivalence_review": "not equivalent: l_rawpath::raw::the_raw_shift_is_seven_l_rawpath fails on it"
+      },
+      {
+        "replacement": "3",
+        "mutated_line": "3",
+        "outcome": "tests_failed",
+        "failing_test": "l_rawpath::raw::the_raw_shift_is_seven_l_rawpath",
+        "equivalence_review": "not equivalent: l_rawpath::raw::the_raw_shift_is_seven_l_rawpath fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edited line is a helper in a module named through a raw r#path attribute under cfg(test), so it carries the same test-only role as a plain path attribute. The helper feeds an assert_eq! against 9, so either neighbor fails the test. Spec cells: RIPR-SPEC-0169#4.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0169#4"
+  ]
+}

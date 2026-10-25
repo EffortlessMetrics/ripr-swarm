@@ -768,9 +768,29 @@ id = "RIPR-SPEC-0150"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Rust producer-owned source role
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0153"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 1
+reason = "a bench edit is never run by cargo test, so its truth is not_discriminated, and the spec's required outcome (zero production findings) is silence, which the truth table scores as a false verdict for an undetected edit; the source_role unit tests pin the evidence role"
+
+[[spec.waived]]
+example = 3
+reason = "every required outcome is that nothing is seeded, which is silence on an edit no test can distinguish; a case cannot label silence as correct, and the source_role and cargo_targets unit tests pin the exclusions"
+
+[[spec.waived]]
+example = 6
+reason = "production_like_targets is ripr.toml configuration, and a corpus case is a Rust diff plus runtime mutant truth with no configuration channel; the source_role override tests pin it"
+
+[[spec.waived]]
+example = 7
+reason = "custom_harness registration is ripr.toml configuration, and a corpus case has no configuration channel; the cargo_targets tests pin the declared, undeclared and harness-enabled verdicts against real cargo metadata"
+
+[[spec.waived]]
+example = 8
+reason = "the required outcome is that a criterion_main! call produces no obligation, which is silence on a bench edit no test runs; a case cannot label silence as correct for a not_discriminated truth"
 
 # Assertion-form parity
 [[unmeasured]]
@@ -825,9 +845,21 @@ id = "RIPR-SPEC-0168"
 scope = "in"
 
 # Contextual source-role composition
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0169"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 3
+reason = "the example asserts which file a nested mod child resolves to; both resolutions compile only with extra files and the outcome is a role on a file the diff never edits, so the role_composition fixture families pin it"
+
+[[spec.waived]]
+example = 5
+reason = "the unreadable cfg_attr condition fails closed to a typed unknown, and the example's outcome is the absence of a resolved child, which a runtime mutant case cannot label"
+
+[[spec.waived]]
+example = 6
+reason = "the example is about resolution order across sibling files under tests/, which are evidence by layout either way; the role_composition tests pin the order independence"
 
 # path-dependency diff-scope expansion
 [[spec]]

@@ -1,0 +1,10 @@
+use specb_layout::l_target::shifted_target;
+
+fn target_base() -> u32 {
+    1
+}
+
+#[test]
+fn the_target_shift_is_nine_l_target() {
+    assert_eq!(shifted_target(target_base()), 10);
+}
