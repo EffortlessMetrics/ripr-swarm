@@ -529,5 +529,39 @@ pub(super) fn client_app_name(body_text: &str, receiver: &str) -> Option<String>
     None
 }
 
+/// The application name a client fixture builds its client over: every
+/// `return` / `yield` of the fixture body is a client construction over the
+/// same plain name, directly or through one bound name (`with TestClient(app)
+/// as c: yield c`). `None` when any exit is not, so a fixture whose client the
+/// adapter cannot read leaves the application unidentified.
+pub(super) fn fixture_client_app_name(fixture_body: &str) -> Option<String> {
+    let lines = logical_lines(fixture_body);
+    let mut found: Option<String> = None;
+    for line in &lines {
+        let line = line.trim();
+        let Some(value) = line
+            .strip_prefix("return ")
+            .or_else(|| line.strip_prefix("yield "))
+        else {
+            continue;
+        };
+        let value = value.trim();
+        let app = if let Some(arguments) = client_construction(value) {
+            application_argument(arguments)
+                .filter(|application| is_plain_name(application))
+                .map(str::to_string)
+        } else if is_plain_name(value) {
+            client_app_name(fixture_body, value)
+        } else {
+            None
+        }?;
+        match &found {
+            Some(existing) if *existing != app => return None,
+            _ => found = Some(app),
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests;

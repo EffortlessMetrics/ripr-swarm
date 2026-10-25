@@ -106,9 +106,13 @@ pub(super) fn static_limit_for_focused_change(
     // only a client call to a route observes; a test that calls the function
     // directly never sees it (#9756).
     if is_route_decorator_edit(trimmed)
-        && !related_candidates
-            .iter()
-            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+        && !related_candidates.iter().any(|candidate| {
+            matches!(
+                candidate.relation,
+                PythonRelationKind::ApiClientRouteCall
+                    | PythonRelationKind::ApiClientRouteUnidentifiedApp
+            )
+        })
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -116,6 +120,30 @@ pub(super) fn static_limit_for_focused_change(
             missing: format!(
                 "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
                 owner.qualified_name
+            ),
+        });
+    }
+    // A request client whose application the adapter cannot tie to the owner's
+    // route registration reaches the route without evidence that the owner's
+    // application serves it: the test may discriminate the change or may
+    // exercise another application, so neither a gap nor a credit is claimed
+    // (#10110).
+    if !related_candidates
+        .iter()
+        .any(|candidate| candidate.relation.uses_oracle())
+        && let Some(candidate) = related_candidates.iter().find(|candidate| {
+            candidate.relation == PythonRelationKind::ApiClientRouteUnidentifiedApp
+        })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: the request client in `{}` is not tied to the application `{}` is registered on",
+                candidate.test.qualified_name, owner.qualified_name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: related test `{}` calls the route of `{}` through a request client whose application the Python preview adapter does not resolve (a fixture it cannot read, a factory-built app, an app defined in the test or a router included elsewhere); it does not build an import graph through them. Build the client over the application the route is registered on, or inspect which application the test exercises.",
+                candidate.test.qualified_name, owner.qualified_name
             ),
         });
     }

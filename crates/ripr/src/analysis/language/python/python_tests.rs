@@ -524,7 +524,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -560,7 +564,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -603,7 +611,11 @@ def item(id):
     let tests = extract_tests(
         Path::new("tests/test_items.py"),
         r#"
-def test_item_response(client):
+from starlette.testclient import TestClient
+from app.items import api
+
+def test_item_response():
+    client = TestClient(api)
     response = client.get("/items/1")
     assert response.json()["ok"] == True
 "#,
@@ -688,7 +700,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -737,7 +753,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -4761,7 +4781,9 @@ fn route_relation_for(decorator: &str, call: &str) -> Result<bool, String> {
         .ok_or_else(|| "expected items owner".to_string())?;
     let tests = extract_tests(
         Path::new("tests/test_items.py"),
-        &format!("def test_items(client):\n    response = client.{call}\n    assert response\n"),
+        &format!(
+            "from starlette.testclient import TestClient\nfrom app.items import api\n\ndef test_items():\n    client = TestClient(api)\n    response = client.{call}\n    assert response\n"
+        ),
     );
     Ok(related_test_candidates(owner, &tests)
         .iter()
@@ -4849,7 +4871,7 @@ fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String
         .ok_or_else(|| "expected route owner".to_string())?;
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "from pkg.a import quote\n\ndef test_expired(client):\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
+        "from starlette.testclient import TestClient\nfrom app.checkout import api\nfrom pkg.a import quote\n\ndef test_expired():\n    client = TestClient(api)\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
     );
     let relation = related_test_candidates(owner, &tests)
         .first()
