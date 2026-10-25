@@ -405,9 +405,28 @@ mod tests {
         );
         assert!(!text.contains("directly or through a helper"), "{text}");
 
+        // The same rule holds for a related test with no call path and a
+        // retained static limitation instead of a stop reason.
         finding.stop_reasons = Vec::new();
+        finding.static_limit_kind = Some(StaticLimitKind::RustIntegrationPublicApiPathUnresolved);
+        finding.related_tests = vec![row(
+            "assert_eq!(outer(3, 3), 0)",
+            OracleStrength::Strong,
+            RelatedTestMiss::NoCallPath,
+        )];
+        let limited = render_verdict_explanation(&finding, None);
+        assert!(
+            limited.contains("directly if tests can name it"),
+            "{limited}"
+        );
+        assert!(
+            !limited.contains("directly or through a helper"),
+            "{limited}"
+        );
+
+        finding.static_limit_kind = None;
         let plain = render_verdict_explanation(&finding, None);
-        assert!(plain.contains("and assert on its result"), "{plain}");
+        assert!(plain.contains("directly or through a helper"), "{plain}");
         assert!(!plain.contains("if tests can name it"), "{plain}");
     }
 
