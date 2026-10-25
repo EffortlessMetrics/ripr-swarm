@@ -109,6 +109,7 @@ fn check_output(layout: Layout) -> Result<Value, String> {
         ));
     }
     let output = CheckOutput {
+        value_origins: Default::default(),
         schema_version: "0.2".to_string(),
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
