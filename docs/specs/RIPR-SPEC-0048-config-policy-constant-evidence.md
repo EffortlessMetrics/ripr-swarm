@@ -171,11 +171,36 @@ target is `opaque_config_lookup`.
 
 | Flow | Current state | Expansion rule |
 | --- | --- | --- |
+| same-file direct reader (#9871) | Selected before `opaque_config_lookup`. | May move out of `static_limitation` only for a changed `const`/`static` with exactly one same-file declaration, read by name by a production function in the same file whose returned or rendered value contains the constant, called by a related test. The state is `already_observed` only when that test compares the output to an expected value that is independent of the constant (a literal, not the constant or a value computed from it) and the comparison would fail for the changed value. It is `actionable` (`add_output_observer` or `add_behavior_discriminator`) only when the test reaches the reader and its assertion cannot distinguish the changed value (`is_ok`, non-empty, length, or a different field). Any other shape stays a named limitation. |
 | `opaque_config_lookup` | Selected next. | May move out of limitation only for a fixture-backed lookup shape that identifies the changed constant, the lookup owner, a supported output/schema/validation sink, and the observer or missing observer for that sink. |
 | generated config or schema output | Limitation. | Remains `macro_generated_config_output` or `config_policy_flow_unknown` until generated output has a fixture-backed source-to-render path and a stable observer shape. |
 | macro output | Limitation. | Remains `macro_generated_config_output` until macro expansion or a fixture-backed macro wrapper gives a stable constant owner and sink without reading generated prose as authority. |
 | dynamic dispatch or registry lookup | Limitation. | Remains `dynamic_config_dispatch` unless the dispatch target is statically resolved by a fixture-backed registry shape and the selected sink is supported. |
 | unsupported cross-file flow | Limitation. | Remains `config_policy_flow_unknown` unless the cross-file edge, sink owner, and observer candidate are fixture-backed and stable across file movement. |
+
+The same-file direct-reader row is selected first because the reach half
+already landed (#9990: tests that call a changed constant's reader are related,
+reach is `weak`, the class stays `static_unknown`). Before it may promote a
+verdict, the fixture and benchmark PR must add must-not-claim cases proving each
+of these stays a limitation or keeps its prior state:
+
+- the constant is read through a lookup, environment variable or map (the
+  `opaque_config_lookup` row);
+- the constant name is shadowed by a local, parameter or pattern binding in the
+  reader;
+- the constant is declared more than once in the file (associated consts per
+  impl, a local `const`);
+- the reader sits in another file or behind a `cfg` gate;
+- the test's expected value is the constant itself or computed from it
+  (self-computed oracle, RIPR-SPEC-0035);
+- the constant is only compared in a branch, which belongs to the predicate
+  boundary rules, not this row;
+- no production function reads the constant (unread constant keeps its
+  abstention).
+
+Each positive case needs a runtime mutant label, so the row can be measured in
+the verdict corpus (RIPR-SPEC-0219) and the Rust `missed_credit_ceiling` falls
+by exactly the rows that flip.
 
 The first implementation slice after this spec should target only the
 `opaque_config_lookup` row. Generated output, macro output, dynamic dispatch,
