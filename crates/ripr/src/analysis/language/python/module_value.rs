@@ -69,6 +69,9 @@ pub(super) struct ForeignWrites {
 
 /// Most distinct words retained in the workspace reference index.
 const MAX_WORKSPACE_WORDS: usize = 200_000;
+/// Sources parsed per parallel batch before the batch is folded, so a tripped
+/// [`MAX_WORKSPACE_WORDS`] cap stops parsing within one batch.
+const FOREIGN_PARSE_BATCH_FILES: usize = 256;
 
 /// Spellings that can hide an imported module's name from the word index.
 const DYNAMIC_LOADERS: [&str; 13] = [
@@ -125,52 +128,55 @@ impl<'a> ForeignIndex<'a> {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
         let mut hidden_import = false;
-        // Parsing each source dominates the index on large workspaces, so the
-        // parses run in parallel; the fold below stays sequential and in input
-        // order so word ownership and the word cap behave as before (#10441).
+        // Parsing each source dominates the index on large workspaces, so each
+        // batch is parsed in parallel and then folded sequentially in input
+        // order: word ownership and the word cap behave as before, and a
+        // tripped word cap stops parsing within one batch (#10441).
         let sources: Vec<(&'a Path, &'a str)> = sources.collect();
         let token = crate::analysis::cancellation::current_token();
-        let parsed: Vec<Option<Vec<String>>> = sources
-            .par_iter()
-            .map(|(_, source)| {
-                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                    assigned_attributes(source)
+        for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
+            let parsed: Vec<Option<Vec<String>>> = batch
+                .par_iter()
+                .map(|(_, source)| {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        assigned_attributes(source)
+                    })
                 })
-            })
-            .collect();
-        for ((file, source), assigned) in sources.into_iter().zip(parsed) {
-            hidden_import |= DYNAMIC_LOADERS
-                .iter()
-                .any(|loader| mentions_identifier(source, loader))
-                || source.contains("sys.modules")
-                || (file.file_name().is_some_and(|name| name == "__init__.py")
-                    && mentions_identifier(source, "__all__"));
-            for word in source_words(source) {
-                let first = references.entry(word).or_insert(Some(file));
-                if first.is_some_and(|first| first != file) {
-                    *first = None;
-                }
-                if references.len() > MAX_WORKSPACE_WORDS {
-                    return Self {
-                        files: Vec::new(),
-                        references: std::collections::BTreeMap::new(),
-                        hidden_import,
-                        unknown: true,
-                    };
-                }
-            }
-            #[cfg(test)]
-            FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-            let dynamic = assigned.is_none()
-                || DYNAMIC_WRITERS
+                .collect();
+            for (&(file, source), assigned) in batch.iter().zip(parsed) {
+                hidden_import |= DYNAMIC_LOADERS
                     .iter()
-                    .any(|writer| mentions_identifier(source, writer))
-                || source.contains("sys.modules");
-            files.push(IndexedSource {
-                file,
-                assigned,
-                dynamic_words: dynamic.then(|| source_words(source).collect()),
-            });
+                    .any(|loader| mentions_identifier(source, loader))
+                    || source.contains("sys.modules")
+                    || (file.file_name().is_some_and(|name| name == "__init__.py")
+                        && mentions_identifier(source, "__all__"));
+                for word in source_words(source) {
+                    let first = references.entry(word).or_insert(Some(file));
+                    if first.is_some_and(|first| first != file) {
+                        *first = None;
+                    }
+                    if references.len() > MAX_WORKSPACE_WORDS {
+                        return Self {
+                            files: Vec::new(),
+                            references: std::collections::BTreeMap::new(),
+                            hidden_import,
+                            unknown: true,
+                        };
+                    }
+                }
+                #[cfg(test)]
+                FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
+                let dynamic = assigned.is_none()
+                    || DYNAMIC_WRITERS
+                        .iter()
+                        .any(|writer| mentions_identifier(source, writer))
+                    || source.contains("sys.modules");
+                files.push(IndexedSource {
+                    file,
+                    assigned,
+                    dynamic_words: dynamic.then(|| source_words(source).collect()),
+                });
+            }
         }
         Self {
             files,
