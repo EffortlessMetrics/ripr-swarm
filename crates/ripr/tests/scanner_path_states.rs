@@ -31,10 +31,12 @@ impl Drop for Scratch {
 
 const MANIFEST: &str = "[package]\nname = \"scanner_path\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
 
-fn source(comparison: &str, tests: &str) -> String {
-    format!(
+fn source(comparison: &str, tests: &str, extra: &str) -> String {
+    let base = format!(
         "#[derive(Clone, Copy, PartialEq, Eq)]\npub enum Scan {{\n    Text,\n    Word,\n}}\n\npub fn scan_path(input: &str) -> Scan {{\n    let mut state = Scan::Text;\n    for symbol in input.chars() {{\n        state = match (state, symbol) {{\n            (Scan::Text, ' ') => Scan::Text,\n            (Scan::Text, _) => Scan::Word,\n            (Scan::Word, ' ') => Scan::Text,\n            (Scan::Word, _) => Scan::Word,\n        }};\n    }}\n    state\n}}\n\npub fn classify_path(input: &str) -> &'static str {{\n    let final_state = scan_path(input);\n    if final_state {comparison} {{\n        \"word\"\n    }} else {{\n        \"blank\"\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn classify_reads_the_last_state() {{\n{tests}\n    }}\n}}\n"
-    )
+    );
+    // Declarations go after the test module so the compared line stays put.
+    format!("{base}{extra}")
 }
 
 /// The compared line is always line 22; the diff changes `Scan::Word` to the
@@ -49,10 +51,16 @@ const BOTH_ROWS: &str = "        assert_eq!(classify_path(\"ab\"), \"word\");\n 
 const WORD_ROW_ONLY: &str = "        assert_eq!(classify_path(\"ab\"), \"word\");";
 
 fn predicate_finding(comparison: &str, tests: &str) -> Result<Value, String> {
-    let source = source(comparison, tests);
+    predicate_finding_with(comparison, tests, "")
+}
+
+/// `extra` declares items after the test module; the fixture must compile.
+fn predicate_finding_with(comparison: &str, tests: &str, extra: &str) -> Result<Value, String> {
+    let source = source(comparison, tests, extra);
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    assert_compiles(&scratch.0.join("src/lib.rs"), &scratch.0)?;
     let diff_file = scratch.0.join("change.diff");
     std::fs::write(&diff_file, diff(comparison)).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
@@ -74,6 +82,26 @@ fn predicate_finding(comparison: &str, tests: &str) -> Result<Value, String> {
         .ok_or_else(|| format!("no predicate finding: {json}"))
 }
 
+/// The fixture is real Rust: a control that does not compile proves nothing
+/// about how a declared path reads.
+fn assert_compiles(lib: &std::path::Path, out_dir: &std::path::Path) -> Result<(), String> {
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let output = std::process::Command::new(rustc)
+        .args(["--edition", "2021", "--crate-type", "lib", "--test"])
+        .arg("--out-dir")
+        .arg(out_dir)
+        .arg(lib)
+        .output()
+        .map_err(|error| format!("rustc did not run: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "the fixture must compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
 // Both states are pinned by a row, so the changed comparison is observed.
 #[test]
 fn variant_operand_beside_a_path_state_scanner_exposes() -> Result<(), String> {
@@ -91,20 +119,57 @@ fn variant_operand_does_not_credit_a_row_that_misses_the_changed_state() -> Resu
     Ok(())
 }
 
-// Control: a variant of another enum is not the scanner's state, even when its
-// last segment matches; the operand reads as its own full path and never equals
-// the scanner's token, so no equality is observed.
-#[test]
-fn variant_operand_of_another_enum_is_not_credited() -> Result<(), String> {
-    let finding = predicate_finding("== Other::Text", BOTH_ROWS)?;
-    assert_ne!(finding["classification"], "exposed", "{finding}");
-    Ok(())
-}
-
 // `!=` takes the same exact-operand path as `==`.
 #[test]
 fn variant_operand_under_not_equal_reads_the_same_way() -> Result<(), String> {
     let finding = predicate_finding("!= Scan::Text", BOTH_ROWS)?;
     assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// A declared enum of the same variant name. `PartialEq<Other>` makes the
+// comparison compile, so this is a real wrong-enum read, not an unresolved path.
+const OTHER_ENUM: &str = "pub enum Other {\n    Text,\n}\n\nimpl PartialEq<Other> for Scan {\n    fn eq(&self, _: &Other) -> bool {\n        false\n    }\n}\n";
+
+#[test]
+fn a_declared_enum_with_the_same_variant_name_is_not_credited() -> Result<(), String> {
+    let finding = predicate_finding_with("== Other::Text", BOTH_ROWS, OTHER_ENUM)?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// Aliases are not resolved (RIPR-SPEC-0163 has no enum-type semantics): the
+// operand keeps its written path, which is not the scanner's `Scan::Text`
+// token, so an alias is a missed credit and never an observed equality.
+#[test]
+fn an_alias_of_the_scanner_enum_keeps_its_written_path() -> Result<(), String> {
+    for (comparison, extra) in [
+        ("== S::Text", "use Scan as S;\n"),
+        ("== Alias::Text", "type Alias = Scan;\n"),
+    ] {
+        let finding = predicate_finding_with(comparison, BOTH_ROWS, extra)?;
+        eprintln!("ALIAS {comparison}: {}", finding["classification"]);
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{comparison}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+// A crate-rooted spelling and a bare constant are not the scanner's token.
+#[test]
+fn a_qualified_prefix_or_a_constant_is_not_a_scanner_state_operand() -> Result<(), String> {
+    for (comparison, extra) in [
+        ("== crate::Scan::Text", ""),
+        ("== TEXT_STATE", "const TEXT_STATE: Scan = Scan::Text;\n"),
+    ] {
+        let finding = predicate_finding_with(comparison, BOTH_ROWS, extra)?;
+        eprintln!("PREFIX {comparison}: {}", finding["classification"]);
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{comparison}: {finding}"
+        );
+    }
     Ok(())
 }
