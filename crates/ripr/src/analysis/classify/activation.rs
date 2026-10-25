@@ -4745,6 +4745,18 @@ fn strip_explicit_return(text: &str) -> (String, bool) {
 /// no turbofish: `x > 101` and `(a + 1) > 5` qualify; `f(a > 1)`,
 /// `v[a > 1]` and `x.parse::<i32>() > 5` do not.
 fn is_top_level_comparison(expression: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(expression);
+    let mut head = masked.trim_start();
+    for keyword in ["async", "move"] {
+        if let Some(rest) = head.strip_prefix(keyword)
+            && rest.starts_with(|ch: char| ch.is_whitespace() || ch == '|')
+        {
+            head = rest.trim_start();
+        }
+    }
+    if head.starts_with('|') {
+        return false;
+    }
     if expression.contains("::<") {
         return false;
     }
@@ -4801,6 +4813,7 @@ fn is_top_level_comparison(expression: &str) -> bool {
                     return false;
                 }
             }
+            '=' if depth == 0 && chars.get(index) == Some(&'>') => return false,
             '<' | '>' | '=' | '!' if depth == 0 => top_level += 1,
             '<' | '>' => return false,
             _ => {}
@@ -8094,6 +8107,30 @@ assert_eq!(input.amount, 100);"#
         // Lifetimes keep the plain scan.
         assert!(is_top_level_comparison("p(&'a x) > 1"));
         assert!(!is_top_level_comparison("f(&'a str, a > 1)"));
+    }
+
+    #[test]
+    fn top_level_comparison_declines_arm_and_closure_expressions() {
+        for expression in [
+            "None => 601,",
+            "|n| n > 101",
+            "move |n| n > 101",
+            "async |n| n > 101",
+            "async move |n| n > 101",
+            "move/* comment */|n| n > 101",
+            "async|n| n > 101",
+        ] {
+            assert!(!is_top_level_comparison(expression), "{expression}");
+        }
+        for expression in [
+            "x >= 101",
+            "x == 101",
+            "x != 101",
+            "(a | b) > 101",
+            r#"s == "=>""#,
+        ] {
+            assert!(is_top_level_comparison(expression), "{expression}");
+        }
     }
 
     /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call

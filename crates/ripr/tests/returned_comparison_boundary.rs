@@ -937,14 +937,41 @@ fn computed_associated_and_method_calls_do_not_name_the_free_owner() -> Result<(
 }
 
 #[test]
-fn a_comparison_nested_in_a_returned_match_keeps_its_return_reading() -> Result<(), String> {
-    let results = findings(
-        "    match x { value if value > 101 => true, _ => false }",
-        "    match x { value if value > 100 => true, _ => false }",
-        &format!("use thr::thr;\n{FAR_ONLY}"),
-    )?;
-    let owner = family(&results, "return_value")?;
-    assert_ne!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
-    assert_gap_named(&results, false)?;
+fn returned_matches_keep_their_existing_infection_reading() -> Result<(), String> {
+    for name in [
+        "field_match_macro_option_shadow",
+        "field_match_raw_option_shadow",
+        "field_match_unexecuted_assertion",
+        "human_full_shared_parse_port",
+    ] {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(name);
+        let output = check_workspace(CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })
+        .map_err(|error| format!("{name}: {error}"))?;
+        let returned = output
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.family.as_str() == "return_value")
+            .collect::<Vec<_>>();
+        assert!(
+            !returned.is_empty(),
+            "{name}: missing return-value subjects"
+        );
+        for owner in returned {
+            assert_ne!(
+                owner.class,
+                ExposureClass::InfectionUnknown,
+                "{name}: {owner:?}"
+            );
+        }
+    }
     Ok(())
 }
