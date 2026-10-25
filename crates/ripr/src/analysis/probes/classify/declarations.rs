@@ -177,7 +177,89 @@ pub(super) fn declaration_shape<'a>(
             });
         }
     }
+    if macro_struct_field_line(root.syntax(), &declaration) {
+        return Some(ParserProbeShape {
+            family: ProbeFamily::StaticUnknown,
+            start_line: line,
+            start_byte: declaration.start,
+            text,
+            standalone_call: false,
+            unsafe_boundary: false,
+        });
+    }
     None
+}
+
+/// A field line of a `struct` declared inside an item macro
+/// (`pin_project! { pub struct X { buffered: Option<u8>, } }`). The macro body
+/// is an opaque token tree, so no `RecordField` node exists; the line is a
+/// declaration when every token sits directly in a `{ .. }` tree whose
+/// preceding tokens in the same tree are a `struct` header (#10268). A
+/// construction (`Self { a: 1 }`) has no `struct` keyword before its brace,
+/// and a line holding a nested brace, a macro `!`, or an array-length call
+/// (`[u8; cap()]`) may run code, so none of them gain this authority.
+fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
+    let Some(first) = root
+        .token_at_offset((span.start as u32).into())
+        .right_biased()
+    else {
+        return false;
+    };
+    let Some(body) = first.parent().filter(is_brace_token_tree) else {
+        return false;
+    };
+    let in_span = |range: ra_ap_syntax::TextRange| {
+        (u32::from(range.start()) as usize) >= span.start
+            && (u32::from(range.end()) as usize) <= span.end
+    };
+    let mut array_semicolon = false;
+    let mut call_after_semicolon = false;
+    for token in body
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| in_span(token.text_range()))
+    {
+        match token.kind() {
+            SyntaxKind::BANG | SyntaxKind::L_CURLY => return false,
+            SyntaxKind::SEMICOLON => array_semicolon = true,
+            SyntaxKind::L_PAREN if array_semicolon => call_after_semicolon = true,
+            _ => {}
+        }
+    }
+    if call_after_semicolon {
+        return false;
+    }
+    let mut steps = 0usize;
+    let mut previous = body.prev_sibling_or_token();
+    while let Some(element) = previous {
+        steps += 1;
+        if steps > 64 {
+            return false;
+        }
+        match element.kind() {
+            SyntaxKind::STRUCT_KW => return true,
+            SyntaxKind::SEMICOLON
+            | SyntaxKind::EQ
+            | SyntaxKind::FN_KW
+            | SyntaxKind::IMPL_KW
+            | SyntaxKind::ENUM_KW
+            | SyntaxKind::TRAIT_KW
+            | SyntaxKind::FAT_ARROW => return false,
+            SyntaxKind::TOKEN_TREE if element.as_node().is_some_and(is_brace_token_tree) => {
+                return false;
+            }
+            _ => {}
+        }
+        previous = element.prev_sibling_or_token();
+    }
+    false
+}
+
+fn is_brace_token_tree(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::TOKEN_TREE
+        && node
+            .first_token()
+            .is_some_and(|token| token.kind() == SyntaxKind::L_CURLY)
 }
 
 fn supported_declaration(node: &SyntaxNode) -> bool {
@@ -314,6 +396,35 @@ mod tests {
             item_scopes: facts.item_scopes,
             macro_candidates: facts.macro_candidates,
         })
+    }
+
+    #[test]
+    fn macro_wrapped_struct_field_is_a_declaration_but_a_construction_is_not() -> Result<(), String>
+    {
+        let source = "pin_project! {\n    pub struct Task<B> {\n        #[pin]\n        rx: Rx<B>,\n        buffered: Option<Cursor<Box<[u8]>>>,\n    }\n}\nfn make() {\n    wrap! {\n        Task {\n            buffered: None,\n        }\n    }\n}\n";
+        let facts = declaration_facts(source)?;
+        for (line, text) in [
+            (4, "rx: Rx<B>,"),
+            (5, "buffered: Option<Cursor<Box<[u8]>>>,"),
+        ] {
+            let shape = declaration_shape(&facts, line, text)
+                .ok_or_else(|| format!("macro struct field not a declaration: {text}"))?;
+            assert_eq!(shape.family, ProbeFamily::StaticUnknown);
+            assert_eq!(shape.start_line, line);
+        }
+        assert!(
+            declaration_shape(&facts, 11, "buffered: None,").is_none(),
+            "a construction inside a macro keeps its probe"
+        );
+        for body in ["buf: [u8; cap()],", "inner: Wrap!(u8),"] {
+            let source = format!("m! {{\n    struct S {{\n        {body}\n    }}\n}}\n");
+            let facts = declaration_facts(&source)?;
+            assert!(
+                declaration_shape(&facts, 3, body).is_none(),
+                "expression-bearing field keeps its probe: {body}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

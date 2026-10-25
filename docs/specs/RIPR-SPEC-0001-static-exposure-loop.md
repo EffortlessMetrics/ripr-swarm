@@ -113,6 +113,12 @@ harness registrations; external parent edges, configuration and Cargo manifests
 are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
+A field line of a `struct` declared inside an item macro (`pin_project! { pub
+struct X { buffered: Option<u8>, } }`) is also a declaration (#10268): its body
+is an opaque token tree, so the line counts when every token sits directly in a
+`{ .. }` tree preceded, in the same tree, by a `struct` header. A construction
+(`Task { buffered: None }`), a nested brace, a macro `!` or an array-length call
+(`[u8; cap()]`) keeps its `field_construction` probe.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated

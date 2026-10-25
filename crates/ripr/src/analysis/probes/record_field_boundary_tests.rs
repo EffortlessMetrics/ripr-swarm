@@ -582,3 +582,21 @@ fn enum_variant_construction_still_seeds_field_construction() -> Result<(), Stri
     );
     Ok(())
 }
+
+#[test]
+fn item_macro_struct_field_is_unknown_but_an_initializer_keeps_its_probe() -> Result<(), String> {
+    // #10268: `pin_project!` bodies are opaque token trees, not `RecordField`s.
+    let source = "pin_project! {\n    pub struct Task<B> {\n        #[pin]\n        rx: Rx<B>,\n        buffered: Option<Cursor<Box<[u8]>>>,\n    }\n}\nfn make() -> Task {\n    Task {\n        buffered: None,\n    }\n}\n";
+    let probes = probes_at(source, 5)?;
+    assert_eq!(probes.len(), 1, "declaration must stay visible: {probes:?}");
+    assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+    assert_eq!(probes[0].location.line, 5);
+    let probes = probes_at(source, 10)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "an initializer must keep field_construction: {probes:?}"
+    );
+    Ok(())
+}
