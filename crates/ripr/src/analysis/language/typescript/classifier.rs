@@ -5756,17 +5756,35 @@ pub(crate) fn ts_observes_decorated_method_call(
     // A method replaced on the instance or prototype (`l.add = () => 99`,
     // `spyOn(l, "add")`, `defineProperty(l, "add", ...)`) bypasses the
     // decorator wrapper, so no assertion in this test sees it.
+    let normalized = normalize_member_access(test_body);
+    let test_body = normalized.as_str();
     let member = format!(".{method}");
+    // Any use of the member other than a direct call (`l.add(...)`) is
+    // refused: an assignment, destructuring target, `[l.add] = ...` or a
+    // method passed as a value can all swap the wrapper out.
     let replaced = test_body.match_indices(&member).any(|(at, _)| {
-        let after = test_body[at + member.len()..].trim_start();
-        after.starts_with('=') && !after.starts_with("==")
+        let after = &test_body[at + member.len()..];
+        match after.chars().next() {
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' => false,
+            Some('(') => false,
+            _ => true,
+        }
     }) || [
-        format!("\"{method}\""),
-        format!("'{method}'"),
-        format!("`{method}`"),
+        "] =",
+        "Object.assign(",
+        "Object.setPrototypeOf(",
+        "Reflect.set(",
+        "__proto__",
     ]
     .iter()
-    .any(|quoted| test_body.contains(quoted.as_str()));
+    .any(|marker| test_body.contains(marker))
+        || [
+            format!("\"{method}\""),
+            format!("'{method}'"),
+            format!("`{method}`"),
+        ]
+        .iter()
+        .any(|quoted| test_body.contains(quoted.as_str()));
     if replaced {
         return false;
     }
@@ -5828,6 +5846,51 @@ pub(crate) fn ts_observes_decorated_method_call(
         })
         .count();
     test_body.contains(&declaration) && declarations == 1 && assignments == 1
+}
+
+/// `body` without comments and without whitespace around `.` (`l . add`,
+/// `l./* c */add`), so member names can be matched as contiguous text.
+fn normalize_member_access(body: &str) -> String {
+    let mut stripped = String::with_capacity(body.len());
+    let mut chars = body.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (ch, chars.peek()) {
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = ' ';
+                for next in chars.by_ref() {
+                    if prev == '*' && next == '/' {
+                        break;
+                    }
+                    prev = next;
+                }
+                stripped.push(' ');
+            }
+            ('/', Some('/')) => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        break;
+                    }
+                }
+                stripped.push('\n');
+            }
+            _ => stripped.push(ch),
+        }
+    }
+    let mut out = String::with_capacity(stripped.len());
+    let mut pending_space = false;
+    for ch in stripped.chars() {
+        if ch.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && ch != '.' && !out.ends_with('.') {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(ch);
+    }
+    out
 }
 
 /// Byte index of the `)` matching the `(` at `open`, or `None`.

@@ -150,6 +150,15 @@ fn decorated_call_refuses_a_method_replaced_in_the_test() {
         "const l = new Ledger();\n  l.add = () => 99;",
         "const l = new Ledger();\n  Ledger.prototype.add = () => 99;",
         "const l = new Ledger();\n  jest.spyOn(l, \"add\").mockReturnValue(99);",
+        "const l = new Ledger();\n  l. add = () => 99;",
+        "const l = new Ledger();\n  l\n    .add = () => 99;",
+        "const l = new Ledger();\n  l./* swap */add = () => 99;",
+        "const l = new Ledger();\n  l['add'] = () => 99;",
+        "const l = new Ledger();\n  l[name] = () => 99;",
+        "const l = new Ledger();\n  [l.add] = [() => 99];",
+        "const l = new Ledger();\n  ({ add: l.add } = { add: () => 99 });",
+        "const l = new Ledger();\n  run(l.add);",
+        "const l = new Ledger();\n  Object.assign(l, { add: () => 99 });",
         "const l = new Ledger();\n  Object.defineProperty(l, 'add', { value: () => 99 });",
     ] {
         assert!(!observes("l.add(2, 3)", body, "Ledger", "add"), "{body}");
