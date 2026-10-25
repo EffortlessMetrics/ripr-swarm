@@ -346,11 +346,20 @@ pub(crate) fn ts_changed_value_is_observed(
                         .module_entries
                         .iter()
                         .filter_map(|entry| entry.decorated.as_ref().map(|d| (entry, d)))
-                        .any(|(entry, decorated)| {
+                        .any(|(entry, _)| {
+                            // The names this test constructs the class under:
+                            // its own name, a named-import alias, or a default
+                            // import's local name, minus any rebinding.
+                            let constructors = constructor_names_for_method_owner(
+                                candidate.test,
+                                &module_entry_owner(owner, entry),
+                                alias_map,
+                                workspace_root,
+                            );
                             ts_observes_decorated_method_call(
                                 &observed_code,
                                 &candidate.test.body_text,
-                                &decorated.class_name,
+                                &constructors,
                                 &entry.name,
                             )
                         })
@@ -5749,9 +5758,15 @@ pub(crate) fn owner_line_context<'a>(
 pub(crate) fn ts_observes_decorated_method_call(
     observed: &str,
     test_body: &str,
-    class: &str,
+    constructors: &[String],
     method: &str,
 ) -> bool {
+    constructors
+        .iter()
+        .any(|class| observes_constructed_call(observed, test_body, class, method))
+}
+
+fn observes_constructed_call(observed: &str, test_body: &str, class: &str, method: &str) -> bool {
     let construct = format!("new {class}(");
     // A method replaced on the instance or prototype (`l.add = () => 99`,
     // `spyOn(l, "add")`, `defineProperty(l, "add", ...)`) bypasses the

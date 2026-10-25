@@ -1460,6 +1460,7 @@ pub(crate) fn module_entry_owner(
             name: entry.name.clone(),
             owner_kind: OwnerKind::Method,
             class_name: Some(decorated.class_name.clone()),
+            class_default_export: decorated.default_export,
             exported_as_default: false,
             default_object_member: false,
             method_kind: TypeScriptMethodKind::Ordinary,

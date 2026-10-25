@@ -1057,7 +1057,8 @@ or `static_unknown`, never `exposed`):
    conditional expression, or a second call keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
-   in a class whose methods the owner relation can name. A decorator
+   in a class whose methods the owner relation can name, including
+   `export default class Name` (#10314). A decorator
    factory (`@D(3)`), a stacked decorator, a class, property, accessor or
    parameter decorator, a static method, and a decorator that also assigns
    `descriptor.get`, `descriptor.set` or `descriptor.writable` keep the old
@@ -1070,7 +1071,10 @@ or `static_unknown`, never `exposed`):
    result, so the same exactness rules as a direct return-value owner apply.
    The asserted call must be on a receiver of the decorated class
    (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
-   in the test): an assertion on another class's same-named method sees
+   in the test), spelled with any constructor name the test legitimately
+   has for it: the class name in the same file, a named-import alias
+   (`import { Ledger as Book }`), or a default import's local name; a name
+   the test body or an enclosing scope rebinds constructs something else: an assertion on another class's same-named method sees
    nothing of the decorator; a callback parameter that reuses the receiver's
    name (`(l: Other) => ...`, `l => ...`) is a different binding and refuses.
    On the return line only decorated-method tests lend reach: an ordinary

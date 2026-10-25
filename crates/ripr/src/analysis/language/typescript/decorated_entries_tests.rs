@@ -17,6 +17,15 @@ export class Ledger {
 }
 "#;
 
+fn observes(observed: &str, body: &str, class: &str, method: &str) -> bool {
+    super::super::classifier::ts_observes_decorated_method_call(
+        observed,
+        body,
+        &[class.to_string()],
+        method,
+    )
+}
+
 fn decorator_entries(source: &str) -> Vec<TypeScriptModuleEntry> {
     extract_owners(Path::new("src/audited.ts"), source)
         .into_iter()
@@ -43,6 +52,7 @@ fn pass_through_decorator_records_its_decorated_method_and_return_lines() {
         entries[0].decorated,
         Some(TypeScriptDecoratedMethod {
             class_name: "Ledger".to_string(),
+            default_export: false,
             return_start_line: 6,
             return_end_line: 6,
         })
@@ -132,7 +142,6 @@ fn a_decorator_with_two_declarations_or_no_application_records_no_entry() {
 
 #[test]
 fn decorated_call_must_be_on_a_receiver_of_the_decorated_class() {
-    use super::super::classifier::ts_observes_decorated_method_call as observes;
     let body = "const l = new Ledger();\n  l.add(1, 1);";
     assert!(observes("new Ledger().add(2, 3)", "", "Ledger", "add"));
     assert!(observes("new Ledger(5).add(2, 3)", "", "Ledger", "add"));
@@ -145,7 +154,6 @@ fn decorated_call_must_be_on_a_receiver_of_the_decorated_class() {
 
 #[test]
 fn decorated_call_refuses_a_method_replaced_in_the_test() {
-    use super::super::classifier::ts_observes_decorated_method_call as observes;
     for body in [
         "const l = new Ledger();\n  l.add = () => 99;",
         "const l = new Ledger();\n  Ledger.prototype.add = () => 99;",
@@ -222,7 +230,6 @@ fn returned_value_must_be_the_originals_result_combined_only_by_add_or_subtract(
 
 #[test]
 fn decorated_call_must_be_the_whole_asserted_value_on_a_single_bound_receiver() {
-    use super::super::classifier::ts_observes_decorated_method_call as observes;
     let body = "const l = new Ledger();";
     assert!(observes("l.add(2, 3)", body, "Ledger", "add"));
     assert!(observes("(l.add(2, 3))", body, "Ledger", "add"));
@@ -291,7 +298,6 @@ fn instance_field_or_constructor_assignment_hides_the_decorated_method() {
 
 #[test]
 fn typed_or_arrow_parameter_shadowing_the_receiver_is_refused() {
-    use super::super::classifier::ts_observes_decorated_method_call as observes;
     for body in [
         "const l = new Ledger(); [new Other()].forEach((l: Other) => expect(l.add(2, 3)).toBe(99));",
         "const l = new Ledger(); xs.forEach((a, l: Other) => expect(l.add(2, 3)).toBe(99));",

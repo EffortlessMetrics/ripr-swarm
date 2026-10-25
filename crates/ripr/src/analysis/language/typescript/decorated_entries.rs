@@ -101,16 +101,19 @@ pub(crate) fn assign_decorated_entries(
         };
         let mut entries: Vec<TypeScriptModuleEntry> = methods
             .iter()
-            .map(|(class_name, method)| TypeScriptModuleEntry {
-                name: method.clone(),
-                exported_as_default: false,
-                class_member: None,
-                decorated: Some(TypeScriptDecoratedMethod {
-                    class_name: class_name.clone(),
-                    return_start_line,
-                    return_end_line,
-                }),
-            })
+            .map(
+                |(class_name, default_export, method)| TypeScriptModuleEntry {
+                    name: method.clone(),
+                    exported_as_default: false,
+                    class_member: None,
+                    decorated: Some(TypeScriptDecoratedMethod {
+                        class_name: class_name.clone(),
+                        default_export: *default_export,
+                        return_start_line,
+                        return_end_line,
+                    }),
+                },
+            )
             .collect();
         entries.sort();
         entries.dedup();
@@ -119,14 +122,15 @@ pub(crate) fn assign_decorated_entries(
     }
 }
 
-/// `decorator name -> [(class, method)]` for every qualifying bare `@name`
-/// application in the program's top-level classes.
+/// `decorator name -> [(class, class is the default export, method)]` for
+/// every qualifying bare `@name` application in the program's top-level
+/// classes, including `export default class Name`.
 fn decorator_applications(
     program: &oxc_ast::ast::Program<'_>,
     source: &SourceText<'_>,
-) -> BTreeMap<String, Vec<(String, String)>> {
-    let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    let mut visit = |class: &Class<'_>| {
+) -> BTreeMap<String, Vec<(String, bool, String)>> {
+    let mut out: BTreeMap<String, Vec<(String, bool, String)>> = BTreeMap::new();
+    let mut visit = |class: &Class<'_>, default_export: bool| {
         let Some(class_name) = class.id.as_ref().map(|id| id.name.as_str().to_string()) else {
             return;
         };
@@ -187,16 +191,21 @@ fn decorator_applications(
             if let Expression::Identifier(decorator) = &method.decorators[0].expression {
                 out.entry(decorator.name.as_str().to_string())
                     .or_default()
-                    .push((class_name.clone(), method_name));
+                    .push((class_name.clone(), default_export, method_name));
             }
         }
     };
     for statement in &program.body {
         match statement {
-            Statement::ClassDeclaration(class) => visit(class),
+            Statement::ClassDeclaration(class) => visit(class, false),
             Statement::ExportNamedDeclaration(export) => {
                 if let Some(Declaration::ClassDeclaration(class)) = export.declaration.as_ref() {
-                    visit(class);
+                    visit(class, false);
+                }
+            }
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
+                    visit(class, true);
                 }
             }
             _ => {}
