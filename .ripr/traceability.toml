@@ -18900,7 +18900,9 @@ tests = [
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::package_without_an_indexed_crate_root_gives_no_evidence",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh",
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::stray_shape_excludes_target_directories_and_root_files",
-  "crates/ripr/src/analysis/facts/stray_files.rs::tests::referenced_names_cover_paths_manifests_and_includes",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::referenced_names_match_inside_any_literal_or_path",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::rs_literals_with_escapes_are_doubt",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::inline_module_path_with_punctuation_or_escape_keeps_the_file",
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::declared_modules_ignore_longer_identifiers",
 ]
 fixtures = []
