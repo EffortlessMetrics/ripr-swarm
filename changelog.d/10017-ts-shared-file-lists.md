@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Fixed TypeScript test files with thousands of tests costing time and memory quadratic in the file's size. Every test copied each file-wide list (imports, mocks, rewritten names, scope bindings) and rebuilt the registration scope, so a 256 KiB generated test file took 23.6 s; tests of one scope now share one list and the scope is indexed once, and the same file takes 0.8 s with byte-identical output (#10017).
