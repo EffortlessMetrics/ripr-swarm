@@ -28,7 +28,7 @@
 # Lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 152
+floor = 153
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
@@ -45,7 +45,7 @@ missed_credit_ceiling = 23
 [grid]
 cell_floor = 21
 trap_floor = 13
-false_credit_ceiling = 2
+false_credit_ceiling = 0
 
 # LSP Repair Packet Command
 [[spec]]
