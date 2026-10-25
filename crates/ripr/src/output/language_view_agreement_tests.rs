@@ -262,6 +262,7 @@ pub(crate) fn check_output(
     outcome: AnalysisOutcome,
 ) -> CheckOutput {
     CheckOutput {
+        value_origins: Default::default(),
         harness_projections: Vec::new(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
