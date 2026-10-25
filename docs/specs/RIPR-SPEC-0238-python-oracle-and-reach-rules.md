@@ -1363,7 +1363,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
   hit at the boundary value credited, a parametrize row at `threshold - 1`
   credited, and inputs that miss the boundary value scored as gaps),
   `py-fixtures-report-file`, `py-unittest-transfer-notify` and
-  `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
+  `py-unittest-deposit-add` (rule 17; the `py-channels-*` cases add exact `capfd` and
+  local-after-owner `readouterr()` output, a file read back through the
+  written parameter, and an arithmetic-wrapped mock argument credited, and a
+  `capsys` read before the owner, stderr read as stdout, the other
+  parameter's file, `assert_called_with`, `assert_any_call`, an argument-free
+  or `ANY` mock assertion and an `abs(n)` rewrite scored as gaps), `py-pytest-tax-self-computed`
   (rule 18), and `py-hypothesis-passing-threshold` and
   `py-hypothesis-label-no-crash` (rule 19).
 - Planned: one `classify_change_with_old` test per acceptance example,
