@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The evidence-promotion honesty corpus loads `fixtures/evidence-promotion-honesty-corpus/cases/*.json` (one case object per file) after the `corpus.json` cases, so a PR adds its case as a file of its own instead of appending to the shared `cases` tail that every corpus PR edited and conflicted on. A case file without an `id` or repeating an existing `id` fails the load; the three newest cases moved to files. (#9859)

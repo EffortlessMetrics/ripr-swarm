@@ -1,0 +1,62 @@
+{
+  "case_id": "loop-accumulator-subtract-pin",
+  "subject_id": "authored-loop-accumulator",
+  "diff": "cases/loop-accumulator-subtract-pin.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "exact_pin_nonzero_total",
+  "hard_case": "A zero-initialized local that the owner returns, updated once per element; the pin walks [2, 3] and pins -5.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "net += d;",
+        "mutated_line": "net += d;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::two_and_three_net_minus_five",
+        "equivalence_review": "not equivalent: two_and_three_net_minus_five fails on it"
+      },
+      {
+        "replacement": "net *= d;",
+        "mutated_line": "net *= d;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::two_and_three_net_minus_five",
+        "equivalence_review": "not equivalent: two_and_three_net_minus_five fails on it"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::two_and_three_net_minus_five",
+        "equivalence_review": "not equivalent: two_and_three_net_minus_five fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The pin walks a non-empty literal and pins a nonzero total from a zero start, so each mutant of the update (opposite sign, product, deleted statement) returns a different value and fails it.",
+  "labeling_observation": {
+    "ripr_commit": "cf8be83",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#1"
+  ]
+}

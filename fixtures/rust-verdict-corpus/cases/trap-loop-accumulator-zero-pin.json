@@ -1,0 +1,61 @@
+{
+  "case_id": "trap-loop-accumulator-zero-pin",
+  "subject_id": "authored-trap-loop-accumulator",
+  "diff": "cases/trap-loop-accumulator-zero-pin.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "exact_pin_on_zero_total",
+  "hard_case": "The pin walks two elements but both are zero and the total is zero, so adding, subtracting, multiplying and deleting the update all return 0.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "sum -= w;",
+        "mutated_line": "sum -= w;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: zero_total(&[1]) becomes a different value, but the test passes only zeros"
+      },
+      {
+        "replacement": "sum *= w;",
+        "mutated_line": "sum *= w;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: zero_total(&[1]) stays 0 only because the sum starts at zero, and the test passes only zeros"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: zero_total(&[1]) becomes 0 instead of 1, but the test passes only zeros"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "zeros_add_up_to_zero reaches the update twice, yet every operand and the total are zero, so all three mutants pass. The pinned value must be nonzero to separate the update from its neighbours.",
+  "labeling_observation": {
+    "ripr_commit": "cf8be83",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#2"
+  ]
+}

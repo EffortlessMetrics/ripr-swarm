@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- A new spec, proposal or plan registers in `policy/doc-artifacts.d/<id>.toml` instead of a `[[artifact]]` appended to `policy/doc-artifacts.toml`, which 17 of 613 recent PRs edited at the same tail. Fragments are read in file-name order after the main ledger; only an absent directory is optional, a non-`.toml` file, an empty fragment or a `schema_version` in a fragment fails, and violations name the fragment file and line. The newest two entries moved to fragments. (#9859)

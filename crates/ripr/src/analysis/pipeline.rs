@@ -1662,7 +1662,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     if !own_artifact_files.is_empty() {
         eprintln!(
             "{}",
-            ripr_artifact_disclosure(&artifact_roots, &own_artifact_files)
+            ripr_artifact_disclosure(&options.root, &artifact_roots, &own_artifact_files)
         );
     }
 
@@ -2551,6 +2551,7 @@ fn bounded_path_listing(paths: &[String]) -> String {
 /// Python repo whose template `.gitignore` does not cover Rust-conventional
 /// `target/`.
 fn ripr_artifact_disclosure(
+    workspace_root: &std::path::Path,
     artifact_roots: &[PathBuf],
     own_artifact_files: &[diff::ChangedFile],
 ) -> String {
@@ -2586,9 +2587,19 @@ fn ripr_artifact_disclosure(
     } else {
         &matched_roots
     };
+    // A Cargo project's repair preflight needs the whole build directory
+    // `target/` ignored (a child-only rule is insufficient), so the default
+    // `target/ripr` root is advised as `/target/` there (#9006).
+    let cargo_project = workspace_root.join("Cargo.toml").is_file();
     let entries = advice_roots
         .iter()
-        .map(|root| diff::artifact_root_gitignore_entry(root))
+        .map(|root| {
+            if cargo_project && diff::artifact_root_pathspec(root) == "target/ripr" {
+                "/target/".to_string()
+            } else {
+                diff::artifact_root_gitignore_entry(root)
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -3221,7 +3232,11 @@ mod tests {
     fn ripr_artifact_disclosure_escapes_gitignore_metacharacters() {
         let files = [changed_file("build/cache*/nested/a.json")];
         let roots = vec![PathBuf::from("build/cache*")];
-        let message = ripr_artifact_disclosure(&roots, &files);
+        let message = ripr_artifact_disclosure(
+            std::path::Path::new("no-such-workspace-root"),
+            &roots,
+            &files,
+        );
         assert!(message.contains(r"Add /build/cache\*/ to"), "{message}");
     }
 
@@ -3465,7 +3480,11 @@ mod tests {
             changed_file("target/ripr/pilot/pilot-summary.md"),
             changed_file("target/ripr/cache/repo-seam-facts/1.61/abc.json"),
         ];
-        let message = ripr_artifact_disclosure(&[PathBuf::from("target").join("ripr")], &files);
+        let message = ripr_artifact_disclosure(
+            std::path::Path::new("no-such-workspace-root"),
+            &[PathBuf::from("target").join("ripr")],
+            &files,
+        );
         assert!(message.contains("2 ripr artifact file(s)"), "{message}");
         assert!(
             message.contains("target/ripr/pilot/pilot-summary.md"),
@@ -3475,13 +3494,39 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_disclosure_advises_the_whole_target_dir_for_a_cargo_project()
+    -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-disclosure-cargo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
+        let files = [changed_file("target/ripr/pilot/pilot-summary.md")];
+        let roots = [PathBuf::from("target").join("ripr")];
+        let cargo = ripr_artifact_disclosure(&dir, &roots, &files);
+        assert!(cargo.contains("Add /target/ to"), "{cargo}");
+        assert!(!cargo.contains("/target/ripr/ to"), "{cargo}");
+        // Without a Cargo.toml the literal root is still advised.
+        let plain = dir.join("plain");
+        std::fs::create_dir_all(&plain).map_err(|error| error.to_string())?;
+        let other = ripr_artifact_disclosure(&plain, &roots, &files);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(other.contains("Add /target/ripr/ to"), "{other}");
+        Ok(())
+    }
+
+    #[test]
     fn ripr_artifact_disclosure_advice_follows_relocated_roots() {
         // PR #8901 review (devin #7): when the intake excluded a relocated
         // cache, the recovery must name the relocated layer entries, not the
         // stale `/target/ripr/` rule that covers none of them.
         let files = [changed_file(".ripr-cache/repo-seam-facts/1.61/abc.json")];
         let roots = vec![PathBuf::from(".ripr-cache").join("repo-seam-facts")];
-        let message = ripr_artifact_disclosure(&roots, &files);
+        let message = ripr_artifact_disclosure(
+            std::path::Path::new("no-such-workspace-root"),
+            &roots,
+            &files,
+        );
         assert!(
             message.contains("/.ripr-cache/repo-seam-facts/"),
             "{message}"

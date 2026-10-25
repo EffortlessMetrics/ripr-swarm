@@ -373,6 +373,15 @@ reason = "Traceability metadata."
 covered_by = ["cargo xtask check-traceability"]
 
 [[allow]]
+glob = ".ripr/traceability.d/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR traceability fragments folded into .ripr/traceability.toml so parallel PRs do not append to the same arrays."
+covered_by = ["cargo xtask check-traceability"]
+
+[[allow]]
 glob = ".ripr/*.txt"
 kind = "policy_metadata"
 owner = "repo-policy"
@@ -996,3 +1005,12 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Stub quality corpus crates are analyzed inputs for judging suggested tests (#8361)."
 covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/doc-artifacts.d/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR document-artifact fragments merged into policy/doc-artifacts.toml so parallel spec PRs do not append to the same ledger tail."
+covered_by = ["cargo xtask check-doc-artifacts"]

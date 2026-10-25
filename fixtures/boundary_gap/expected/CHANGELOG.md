@@ -1160,6 +1160,13 @@ The same snapshots follow corpus cache generation 1.102 to 1.103 for
 (RIPR-SPEC-0117 example 9, #6925), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Exported macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.104 to 1.105 for
+`#[macro_export]` test generators named by `use crate::name;`
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
@@ -1231,3 +1238,15 @@ The same snapshots follow corpus cache generation 1.101 to 1.102 for the
 rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
 generation, content commitment, dependent verify commitments and receipt byte
 hashes only.
+
+### loop accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.103 to 1.104 for the
+returned loop-accumulator update (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### table-driven loop-accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.105 to 1.106 for the
+table-driven loop-accumulator pin (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.

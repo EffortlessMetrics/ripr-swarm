@@ -1,0 +1,11 @@
+diff --git a/shop/fees.py b/shop/fees.py
+--- a/shop/fees.py
++++ b/shop/fees.py
+@@ -11,6 +11,6 @@
+ 
+ 
+ def delta_fee(x):
+-    return x * 3
++    return x * 3 + 0.5
+ 
+ 

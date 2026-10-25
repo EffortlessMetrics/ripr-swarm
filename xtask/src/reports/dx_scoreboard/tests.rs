@@ -1847,6 +1847,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3185,6 +3186,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -4508,5 +4510,205 @@ fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
         "unknown_verdicts not listed for review: {}",
         regressed["gate"]["review"]
     );
+    Ok(())
+}
+
+/// The no-Rust rows exist so the common docs-or-CI commit has its own warm
+/// check trend (#10329). They stay meaningful only while the pinned diff
+/// touches no Rust, so each is a distinct commit from its Rust-editing
+/// sibling and, for the merge commit, names the first parent as its base.
+#[test]
+fn corpus_pins_no_rust_commits() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let entry = |id: &str| {
+        config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))
+    };
+    let serde = entry("serde")?;
+    let serde_no_rust = entry("serde-no-rust")?;
+    let cargo = entry("cargo")?;
+    let cargo_no_rust = entry("cargo-no-rust")?;
+    for (rust_editing, no_rust) in [(serde, serde_no_rust), (cargo, cargo_no_rust)] {
+        if rust_editing.url != no_rust.url {
+            return Err(format!("{} must pin the same upstream", no_rust.id));
+        }
+        if rust_editing.sha == no_rust.sha {
+            return Err(format!(
+                "{} pins the Rust-editing commit, so it would not track a no-Rust diff",
+                no_rust.id
+            ));
+        }
+        if !no_rust.note.contains("no Rust") {
+            return Err(format!("{} note must say the diff has no Rust", no_rust.id));
+        }
+    }
+    // The config cannot prove offline that a commit touches no Rust, so the
+    // two commits checked against upstream (serde: only the CI workflow;
+    // cargo: only the book changelog, diffed against the first parent) are
+    // pinned here too. Moving either pin is then a deliberate two-place edit
+    // that re-asks that question, not a drift this test waves through.
+    for (id, sha) in [
+        ("serde-no-rust", "576e2ef9d8b985cb9399fa3a35913ef86503bad4"),
+        ("cargo-no-rust", "523e530d77cce92813eebbf6ac009a04f2df2ac2"),
+    ] {
+        if entry(id)?.sha != sha {
+            return Err(format!(
+                "{id} moved off the commit verified to change no Rust; re-verify the diff before updating this test"
+            ));
+        }
+    }
+    if cargo_no_rust.base_sha.as_deref() != Some("04d22dbe795476cf89d1dc2599cec98e4b227bc3") {
+        return Err("cargo-no-rust base_sha must stay the verified first parent".to_string());
+    }
+    // A merge commit diffed against HEAD~1 would compare with its second
+    // parent, which carries Rust changes; the base must be pinned.
+    let base = cargo_no_rust
+        .base_sha
+        .as_deref()
+        .ok_or("cargo-no-rust must pin the first parent as base_sha")?;
+    if base == cargo_no_rust.sha {
+        return Err("cargo-no-rust base_sha must differ from sha".to_string());
+    }
+    // The cargo row is heavy like the Rust-editing cargo row; the serde row
+    // stays in the light tier so the default run covers a no-Rust diff.
+    if serde_no_rust.heavy || !cargo_no_rust.heavy {
+        return Err("serde-no-rust is light and cargo-no-rust is heavy".to_string());
+    }
+    Ok(())
+}
+
+/// Non-Rust corpus rows (#10338): each names its language, pins full shas and
+/// is a separate population from the Rust rows. An unknown language is
+/// refused so a typo cannot silently fall back to `rust`.
+#[test]
+fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let python: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "python")
+        .collect();
+    let ids: Vec<_> = python.iter().map(|entry| entry.id.as_str()).collect();
+    if ids != ["click-python", "poetry-python"] {
+        return Err(format!(
+            "expected click and poetry Python rows, got {ids:?}"
+        ));
+    }
+    let shas: Vec<_> = python.iter().map(|entry| entry.sha.as_str()).collect();
+    if shas
+        != [
+            "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e",
+            "a416efd1be6b6787019e751e7c4f6fa1a0911050",
+        ]
+    {
+        return Err(format!(
+            "Python pins moved off the commits verified to edit Python and its test: {shas:?}"
+        ));
+    }
+    if python[0].heavy || !python[1].heavy {
+        return Err("click must be the light Python row and poetry the heavy one".to_string());
+    }
+    // Rows without a language stay Rust, so existing pins keep their meaning.
+    if config
+        .corpus
+        .iter()
+        .any(|entry| entry.id == "serde" && entry.language() != "rust")
+    {
+        return Err("rows without `language` must read as rust".to_string());
+    }
+    let mut typo = config.corpus.clone();
+    typo[0].language = Some("pyton".to_string());
+    match validate_corpus(&typo) {
+        Err(message) if message.contains("unknown language `pyton`") => Ok(()),
+        other => Err(format!(
+            "an unknown language must be refused, got {other:?}"
+        )),
+    }
+}
+
+/// A manifest `language` of the wrong JSON type must not be read as absent,
+/// which would file the entry's measurements under `rust`.
+#[test]
+fn manifest_language_must_be_a_string_when_present() -> Result<(), String> {
+    let manifest = |language: Value| {
+        json!({
+            "kind": "ripr_rust_corpus_manifest",
+            "corpus_version": "v",
+            "repos": [{
+                "id": "a", "url": "u", "tier": "fast", "language": language,
+                "sha": "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b",
+            }],
+        })
+    };
+    let (_, corpus) = corpus_from_manifest(&manifest(json!("python")))?;
+    if corpus.first().map(CorpusEntry::language) != Some("python") {
+        return Err("a string manifest language must be carried through".to_string());
+    }
+    match corpus_from_manifest(&manifest(json!(123))) {
+        Err(message) if message.contains("`language` must be a string") => Ok(()),
+        other => Err(format!("a numeric language must be refused, got {other:?}")),
+    }
+}
+
+/// The per-repository rows carry the entry's language so a consumer can
+/// group results without joining back to the corpus metadata.
+#[test]
+fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let repos = repo_view(&config, &[]);
+    let language = |id: &str| {
+        repos
+            .iter()
+            .find(|row| row["id"] == id)
+            .and_then(|row| row["language"].as_str())
+            .map(str::to_string)
+    };
+    if language("click-python").as_deref() != Some("python") {
+        return Err("click-python row must report python".to_string());
+    }
+    if language("serde").as_deref() != Some("rust") {
+        return Err("a row without `language` must report rust".to_string());
+    }
+    Ok(())
+}
+
+/// TypeScript row (#10338). The exact pin is asserted so moving it is a
+/// deliberate two-place edit that re-asks whether the commit still edits
+/// TypeScript source and its test. No larger row is pinned: every larger
+/// TypeScript repository tried is partial today, and a repository that stops
+/// short fails the completion gate even when new.
+#[test]
+fn corpus_pins_the_typescript_commit() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let typescript: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "typescript")
+        .map(|entry| (entry.id.as_str(), entry.sha.as_str(), entry.heavy))
+        .collect();
+    let expected = [(
+        "defu-typescript",
+        "11ba02213d4b1c6b02dd686041f75edc479c98e9",
+        false,
+    )];
+    if typescript != expected {
+        return Err(format!(
+            "expected only the verified defu TypeScript row, got {typescript:?}"
+        ));
+    }
     Ok(())
 }

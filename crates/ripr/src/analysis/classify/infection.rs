@@ -4,6 +4,7 @@ use super::activation::{
     is_computed_value_expression, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::probes::same_connectives;
 use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
@@ -47,20 +48,71 @@ fn changed_operands_are_never_evaluated(
     let Some(prior) = after.with_chain(before) else {
         return false;
     };
-    if related_tests.is_empty()
-        || !related_tests
+    let parameters = after.parameters();
+    let Some(runs) = owner_literal_runs(activation, related_tests, owner, parameters) else {
+        return false;
+    };
+    after.changed_operands_never_evaluated(&prior, &runs)
+}
+
+/// One run per owner call written in a related test: the literal argument
+/// of each owner parameter on that call line, `None` where it cannot be
+/// read. `None` overall when a table, builder or other input source ripr
+/// cannot place on a call line may feed the owner, or a related test reaches
+/// the owner other than by direct calls with plain literal arguments.
+fn owner_literal_runs(
+    activation: &ActivationEvidence,
+    related_tests: &[&TestSummary],
+    owner: &FunctionSummary,
+    parameters: &[String],
+) -> Option<Vec<Vec<Option<String>>>> {
+    // A related test that never writes the owner's name cannot call it when
+    // no other function holds the owner (the caller's `owner_has_other_callers`
+    // check covers helpers and macros), unless it calls another related test.
+    // Such a bystander contributes no run, and its own table rows and
+    // arguments are not inputs to the owner.
+    // Any whole-word mention counts, not only a call: `let g = owner;` holds
+    // the owner as a value and a later `g(..)` is a call this scan cannot see.
+    let reaches = |test: &TestSummary| mentions_word(&test.body, &owner.name);
+    let bystander = |test: &TestSummary| {
+        !reaches(test)
+            && !test.calls.iter().any(|call| {
+                related_tests
+                    .iter()
+                    .any(|other| other.name == call.name && other.name != test.name)
+            })
+    };
+    let readers = related_tests
+        .iter()
+        .copied()
+        .filter(|test| !bystander(test))
+        .collect::<Vec<_>>();
+    if readers.is_empty()
+        || !readers
             .iter()
             .all(|test| test_reaches_owner_only_directly(test, &owner.name))
     {
-        return false;
+        return None;
     }
-    let mut lines: BTreeMap<usize, BTreeMap<String, Option<String>>> = BTreeMap::new();
+    let in_bystander = |fact: &crate::value_origins::LocatedValueFact| {
+        related_tests.iter().any(|test| {
+            bystander(test)
+                && (test.start_line..=test.end_line).contains(&fact.line)
+                && fact.file.as_ref().is_none_or(|file| *file == test.file)
+        })
+    };
+    // Keyed by file too: two test files can put an owner call on the same line.
+    let mut lines: BTreeMap<(Option<std::path::PathBuf>, usize), BTreeMap<String, Option<String>>> =
+        BTreeMap::new();
     for fact in &activation.observed_values {
+        if in_bystander(fact) {
+            continue;
+        }
         match fact.context {
             ValueContext::FunctionArgument => {}
             ValueContext::AssertionArgument => continue,
             // Inputs ripr cannot place on a call line may evaluate the operand.
-            _ => return false,
+            _ => return None,
         }
         // A derived fact such as `x == 0 || y == 1` is not an argument.
         let Some((name, value)) = fact.value.split_once(" = ") else {
@@ -72,10 +124,10 @@ fn changed_operands_are_never_evaluated(
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         {
-            return false;
+            return None;
         }
         // The same parameter twice on a line is two calls; neither is read.
-        let line = lines.entry(fact.line).or_default();
+        let line = lines.entry((fact.file.clone(), fact.line)).or_default();
         let read = if line.contains_key(name) {
             None
         } else {
@@ -83,23 +135,136 @@ fn changed_operands_are_never_evaluated(
         };
         line.insert(name.to_string(), read);
     }
-    let parameters = after.parameters();
     // One run per owner call written in a related test; a call line with no
     // readable arguments is a run that cannot be shown to short-circuit.
     let empty = BTreeMap::new();
-    let runs = related_tests
+    let runs = readers
         .iter()
-        .flat_map(|test| test.body_calls())
-        .filter(|call| call.name == owner.name)
-        .map(|call| {
-            let line = lines.get(&call.line).unwrap_or(&empty);
+        .flat_map(|test| test.body_calls().map(move |call| (*test, call)))
+        .filter(|(_, call)| call.name == owner.name)
+        .map(|(test, call)| {
+            let line = lines
+                .get(&(Some(test.file.clone()), call.line))
+                .or_else(|| lines.get(&(None, call.line)))
+                .unwrap_or(&empty);
             parameters
                 .iter()
                 .map(|name| line.get(name).cloned().flatten())
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    after.changed_operands_never_evaluated(&prior, &runs)
+    Some(runs)
+}
+
+/// #6488: whether the related tests call the owner, directly and with plain
+/// literal arguments only, on rows that tell its all-bool `&&`/`||` body
+/// from each one-step mutation (see
+/// `ShortCircuitTail::runs_tell_apart_one_step_mutants`). The chain must be
+/// the owner's whole body, so the arguments are the values it reads.
+fn boolean_truth_table_is_exercised(
+    probe: &Probe,
+    activation: &ActivationEvidence,
+    related_tests: &[&TestSummary],
+    owner: &FunctionSummary,
+) -> bool {
+    let Some(chain) = ShortCircuitTail::parse(&owner.body, &probe.expression) else {
+        return false;
+    };
+    // A row counts only when it is live and its result is asserted bare: a
+    // call under `#[ignore]`, an `if`, a closure or a tautology (`r == r`,
+    // `|| true`) separates nothing at runtime.
+    related_tests
+        .iter()
+        .filter(|test| !word_call_offsets(&test.body, &owner.name).is_empty())
+        .all(|test| only_bare_row_assertions(test, &owner.name))
+        && owner_literal_runs(activation, related_tests, owner, chain.parameters())
+            .is_some_and(|runs| chain.runs_tell_apart_one_step_mutants(&runs))
+}
+
+/// `test` is a plain `#[test]` whose body is nothing but top-level
+/// `assert!([!]owner(..))`, `assert_eq!`/`assert_ne!` of an owner call
+/// against `true`/`false` (either order), each ending in `;`. The call's
+/// arguments are plain literals (`owner_call_has_plain_literal_arguments`).
+/// Anything else (a `let`, a branch, a message argument, a path-qualified
+/// call, a trailing expression, an attribute besides `#[test]`) declines.
+fn only_bare_row_assertions(test: &TestSummary, owner: &str) -> bool {
+    if test.attrs.iter().any(|attr| attr.trim() != "#[test]") {
+        return false;
+    }
+    let body = test.body.as_ref();
+    let (Some(open), Some(close)) = (body.find('{'), body.rfind('}')) else {
+        return false;
+    };
+    if open >= close {
+        return false;
+    }
+    let inner = &body[open + 1..close];
+    let masked = mask_comments_and_strings(inner);
+    if masked.len() != inner.len() || inner.contains("//") || inner.contains("/*") {
+        return false;
+    }
+    let mut statements = masked.split(';').collect::<Vec<_>>();
+    if statements.pop().is_none_or(|rest| !rest.trim().is_empty()) || statements.is_empty() {
+        return false;
+    }
+    let is_bool = |text: &str| matches!(text.trim(), "true" | "false");
+    let is_call = |text: &str| {
+        let text = text.trim();
+        text.strip_prefix(owner).is_some_and(closes_at_end)
+            && owner_call_has_plain_literal_arguments(text, owner)
+    };
+    statements.iter().all(|statement| {
+        let statement = statement.trim();
+        if let Some(argument) = statement
+            .strip_prefix("assert!(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            return is_call(argument.trim().strip_prefix('!').unwrap_or(argument));
+        }
+        ["assert_eq!(", "assert_ne!("].iter().any(|macro_open| {
+            statement
+                .strip_prefix(macro_open)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .and_then(|arguments| {
+                    // The call holds a comma, so split on the last comma
+                    // when the call is first and the first when it is not.
+                    let (first, last) = arguments.rsplit_once(',')?;
+                    if is_call(first) && is_bool(last) {
+                        return Some(());
+                    }
+                    let (first, rest) = arguments.split_once(',')?;
+                    (is_bool(first) && is_call(rest)).then_some(())
+                })
+                .is_some()
+        })
+    })
+}
+
+/// RIPR-SPEC-0353: the returned-value sink of an all-bool `&&`/`||` owner
+/// body whose related tests exercise its truth table, for the
+/// `return_value` probe on that chain. `None` for anything else, so the
+/// ordinary sink reading (unknown for a chain with no value marker) stays.
+pub(in crate::analysis) fn exercised_bool_chain_return_sink(
+    probe: &Probe,
+    activation: &ActivationEvidence,
+    related_tests: &[&TestSummary],
+    owner: &FunctionSummary,
+    owner_has_other_callers: bool,
+) -> Option<FlowSinkFact> {
+    (probe.family == ProbeFamily::ReturnValue
+        && probe.owner.as_ref() == Some(&owner.id)
+        && !owner_has_other_callers
+        && probe
+            .before
+            .as_deref()
+            .is_none_or(|before| same_connectives(&probe.expression, before))
+        && boolean_truth_table_is_exercised(probe, activation, related_tests, owner))
+    .then(|| FlowSinkFact {
+        kind: FlowSinkKind::ReturnValue,
+        text: probe.expression.trim().to_string(),
+        line: probe.location.line,
+        owner: Some(owner.id.clone()),
+    })
 }
 
 /// Whether `test` calls the owner directly and routes nowhere else that
@@ -133,6 +298,39 @@ fn test_reaches_owner_only_directly(test: &TestSummary, owner: &str) -> bool {
                 false
             }
         })
+}
+
+/// `text` holds a whole-word `name` (an identifier boundary on both sides).
+fn mentions_word(text: &str, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(name).any(|(at, _)| {
+        (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(at + name.len())
+                .is_none_or(|byte| !is_ident_byte(*byte))
+    })
+}
+
+/// `rest` is one parenthesized group whose closing parenthesis is its last
+/// byte: `(true, false)` but not `(false, true) || (true)`.
+fn closes_at_end(rest: &str) -> bool {
+    if !rest.starts_with('(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return index + 1 == rest.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn is_ident_byte(byte: u8) -> bool {
@@ -370,6 +568,26 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Yes,
                     Confidence::Medium,
                     "Detected related test input at the changed boundary",
+                )
+            } else if probe_literals.is_empty()
+                && changed_operands.is_none()
+                && unresolved_boundary.is_none()
+                && !owner_has_other_callers
+                && owner.is_some_and(|owner| {
+                    boolean_truth_table_is_exercised(probe, activation, related_tests, owner)
+                })
+            {
+                // #6488: a pure bool chain has no literal boundary; its
+                // boundary is the truth table. The related tests call the
+                // owner with literal rows that separate the chain from its
+                // connective swap, both constants and any one negated operand.
+                StageEvidence::new(
+                    StageState::Yes,
+                    Confidence::Medium,
+                    format!(
+                        "Related test calls give literal truth-table rows that separate `{}` from its connective swap, constant `true`/`false` and any single negated operand",
+                        probe.expression.trim()
+                    ),
                 )
             } else if probe_literals.is_empty() {
                 StageEvidence::new(

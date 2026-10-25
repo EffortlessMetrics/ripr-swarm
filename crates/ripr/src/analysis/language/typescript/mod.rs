@@ -70,6 +70,7 @@ mod classifier;
 mod committed_snapshot;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
+mod decorated_entries;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -84,6 +85,8 @@ mod helper_inline;
 #[cfg(test)]
 mod helper_inline_tests;
 mod hook_owner_guard;
+#[cfg(test)]
+mod identifier_write_scale_tests;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
@@ -180,6 +183,7 @@ pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
+pub(crate) use decorated_entries::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
@@ -611,8 +615,16 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let (mut tests, conditional_credit_gap, expansion) =
-                    extract_tests_with_expansion(relative, source);
+                // #10017: extraction is a pure function of (path, source) and
+                // is served from the content-keyed cache; the clone below is
+                // what snapshot promotion mutates, so promotion still reads
+                // the filesystem on every run.
+                let extraction = extraction_cache::test_extraction_cached(relative, source);
+                let (mut tests, conditional_credit_gap, expansion) = (
+                    extraction.0.clone(),
+                    extraction.1.clone(),
+                    extraction.2.clone(),
+                );
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
                 // The tests of a suite-factory call carry the factory's
                 // snapshot call once per expansion, so the file's calls are
@@ -652,8 +664,8 @@ impl TypeScriptAdapter {
                 // #10071/#10044: owners came out of the same single parse as
                 // the parse check; the process-lifetime cache lets an LSP
                 // session re-save without re-parsing the whole workspace.
-                // Test extraction stays uncached because committed snapshots
-                // read the filesystem.
+                // Test extraction is cached separately (#10017): only its
+                // pure step, never snapshot promotion.
                 all_owners.extend(facts.owners.clone());
             }
         }
@@ -679,6 +691,9 @@ impl TypeScriptAdapter {
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
+        // Enum-member findings carry no probe owner, but their id was minted
+        // over an `Enum::Member` identity; collision ranking needs it (#10349).
+        let mut minted_owners: std::collections::HashMap<usize, String> = Default::default();
         let mut changed_count: usize = 0;
         // Per-output-language tally (#2103 review): this adapter covers
         // typescript (.ts/.tsx/.mts/.cts) and javascript (.js/.jsx/.mjs/.cjs),
@@ -987,6 +1002,7 @@ impl TypeScriptAdapter {
                     let mut finding =
                         enum_member_finding(&changed.path, added.line, &added.text, identity);
                     finding.evidence.extend(discovery_evidence.clone());
+                    minted_owners.insert(findings.len(), identity.to_string());
                     findings.push(finding);
                 }
             }
@@ -1290,7 +1306,7 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
-        dedup_typescript_probe_ids(&mut findings);
+        dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
             findings,
