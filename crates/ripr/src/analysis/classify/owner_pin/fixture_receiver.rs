@@ -23,13 +23,15 @@ pub(super) struct FixtureReceiver {
     field: String,
     tuple_types: Vec<String>,
     projected: usize,
+    previous_projected: usize,
     dispatch: dispatch::FixtureDispatch,
 }
 
 impl FixtureReceiver {
     pub(super) fn establish(
         owner: &FunctionSummary,
-        expression: &str,
+        changed_expression: &str,
+        before: Option<&str>,
         index: &RustIndex,
     ) -> Option<Self> {
         let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
@@ -52,59 +54,18 @@ impl FixtureReceiver {
         }
         let tail = body.tail_expr()?;
         if collapse_whitespace(&tail.syntax().text().to_string())
-            != collapse_whitespace(expression.trim().trim_end_matches(';'))
+            != collapse_whitespace(changed_expression.trim().trim_end_matches(';'))
         {
             return None;
         }
-        let sum = method(tail, "sum", 0)?;
-        let map = method(sum.receiver()?, "map", 1)?;
-        let ast::Expr::ClosureExpr(closure) = map.arg_list()?.args().next()? else {
-            return None;
-        };
-        if closure.move_token().is_some()
-            || closure.async_token().is_some()
-            || closure.ret_type().is_some()
-        {
+        let (field, arity, projected) = projection(tail)?;
+        let (previous_field, previous_arity, previous_projected) =
+            projection(expression(before?.trim().trim_end_matches(';'))?)?;
+        // Both sides must be the same bounded sum pipeline. Binding renames
+        // preserve its projection; an unread old computation supplies no pin.
+        if previous_field != field || previous_arity != arity {
             return None;
         }
-        let list = closure.param_list()?;
-        let mut params = list.params();
-        let (Some(param), None) = (params.next(), params.next()) else {
-            return None;
-        };
-        if param.ty().is_some() {
-            return None;
-        }
-        let ast::Pat::TuplePat(pattern) = param.pat()? else {
-            return None;
-        };
-        let mut projected = None;
-        let mut arity = 0;
-        for (position, pattern) in pattern.fields().enumerate() {
-            arity += 1;
-            match pattern {
-                ast::Pat::WildcardPat(_) => {}
-                ast::Pat::IdentPat(binding)
-                    if binding.ref_token().is_none()
-                        && binding.mut_token().is_none()
-                        && binding.pat().is_none()
-                        && projected.is_none()
-                        && closure.body()?.syntax().text() == binding.name()?.text() =>
-                {
-                    projected = Some(position);
-                }
-                _ => return None,
-            }
-        }
-        let projected = projected?;
-        let iter = method(map.receiver()?, "iter", 0)?;
-        let ast::Expr::FieldExpr(field) = iter.receiver()? else {
-            return None;
-        };
-        if field.expr()?.syntax().text() != "self" {
-            return None;
-        }
-        let field = field.name_ref()?.text().to_string();
         let source = &index.files().get(&owner.file)?.source;
         let parse = parse_clean_source_file(source)?;
         let mut records = parse
@@ -139,6 +100,7 @@ impl FixtureReceiver {
             .collect();
         if tuple_types.len() != arity
             || tuple_types.get(projected)? != "u32"
+            || tuple_types.get(previous_projected)? != "u32"
             || tuple_types
                 .iter()
                 .any(|ty| !matches!(ty.as_str(), "u32" | "String"))
@@ -156,6 +118,7 @@ impl FixtureReceiver {
             field,
             tuple_types,
             projected,
+            previous_projected,
             dispatch,
         })
     }
@@ -307,6 +270,8 @@ impl FixtureReceiver {
             return None;
         }
         let mut count = 0;
+        let mut current_total = 0u32;
+        let mut previous_total = 0u32;
         for element in elements.exprs() {
             let ast::Expr::TupleExpr(tuple) = element else {
                 return None;
@@ -333,11 +298,81 @@ impl FixtureReceiver {
                     _ => return None,
                 }
             }
-            integer(&values.get(self.projected)?.syntax().text().to_string())?;
+            if self.projected != self.previous_projected {
+                current_total = current_total.checked_add(integer(
+                    &values.get(self.projected)?.syntax().text().to_string(),
+                )?)?;
+                previous_total = previous_total.checked_add(integer(
+                    &values
+                        .get(self.previous_projected)?
+                        .syntax()
+                        .text()
+                        .to_string(),
+                )?)?;
+            }
             count += 1;
         }
-        (count > 0).then_some(())
+        // Different numeric columns are different functions (a row with 0
+        // and 1 separates them). Equal totals on this actual fixture leave
+        // that edit dormant, even if individual row values differ. Equal
+        // projections are equivalent binding rewrites and keep their reading.
+        (count > 0
+            && (self.projected == self.previous_projected || current_total != previous_total))
+            .then_some(())
     }
+}
+
+fn projection(tail: ast::Expr) -> Option<(String, usize, usize)> {
+    let sum = method(tail, "sum", 0)?;
+    let map = method(sum.receiver()?, "map", 1)?;
+    let ast::Expr::ClosureExpr(closure) = map.arg_list()?.args().next()? else {
+        return None;
+    };
+    if closure.move_token().is_some()
+        || closure.async_token().is_some()
+        || closure.ret_type().is_some()
+    {
+        return None;
+    }
+    let list = closure.param_list()?;
+    let mut params = list.params();
+    let (Some(param), None) = (params.next(), params.next()) else {
+        return None;
+    };
+    if param.ty().is_some() {
+        return None;
+    }
+    let ast::Pat::TuplePat(pattern) = param.pat()? else {
+        return None;
+    };
+    let mut projected = None;
+    let mut arity = 0;
+    for (position, pattern) in pattern.fields().enumerate() {
+        arity += 1;
+        match pattern {
+            ast::Pat::WildcardPat(_) => {}
+            ast::Pat::IdentPat(binding)
+                if binding.ref_token().is_none()
+                    && binding.mut_token().is_none()
+                    && binding.pat().is_none()
+                    && projected.is_none()
+                    && closure.body()?.syntax().text() == binding.name()?.text() =>
+            {
+                projected = Some(position);
+            }
+            _ => return None,
+        }
+    }
+    let projected = projected?;
+    let iter = method(map.receiver()?, "iter", 0)?;
+    let ast::Expr::FieldExpr(field) = iter.receiver()? else {
+        return None;
+    };
+    if field.expr()?.syntax().text() != "self" {
+        return None;
+    }
+    let field = field.name_ref()?.text().to_string();
+    Some((field, arity, projected))
 }
 
 fn plain_function(function: &ast::Fn) -> bool {

@@ -2890,6 +2890,7 @@ impl OwnerReturnPin {
                         fixture_receiver::FixtureReceiver::establish(
                             owner,
                             &probe.expression,
+                            probe.before.as_deref(),
                             index,
                         )
                         .map(ReturnPathGate::FixtureReceiver)

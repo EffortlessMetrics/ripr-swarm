@@ -17625,6 +17625,9 @@ spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_literal_pin_reads_helper_data",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_credit_requires_readable_carried_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_projection_edit_needs_distinct_literal_totals",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_unread_old_pipeline_supplies_no_pin",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_equivalent_binding_edits_keep_degenerate_literals",
   "crates/ripr/tests/framework_oracle_limit.rs::a_fixture_receiver_shape_that_differs_keeps_the_finding",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
   "crates/ripr/tests/proximity_oracle_credit.rs::same_file_test_that_reaches_the_owner_through_a_helper_keeps_credit",

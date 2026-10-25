@@ -1084,6 +1084,103 @@ fn fixture_receiver_literal_pin_reads_helper_data() -> Result<(), String> {
 }
 
 #[test]
+fn fixture_receiver_projection_edit_needs_distinct_literal_totals() -> Result<(), String> {
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    let edit = diff(
+        6,
+        "        self.items.iter().map(|(price, _)| price).sum()",
+        "        self.items.iter().map(|(_, price)| price).sum()",
+    );
+    for (label, values, expected, credited) in [
+        ("equal columns", "vec![(7, 7)]", 7, false),
+        ("cross-row cancellation", "vec![(1, 2), (2, 1)]", 3, false),
+        ("zero columns", "vec![(0, 0), (0, 0)]", 0, false),
+        ("separating totals", "vec![(1, 3), (2, 4)]", 7, true),
+        ("unread overflow", "vec![(4294967295, 1), (1, 2)]", 3, false),
+    ] {
+        let source = cart_source(&format!(
+            "        assert_eq!(fixture().total(), {expected});"
+        ))
+        .replace("Vec<(String, u32)>", "Vec<(u32, u32)>")
+        .replace(data, values);
+        if credited {
+            let findings = findings_on(&source, &edit, 6)?;
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.class == ExposureClass::Exposed)
+            );
+            assert!(findings.iter().all(|finding| !limited(finding)));
+        } else {
+            withheld(&source, &edit, 6, label)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_receiver_unread_old_pipeline_supplies_no_pin() -> Result<(), String> {
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    let after = "        self.items.iter().map(|(_, price)| price).sum()";
+    for (label, values, expected, before) in [
+        (
+            "single product and sum coincide",
+            "vec![(\"a\".to_string(), 7)]",
+            7,
+            "        self.items.iter().map(|(_, price)| price).product()",
+        ),
+        (
+            "zero product and sum coincide",
+            "vec![(\"a\".to_string(), 0), (\"b\".to_string(), 0)]",
+            0,
+            "        self.items.iter().map(|(_, price)| price).product()",
+        ),
+        (
+            "a separating product is still outside the old-pipeline reader",
+            data,
+            42,
+            "        self.items.iter().map(|(_, price)| price).product()",
+        ),
+        (
+            "an unread old filter",
+            data,
+            42,
+            "        self.items.iter().map(|(_, price)| price).filter(|&&price| price != 0).sum()",
+        ),
+    ] {
+        let source = cart_source(&format!(
+            "        assert_eq!(fixture().total(), {expected});"
+        ))
+        .replace(data, values);
+        withheld(&source, &diff(6, before, after), 6, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_receiver_equivalent_binding_edits_keep_degenerate_literals() -> Result<(), String> {
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    for (values, expected) in [
+        ("vec![(\"a\".to_string(), 7)]", 7),
+        ("vec![(\"a\".to_string(), 0), (\"b\".to_string(), 0)]", 0),
+        ("vec![(\"a\".to_string(), 2), (\"b\".to_string(), 2)]", 4),
+    ] {
+        let source = cart_source(&format!(
+            "        assert_eq!(fixture().total(), {expected});"
+        ))
+        .replace(data, values);
+        let findings = findings_on(&source, &cart_edit(), 6)?;
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.class == ExposureClass::Exposed)
+        );
+        assert!(findings.iter().all(|finding| !limited(finding)));
+    }
+    Ok(())
+}
+
+#[test]
 fn a_fixture_receiver_shape_that_differs_keeps_the_finding() -> Result<(), String> {
     for (label, body) in [
         (

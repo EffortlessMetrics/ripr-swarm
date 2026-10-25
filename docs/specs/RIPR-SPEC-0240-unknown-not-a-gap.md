@@ -419,7 +419,18 @@ non-ignored related test matches one of these shapes:
   projected component is `u32`. A unique, unattributed zero-argument helper
   in the test's own file and module returns only that record literal, with a
   nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
-  Each numeric component must be literal. Pipeline dispatch also fails closed
+  Each numeric component must be literal. The paired old expression must also
+  be the same-field, same-arity `iter().map(tuple projection).sum()` pipeline,
+  with a projected `u32` column. Unknown or other old pipelines (including
+  product-to-sum changes) supply no new credit. Equal projected positions are
+  equivalent binding rewrites and keep their existing reading, including
+  single-row or zero-valued data; no all-mutants adequacy rule is inferred.
+  Different projected columns are different functions: a row with 0 and 1
+  separates them. Their checked `u32` sums over the actual literal fixture
+  must differ. Equal aggregate totals (including cross-row cancellation) or
+  overflow withhold the pin. This is an edit-specific activation check, not
+  evaluation of arbitrary helpers or hypothetical alternative reductions.
+  Pipeline dispatch also fails closed
   for indexed receiver methods named `iter`, `map`, `sum` or `to_string`, an indexed
   `no_implicit_prelude` declaration, or imports, extern crates and item macro
   invocations (including trait/impl associated items) in the owner module
@@ -728,7 +739,10 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 - `fixture_receiver_literal_pin_reads_helper_data` and
   `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
-  `fixture_receiver_credit_requires_readable_carried_data`
+  `fixture_receiver_credit_requires_readable_carried_data`,
+  `fixture_receiver_projection_edit_needs_distinct_literal_totals`,
+  `fixture_receiver_unread_old_pipeline_supplies_no_pin` and
+  `fixture_receiver_equivalent_binding_edits_keep_degenerate_literals`
 - `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
