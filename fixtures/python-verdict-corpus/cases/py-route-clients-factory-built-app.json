@@ -1,0 +1,44 @@
+{
+  "case_id": "py-route-clients-factory-built-app",
+  "subject_id": "authored-py-pytest-route-clients",
+  "diff": "cases/py-route-clients-factory-built-app.diff",
+  "anchor": {
+    "file": "routeclients/reports.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_client_over_a_factory_built_app",
+  "hard_case": "the client is built over `build_app()`, a call the adapter does not follow",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"rows\": 5}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the report row count changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`test_reports_respond` builds its client over `build_app()`, which returns the `app` the `reports` route is registered on. The adapter does not follow the factory call, so the application is unidentified: the relation is reach evidence without an oracle and the verdict is `limited` rather than a gap or a credit. A changed row count passes the test.",
+  "labeling_observation": {
+    "ripr_commit": "1818f481",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
