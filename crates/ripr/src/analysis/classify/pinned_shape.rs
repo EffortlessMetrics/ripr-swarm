@@ -393,15 +393,23 @@ fn degenerate_pin(shape: Shape, call: &str, other: &str) -> bool {
         || is_zero_literal(other)
 }
 
-/// `0`, `-0`, `0_u32` and the like: an integer literal that is zero.
+/// `0`, `-0`, `0_u32`, `0x0` and the like: an integer literal that is zero.
 fn is_zero_literal(text: &str) -> bool {
     let compact: String = text.chars().filter(|ch| *ch != '_').collect();
     let digits = compact.trim().trim_start_matches('-');
-    digits.strip_prefix('0').is_some_and(|suffix| {
-        suffix.is_empty()
-            || ((suffix.starts_with('u') || suffix.starts_with('i'))
-                && suffix[1..].chars().all(|ch| ch.is_ascii_alphanumeric()))
-    })
+    let Some(rest) = digits.strip_prefix('0') else {
+        return false;
+    };
+    // `u` and `i` are not digits in any base, so the first one starts the suffix.
+    let (mantissa, suffix) = rest.split_at(rest.find(['u', 'i']).unwrap_or(rest.len()));
+    let radix_digits = match mantissa.chars().next() {
+        Some('x' | 'b' | 'o') => &mantissa[1..],
+        _ => mantissa,
+    };
+    let radix_prefixed = radix_digits.len() != mantissa.len();
+    (!radix_prefixed || !radix_digits.is_empty())
+        && radix_digits.chars().all(|ch| ch == '0')
+        && (suffix.is_empty() || suffix[1..].chars().all(|ch| ch.is_ascii_alphanumeric()))
 }
 
 /// An input the closure or the `else` exit need not see: an empty literal,

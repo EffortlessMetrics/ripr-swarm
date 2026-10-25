@@ -210,6 +210,20 @@ fn a_zero_total_separates_nothing_and_keeps_the_gap() -> Result<(), String> {
 }
 
 #[test]
+fn a_nondecimal_zero_total_keeps_the_gap() -> Result<(), String> {
+    for expected in ["0x0", "0b0", "0o0_u32"] {
+        let found = accumulator_finding(OWNER, &format!("assert_eq!(total(&[0]), {expected});"))?;
+        assert_eq!(
+            found.class,
+            ExposureClass::WeaklyExposed,
+            "{expected}: {found:?}"
+        );
+        assert_eq!(limit(&found), None, "{expected}");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_call_that_is_never_asserted_stays_a_gap() -> Result<(), String> {
     let found = accumulator_finding(OWNER, "let _ = total(&[3, 4, 5]);")?;
     assert_ne!(found.class, ExposureClass::Exposed, "{found:?}");
@@ -346,15 +360,22 @@ mod tests {{
         );
         // The update is not a returned accumulator, so it keeps its
         // `static_unknown` probe instead of a `return_value` one.
-        let diff = "diff --git a/src/lib.rs b/src/lib.rs
+        // A variant that inserts a line before the update moves it down.
+        let line = owner
+            .lines()
+            .position(|text| text.contains("sum +="))
+            .map_or(4, |at| at + 1);
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -4,1 +4,1 @@
+@@ -{line},1 +{line},1 @@
 -        sum = sum + w;
 +        sum += w;
-";
-        let repo = TempRepo::create(&lib, diff)?;
+"
+        );
+        let repo = TempRepo::create(&lib, &diff)?;
         let output = check_workspace(CheckInput {
             root: repo.root.clone(),
             base: None,
@@ -369,7 +390,7 @@ index 1111111..2222222 100644
                 .findings
                 .iter()
                 .all(|found| found.probe.family != ProbeFamily::ReturnValue
-                    || found.probe.location.line != 4),
+                    || found.probe.location.line != line),
             "{owner}: {:?}",
             output.findings
         );
