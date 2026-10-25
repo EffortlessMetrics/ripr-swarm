@@ -17435,10 +17435,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
 ]
 fixtures = [
-  "typescript_mock_count_alias",
-  "typescript_mock_count_optional",
-  "typescript_mock_count_computed",
-  "typescript_mock_count_arguments",
+  "fixtures/typescript_mock_count_alias",
+  "fixtures/typescript_mock_count_optional",
+  "fixtures/typescript_mock_count_computed",
+  "fixtures/typescript_mock_count_arguments",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",
