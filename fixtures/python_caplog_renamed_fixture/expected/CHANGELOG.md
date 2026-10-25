@@ -16,7 +16,7 @@ Updated:
 ## Pending — python_caplog_renamed_fixture (2)
 
 Reason:
-RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244); re-bless after #10444 and #10426 crossed
+RIPR-SPEC-0238 inherited main drift: #10444 fixture predates the #10426 evidence legend
 
 Command:
 `cargo xtask goldens bless python_caplog_renamed_fixture --reason "..."`
