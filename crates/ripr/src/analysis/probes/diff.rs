@@ -14,7 +14,9 @@ use super::classify::{
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::{collision_rank_key, diff_probe_id};
+use super::ids::{
+    collision_ordinals, collision_rank_key, diff_probe_id, normalize_rust_expression,
+};
 use super::lexical::{
     classify_changed_line, classify_changed_line_against, is_accumulator_rewrite_of,
 };
@@ -803,27 +805,25 @@ fn parser_span_for_canonical_shape(
 /// eight-hex fingerprint (#8838) rank by their full payload digest instead:
 /// the same pair gets the same two ids whichever the diff lists first.
 fn dedup_probe_ids(probes: &mut [SeededProbe]) {
-    use std::collections::HashMap;
-    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-    for (index, seeded) in probes.iter().enumerate() {
-        groups
-            .entry(seeded.probe.id.0.clone())
-            .or_default()
-            .push(index);
-    }
-    for (base, indices) in groups.into_iter().filter(|(_, indices)| indices.len() > 1) {
-        let mut ranked = indices
-            .into_iter()
-            .map(|index| {
-                let probe = &probes[index].probe;
-                let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
-                let key = collision_rank_key(&base, owner, &probe.expression);
-                (key, index)
-            })
-            .collect::<Vec<_>>();
-        ranked.sort();
-        for (rank, (_, index)) in ranked.into_iter().enumerate().skip(1) {
-            probes[index].probe.id.0 = format!("{base}.{}", rank + 1);
+    let keyed = probes
+        .iter()
+        .map(|seeded| {
+            let probe = &seeded.probe;
+            let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
+            let expression = normalize_rust_expression(&probe.expression);
+            (
+                probe.id.0.clone(),
+                collision_rank_key(&probe.id.0, owner, &expression),
+            )
+        })
+        .collect::<Vec<_>>();
+    let entries = keyed
+        .iter()
+        .map(|(base, key)| (base.as_str(), *key))
+        .collect::<Vec<_>>();
+    for (seeded, ordinal) in probes.iter_mut().zip(collision_ordinals(&entries)) {
+        if ordinal > 1 {
+            seeded.probe.id.0 = format!("{}.{ordinal}", seeded.probe.id.0);
         }
     }
 }

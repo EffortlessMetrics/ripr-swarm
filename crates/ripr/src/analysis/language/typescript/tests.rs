@@ -18513,3 +18513,83 @@ fn owner_index_by_span_agrees_with_line_resolution_on_linear_plans() {
     // A span the plan contains but with the wrong name: not an identity.
     assert_eq!(plan.owner_index_by_span("slash", 1, 12), None);
 }
+
+/// #8838 mirror: `if (x > 39113) {` and `if (x > 60939) {` share the
+/// eight-hex fingerprint `21e51c17` at one owner. Which of them takes the
+/// `.2` suffix must not depend on the order the diff lists them in; the
+/// full payload digest ranks `60939` (`21e51c1782f4…`) before `39113`
+/// (`21e51c17e5ef…`).
+#[test]
+fn analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-collision-order")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function classify(x: number): number {\n  if (x > 39113) {\n    return 1;\n  }\n  if (x > 60939) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let low = crate::analysis::diff::ChangedLine {
+        line: 2,
+        new_side_line: 2,
+        text: "  if (x > 39113) {".to_string(),
+    };
+    let high = crate::analysis::diff::ChangedLine {
+        line: 5,
+        new_side_line: 5,
+        text: "  if (x > 60939) {".to_string(),
+    };
+    let ids_in_order = |added_lines: Vec<crate::analysis::diff::ChangedLine>| {
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines,
+            removed_lines: Vec::new(),
+        }];
+        let result = TypeScriptAdapter.analyze_diff(&options, &policy, &changed_files)?;
+        let mut ids = result
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.probe.expression.trim().to_string(),
+                    finding.id.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok::<_, String>(ids)
+    };
+    let low_first = ids_in_order(vec![low.clone(), high.clone()]);
+    let high_first = ids_in_order(vec![high, low]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (low_first, high_first) = (low_first?, high_first?);
+
+    let base = "probe:src_lib.ts:typescript_preview:21e51c17";
+    assert_eq!(
+        low_first,
+        vec![
+            ("if (x > 39113) {".to_string(), format!("{base}.2")),
+            ("if (x > 60939) {".to_string(), base.to_string()),
+        ],
+        "fixture must be an actual fp8 collision ranked by payload digest"
+    );
+    assert_eq!(
+        low_first, high_first,
+        "expression-to-id association must not follow diff order"
+    );
+    Ok(())
+}
