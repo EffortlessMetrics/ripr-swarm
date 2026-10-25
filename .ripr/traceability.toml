@@ -2017,6 +2017,8 @@ tests = [
   "xtask/src/reports/review_comments.rs::write_wrapper_classifies_named_guidance_ceiling_failure",
   "xtask/src/reports/review_comments.rs::producer_error_matching_distinguishes_ceiling_from_other_failures",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_owner_attribution_runs_under_the_run_token",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_budget_spent_in_owner_attribution_records_timeout",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_ordinary_canonical_analysis_failure_records_failed",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",
   "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
