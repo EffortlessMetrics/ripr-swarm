@@ -18,7 +18,11 @@ cargo xtask termination-qualification --binary <path-to-ripr> \
 
 On the cut, run the first command in a clean checkout of `CANDIDATE_SHA` with
 `--profile release`, and replace `--expected-commit` with
-`--candidate-manifest <#1609 manifest.json>`, which supplies `candidate.sha`.
+`--candidate-manifest <#1609 manifest.json> --candidate-manifest-sha256
+<accepted-raw-sha256>`. The digest is the accepted one from the reviewed #1609
+handoff (`ACCEPTED_MANIFEST_SHA256` in the transaction runbook), not one
+computed from the file. The harness hashes the manifest bytes, refuses any
+mismatch, and only then reads `candidate.sha` from those same bytes (#10251).
 That field is this harness's whole contract with the manifest; #1609's DTO owns
 the rest.
 
@@ -27,7 +31,8 @@ a family takes one control only, from either source.
 
 
 Outputs: `target/ripr/reports/termination-qualification.{json,md}`. Other
-flags: `--expected-sha256`, `--expected-version`, `--expected-commit`, `--family`, `--no-repeat`,
+flags: `--expected-sha256`, `--expected-version`, `--expected-commit`,
+`--candidate-manifest` with `--candidate-manifest-sha256`, `--family`, `--no-repeat`,
 `--deadline-seconds` (default 60), `--allow-incomplete`, `--work-dir`, `--out`.
 
 ## What runs

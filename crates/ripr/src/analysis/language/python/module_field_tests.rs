@@ -200,8 +200,11 @@ fn patched_module_object_is_not_credited() -> Check {
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it(monkeypatch):\n    mp = monkeypatch\n    mp.delattr(route, \"response\")\n    checkout(True)\n    assert response.status_code == 422\n",
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
     ] {
+        // Never exposed, and never a weak finding either: a weak finding
+        // carries a repair card that asserts on the stale imported object
+        // (#10289).
         let class = classify_with_test(test_src)?;
-        assert_ne!(class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(class, ExposureClass::StaticUnknown, "{test_src}");
     }
     Ok(())
 }
@@ -216,7 +219,7 @@ fn dynamic_namespace_module_class(writer: &str) -> Result<ExposureClass, String>
 fn dynamic_namespace_reload_does_not_credit_module_object() -> Check {
     assert_eq!(
         dynamic_namespace_module_class("importlib.reload(route)")?,
-        ExposureClass::WeaklyExposed
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }
@@ -225,7 +228,7 @@ fn dynamic_namespace_reload_does_not_credit_module_object() -> Check {
 fn dynamic_namespace_dunder_setattr_does_not_credit_module_object() -> Check {
     assert_eq!(
         dynamic_namespace_module_class("route.__setattr__(\"response\", object())")?,
-        ExposureClass::WeaklyExposed
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }
@@ -234,7 +237,7 @@ fn dynamic_namespace_dunder_setattr_does_not_credit_module_object() -> Check {
 fn dynamic_namespace_renamed_delattr_does_not_credit_module_object() -> Check {
     assert_eq!(
         dynamic_namespace_module_class("mp.delattr(route, \"response\")")?,
-        ExposureClass::WeaklyExposed
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }

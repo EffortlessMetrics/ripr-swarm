@@ -480,7 +480,7 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     let root = authority_fixture_root("file-scan-memo")?;
     fs::write(
         root.join("src/lib.rs"),
-        "const LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
+        "mod other;\nconst LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
     )
     .map_err(|error| error.to_string())?;
     fs::write(
@@ -19891,4 +19891,61 @@ fn value_facts_keep_one_fact_per_test_file() {
         files,
         vec![Some(Path::new("tests/a.rs")), Some(Path::new("tests/b.rs"))]
     );
+}
+
+#[test]
+fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<(), String> {
+    let test_body = "#[test]\n\
+         fn boundary() {\n\
+             assert_eq!(discounted_total(100, 100), 90);\n\
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (
+            PathBuf::from("src/pricing.rs"),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 \
+                 { if amount >= threshold { amount - 10 } else { amount } }\n",
+        ),
+        (PathBuf::from("tests/first_tests.rs"), test_body),
+        (PathBuf::from("tests/second_tests.rs"), test_body),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+
+    // Same line, text, value and context on both sides: only the test file
+    // differs, so the pair isolates file as the identity discriminator.
+    let mut facts = evidence
+        .observed_values
+        .iter()
+        .map(|fact| {
+            (
+                fact.file.clone(),
+                fact.line,
+                fact.text.as_str(),
+                fact.value.as_str(),
+                fact.context.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    facts.sort_by(|a, b| a.0.cmp(&b.0));
+    let fact = |file: &str| {
+        (
+            Some(PathBuf::from(file)),
+            3,
+            "assert_eq!(discounted_total(100, 100), 90);",
+            "100",
+            ValueContext::FunctionArgument,
+        )
+    };
+    assert_eq!(
+        facts,
+        vec![fact("tests/first_tests.rs"), fact("tests/second_tests.rs")],
+        "facts: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
 }
