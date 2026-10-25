@@ -94,7 +94,8 @@ for (paid, in_stock, want) in rows {
 
 where every owner argument is a loop variable or a bool literal, the expected
 value is a loop variable, every cell read is a bool literal, and the loop body
-is exactly one two-argument `assert_eq!` of the owner call (a message, a
+is exactly one `assert_eq!` of the owner call with an optional plain string
+message (a message with format arguments, a
 `continue`, an `if`, a computed or short row, a rebound name or a second
 statement declines). Each tuple is one run, in the owner's parameter order,
 and joins the direct-call runs under rule 5. A property loop over inputs

@@ -275,8 +275,17 @@ fn a_table_of_one_row_stays_unknown() -> Result<(), String> {
 }
 
 #[test]
-fn a_table_assertion_with_a_message_stays_unknown() -> Result<(), String> {
-    let body = "        assert_eq!(can_ship(paid, in_stock), want, \"row\");\n";
+fn a_table_assertion_with_a_plain_message_still_reads_the_rows() -> Result<(), String> {
+    let body = "        assert_eq!(can_ship(paid, in_stock), want, \"{paid} {in_stock}\");\n";
+    let findings = table_findings(&table_test(THREE_TABLE_ROWS, body))?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_assertion_with_a_message_argument_stays_unknown() -> Result<(), String> {
+    let body =
+        "        assert_eq!(can_ship(paid, in_stock), want, \"{}\", can_ship(true, true));\n";
     let findings = table_findings(&table_test(THREE_TABLE_ROWS, body))?;
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())

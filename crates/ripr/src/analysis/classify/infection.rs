@@ -302,7 +302,17 @@ fn table_test_runs(
     }
     let arguments = statement.strip_prefix("assert_eq!(")?.strip_suffix(')')?;
     let parts = split_top_level_commas(arguments)?;
-    if parts.len() != 2 {
+    // An optional message must be a single string literal (its contents are
+    // masked to spaces), so no call hides in a format argument.
+    let plain_message = |part: &str| {
+        let part = part.trim();
+        let inside = part
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .unwrap_or(part);
+        inside.trim().is_empty()
+    };
+    if !(parts.len() == 2 || (parts.len() == 3 && plain_message(parts[2]))) {
         return None;
     }
     let call = parts[0].trim();
