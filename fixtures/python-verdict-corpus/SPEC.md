@@ -69,6 +69,13 @@ this repository's license, one per test library or library feature:
   through a helper in another file, a module-level lambda, `globals()`
   dispatch, a module constant read by a test class, the same function name in
   two modules, a nested function, and an unrelated unparseable module.
+- `authored-py-pytest-route-clients`: a framework-free route registry and
+  `TestClient`, with route owners whose request client is a conftest fixture
+  over the owner's own app, a fixture over another module's `app` on the same
+  path, a client built over a factory call, and a fixture built on a second
+  fixture. Each test only asserts the response is not `None`, so every mutant
+  survives and the cases score how the client's application is read, not the
+  oracle (run under Python 3.13.16 and pytest 9.1.1).
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's

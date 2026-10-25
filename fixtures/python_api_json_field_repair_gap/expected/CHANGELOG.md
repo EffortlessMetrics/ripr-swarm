@@ -564,3 +564,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_api_json_field_repair_gap (27)
+
+Reason:
+RIPR-SPEC-0238 R3: re-bless after merging main (#10258 wrapping) over test line shift
+
+Command:
+`cargo xtask goldens bless python_api_json_field_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
