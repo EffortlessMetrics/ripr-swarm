@@ -250,8 +250,10 @@ pub(in crate::analysis) fn exercised_bool_chain_return_sink(
     related_tests: &[&TestSummary],
     owner: &FunctionSummary,
     owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
 ) -> Option<FlowSinkFact> {
     (probe.family == ProbeFamily::ReturnValue
+        && !assertion_macros_rebound
         && probe.owner.as_ref() == Some(&owner.id)
         && !owner_has_other_callers
         && probe
@@ -451,6 +453,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
         None,
         None,
         true,
+        false,
     )
 }
 
@@ -459,7 +462,10 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
 /// parameters and that its body is the whole chain. Without an owner, or when
 /// any function other than the related tests calls the owner by name
 /// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
-/// that reading declines.
+/// that reading declines. The truth-table reading (#6488) also declines when
+/// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
+/// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
+/// a shadowing `macro_rules!` compares nothing.
 pub(in crate::analysis) fn infection_evidence_for_owner(
     probe: &Probe,
     related_tests: &[&TestSummary],
@@ -468,6 +474,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     owner: Option<&FunctionSummary>,
     literal_length_boundary: Option<&super::literal_length_boundary::LiteralLengthBoundary>,
     owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
 ) -> StageEvidence {
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -485,6 +492,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner,
             literal_length_boundary,
             owner_has_other_callers,
+            assertion_macros_rebound,
         );
         if matches!(evidence.state, StageState::Weak) {
             return evidence;
@@ -582,6 +590,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 && changed_operands.is_none()
                 && unresolved_boundary.is_none()
                 && !owner_has_other_callers
+                && !assertion_macros_rebound
                 && owner.is_some_and(|owner| {
                     boolean_truth_table_is_exercised(probe, activation, related_tests, owner)
                 })

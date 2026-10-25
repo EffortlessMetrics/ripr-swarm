@@ -355,6 +355,20 @@ impl ClassifiedProbeEvidence {
                         .any(|body| mentions_identifier(body, &owner.name))
                 }))
         });
+        // The truth-table reading takes `assert_eq!(owner(..), want)` as a
+        // comparison by the macro's name; a rebound name compares nothing.
+        // Only a `&&`/`||` owner reaches that reading, so other owners skip the
+        // per-file macro scan.
+        let assertion_macros_rebound = matches!(
+            context.probe.family,
+            ProbeFamily::Predicate | ProbeFamily::ReturnValue
+        ) && context
+            .owner_fn
+            .is_some_and(|owner| owner.body.contains("&&") || owner.body.contains("||"))
+            && crate::analysis::classify::macro_names_rebound(
+                context.index,
+                &["assert", "assert_eq", "assert_ne"],
+            );
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
@@ -363,6 +377,7 @@ impl ClassifiedProbeEvidence {
             context.owner_fn,
             gathered.literal_length_boundary.as_ref(),
             owner_has_other_callers,
+            assertion_macros_rebound,
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -449,6 +464,7 @@ impl ClassifiedProbeEvidence {
                 &test_summaries,
                 owner,
                 owner_has_other_callers,
+                assertion_macros_rebound,
             )
             .map(|sink| (owner, sink))
         }) {
