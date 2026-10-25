@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/observation_verified_semicolon_effect/input
+
+Summary: 2 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)
+  E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E5 [findings 1, 2]: discriminator yes: Strong oracle found: exact value or pattern assertion
+  E6 [findings 1, 2]: local flow reaches event or outbound call: notifier.send(order_id) (line 18)
+  E7 [findings 1, 2]: related test tests/observes.rs:4 process_order_sends_exact_order_id uses strong exact value oracle: assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);
+  E8 [findings 1, 2]: source function argument value order_id = "order-42" at line 6
+  E9 [findings 1, 2]: source assertion argument value "order-42" at line 7
+
+Finding 1: INFO ./src/lib.rs:18
+  id: probe:src_lib.rs:call_deletion:934aa430
+Changed
+  before: notifier.send("static_msg")
+  after:  notifier.send(order_id)
+Probe
+  family: call_deletion
+  delta:  effect
+  owner:  src/lib.rs::process_order
+  canonical gap: gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
+Drill in:
+  ripr explain --root <cwd>/fixtures/observation_verified_semicolon_effect/input --diff <cwd>/fixtures/observation_verified_semicolon_effect/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
+  ripr context --root <cwd>/fixtures/observation_verified_semicolon_effect/input --diff <cwd>/fixtures/observation_verified_semicolon_effect/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
+
+Finding 2: INFO ./src/lib.rs:18
+  id: probe:src_lib.rs:side_effect:95da2a37
+Changed
+  before: notifier.send("static_msg")
+  after:  notifier.send(order_id)
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  src/lib.rs::process_order
+  canonical gap: gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
+Drill in:
+  ripr explain --root <cwd>/fixtures/observation_verified_semicolon_effect/input --diff <cwd>/fixtures/observation_verified_semicolon_effect/diff.patch --mode fast probe:src_lib.rs:side_effect:95da2a37
+  ripr context --root <cwd>/fixtures/observation_verified_semicolon_effect/input --diff <cwd>/fixtures/observation_verified_semicolon_effect/diff.patch --mode fast --at probe:src_lib.rs:side_effect:95da2a37
