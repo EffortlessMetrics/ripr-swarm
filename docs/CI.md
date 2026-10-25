@@ -2402,14 +2402,18 @@ and fails when:
 - a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
 
 It is separate from `check-capabilities`, which validates
-`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
-the registry. Limits: it does not check cell states, tier ceilings or docs text
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and joins explicit
+`cells` identities to the source-built whole registry. Product status and cell
+support remain separate authorities. The producer inventory does not check cell
+states, tier ceilings or docs text
 (in-crate tests and `check-support-tiers`), framework-level producers (the
 per-language disposition tests), the registry's relation to
 `metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
 reads a saved registry without building and can be stale; the report says so.
-It is not part of `precommit` or `check-pr` (it requires a `ripr` build, which
-`precommit` must not force). It is hosted: `rust-gates.yml` runs it as the
+The producer inventory is not part of `precommit` or `check-pr`; those paths
+run the separate identity join through `check-capabilities`, which reads a
+source-built registry with default features. Producer inventory is hosted:
+`rust-gates.yml` runs it as the
 unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
