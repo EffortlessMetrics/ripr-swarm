@@ -41,7 +41,9 @@
 //! - `missing_input`: the shared prose says "no test input reaches ...",
 //!   stronger than a single-file static reading supports. A row whose own
 //!   boundary fact says its input misses the boundary gets
-//!   `observation_unconfirmed` instead.
+//!   `observation_unconfirmed` instead. The renderer already words a
+//!   TypeScript or JavaScript `missing_input` row as "seen" (#10040), so a
+//!   future producer needs a row-owned input proof, not new prose.
 //! - `assertion_not_credited`: reserved for a typed established refusal
 //!   (#5446), which TypeScript does not produce;
 //! - `missing_exact_assertion`: the TypeScript model carries no row-owned
