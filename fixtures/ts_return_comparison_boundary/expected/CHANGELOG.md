@@ -320,3 +320,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_return_comparison_boundary (24)
+
+Reason:
+RIPR-SPEC-0224 (#10040): the TypeScript row-owned MissedBoundary fact now emits missing_input with the hedged 'seen' wording instead of observation_unconfirmed
+
+Command:
+`cargo xtask goldens bless ts_return_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

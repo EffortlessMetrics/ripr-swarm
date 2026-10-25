@@ -2555,6 +2555,7 @@ impl RustAdapter {
                 };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
+                let binding_return = seeded.binding_return;
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
@@ -2685,6 +2686,10 @@ impl RustAdapter {
                     &probe,
                     &index,
                     binding_relation.as_ref(),
+                );
+                probes::attach_changed_binding_return_evidence(
+                    &mut finding,
+                    binding_return.as_ref(),
                 );
                 // #5268: the producer names the canonical gap identity from
                 // the changed-line evidence it already holds, after the

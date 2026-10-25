@@ -98,6 +98,27 @@ base_sha = "04d22dbe795476cf89d1dc2599cec98e4b227bc3"
 note = "cargo merge commit whose diff against its first parent changes only doc/book/src/CHANGELOG.md (no Rust); ~1400 .rs files stay untouched"
 heavy = true
 
+# Python diffs. The warm check on a Python edit runs the Python analyzer, which
+# has its own hot spots (#10017), so these rows are a separate population from
+# the Rust rows above. Each pin is a single-parent commit whose own change edits
+# production Python and its test, so `HEAD~1` is the base. Both complete with
+# findings under `--mode draft`; `django` was tried and stops at the Python
+# workspace-file cap (partial), so it would not measure a complete check.
+[[corpus]]
+id = "click-python"
+url = "https://github.com/pallets/click"
+sha = "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e"
+language = "python"
+note = "small Python library; commit edits src/click/utils.py and its test"
+
+[[corpus]]
+id = "poetry-python"
+url = "https://github.com/python-poetry/poetry"
+sha = "a416efd1be6b6787019e751e7c4f6fa1a0911050"
+language = "python"
+note = "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test"
+heavy = true
+
 # ---------------------------------------------------------------- speed ----
 
 [[metric]]

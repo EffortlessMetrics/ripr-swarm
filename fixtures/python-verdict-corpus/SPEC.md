@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Twenty small authored Python projects under `subjects/`, our own code under
+Small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -76,6 +76,13 @@ this repository's license, one per test library or library feature:
   fixture. Each test only asserts the response is not `None`, so every mutant
   survives and the cases score how the client's application is read, not the
   oracle (run under Python 3.13.16 and pytest 9.1.1).
+- `authored-py-pytest-literals`, `authored-py-pytest-imports`,
+  `authored-py-unittest-almost`, `authored-py-unittest-raises` and
+  `authored-py-pytest-conjuncts`: one RIPR-SPEC-0238 rule family each (literal
+  comparisons; rival imports and `mocker.patch`; `assertAlmostEqual`; callable
+  and bound exception assertions; `and`/`or`/`not` chains). Cases are
+  one-line edits or rewrites labeled by real pytest runs (Python 3.13.16,
+  pytest 9.1.1, pytest-mock 3.17.0).
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's

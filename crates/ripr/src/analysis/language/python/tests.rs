@@ -8880,20 +8880,134 @@ fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), Str
 }
 
 #[test]
-fn alias_replacement_skips_string_literals_and_longer_names() {
-    use super::caplog_text::replace_identifier;
+fn overlapping_alias_names_do_not_corrupt_the_read() -> Result<(), String> {
+    // #10282 review: `msgs = caplog.text` then `text = caplog.messages` made
+    // the second replacement rewrite the first's inserted `caplog.text`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs\n";
     assert_eq!(
-        replace_identifier(
-            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
-            "msgs",
-            "caplog.messages"
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_assertion_using_an_alias_is_evaluated() -> Result<(), String> {
+    // #10282 review: the alias use on a continuation line is part of the
+    // assertion statement, not an extra use.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert (\n        \"low balance: 5\" in msgs\n    )\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_alias_inside_a_triple_quoted_literal_is_not_substituted() -> Result<(), String> {
+    // Post-landing #10282 receipt: a plain quote toggle read
+    // `"""prefix "msgs" : 5"""` as alternating open and closed strings, so the
+    // `msgs` inside it was replaced and the evaluator read `caplog.text`.
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "\"\"\"prefix \"msgs\" : 5\"\"\" in msgs",
+            &[("msgs", "caplog.text")]
         ),
-        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
-            .replace("x.msgs", "x.caplog.messages")
+        "\"\"\"prefix \"msgs\" : 5\"\"\" in caplog.text"
     );
     assert_eq!(
-        replace_identifier("\"a\\\"msgs\" in msgs", "msgs", "R"),
+        replace_identifiers("\'\'\'a \'msgs\' b\'\'\' in msgs", &[("msgs", "R")]),
+        "\'\'\'a \'msgs\' b\'\'\' in R"
+    );
+    let owner = AUDIT_OWNER.replace(
+        "low balance: %s\", balance",
+        "prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\"",
+    );
+    for quote in ["\"\"\"", "\'\'\'"] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    assert {quote}prefix \"msgs\" : 5{quote} in msgs\n"
+        );
+        assert_eq!(
+            classify_log_text_edit_from(
+                &owner,
+                "log.warning(\"prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\")",
+                "log.warning(\"prefix \\\"msgs\\\" : 5\")",
+                &test
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{quote}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn two_aliases_whose_names_are_read_attributes_are_both_evaluated() -> Result<(), String> {
+    // Exact-successor review (P2): the local `text` was counted inside the
+    // other alias's `caplog.text`, so a two-alias assertion abstained.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs and \"low balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_direct_read_beside_a_same_named_alias_stays_a_required_condition() -> Result<(), String> {
+    // Review of #10309: replacing the attribute in `caplog.text` turned a
+    // direct check into `caplog.caplog.text`, which the evaluator dropped.
+    let owner_edit = "log.warning(\"balance: %s low\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.text\n    assert \"low balance: 5\" in caplog.text and \"balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, owner_edit, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_comment_ending_in_a_backslash_does_not_extend_the_assertion() -> Result<(), String> {
+    // #10309 review: the comment's trailing backslash is not a continuation,
+    // so the `del` on the next line is an extra use and keeps the abstention.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert \"low balance: 5\" in msgs  # see notes\\\n    del msgs\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_replacement_skips_string_literals_and_longer_names() {
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
+            &[("msgs", "caplog.messages")]
+        ),
+        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
+    );
+    assert_eq!(
+        replace_identifiers("\"a\\\"msgs\" in msgs", &[("msgs", "R")]),
         "\"a\\\"msgs\" in R"
+    );
+    // One pass: a read inserted for one alias is not rescanned as another
+    // alias named `text` (#10282 review).
+    assert_eq!(
+        replace_identifiers(
+            "\"x\" in msgs and text",
+            &[("msgs", "caplog.text"), ("text", "caplog.messages")]
+        ),
+        "\"x\" in caplog.text and caplog.messages"
     );
 }
 
