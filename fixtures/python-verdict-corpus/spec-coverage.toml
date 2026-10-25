@@ -749,6 +749,8 @@ reason = "Rust-only out-parameter oracle credit; not a python verdict example"
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+[[spec]]
 id = "RIPR-SPEC-0360"
 scope = "out"
 reason = "Rust-only loop-accumulator credit; not a python verdict example"
