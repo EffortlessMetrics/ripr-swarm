@@ -425,7 +425,9 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
         set(&["lang-rust", "lang-typescript", "lang-python", "lang-perl"])
     );
     let unknown = parse_args(&["--features", "lang-go"].map(String::from))?;
-    assert!(unknown.build.enabled_features(&manifest).is_err());
+    if let Ok(enabled) = unknown.build.enabled_features(&manifest) {
+        return Err(format!("unknown language feature accepted: {enabled:?}"));
+    }
     for features in [
         None,
         Some("lang-typescript"),
@@ -449,7 +451,9 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
         vec!["--no-default-features", "--no-default-features"],
         vec!["--features", "lang-rust", "--features", "lang-perl"],
     ] {
-        assert!(parse_args(&args.into_iter().map(String::from).collect::<Vec<_>>()).is_err());
+        if let Ok(parsed) = parse_args(&args.into_iter().map(String::from).collect::<Vec<_>>()) {
+            return Err(format!("invalid arguments accepted: {parsed:?}"));
+        }
     }
     Ok(())
 }
