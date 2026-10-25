@@ -800,7 +800,7 @@ impl TypeScriptAdapter {
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
-                    .filter(|owner| normalized_path(&owner.file) == changed_norm)
+                    .filter(|owner| normalized_path_eq(&owner.file, &changed_norm))
                     .cloned()
                     .collect(),
             );
