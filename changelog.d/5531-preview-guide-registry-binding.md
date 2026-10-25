@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Bound `docs/LANGUAGE_ADAPTER_PREVIEW.md` to the capability registry: it now embeds the generated registry block (`cargo xtask capability-docs --check/--write` covers it and the docs-gate runs it when the guide changes), hand-written per-cell tier claims were removed, Perl claims that contradicted the registry (`not_proven`) were corrected, and the `language_capability_drift` test fails if the prose states a `usable alpha` tier or calls a registry-supported cell `not_proven` (#5531). Registry states and tiers are unchanged.

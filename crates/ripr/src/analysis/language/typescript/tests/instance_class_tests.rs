@@ -657,8 +657,14 @@ fn instance_facts_read_predicate_changes_only() -> Result<(), String> {
         .find(|owner| owner.name == "errorFor")
         .ok_or("owner errorFor not extracted")?;
     let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let read = |family: ProbeFamily| {
         let facts =
             ts_instance_class_facts(&family, CHANGED, &owner, &candidates, None, Some(&root));
@@ -708,8 +714,14 @@ fn instance_facts_read_predicate_changes_only() -> Result<(), String> {
     ] {
         let test = errors_test(body);
         let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
-        let candidates =
-            related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+        let candidates = related_test_candidates(
+            &owner,
+            &tests,
+            Some(&root),
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        );
         let facts = ts_instance_class_facts(
             &ProbeFamily::Predicate,
             CHANGED,
@@ -941,8 +953,14 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
             !helper_kept,
             "{label}"
         );
-        let candidates =
-            related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+        let candidates = related_test_candidates(
+            &owner,
+            &tests,
+            Some(&root),
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        );
         let facts = ts_instance_class_facts(
             &ProbeFamily::Predicate,
             CHANGED,

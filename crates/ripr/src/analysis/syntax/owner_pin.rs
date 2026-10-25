@@ -117,6 +117,11 @@ pub(crate) struct HelperLoan {
     /// Lines of the test's calls to the helper that sit on its eager
     /// statement path, each the only call expression on its line.
     pub(crate) call_lines: Vec<usize>,
+    /// Lines of the test's calls to the helper on its eager statement path
+    /// whatever else the line holds (`check("1 big", Size::kib(1), true)`).
+    /// A superset of `call_lines`: a consumer must itself say which call an
+    /// activation fact on such a line describes (#9329).
+    pub(crate) eager_call_lines: Vec<usize>,
 }
 
 /// Why one `assert_eq!` invocation is not on an established execution path.
@@ -1002,6 +1007,15 @@ fn macro_binding_sites_in_tree(
             if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
                 continue;
             }
+            // An accepted identity invocation over literal `fn` items binds
+            // nothing; its tests are scanned from their own expansion
+            // (#8999).
+            if binding_free
+                .passthrough
+                .contains(&call.syntax().text_range().start())
+            {
+                continue;
+            }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
@@ -1380,6 +1394,8 @@ struct BindingFreeFileIndex {
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
     calls: Vec<ast::MacroCall>,
+    /// Calls accepted as the identity over literal `fn` items (#8999).
+    passthrough: BTreeSet<ra_ap_syntax::TextSize>,
 }
 
 #[cfg(test)]
@@ -1422,6 +1438,7 @@ impl BindingFreeFileIndex {
             rules,
             modules,
             calls,
+            passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
         }
     }
 }
@@ -2515,6 +2532,7 @@ fn local_helper_assertions(
         .map(|name| name.text().to_string())
         .collect();
     let mut called = BTreeMap::<String, Vec<usize>>::new();
+    let mut eager_called = BTreeMap::<String, Vec<usize>>::new();
     let mut calls_per_line = BTreeMap::<usize, usize>::new();
     // Method calls and macro invocations count too: a macro's operand is
     // an unparsed token tree that may hold another call.
@@ -2548,6 +2566,9 @@ fn local_helper_assertions(
             && eager_path(call.syntax().clone(), test, false, first_return).is_ok()
         {
             let line = lines.line(call.syntax().text_range().start());
+            if lines.line(call.syntax().text_range().end()) == line {
+                eager_called.entry(name.clone()).or_default().push(line);
+            }
             let lines_of_name = called.entry(name).or_default();
             // A line holding another call cannot say which call an
             // activation fact on it describes.
@@ -2607,6 +2628,7 @@ fn local_helper_assertions(
             helper: text,
             parameters: plain_parameter_names(helper),
             call_lines,
+            eager_call_lines: eager_called.get(&name).cloned().unwrap_or_default(),
         };
         for (key, admitted) in admitted_assertions(candidates, helper, None) {
             if admitted.is_ok() {
@@ -3925,6 +3947,19 @@ fn has_escape(
             || ast::YieldExpr::can_cast(node.kind()))
         .then_some(AssertionContextRefusal::ClosureExit)
     })
+}
+
+/// Whether `node` holds anything the shared owner-pin escape authority
+/// ([`has_escape`]) refuses with the full [`TRUSTED_MACRO_NAMES`] set and no
+/// recorded bindings: a macro outside that set, a trusted macro whose operand
+/// tokens hide an exit (`return`, `break`, `continue`, `yield`, `?`) or a
+/// nested expansion, and any `return`/`?`/`yield` owned by a closure inside
+/// `node`. The closure part is stricter than a plain early-exit scan: a
+/// closure's own exit also refuses. The same-file callback-helper producer
+/// (#9981) gates its credit on this before copying any facts, so diff output
+/// and the repo-exposure consumer agree on what may have exited.
+pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {

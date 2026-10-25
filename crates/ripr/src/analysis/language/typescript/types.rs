@@ -718,14 +718,18 @@ impl TypeScriptErrorPayload {
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
             }
-            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral
+            | TypeScriptErrorPayloadKind::ChaiThrowClass
+            | TypeScriptErrorPayloadKind::ChaiThrowClassLiteral => {
                 format!("expect(...).to.throw({})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsContainsRegex
             | TypeScriptErrorPayloadKind::AssertThrowsObject => {
                 format!("assert.throws(..., {})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsContainsRegex
             | TypeScriptErrorPayloadKind::AssertRejectsObject => {
                 format!("await assert.rejects(..., {})", self.expected)
             }
@@ -758,12 +762,22 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsMatchObject,
     /// chai `expect(...).to.throw("message")` (RIPR-SPEC-0243 rule 10).
     ChaiThrowLiteral,
+    /// chai `expect(...).to.throw(SomeError)` (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClass,
+    /// chai `expect(...).to.throw(SomeError, "message")`: both the class and
+    /// the message substring must match (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClassLiteral,
     /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertThrowsRegex,
+    /// `node:assert` `throws(fn, /text/)`: an unanchored regex of plain text,
+    /// a substring test of `String(err)` (RIPR-SPEC-0243 rule 20).
+    AssertThrowsContainsRegex,
     /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertThrowsObject,
     /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertRejectsRegex,
+    /// `node:assert` `rejects(p, /text/)` (RIPR-SPEC-0243 rule 20).
+    AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,
 }

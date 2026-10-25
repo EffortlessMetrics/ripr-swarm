@@ -10778,6 +10778,50 @@ fn an_err_return_guard_on_inequality_pins_its_assertion_twin() {
 }
 
 #[test]
+fn an_err_return_guard_on_a_negated_literal_matches_pins_its_assertion_twin() {
+    // RIPR-SPEC-0154 example 2 (#10121): `if !matches!(owner(..), v) {
+    // return Err(..) }` is `assert!(matches!(owner(..), v))`, which pins the
+    // owner's value like `assert_eq!(owner(..), v)` does.
+    let body = "    if !matches!(weight(4), 12) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
+    let subject = "if !matches!(weight(4), 12)";
+    let verdicts = weight_verdicts(&weight_test(" -> Result<(), String>", body), subject);
+    assert_eq!(verdicts.len(), 1, "{verdicts:?}");
+    assert!(
+        verdicts
+            .iter()
+            .all(|(text, admitted)| *admitted && text.starts_with(subject)),
+        "{verdicts:?}"
+    );
+}
+
+#[test]
+fn an_err_return_guard_on_a_matches_that_is_not_one_literal_pin_refuses() {
+    for (body, subject) in [
+        // An or-pattern, wildcard and binding pin no single value.
+        (
+            "    if !matches!(weight(4), 12 | 13) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), 12 | 13)",
+        ),
+        (
+            "    if !matches!(weight(4), _) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), _)",
+        ),
+        // A guarded pattern says nothing about the value alone.
+        (
+            "    if !matches!(weight(4), n if n > 1) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), n if n > 1)",
+        ),
+        // The scrutinee must be the owner call itself.
+        (
+            "    if !matches!(weight(4) + 1, 13) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4) + 1, 13)",
+        ),
+    ] {
+        assert_not_pinned(&weight_test(" -> Result<(), String>", body), subject);
+    }
+}
+
+#[test]
 fn only_a_lone_top_level_equality_reads_as_a_pin() {
     let refused = [
         // The twin of an `==` guard is `assert!(weight(4) != 12)`.

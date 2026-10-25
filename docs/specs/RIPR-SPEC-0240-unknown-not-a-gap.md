@@ -419,6 +419,16 @@ non-ignored related test matches one of these shapes:
   read or a comparison before the call keep the finding. The recorded value
   reaches the assertion through the double's own method, which ripr does not
   follow.
+- **local executor** (#9443): a `return_value` probe on an `async fn` owner,
+  and a `direct_owner_call` test with a strong assertion: an `assert_eq!` with
+  a literal on one side and `helper(owner(..))` on the other, where `helper`
+  is a function of the test's own file other than the owner and the owner call
+  is its only argument (a hand-written `block_on`). The owner's bare call is a
+  future, so the compared value comes out of the helper, which ripr does not
+  read. A sync owner, a helper defined elsewhere, a second argument and a
+  non-literal expectation keep the finding. Whether a bounded rule can credit a
+  single-argument local executor is left open; until then the gap is withheld,
+  never credited.
 
 Any one matching related test withholds the finding: a weaker sibling test
 reads as evidence ripr gathered, not as the oracle that decides, and the
@@ -457,7 +467,9 @@ test that may notice the change (#9440):
   chain that reaches an iterator source (`iter`, `into_iter`, `chars`,
   `windows`, ..., or a range) through iterator adaptors alone, so
   `xs.iter().next().map(..)` stays an `Option` combinator. The changed line
-  must overlap a closure of the tail. A spawned thread joined in the tail, a returned closure
+  must overlap a closure of the tail. A spawned thread joined in the tail (except the
+  whole-body, branch-free `std::thread::spawn(move || e).join().unwrap()` that
+  RIPR-SPEC-0265 rule 4 credits), a returned closure
   the test applies, and an adaptor chain the owner or the test collects are
   this shape. The owner has no `return`, `?`, `break` or `continue` outside
   closures.
@@ -495,13 +507,14 @@ does not answer here, so neither the gap nor credit is established. Crediting
 the shapes whose closure the call runs on every input (a spawned and joined
 closure, a returned closure the test applies, a `Result` collect) needs those
 shapes added to the pin rules with runtime controls; that is follow-up work,
-not part of this rule. The cost is that a true gap in these shapes reads
+not part of this rule. RIPR-SPEC-0265 rule 4 has since taken the spawned and
+joined closure whose body runs on every input. The cost is that a true gap in these shapes reads
 `static_unknown` too: `shape-let-else-branch-unreached` and
 `shape-windows-strict-vs-loose`, whose cases accept `limited`. The zero-input
 rule keeps the gap for `shape-closure-returned-zero-input`.
 
-Corpus effect on main: `shape-thread-join-result`,
-`shape-sort-direction-truncate` and `shape-let-else-branch-pinned` move from
+Corpus effect on main: `shape-sort-direction-truncate` and
+`shape-let-else-branch-pinned` move from
 `false_actionable` to `abstained`; `shape-let-else-branch-unreached` and
 `shape-windows-strict-vs-loose` move from `ideal` to `abstained`. The cases
 `shape-closure-returned-adder`, `shape-collect-result-short-circuit` and
