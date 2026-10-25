@@ -1,8 +1,9 @@
 //! A bounded, assertion-local path through a hand-written trait recorder.
 //! Reach, oracle strength and execution/macro admission remain with their owners.
 use super::{FunctionSummary, OracleFact, RustIndex, TestSummary};
-use crate::analysis::classify::{OwnerPinSyntax, reveal::assertion_comparison_operands};
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::classify::{
+    OwnerPinSyntax, reveal::assertion_comparison_operands, targeted_free_call_reaches_owner,
+};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{OracleKind, Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -13,6 +14,7 @@ use std::collections::BTreeMap;
 
 pub(in crate::analysis) struct RecordingDouble {
     owner: String,
+    owner_id: crate::domain::SymbolId,
     file: std::path::PathBuf,
     argument: usize,
     doubles: BTreeMap<String, String>,
@@ -67,6 +69,192 @@ fn root(node: &SyntaxNode) -> bool {
     node.parent()
         .is_some_and(|p| p.kind() == ra_ap_syntax::SyntaxKind::SOURCE_FILE)
 }
+#[derive(Default)]
+struct Inputs {
+    integers: std::collections::BTreeSet<String>,
+    slices: BTreeMap<String, String>,
+}
+fn integer_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "u8" | "u16" | "u32" | "u64" | "usize" | "i8" | "i16" | "i32" | "i64" | "isize"
+    )
+}
+fn primitive(expr: &ast::Expr, known: &Inputs) -> bool {
+    match expr {
+        ast::Expr::PathExpr(_) => known.integers.contains(&text(expr)),
+        ast::Expr::Literal(_) => text(expr).parse::<u64>().is_ok(),
+        _ => false,
+    }
+}
+fn owner_inputs(declaration: &ast::Fn, sink: &str) -> Option<(usize, String, Inputs)> {
+    let mut known = Inputs::default();
+    let mut target = None;
+    for (at, parameter) in declaration.param_list()?.params().enumerate() {
+        let ast::Pat::IdentPat(pattern) = parameter.pat()? else {
+            return None;
+        };
+        if pattern.ref_token().is_some() || pattern.pat().is_some() {
+            return None;
+        }
+        let name = pattern.name()?.text().to_string();
+        let ty = text(&parameter.ty()?);
+        if name == sink {
+            let trait_name = ty.strip_prefix("&mutdyn")?;
+            if !ident(trait_name) || target.is_some() {
+                return None;
+            }
+            target = Some((at, trait_name.to_string()));
+        } else if integer_type(&ty) {
+            known.integers.insert(name);
+        } else if matches!(ty.as_str(), "&[u32]" | "&[u64]") {
+            known.slices.insert(name, ty);
+        } else {
+            return None;
+        }
+    }
+    let (at, trait_name) = target?;
+    Some((at, trait_name, known))
+}
+fn setup(statement: &ast::Stmt, sink: &str, known: &mut Inputs) -> Option<()> {
+    let ast::Stmt::LetStmt(binding) = statement else {
+        return None;
+    };
+    let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+        return None;
+    };
+    let name = pattern.name()?.text().to_string();
+    if name == sink || pattern.ref_token().is_some() || pattern.pat().is_some() {
+        return None;
+    }
+    let initializer = binding.initializer()?;
+    if let Some(ty) = binding.ty()
+        && !integer_type(&text(&ty))
+    {
+        return None;
+    }
+    if !primitive(&initializer, known) {
+        let annotated = text(&binding.ty()?);
+        let bounded_sum = known.slices.iter().any(|(slice, ty)| {
+            text(&initializer) == format!("{slice}.iter().sum()")
+                && ((ty == "&[u32]" && annotated == "u32")
+                    || (ty == "&[u64]" && annotated == "u64"))
+        });
+        if !bounded_sum {
+            return None;
+        }
+    }
+    known.integers.insert(name);
+    Some(())
+}
+fn bounded_string(expr: &ast::Expr, known: &Inputs) -> Option<()> {
+    if let ast::Expr::MethodCallExpr(call) = expr {
+        if call.name_ref()?.text() == "to_string"
+            && call.generic_arg_list().is_none()
+            && call.arg_list()?.args().next().is_none()
+            && matches!(call.receiver(), Some(ast::Expr::Literal(ref lit)) if lit.syntax().text().to_string().starts_with('"'))
+        {
+            return Some(());
+        }
+        return None;
+    }
+    let ast::Expr::MacroExpr(macro_expr) = expr else {
+        return None;
+    };
+    let call = macro_expr.macro_call()?;
+    if text(&call.path()?) != "format" {
+        return None;
+    }
+    // Parse token-tree arguments as expressions; a CALL_EXPR scan of the macro
+    // node itself cannot see a hidden exit, conditional or overloaded operator.
+    let parsed = function(&format!(
+        "fn __args() {{ __args{}; }}",
+        call.token_tree()?.syntax().text()
+    ))?;
+    let list = statements(&parsed)?;
+    let [ast::Stmt::ExprStmt(statement)] = list.as_slice() else {
+        return None;
+    };
+    let ast::Expr::CallExpr(arguments) = statement.expr()? else {
+        return None;
+    };
+    let arguments: Vec<_> = arguments.arg_list()?.args().collect();
+    let (template, values) = arguments.split_first()?;
+    if !matches!(template, ast::Expr::Literal(_))
+        || !values.iter().all(|value| primitive(value, known))
+    {
+        return None;
+    }
+    let raw = template.syntax().text().to_string();
+    let mut template = raw.strip_prefix('"')?.strip_suffix('"')?;
+    if template.contains('\\') {
+        return None;
+    }
+    let mut positional = 0;
+    while let Some((prefix, fields)) = template.split_once('{') {
+        if prefix.contains('}') {
+            return None;
+        }
+        let (field, suffix) = fields.split_once('}')?;
+        if field.is_empty() {
+            positional += 1;
+        } else if !known.integers.contains(field) {
+            return None;
+        }
+        template = suffix;
+    }
+    (!template.contains('}') && positional == values.len()).then_some(())
+}
+fn bounded_send(call: &ast::MethodCallExpr, sink: &str, name: &str, known: &Inputs) -> Option<()> {
+    if text(&call.receiver()?) != sink
+        || call.name_ref()?.text() != name
+        || call.generic_arg_list().is_some()
+    {
+        return None;
+    }
+    let arguments: Vec<_> = call.arg_list()?.args().collect();
+    let [argument] = arguments.as_slice() else {
+        return None;
+    };
+    bounded_string(argument, known)
+}
+fn append_only_expr(expr: &ast::Expr, sink: &str, name: &str, known: &Inputs) -> Option<()> {
+    if let ast::Expr::MethodCallExpr(call) = expr {
+        return bounded_send(call, sink, name, known);
+    }
+    let ast::Expr::IfExpr(branch) = expr else {
+        return None;
+    };
+    let ast::Expr::BinExpr(condition) = branch.condition()? else {
+        return None;
+    };
+    if branch.else_branch().is_some()
+        || !matches!(condition.op_kind(), Some(ast::BinaryOp::CmpOp(_)))
+        || !primitive(&condition.lhs()?, known)
+        || !primitive(&condition.rhs()?, known)
+    {
+        return None;
+    }
+    let body = branch.then_branch()?.stmt_list()?;
+    if body.tail_expr().is_some() {
+        return None;
+    }
+    let statements: Vec<_> = body.statements().collect();
+    if statements.is_empty() {
+        return None;
+    }
+    for statement in statements {
+        bounded_send(&method(&statement)?, sink, name, known)?;
+    }
+    Some(())
+}
+fn append_only(statement: &ast::Stmt, sink: &str, name: &str, known: &Inputs) -> Option<()> {
+    let ast::Stmt::ExprStmt(statement) = statement else {
+        return None;
+    };
+    append_only_expr(&statement.expr()?, sink, name, known)
+}
+
 impl RecordingDouble {
     pub(super) fn establish(
         probe: &Probe,
@@ -89,7 +277,8 @@ impl RecordingDouble {
             return None;
         }
         // The changed call itself must be an unconditional top-level statement.
-        let owner_statements = statements(&declaration)?;
+        let owner_body = declaration.body()?.stmt_list()?;
+        let owner_statements: Vec<_> = owner_body.statements().collect();
         let changed = function(&format!(
             "fn __changed() {{ {}; }}",
             probe.expression.trim_end_matches(';')
@@ -125,124 +314,16 @@ impl RecordingDouble {
             return None;
         }
         let method_name = call.name_ref()?.text().to_string();
-        let body = declaration.body()?;
-        let masked = mask_comments_and_strings(&body.syntax().text().to_string());
-        let sink_mentions = masked
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .filter(|v| *v == sink)
-            .count();
-        let sink_calls = body
-            .syntax()
-            .descendants()
-            .filter_map(ast::MethodCallExpr::cast)
-            .filter(|c| {
-                c.receiver().is_some_and(|r| text(&r) == sink)
-                    && c.name_ref().is_some_and(|n| n.text() == method_name)
-            })
-            .count();
-        if sink_mentions != sink_calls
-            || body.syntax().descendants().any(|n| {
-                matches!(
-                    n.kind(),
-                    ra_ap_syntax::SyntaxKind::CALL_EXPR
-                        | ra_ap_syntax::SyntaxKind::LOOP_EXPR
-                        | ra_ap_syntax::SyntaxKind::WHILE_EXPR
-                        | ra_ap_syntax::SyntaxKind::FOR_EXPR
-                        | ra_ap_syntax::SyntaxKind::CLOSURE_EXPR
-                        | ra_ap_syntax::SyntaxKind::AWAIT_EXPR
-                ) || ast::MacroCall::cast(n)
-                    .is_some_and(|m| m.path().is_none_or(|p| text(&p) != "format"))
-            })
-        {
-            return None;
-        }
-        for parameter in declaration.param_list()?.params() {
-            let ast::Pat::IdentPat(pattern) = parameter.pat()? else {
-                return None;
-            };
-            if pattern.name()?.text() != sink {
-                let ty = text(&parameter.ty()?);
-                if !matches!(
-                    ty.as_str(),
-                    "u8" | "u16"
-                        | "u32"
-                        | "u64"
-                        | "usize"
-                        | "i8"
-                        | "i16"
-                        | "i32"
-                        | "i64"
-                        | "isize"
-                        | "&[u32]"
-                        | "&[u64]"
-                ) {
-                    return None;
-                }
-            }
-        }
-        let (argument, trait_name) =
-            declaration
-                .param_list()?
-                .params()
-                .enumerate()
-                .find_map(|(at, parameter)| {
-                    let ast::Pat::IdentPat(pattern) = parameter.pat()? else {
-                        return None;
-                    };
-                    if pattern.name()?.text() != sink
-                        || pattern.ref_token().is_some()
-                        || pattern.pat().is_some()
-                    {
-                        return None;
-                    }
-                    let ty = text(&parameter.ty()?);
-                    let trait_name = ty.strip_prefix("&mutdyn")?;
-                    ident(trait_name).then_some((at, trait_name.to_string()))
-                })?;
-        // No earlier branch, opaque call or sink hand-off can skip the write.
+        let (argument, trait_name, mut known) = owner_inputs(&declaration, &sink)?;
         for statement in &owner_statements[..at] {
-            let ast::Stmt::LetStmt(binding) = statement else {
-                return None;
-            };
-            let ast::Pat::IdentPat(pattern) = binding.pat()? else {
-                return None;
-            };
-            if pattern.name()?.text() == sink {
-                return None;
-            }
-            let initializer = binding.initializer()?;
-            let value = text(&initializer);
-            if value.contains(&sink)
-                || initializer.syntax().descendants().any(|n| {
-                    matches!(
-                        n.kind(),
-                        ra_ap_syntax::SyntaxKind::IF_EXPR
-                            | ra_ap_syntax::SyntaxKind::MATCH_EXPR
-                            | ra_ap_syntax::SyntaxKind::LOOP_EXPR
-                            | ra_ap_syntax::SyntaxKind::FOR_EXPR
-                            | ra_ap_syntax::SyntaxKind::WHILE_EXPR
-                            | ra_ap_syntax::SyntaxKind::CLOSURE_EXPR
-                            | ra_ap_syntax::SyntaxKind::CALL_EXPR
-                            | ra_ap_syntax::SyntaxKind::MACRO_CALL
-                            | ra_ap_syntax::SyntaxKind::TRY_EXPR
-                            | ra_ap_syntax::SyntaxKind::AWAIT_EXPR
-                    )
-                })
-            {
-                return None;
-            }
-            // The retained corpus sums a primitive slice before sending it.
-            for call in initializer
-                .syntax()
-                .descendants()
-                .filter_map(ast::MethodCallExpr::cast)
-            {
-                if !matches!(call.name_ref()?.text(), "iter" | "sum")
-                    || call.arg_list()?.args().next().is_some()
-                {
-                    return None;
-                }
-            }
+            setup(statement, &sink, &mut known)?;
+        }
+        bounded_send(&changed_call, &sink, &method_name, &known)?;
+        for statement in &owner_statements[at..] {
+            append_only(statement, &sink, &method_name, &known)?;
+        }
+        if let Some(tail) = owner_body.tail_expr() {
+            append_only_expr(&tail, &sink, &method_name, &known)?;
         }
         // Resolve the root trait and same-file doubles, including an inline test module.
         // Imports, expansion and standard-type/read-method lookalikes refuse.
@@ -436,6 +517,7 @@ impl RecordingDouble {
         }
         (!doubles.is_empty()).then_some(Self {
             owner: owner.name.clone(),
+            owner_id: owner.id.clone(),
             file: owner.file.clone(),
             argument,
             doubles,
@@ -461,7 +543,15 @@ impl RecordingDouble {
         {
             return false;
         }
-        self.admits_inner(test, assertion).is_some()
+        let Some(owner) = index
+            .functions()
+            .iter()
+            .find(|owner| owner.id == self.owner_id)
+        else {
+            return false;
+        };
+        targeted_free_call_reaches_owner(test, owner, None, index, syntax)
+            && self.admits_inner(test, assertion).is_some()
     }
     fn admits_inner(&self, test: &TestSummary, assertion: &OracleFact) -> Option<()> {
         let function = function(&test.body)?;

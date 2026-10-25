@@ -209,3 +209,38 @@ fn user_read_methods_do_not_supply_recording_credit() -> Result<(), String> {
         + "\ntrait Clone { fn clone(&self) -> Vec<String>; }\nimpl Clone for Vec<String> { fn clone(&self) -> Vec<String> { vec![\"n=3\".to_string()] } }\n";
     assert_reading("constant user clone", &custom_clone, false)
 }
+
+#[test]
+fn hidden_execution_and_module_value_twins_cannot_supply_credit() -> Result<(), String> {
+    let base = source(
+        "self.lines.push(line);",
+        "&mut dyn Sink",
+        &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+    );
+    for (label, candidate) in [
+        ("overloaded setup equality", base.replace("n: u32) {", "n: u32) { let skip = Stop == Stop;")
+            + "\nstruct Stop; impl PartialEq for Stop { fn eq(&self, _: &Self) -> bool { std::process::exit(0); } }\n"),
+        ("hidden format exit", base.replace("format!(\"n={}\", n)", "format!(\"n={}\", { std::process::exit(0); n })")),
+        ("module const redirects owner", base.replace("use super::*;", "use super::*; const report: fn(&mut dyn Sink, u32) = rival; fn rival(s: &mut dyn Sink, _: u32) { s.send(\"n=3\".to_string()); }")),
+        ("module static redirects owner", base.replace("use super::*;", "use super::*; static report: fn(&mut dyn Sink, u32) = rival; fn rival(s: &mut dyn Sink, _: u32) { s.send(\"n=3\".to_string()); }")),
+        ("tuple constructor redirects owner", base.replace("use super::*;", "use super::*; struct report<'a>(&'a mut dyn Sink, u32); impl Drop for report<'_> { fn drop(&mut self) { self.0.send(\"n=3\".to_string()); } }")),
+    ] {
+        assert_reading(label, &candidate, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn primitive_slice_setup_and_later_append_keep_the_exact_pin() -> Result<(), String> {
+    let body = "let mut recorder = Recorder { lines: vec![], other: vec![] };\n        report(&mut recorder, &[1, 2]);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);";
+    let candidate = source("self.lines.push(line);", "&mut dyn Sink", body)
+        .replace(
+            "n: u32) {",
+            "items: &[u32]) { let n: u32 = items.iter().sum();",
+        )
+        .replace(
+            "\n}\n#[cfg(test)]",
+            "\n    if n > 100 { sink.send(\"over budget\".to_string()); }\n}\n#[cfg(test)]",
+        );
+    assert_reading("typed slice sum and later append", &candidate, true)
+}

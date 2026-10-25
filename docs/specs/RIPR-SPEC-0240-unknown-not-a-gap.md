@@ -417,8 +417,32 @@ non-ignored related test matches one of these shapes:
   call, compares `rec.field` (a field, not a method call and not only its `.len()`, `.is_empty()` or `.count()`) in an `assert_eq!`.
   A concrete `&mut` parameter, a std collection, a constructor call, a method
   read or a comparison before the call keep the finding. The recorded value
-  reaches the assertion through the double's own method, which ripr does not
-  follow.
+  reaches the assertion through the double's own method. Outside the bounded
+  recording rule below, ripr does not follow that method.
+
+  **Bounded recording credit (#9766):** a same-file free owner sends one
+  `String` argument through a local root trait. The asserted double has a
+  unique same-file struct definition and trait implementation (possibly in an
+  inline test module), whose method consists only of
+  `self.field.push(argument);`; `field` is a standard `Vec<String>`.
+  The test begins with its empty struct-literal double, an unqualified owner
+  call, and an immediately following exact comparison of that field (or its
+  standard `clone()`) to a nonempty vector of independent string literals.
+  The existing free-call binding authority must resolve the actual call to
+  this owner; a module constant, static or constructor twin cannot borrow it.
+  This supplies assertion-local observation, without changing reach or strength.
+
+  Owner execution is bounded to primitive integer inputs, literal setup or an
+  explicitly typed primitive slice `iter().sum()`, and direct sends. A later
+  primitive comparison may guard further append-only sends. Format arguments
+  are parsed out of their token tree: only primitive names or numeric literals
+  and plain named/positional placeholders are admitted. Hidden calls, operators
+  on unknown values, other setup/effects, type aliases, ambiguous imports,
+  item expansion/attributes, and user-defined `clone`/`to_string` methods refuse
+  this credit. Concrete mutable parameters, standard collection receivers,
+  count-only observations, before-call assertions, no-op/constant writers and
+  comparisons of another field retain their prior refusals. This rule grants
+  no fixture-builder receiver credit.
 - **local executor** (#9443): a `return_value` probe on an `async fn` owner,
   and a `direct_owner_call` test with a strong assertion: an `assert_eq!` with
   a literal on one side and `helper(owner(..))` on the other, where `helper`
@@ -676,6 +700,16 @@ a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
 
 ## Test Mapping
 
+Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
+`exact_recorded_argument_is_credited`,
+`a_double_declared_in_the_test_module_is_credited`,
+`primitive_slice_setup_and_later_append_keep_the_exact_pin`,
+`missing_argument_transfer_is_never_credited`,
+`recording_credit_preserves_observer_and_receiver_refusals`,
+`user_read_methods_do_not_supply_recording_credit`, and
+`hidden_execution_and_module_value_twins_cannot_supply_credit`.
+The existing framework suite retains the concrete/collection/count/order controls.
+
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 
 - `analyzer_limit_refusals_withhold_the_gap_and_name_the_test`
@@ -754,6 +788,10 @@ Wire strings are pinned by
 and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/classify/effect_carrier/recording.rs` establishes
+  the bounded transfer; `classifier/evidence.rs` and `classify/reveal.rs` carry
+  its assertion-local admission through the existing reveal decision.
 
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `AssertionRefusal::is_analyzer_limit`.
