@@ -11,18 +11,21 @@
 //! ```
 //!
 //! as the whole helper body (a tail expression). When the scrutinee
-//! resolves exactly (#3295 facts) and every arm's pattern is a plain
-//! string literal or `_` and every arm's value is a plain string
-//! literal or one nested direct call to a unique helper, the
-//! evaluator returns the first arm whose literal equals the scrutinee
-//! — source order is authoritative, exactly like the Rust match. A
+//! resolves exactly (#3295 facts) to a string or a char and every
+//! arm's pattern is `_` or one or more `|`-joined literals of that same
+//! type (an escape decodes through the shared #3295 literal parser) and
+//! every arm's value is a plain string literal or one nested direct
+//! call to a unique helper, the evaluator returns the first arm whose
+//! literal equals the scrutinee — source order is authoritative,
+//! exactly like the Rust match. A
 //! nested call resolves through the shared bounded context (the
 //! #3296 recursive row): distinct `(helper, bound inputs)` states
 //! unroll within the explicit hop bound, while a repeated state (a
 //! true cycle) or the bound itself refuses. Anything else — a guard,
-//! an alternative pattern, a computed value, a bare-identifier
-//! pattern, a non-string scrutinee, any statement after the closing
-//! brace — refuses the whole shape and returns `None`; the caller's
+//! a computed value, a bare-identifier pattern, a range or path
+//! pattern, a pattern whose type differs from the scrutinee's, any
+//! statement after the closing brace — refuses the whole shape and
+//! returns `None`; the caller's
 //! existing limitation wording stays the disclosure.
 
 use super::helper_transfer::HelperEval;
@@ -45,9 +48,10 @@ enum MatchValue {
 }
 
 struct MatchArm {
-    /// `None` is the `_` wildcard arm; `Some(literal)` is a plain
-    /// string-literal pattern. A wildcard still respects source order.
-    pattern: Option<String>,
+    /// `None` is the `_` wildcard arm; `Some(literals)` is one literal
+    /// pattern or the `|`-joined alternatives, each an exact string or
+    /// char. A wildcard still respects source order.
+    pattern: Option<Vec<TypedValue>>,
     value: MatchValue,
 }
 
@@ -61,13 +65,25 @@ pub(crate) fn match_return_value(
     let shape = MatchShape::parse(&helper.body)?;
     let subject = match evaluate_initializer(&shape.scrutinee, inputs) {
         EvalOutcome::Exact {
-            value: TypedValue::Str(text),
+            value: value @ (TypedValue::Str(_) | TypedValue::Char(_)),
             ..
-        } => text,
+        } => value,
         _ => return None,
     };
     for arm in &shape.arms {
-        let selected = !matches!(&arm.pattern, Some(literal) if literal != &subject);
+        let selected = match &arm.pattern {
+            None => true,
+            Some(literals) => {
+                // A literal of the other type would not compile against
+                // this scrutinee; refuse rather than guess a mismatch.
+                if literals.iter().any(|literal| {
+                    std::mem::discriminant(literal) != std::mem::discriminant(&subject)
+                }) {
+                    return None;
+                }
+                literals.contains(&subject)
+            }
+        };
         if selected {
             return match &arm.value {
                 MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
@@ -151,20 +167,20 @@ impl MatchShape {
     }
 }
 
-/// `"literal" => "value",` — the pattern is a plain string literal or
-/// `_`; the value is a plain string literal or one nested direct call
-/// (`label_of("a")`) to a unique helper with literal or bound-parameter
-/// arguments. Guards, alternatives, bindings, paths, and escapes all
-/// refuse the arm (and with it the whole helper): an unresolved
-/// pattern could match anything, and any other value shape is not an
-/// exact return the shared authorities can evaluate.
+/// `"literal" => "value",` — the pattern is `_` or `|`-joined string or
+/// char literals; the value is a plain string literal or one nested
+/// direct call (`label_of("a")`) to a unique helper with literal or
+/// bound-parameter arguments. Guards, bindings, ranges and paths refuse
+/// the arm (and with it the whole helper): an unresolved pattern could
+/// match anything, and any other value shape is not an exact return the
+/// shared authorities can evaluate.
 fn parse_arm(line: &str) -> Option<MatchArm> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let (pattern, value) = trimmed.split_once(" => ")?;
     let pattern = if pattern == "_" {
         None
     } else {
-        Some(literal_string(pattern)?)
+        Some(literal_alternatives(pattern)?)
     };
     let value = if let Some(literal) = literal_string(value) {
         MatchValue::Literal(literal)
@@ -192,6 +208,87 @@ fn direct_call(text: &str) -> Option<()> {
         return None;
     }
     Some(())
+}
+
+/// One literal pattern or `|`-joined alternatives, each evaluated
+/// through the shared #3295 literal parser so an escape decodes exactly
+/// as it does in the caller's argument. A guard, a binding, a range or
+/// a path does not evaluate to a string or char and refuses the arm.
+fn literal_alternatives(pattern: &str) -> Option<Vec<TypedValue>> {
+    let mut literals = Vec::new();
+    for alternative in split_alternatives(pattern)? {
+        // The shared parser only strips the outer quotes, so `"a"..="z"`
+        // must be rejected here as a range, not read as one string.
+        if !is_single_literal(alternative) {
+            return None;
+        }
+        match evaluate_initializer(alternative, &ExactInputs::new()) {
+            EvalOutcome::Exact {
+                value: value @ (TypedValue::Str(_) | TypedValue::Char(_)),
+                ..
+            } => literals.push(value),
+            _ => return None,
+        }
+    }
+    Some(literals)
+}
+
+/// True when `text` is exactly one quoted literal: the first unescaped
+/// closing quote is the last character.
+pub(super) fn is_single_literal(text: &str) -> bool {
+    let mut characters = text.char_indices();
+    let Some((_, open)) = characters.next() else {
+        return false;
+    };
+    if open != '"' && open != '\'' {
+        return false;
+    }
+    let mut escaped = false;
+    for (index, character) in characters {
+        if escaped {
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == open {
+            return index + character.len_utf8() == text.len();
+        }
+    }
+    false
+}
+
+/// Split a pattern on `|` outside string and char literals. An
+/// unterminated literal refuses the pattern.
+fn split_alternatives(pattern: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, character) in pattern.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => match character {
+                '"' | '\'' => quote = Some(character),
+                '|' => {
+                    parts.push(pattern[start..index].trim());
+                    start = index + 1;
+                }
+                _ => {}
+            },
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    parts.push(pattern[start..].trim());
+    Some(parts)
 }
 
 /// A plain string literal: non-empty, no quote, backslash, apostrophe,
@@ -312,25 +409,35 @@ mod tests {
     }
 
     #[test]
-    fn guard_alternative_binding_and_computed_shapes_fail_closed() -> Result<(), String> {
-        let cases: [(&str, &str); 5] = [
+    fn guard_binding_range_and_computed_shapes_fail_closed() -> Result<(), String> {
+        let cases: [(&str, &str); 9] = [
             (
                 "guard arm",
                 "        \"word\" if kind.len() > 2 => \"alpha\",",
             ),
             (
-                "alternative pattern",
-                "        \"word\" | \"text\" => \"alpha\",",
+                "guard on an alternative",
+                "        \"word\" | \"text\" if kind.len() > 2 => \"alpha\",",
             ),
             ("bare binding pattern", "        word => \"alpha\","),
+            (
+                "binding alternative",
+                "        \"text\" | word => \"alpha\",",
+            ),
+            ("range pattern", "        \"a\"..=\"z\" => \"alpha\","),
             (
                 "computed argument in a call value",
                 "        \"word\" => pick(kind.trim()),",
             ),
             (
-                "escaped literal pattern",
-                "        \"a\\\"b\" => \"alpha\",",
+                "char literal against a string scrutinee",
+                "        'w' => \"alpha\",",
             ),
+            (
+                "mixed-type alternatives",
+                "        'w' | \"word\" => \"alpha\",",
+            ),
+            ("char range pattern", "        'a'..='z' => \"alpha\","),
         ];
         let index = RustIndex::default();
         let eval = root_eval(&index);
@@ -347,16 +454,24 @@ mod tests {
     }
 
     #[test]
-    fn non_string_scrutinee_and_non_tail_bodies_fail_closed() -> Result<(), String> {
+    fn non_literal_scrutinee_and_non_tail_bodies_fail_closed() -> Result<(), String> {
         let index = RustIndex::default();
         let eval = root_eval(&index);
-        // A char scrutinee is a named limitation, not a guessed match.
+        // String-literal arms against a char scrutinee do not compile;
+        // refuse rather than guess a match.
         let char_scrutinee = BODY.replace("match kind", "match c");
         let helper = match_fn("label", &char_scrutinee);
         let bound = inputs(&[("c", "'a'")]);
         assert!(
             match_return_value(&helper, &bound, &eval).is_none(),
-            "a non-string scrutinee must refuse the match"
+            "a scrutinee of the other literal type must refuse the match"
+        );
+        // An integer scrutinee is outside the string/char lattice.
+        let integer = BODY.replace("match kind", "match n");
+        let helper_int = match_fn("label", &integer);
+        assert!(
+            match_return_value(&helper_int, &inputs(&[("n", "7")]), &eval).is_none(),
+            "an integer scrutinee must refuse the match"
         );
         // A statement after the closing brace is not the pinned shape.
         let with_tail = BODY.replace("    }\n}", "    }\n    kind\n}");
@@ -376,6 +491,66 @@ mod tests {
             match_return_value(&helper3, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
             "an unbound scrutinee must refuse the match"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn alternative_patterns_select_each_listed_literal() -> Result<(), String> {
+        let body = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" | \"term\" => \"alpha\",",
+        );
+        assert_ne!(body, BODY, "the alternative substitution must apply");
+        let helper = match_fn("label", &body);
+        assert_eq!(returned(&helper, "\"word\"")?, "alpha");
+        assert_eq!(returned(&helper, "\"term\"")?, "alpha");
+        assert_eq!(returned(&helper, "\"text\"")?, "beta");
+        // A scrutinee neither alternative names falls to the wildcard.
+        assert_eq!(returned(&helper, "\"wor\"")?, "other");
+        Ok(())
+    }
+
+    #[test]
+    fn escaped_patterns_decode_like_the_callers_literal() -> Result<(), String> {
+        let body = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"a\\tb\" | \"c|d\" => \"alpha\",",
+        );
+        assert_ne!(body, BODY, "the escaped-pattern substitution must apply");
+        let helper = match_fn("label", &body);
+        // The tab decodes on both sides; the `|` inside a literal is
+        // part of the string, not an alternative separator.
+        assert_eq!(returned(&helper, "\"a\\tb\"")?, "alpha");
+        assert_eq!(returned(&helper, "\"c|d\"")?, "alpha");
+        // The two-character text `\t` is not the decoded tab.
+        assert_eq!(returned(&helper, "\"a\\\\tb\"")?, "other");
+        assert_eq!(returned(&helper, "\"c\"")?, "other");
+        Ok(())
+    }
+
+    #[test]
+    fn char_scrutinee_selects_char_arms_in_source_order() -> Result<(), String> {
+        let body = "pub fn tag(c: char) -> &'static str {
+    match c {
+        'a' | 'b' => \"low\",
+        'c' => \"third\",
+        _ => \"other\",
+    }
+}";
+        let helper = match_fn("tag", body);
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
+        for (input, expected) in [
+            ("'a'", "low"),
+            ("'b'", "low"),
+            ("'c'", "third"),
+            ("'z'", "other"),
+        ] {
+            match match_return_value(&helper, &inputs(&[("c", input)]), &eval) {
+                Some(TypedValue::Str(text)) => assert_eq!(text, expected, "input {input}"),
+                other => return Err(format!("expected {expected} for {input}, got {other:?}")),
+            }
+        }
         Ok(())
     }
 
@@ -457,5 +632,113 @@ mod tests {
             "a chain beyond the hop bound must refuse"
         );
         Ok(())
+    }
+
+    #[test]
+    fn literal_tail_callee_values_resolve_and_ambiguous_tails_refuse() -> Result<(), String> {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {
+    match kind {
+        \"word\" => pick(kind),
+        _ => \"other\",
+    }
+}",
+        );
+        let index_with = |pick_body: &str| {
+            RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![label.clone(), match_fn("pick", pick_body)],
+                ..Default::default()
+            })
+        };
+        let resolve = |index: &RustIndex| {
+            let eval = root_eval(index);
+            super::super::helper_transfer::helper_return_value(
+                &label,
+                &inputs(&[("kind", "\"word\"")]),
+                &eval,
+            )
+        };
+        let single = index_with("fn pick(_kind: &str) -> &'static str {\n    \"alpha\"\n}");
+        match resolve(&single) {
+            Some(TypedValue::Str(text)) => assert_eq!(text, "alpha"),
+            other => {
+                return Err(format!(
+                    "expected the literal callee to resolve, got {other:?}"
+                ));
+            }
+        }
+        // Two literal lines are not one tail value.
+        let two =
+            index_with("fn pick(_kind: &str) -> &'static str {\n    \"alpha\"\n    \"beta\"\n}");
+        assert!(resolve(&two).is_none(), "two literal lines must refuse");
+        // A quote-bounded expression is not a whole literal.
+        let concat = index_with("fn pick(_kind: &str) -> String {\n    \"a\" + \"b\"\n}");
+        assert!(
+            resolve(&concat).is_none(),
+            "a quoted expression must refuse, got {:?}",
+            resolve(&concat)
+        );
+        // A computed tail is not a whole literal.
+        let computed = index_with("fn pick(kind: &str) -> String {\n    kind.to_uppercase()\n}");
+        assert!(resolve(&computed).is_none(), "a computed tail must refuse");
+        Ok(())
+    }
+
+    #[test]
+    fn a_discarded_literal_statement_does_not_displace_a_binding_tail() {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {\n    match kind {\n        \"word\" => pick(kind),\n        _ => \"other\",\n    }\n}",
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                label.clone(),
+                match_fn(
+                    "pick",
+                    "fn pick(_k: &str) -> &'static str {\n    \"unused\";\n    let value = \"alpha\";\n    value\n}",
+                ),
+            ],
+            ..Default::default()
+        });
+        let eval = root_eval(&index);
+        let value = super::super::helper_transfer::helper_return_value(
+            &label,
+            &inputs(&[("kind", "\"word\"")]),
+            &eval,
+        );
+        assert!(value.is_some(), "the let-bound tail must still resolve");
+    }
+
+    #[test]
+    fn raw_string_interiors_async_bodies_and_early_returns_are_not_literal_tails() {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {\n    match kind {\n        \"word\" => pick(kind),\n        _ => \"other\",\n    }\n}",
+        );
+        let bodies = [
+            "fn pick(_k: &str) -> &'static str {\n    r#\"\n\"x\"\n\"#\n}",
+            "async fn pick(_k: &str) -> &'static str {\n    \"x\"\n}",
+            "fn pick(k: &str) -> &'static str {\n    \"x\";\n    return k;\n}",
+            // A quoted line inside a block comment is comment text, not a tail.
+            "fn pick(_k: &str) -> &'static str {\n    /*\n    \"x\"\n    */\n}",
+            "fn pick(_k: &str) -> &'static str {\n    /*\n    \"alpha\"\n    */\n    const { \"beta\" }\n}",
+        ];
+        for body in bodies {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![label.clone(), match_fn("pick", body)],
+                ..Default::default()
+            });
+            let eval = root_eval(&index);
+            assert!(
+                super::super::helper_transfer::helper_return_value(
+                    &label,
+                    &inputs(&[("kind", "\"word\"")]),
+                    &eval,
+                )
+                .is_none(),
+                "{body}"
+            );
+        }
     }
 }

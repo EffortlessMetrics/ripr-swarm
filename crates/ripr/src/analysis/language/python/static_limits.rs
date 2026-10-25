@@ -11,6 +11,7 @@ use super::related_tests::{
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
+use super::sink_alignment::CreditedAssertion;
 use super::source_utils::SourceText;
 use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
@@ -41,6 +42,71 @@ pub(super) fn static_limit_for_change(
         None,
     );
     static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
+}
+
+/// A test that rebinds the owner's module object (`route.response = fake`,
+/// `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
+/// object than the owner mutates. Withholding credit alone leaves a weak
+/// finding whose repair card asserts on the stale import, so the finding is
+/// withheld as a runtime-substitution limit like `patch` (#10289).
+///
+/// `credited` is the test the finding's observation credit comes from. A
+/// credit from a test that does not rebind the object is an independent live
+/// read, so a sibling's rebinding does not take it away (#10354); with no
+/// credit, or credit from a rebinding test, the limit holds (fail closed).
+pub(super) fn module_object_rebind_limit(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    credited: Option<&CreditedAssertion>,
+) -> Option<PythonStaticLimit> {
+    let ChangedEffect::ModuleField { object, attr } =
+        ChangedEffect::of(line_text, old_line_text, owner, false)?
+    else {
+        return None;
+    };
+    let rebinds = |test: &PythonTest| test.constant_rebinding.assigns_attribute(&object);
+    // Only a credit that reads the changed field through the object's own
+    // import is a live read: a return or other assertion that merely names
+    // the owner does not discriminate the write (#10354).
+    let live_credit = credited.is_some_and(|credited| {
+        related_candidates.iter().any(|candidate| {
+            let test = candidate.test;
+            test.name == credited.test_name
+                && test.file == credited.test_file
+                && !rebinds(test)
+                && test.imports.iter().any(|import| {
+                    import.imported == object
+                        && import_source_module_matches_owner(import, owner, &test.file)
+                        && credited.text.contains(&format!("{}.{attr}", import.alias))
+                })
+        })
+    });
+    if live_credit {
+        return None;
+    }
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            let test = candidate.test;
+            // Only a test that imports the object can read a stale one.
+            rebinds(test)
+                && test.imports.iter().any(|import| {
+                    import.imported == object
+                        && import_source_module_matches_owner(import, owner, &test.file)
+                })
+        })
+        .then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MockedModule,
+            evidence: format!(
+                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
+            ),
+            missing: format!(
+                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
+            ),
+        })
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -202,36 +268,6 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
         });
     }
-    // A test that rebinds the owner's module object (`route.response = fake`,
-    // `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
-    // object than the owner mutates. Withholding credit alone leaves a weak
-    // finding whose repair card asserts on the stale import, so the finding is
-    // withheld as a runtime-substitution limit like `patch` (#10289).
-    if let Some(ChangedEffect::ModuleField { object, .. }) =
-        ChangedEffect::of(line_text, old_line_text, owner, false)
-        && related_candidates
-            .iter()
-            .filter(|candidate| candidate.relation.uses_oracle())
-            .any(|candidate| {
-                let test = candidate.test;
-                // Only a test that imports the object can read a stale one.
-                test.constant_rebinding.assigns_attribute(&object)
-                    && test.imports.iter().any(|import| {
-                        import.imported == object
-                            && import_source_module_matches_owner(import, owner, &test.file)
-                    })
-            })
-    {
-        return Some(PythonStaticLimit {
-            kind: StaticLimitKind::MockedModule,
-            evidence: format!(
-                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
-            ),
-            missing: format!(
-                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
-            ),
-        });
-    }
     if related_candidates_have_property_based_test_limit(related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::PropertyBasedTest,
@@ -381,19 +417,29 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
         .map_or(&text[..idx], |(_, line)| line)
 }
 
+/// Whether the end of `prefix` (the text of a line before a position) sits in
+/// a comment or an open string. A tripled quote opens a string that only the
+/// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
+/// code after it is visible (#9992); a triple string left open at the end of
+/// the prefix hides what follows. F-string fields are not read here.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
-    let mut quote = None;
-    let mut escaped = false;
-    for ch in prefix.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if let Some(active_quote) = quote {
+    let chars: Vec<char> = prefix.chars().collect();
+    // The active delimiter and its width (1 or 3).
+    let mut open: Option<(char, usize)> = None;
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if let Some((quote, width)) = open {
+            let closes = ch == quote
+                && chars.len() - index >= width
+                && chars[index..index + width].iter().all(|c| *c == quote);
             if ch == '\\' {
-                escaped = true;
-            } else if ch == active_quote {
-                quote = None;
+                index += 2;
+            } else if closes {
+                open = None;
+                index += width;
+            } else {
+                index += 1;
             }
             continue;
         }
@@ -401,10 +447,15 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
             return true;
         }
         if ch == '\'' || ch == '"' {
-            quote = Some(ch);
+            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+            let width = if triple { 3 } else { 1 };
+            open = Some((ch, width));
+            index += width;
+            continue;
         }
+        index += 1;
     }
-    quote.is_some()
+    open.is_some()
 }
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
