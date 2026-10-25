@@ -4,11 +4,13 @@ pub enum Either {
 }
 
 pub fn score(n: usize) -> u32 {
-    let f = |(Either::Left(n) | Either::Right(n)): Either| n;
-    let _ = f(Either::Left(7));
-    let m = n * 2;
-    if m == 40 {
-        return 0;
-    }
-    1
+    let f = |(Either::Left(n) | Either::Right(n)): Either| {
+        let m = n * 2;
+        if m == 40 {
+            return 0;
+        }
+        1
+    };
+    let _ = n;
+    f(Either::Left(7))
 }

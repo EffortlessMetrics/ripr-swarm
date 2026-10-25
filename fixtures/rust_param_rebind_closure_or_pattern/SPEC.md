@@ -4,9 +4,9 @@ Spec: RIPR-SPEC-0158
 
 ## Given
 
-`score` compares `m == 40` where `m = n * 2`, and the parameter `n` is rebound
-by a closure or-pattern parameter `|(Either::Left(n) | Either::Right(n))|` before that `let`. The related integration test passes `20`,
-which would sit on the boundary only if `n` still held the caller's value (#9774, #10154).
+`score` compares `m == 40` where `m = n * 2`, but the closure parameter pattern `(Either::Left(n) | Either::Right(n))` binds its own `n`, and the compared local `m = n * 2` is computed inside the closure. The inner `n` shadows the
+parameter there, so the related integration test's input `20` never reaches `m`
+(#9774, #10154). The test pins the real result (`1`).
 
 ## When
 
@@ -14,7 +14,7 @@ which would sit on the boundary only if `n` still held the caller's value (#9774
 
 ## Then
 
-The finding is not `exposed`: the rebinding means the test input `20` never reaches `m`.
+The finding is not `exposed`: the boundary operand `m` is not mapped to the test input `20`.
 
 ## Must Not
 
