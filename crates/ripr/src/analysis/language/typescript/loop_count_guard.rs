@@ -1165,16 +1165,20 @@ fn declares_method(statement: &str, at: usize, len: usize) -> bool {
 
 /// `(svc as any)`, `svc!`, `(svc as Svc)!` name the receiver `svc`.
 fn without_receiver_casts(receiver: &str) -> String {
-    reduce_receiver(receiver, 0)
+    let mut budget = REDUCTION_BUDGET;
+    reduce_receiver(receiver, &mut budget)
 }
 
-/// Group nesting past this depth is left as written rather than recursed into.
-const MAX_GROUP_DEPTH: usize = 16;
+/// Reduction steps one receiver may spend. Each step rescans the text, so the
+/// budget bounds both recursion depth and total work on deeply nested input;
+/// a receiver that runs out is left as written.
+const REDUCTION_BUDGET: usize = 32;
 
-fn reduce_receiver(receiver: &str, level: usize) -> String {
-    if level >= MAX_GROUP_DEPTH {
+fn reduce_receiver(receiver: &str, budget: &mut usize) -> String {
+    if *budget == 0 {
         return receiver.to_string();
     }
+    *budget -= 1;
     let mut text = receiver.trim_end().to_string();
     for _ in 0..8 {
         let trimmed = text.trim_end();
@@ -1221,7 +1225,7 @@ fn reduce_receiver(receiver: &str, level: usize) -> String {
         if call_like {
             break;
         }
-        let Some(reduced) = reduced_group(inner, level) else {
+        let Some(reduced) = reduced_group(inner, budget) else {
             break;
         };
         let glue = if before.len() == end[..open].len()
@@ -1243,21 +1247,29 @@ fn is_word_char(c: char) -> bool {
 
 /// The expression a cast or non-null group stands for (the last element of a
 /// comma list), or `None` when the group reduces to nothing new.
-fn reduced_group(inner: &str, level: usize) -> Option<String> {
+fn reduced_group(inner: &str, budget: &mut usize) -> Option<String> {
     let flat = inner.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut start = 0usize;
     let mut end = flat.len();
     let mut nest = 0usize;
+    let mut in_type = false;
+    let mut angle = 0usize;
     for (at, ch) in flat.char_indices() {
         match ch {
             '(' | '[' | '{' => nest += 1,
             ')' | ']' | '}' => nest = nest.saturating_sub(1),
-            ',' if nest == 0 => start = at + 1,
-            ' ' if nest == 0 => {
+            '<' if nest == 0 && in_type => angle += 1,
+            '>' if nest == 0 && in_type => angle = angle.saturating_sub(1),
+            ',' if nest == 0 && angle == 0 => {
+                start = at + 1;
+                end = flat.len();
+                in_type = false;
+            }
+            ' ' if nest == 0 && !in_type => {
                 let rest = &flat[at..];
                 if rest.starts_with(" as ") || rest.starts_with(" satisfies ") {
                     end = at;
-                    break;
+                    in_type = true;
                 }
             }
             _ => {}
@@ -1268,7 +1280,7 @@ fn reduced_group(inner: &str, level: usize) -> Option<String> {
         Some(rest) => rest.split_once('>').map_or(head, |(_, tail)| tail.trim()),
         None => head,
     };
-    let reduced = reduce_receiver(head, level + 1);
+    let reduced = reduce_receiver(head, budget);
     (!reduced.is_empty() && reduced != flat).then_some(reduced)
 }
 
@@ -2226,6 +2238,9 @@ mod tests {
             "(svc!).retry(fn, 2);",
             "(a, svc as any).retry(fn, 2);",
             "(0, svc).retry(fn, 2);",
+            "(a as any, svc).retry(fn, 2);",
+            "(a, svc as Map<A, B>).retry(fn, 2);",
+            "(a, svc as Map<A, B>, svc).retry(fn, 2);",
         ] {
             assert!(
                 hands_mock_to_owner(stmt, &["retry"], Receivers::Members(&svc, "retry"), "fn"),
@@ -2258,8 +2273,16 @@ mod tests {
         assert_eq!(binding_names(" { a = fn, b: c, d } = o"), ["a", "c", "d"]);
         assert_eq!(binding_names(" [a = fn, b] = o"), ["a", "b"]);
         assert_eq!(binding_names(" r: ReturnType<typeof fn> = x"), ["r"]);
-        let nested = format!("{}svc as any{}", "(".repeat(100_000), ")".repeat(100_000));
-        let _ = without_receiver_casts(&nested);
+        for unit in ["(", "(a, (", "(<T>", "!)(", "(x, "] {
+            let closer = if unit == "!)(" { "!)" } else { "))" };
+            let nested = format!("{}svc as any{}", unit.repeat(20_000), closer.repeat(20_000));
+            let started = std::time::Instant::now();
+            let _ = without_receiver_casts(&nested);
+            assert!(
+                started.elapsed().as_secs() < 2,
+                "{unit:?} reduction is not bounded"
+            );
+        }
         let deep = format!("{}new Svc(){}", "(".repeat(5000), ")".repeat(5000));
         assert_eq!(inline_constructed_class(&deep), None);
     }
