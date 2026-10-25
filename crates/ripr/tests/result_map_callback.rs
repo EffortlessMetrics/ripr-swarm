@@ -10,6 +10,12 @@ const SOURCE: &str = include_str!(
     "../../../fixtures/rust-verdict-corpus/subjects/authored-result-map-callback/src/lib.rs.txt"
 );
 struct Subject(PathBuf);
+impl Subject {
+    fn claim(root: PathBuf) -> Result<Self, String> {
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        Ok(Self(root))
+    }
+}
 impl Drop for Subject {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -31,8 +37,9 @@ fn analyze_with_reader(
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    let subject = Subject(root);
-    std::fs::create_dir_all(subject.0.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    let subject = Subject::claim(root)?;
+    std::fs::create_dir(subject.0.join("src")).map_err(|e| e.to_string())?;
     std::fs::write(
         subject.0.join("Cargo.toml"),
         "[package]\nname='result_map_callback'\nversion='0.1.0'\nedition='2021'\n",
@@ -205,5 +212,20 @@ fn result_map_does_not_borrow_an_error_only_wrapper_pin() -> Result<(), String> 
     )?;
     assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_subject_claim_preserves_a_colliding_directory() -> Result<(), String> {
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    let root = std::env::temp_dir().join(format!("ripr-result-map-claim-{}", std::process::id()));
+    let owned = Subject::claim(root)?;
+    let sentinel = owned.0.join("sentinel.txt");
+    std::fs::write(&sentinel, "preserve").map_err(|error| error.to_string())?;
+    assert!(Subject::claim(owned.0.clone()).is_err());
+    assert_eq!(
+        std::fs::read_to_string(sentinel).map_err(|error| error.to_string())?,
+        "preserve"
+    );
     Ok(())
 }
