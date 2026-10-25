@@ -407,3 +407,24 @@ fn mock_call_count_alias_dependencies_refuse_cycles_and_keep_long_chains() {
     assert_eq!(tests[0].assertions.len(), 1);
     assert_eq!(mock_call_count_assertions(&tests[0]), vec![true]);
 }
+
+#[test]
+fn capped_mock_call_count_alias_receivers_do_not_become_identifier_dependencies()
+-> Result<(), String> {
+    for (suffix, observation) in [
+        (".calls.length", "count"),
+        (".calls", "count.length"),
+        ("", "count.calls.length"),
+    ] {
+        let source = node_test(&format!(
+            "fn.nested = fn; const count = fn.{}mock{suffix}; const nested = count; assert.equal({observation}, 1);",
+            "nested.".repeat(100)
+        ));
+        assert_eq!(
+            notify_class("capped-count-alias-root", &source)?,
+            ExposureClass::WeaklyExposed,
+            "{suffix}"
+        );
+    }
+    Ok(())
+}

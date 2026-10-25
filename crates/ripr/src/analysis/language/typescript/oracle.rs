@@ -2875,6 +2875,9 @@ fn resolve_mock_count_aliases(raw: MockCountAliases) -> MockCountAliases {
         };
         if expanded.len() > 64 {
             expanded.drain(..expanded.len() - 64);
+            if let Some(first) = expanded.first_mut() {
+                *first = MockCountPart::Opaque;
+            }
         }
         resolved.insert(name.clone(), (expanded, *end));
         if let Some(dependents) = waiting.remove(&name) {
@@ -2952,6 +2955,11 @@ fn mock_count_path(
     let mut path = mock_count_path(object, aliases, before, depth + 1);
     if path.len() >= 64 {
         path.remove(0);
+        if let Some(first) = path.first_mut() {
+            // The retained front is now a member, not a lexical root. Do
+            // not invent alias dependencies from a truncated receiver.
+            *first = Opaque;
+        }
     }
     path.push(key);
     path
