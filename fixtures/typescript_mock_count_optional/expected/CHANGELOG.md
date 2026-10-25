@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_optional (3)
+
+Reason:
+RIPR-SPEC-0243 decision 22: integrate accepted main #10258 digest wrapping; retain the complete missing/advisory prose for this owned mock-count fixture; classification, source oracle, JSON and human-full bytes are unchanged.
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_optional --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

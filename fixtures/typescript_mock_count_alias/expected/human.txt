@@ -20,7 +20,10 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: sender.send(2 * id);
-  Missing discriminator (1 of 2): Related test reaches `notify` with a mock interaction oracle, but TypeScript preview does not yet establish the changed call payload; keep the item advisory until mock-shape…
+  Missing discriminator (1 of 2): Related test reaches `notify` with a mock interaction oracle, but
+    TypeScript preview does not yet establish the changed call payload; keep the item advisory until
+    mock-shape actionability can name the callee, expected arguments, verify command, receipt
+    command, and edit boundaries
   Related test: test/notify.test.ts:10 notify alias
   Next step — TypeScript preview advisory: related mock interaction evidence is present, but mock
     payloads are not yet a safe discriminator for `call sender.send includes 2 * id`; no actionable
