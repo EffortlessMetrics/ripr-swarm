@@ -620,6 +620,16 @@ fn given_an_aliased_fixture_overriding_caplog_then_the_logged_text_abstains() ->
         ])?,
         ABSTAINS
     );
+    // `pytest_asyncio.fixture` is recognized the same way.
+    let asyncio = conftest.replace("from pytest import", "from pytest_asyncio import");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &asyncio),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
     // An alias bound to another module's `fixture` is not pytest's.
     let foreign = conftest.replace("from pytest import", "from tools import");
     assert_eq!(
