@@ -61,3 +61,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_conditional_version_annotated_write (6)
+
+Reason:
+RIPR-SPEC-0319 next-step lines: fixture goldens blessed without them (#10235 after #9449 combined-tree drift)
+
+Command:
+`cargo xtask goldens bless python_conditional_version_annotated_write --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
