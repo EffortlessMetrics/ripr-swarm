@@ -27,7 +27,7 @@ Updated:
 ## Pending — module_reach_super_import_control (3)
 
 Reason:
-RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+RIPR-SPEC-0186: exact wrapper boundary pins now confirm the private boolean whole-return twin (#9849, weakly_exposed -> exposed)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_control --reason "..."`

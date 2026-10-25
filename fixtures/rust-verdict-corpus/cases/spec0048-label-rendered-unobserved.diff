@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ //! RIPR-SPEC-0048 acceptance example 2.
+ 
+-pub const TIER_LABEL: &str = "tier: gold";
++pub const TIER_LABEL: &str = "tier: premium";
+ 
+ pub fn render_report() -> String {
+     format!("{TIER_LABEL}\n")
