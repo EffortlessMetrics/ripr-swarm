@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-default-flow",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25; negatives for RIPR-SPEC-0357 (value default reaching the returned text through a binding)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "199ebdeec8f871a59ef5a9992f21baea6b776dac24b7213806a39c55db4878ca"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "87c52ecc53341335b78a849eed1a52272d8d0d9a783e6fa6d31bf34cc1b6ed3e"
+    }
+  ]
+}

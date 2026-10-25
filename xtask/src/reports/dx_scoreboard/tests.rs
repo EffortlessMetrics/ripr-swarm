@@ -1847,6 +1847,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3185,6 +3186,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -4577,6 +4579,95 @@ fn corpus_pins_no_rust_commits() -> Result<(), String> {
     // stays in the light tier so the default run covers a no-Rust diff.
     if serde_no_rust.heavy || !cargo_no_rust.heavy {
         return Err("serde-no-rust is light and cargo-no-rust is heavy".to_string());
+    }
+    Ok(())
+}
+
+/// Non-Rust corpus rows (#10338): each names its language, pins full shas and
+/// is a separate population from the Rust rows. An unknown language is
+/// refused so a typo cannot silently fall back to `rust`.
+#[test]
+fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let python: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "python")
+        .collect();
+    let ids: Vec<_> = python.iter().map(|entry| entry.id.as_str()).collect();
+    if ids != ["click-python", "poetry-python"] {
+        return Err(format!(
+            "expected click and poetry Python rows, got {ids:?}"
+        ));
+    }
+    if python[0].heavy || !python[1].heavy {
+        return Err("click must be the light Python row and poetry the heavy one".to_string());
+    }
+    // Rows without a language stay Rust, so existing pins keep their meaning.
+    if config
+        .corpus
+        .iter()
+        .any(|entry| entry.id == "serde" && entry.language() != "rust")
+    {
+        return Err("rows without `language` must read as rust".to_string());
+    }
+    let mut typo = config.corpus.clone();
+    typo[0].language = Some("pyton".to_string());
+    match validate_corpus(&typo) {
+        Err(message) if message.contains("unknown language `pyton`") => Ok(()),
+        other => Err(format!(
+            "an unknown language must be refused, got {other:?}"
+        )),
+    }
+}
+
+/// A manifest `language` of the wrong JSON type must not be read as absent,
+/// which would file the entry's measurements under `rust`.
+#[test]
+fn manifest_language_must_be_a_string_when_present() -> Result<(), String> {
+    let manifest = |language: Value| {
+        json!({
+            "kind": "ripr_rust_corpus_manifest",
+            "corpus_version": "v",
+            "repos": [{
+                "id": "a", "url": "u", "tier": "fast", "language": language,
+                "sha": "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b",
+            }],
+        })
+    };
+    let (_, corpus) = corpus_from_manifest(&manifest(json!("python")))?;
+    if corpus.first().map(CorpusEntry::language) != Some("python") {
+        return Err("a string manifest language must be carried through".to_string());
+    }
+    match corpus_from_manifest(&manifest(json!(123))) {
+        Err(message) if message.contains("`language` must be a string") => Ok(()),
+        other => Err(format!("a numeric language must be refused, got {other:?}")),
+    }
+}
+
+/// The per-repository rows carry the entry's language so a consumer can
+/// group results without joining back to the corpus metadata.
+#[test]
+fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let repos = repo_view(&config, &[]);
+    let language = |id: &str| {
+        repos
+            .iter()
+            .find(|row| row["id"] == id)
+            .and_then(|row| row["language"].as_str())
+            .map(str::to_string)
+    };
+    if language("click-python").as_deref() != Some("python") {
+        return Err("click-python row must report python".to_string());
+    }
+    if language("serde").as_deref() != Some("rust") {
+        return Err("a row without `language` must report rust".to_string());
     }
     Ok(())
 }

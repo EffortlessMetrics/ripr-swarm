@@ -745,23 +745,43 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         .collect()
 }
 
+/// Whether the name at `idx` sits on a `case` pattern line where it may be a
+/// capture (`case {"k": r}:`, `case Foo(x=r):`, `case (1 | r):`). Any such
+/// mention withholds credit, which also demotes a guard read
+/// (`case x if r:`); a dotted value pattern (`case r.A:`) or a class pattern
+/// (`case r(1):`) is a read and is not matched.
+fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    let is_case_line = body[line_start..idx]
+        .trim_start()
+        .strip_prefix("case")
+        .is_some_and(|tail| tail.starts_with([' ', '\t', '(', '[', '{']));
+    is_case_line && !after.starts_with(['.', '('])
+}
+
 /// Whether `var` appears in a position that can bind it through a target list
 /// or an annotation (`x, r = ...`, `for i, r in ...`, `with a as (b, r)`,
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
-fn binds_in_target_list(body: &str, var: &str) -> bool {
+pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
             && !next_char_is_identifier(body, end)
             && !python_text_hides_code(body, idx)
             && {
-                let after = body[end..].trim_start_matches([' ', '\t']);
-                let before = body[..idx].trim_end_matches([' ', '\t']);
+                let spaced = body[end..].trim_start_matches([' ', '\t']);
+                let after = skip_blank_forward(spaced, false);
+                // A backslash continuation before the `=` (`r \\\n = [1]`) is a
+                // second binding of the name, never the construction line.
+                let continued = after.len() != spaced.len();
+                let before = skip_blank_backward(&body[..idx], false);
                 after.starts_with(',')
                     || (after.starts_with(':') && !after.starts_with(":="))
                     || before.ends_with(',')
                     || before.ends_with('*')
+                    || (continued && (plain_assign(after) || augmented_assign_op(after)))
+                    || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
             }
     })
@@ -775,21 +795,22 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
 fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
     let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
     let not_line_start = !body[line_start..idx].trim().is_empty();
-    let plain_assign = |rest: &str| rest.starts_with('=') && !rest.starts_with("==");
-    if not_line_start && plain_assign(after) {
+    // `if z: r += [1]`, `a = 1; r += [1]`: an augmented assignment after a
+    // header or `;` rebinds like a plain one.
+    if not_line_start && (plain_assign(after) || augmented_assign_op(after)) {
         return true;
     }
     // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
-    // spacing, nesting (`(( r ))`) and a split across lines do not change the
-    // reading.
+    // spacing, nesting (`(( r ))`), a split across lines, a backslash
+    // continuation and a comment inside the brackets do not change the reading.
     let mut head_end = before.len();
-    let mut rest = after.trim_start();
+    let mut rest = skip_blank_forward(after, true);
     let mut peeled = false;
     while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
         let opener = if closer == ']' { '[' } else { '(' };
         let Some(open_at) = body
             .get(..head_end)
-            .map(str::trim_end)
+            .map(|head| skip_blank_backward(head, true))
             .filter(|head| head.ends_with(opener))
             .map(|head| head.len() - 1)
         else {
@@ -798,7 +819,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         head_end = body
             .get(..open_at)
             .map_or(open_at, |head| head.trim_end_matches([' ', '\t']).len());
-        rest = rest[1..].trim_start();
+        rest = skip_blank_forward(&rest[1..], true);
         peeled = true;
     }
     if !peeled {
@@ -809,12 +830,107 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         .get(head.rfind('\n').map_or(0, |at| at + 1)..)
         .unwrap_or("");
     plain_assign(rest)
+        || augmented_assign_op(rest)
         || (rest.starts_with(',') && opener_is_target_position(head_line))
+        // An annotated target (`(r): list = [1]`); `if (r):` is not at a target
+        // position. `case (r):` / `case [r]:` is a match capture that rebinds
+        // `r`, so a `case` line withholds credit too.
+        || (rest.starts_with(':')
+            && !rest.starts_with(":=")
+            && (opener_is_target_position(head_line)
+                || head_line
+                    .trim_start()
+                    .strip_prefix("case")
+                    .is_some_and(|tail| !tail.starts_with(is_python_identifier_char))))
         // `in` binds only inside a `for` target list (`for (r) in items`,
-        // `for x, (r) in items`); a membership test such as
+        // `for (r)in items`, `for x, (r) in items`); a membership test such as
         // `assert ((r)) in items` rebinds nothing.
-        || (rest.starts_with("in ") && is_inside_for_target(head_line))
-        || head.trim_end().ends_with(" as")
+        || (rest.strip_prefix("in").is_some_and(|after_in| {
+            !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head_line)
+        }))
+        || head.trim_end().strip_suffix("as").is_some_and(|before_as| {
+            before_as.ends_with([' ', '\t']) || before_as.ends_with(['(', ','])
+        })
+}
+
+fn plain_assign(rest: &str) -> bool {
+    rest.starts_with('=') && !rest.starts_with("==")
+}
+
+/// Whether `rest` starts with an augmented-assignment operator (`+=`, `//=`,
+/// `>>=`), which rebinds its target. Comparisons (`<=`, `>=`) are not listed.
+fn augmented_assign_op(rest: &str) -> bool {
+    [
+        "+=", "-=", "*=", "/=", "//=", "%=", "@=", "&=", "|=", "^=", ">>=", "<<=", "**=",
+    ]
+    .iter()
+    .any(|op| rest.starts_with(op))
+}
+
+/// `text` without leading blanks: spaces, tabs and backslash-newline
+/// continuations, and when `across_lines` also newlines and `#` comments
+/// (inside brackets, where a line break is not a statement end).
+fn skip_blank_forward(text: &str, across_lines: bool) -> &str {
+    let mut rest = text;
+    loop {
+        let trimmed = rest.trim_start_matches([' ', '\t']);
+        let next = if let Some(after) = trimmed
+            .strip_prefix("\\\r\n")
+            .or_else(|| trimmed.strip_prefix("\\\n"))
+        {
+            after
+        } else if across_lines && trimmed.starts_with('#') {
+            trimmed.find('\n').map_or("", |at| &trimmed[at..])
+        } else if across_lines {
+            trimmed.trim_start()
+        } else {
+            trimmed
+        };
+        if next.len() == rest.len() {
+            return rest;
+        }
+        rest = next;
+    }
+}
+
+/// `text` without trailing blanks, mirroring [`skip_blank_forward`]: trailing
+/// `#` comments are dropped when `across_lines`.
+fn skip_blank_backward(text: &str, across_lines: bool) -> &str {
+    let mut head = text;
+    loop {
+        let trimmed = if across_lines {
+            head.trim_end()
+        } else {
+            head.trim_end_matches([' ', '\t'])
+        };
+        let removed = &head[trimmed.len()..];
+        let mut next = trimmed
+            .strip_suffix("\\\r\n")
+            .or_else(|| trimmed.strip_suffix("\\\n"))
+            // Across lines `trim_end` also removed the newline of a trailing
+            // backslash continuation (`(\\\n (r))`).
+            .or_else(|| {
+                trimmed
+                    .strip_suffix('\\')
+                    .filter(|_| across_lines && removed.contains('\n'))
+            })
+            .unwrap_or(trimmed);
+        if across_lines {
+            let line_start = next.rfind('\n').map_or(0, |at| at + 1);
+            let line = &next[line_start..];
+            if let Some(at) = line
+                .match_indices('#')
+                .map(|(at, _)| at)
+                .find(|at| !python_prefix_hides_code(&line[..*at]))
+            {
+                next = &next[..line_start + at];
+            }
+        }
+        if next.len() == head.len() {
+            return head;
+        }
+        head = next;
+    }
 }
 
 /// Whether `head` (the text of a line before a peeled target) sits in the
@@ -825,7 +941,9 @@ fn is_inside_for_target(head: &str) -> bool {
     while let Some(at) = head[..search].rfind("for") {
         let boundary_before = !head[..at].ends_with(is_python_identifier_char);
         let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
-        if boundary_before && boundary_after {
+        // A `for` inside a string or after a comment is text, not a keyword.
+        let hidden = python_prefix_hides_code(&head[..at]);
+        if boundary_before && boundary_after && !hidden {
             let targets = &head[at + 3..];
             return !targets.contains(['=', ':'])
                 && !targets
@@ -2929,19 +3047,25 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)
-        || ["def ", "class ", "for ", "as "]
+        || ["def", "class", "for", "as", "import", "nonlocal"]
             .into_iter()
             .any(|keyword| {
-                let needle = format!("{keyword}{name}");
-                body.match_indices(&needle).any(|(idx, _)| {
-                    let end = idx + needle.len();
+                body.match_indices(keyword).any(|(idx, _)| {
+                    let after_keyword = idx + keyword.len();
+                    let spaced = &body[after_keyword..];
+                    // Any run of blanks (or a backslash continuation) may separate
+                    // the keyword from the name: `for  r  in`, `as\tr`.
+                    let rest = skip_blank_forward(spaced, false);
+                    let name_at = body.len() - rest.len();
                     let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
                     let line = body[line_start..].trim_start();
                     let import_line = line.starts_with("import ") || line.starts_with("from ");
-                    python_callee_start_has_boundary(body, idx)
-                        && !next_char_is_identifier(body, end)
+                    rest.len() != spaced.len()
+                        && rest.starts_with(name)
+                        && python_callee_start_has_boundary(body, idx)
+                        && !next_char_is_identifier(body, name_at + name.len())
                         && !python_text_hides_code(body, idx)
-                        && (import_as_binds || keyword != "as " || !import_line)
+                        && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
                 })
             })
 }
@@ -2973,9 +3097,8 @@ fn walrus_binds(body_text: &str, name: &str) -> bool {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
-            && body_text[end..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(":=")
+            // `(r\n := [1])`: a line break is legal inside the brackets.
+            && skip_blank_forward(&body_text[end..], true).starts_with(":=")
             && !python_text_hides_code(body_text, idx)
     })
 }

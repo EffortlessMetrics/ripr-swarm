@@ -1,0 +1,44 @@
+{
+  "case_id": "py-raises-callable-pytest",
+  "subject_id": "authored-py-unittest-raises",
+  "diff": "cases/py-raises-callable-pytest.diff",
+  "anchor": {
+    "file": "guards/errors.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "pytest_raises_callable_type_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "raise ValueError(\"blank\")",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the message changes (the callable form pins the error type only)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rules 13 and 14: the callable form pins the error type only.",
+  "labeling_observation": {
+    "ripr_commit": "b6659630",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
