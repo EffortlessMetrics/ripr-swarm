@@ -787,3 +787,37 @@ fn given_crlf_positive_controls_then_real_calls_stay_seen() {
     assert!(!sees_call("assert other.helper(0) == x\r\n"));
     assert!(!sees_call("assert nothelper(0) == x\r\n"));
 }
+
+#[test]
+fn given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned_as_an_f_string() {
+    // Valid on CPython (no Call node): a keyword directly before a plain
+    // triple-quoted literal. The prefix is the whole identifier run, so `if`,
+    // `elif` and `or` are not f-prefixes and the braces stay plain text.
+    for body in [
+        "x = 1 if\"\"\"\n{\nhelper(1)\n}\n\"\"\" else 2\n",
+        "x = 1 if'''\n{\nhelper(1)\n}\n''' else 2\n",
+        "x = a or\"\"\"\n{\nhelper(1)\n}\n\"\"\"\n",
+        "if a:\n    pass\nelif\"\"\"\n{\nhelper(1)\n}\n\"\"\":\n    pass\n",
+        "x = f\"\"\"\n{\n1 if'''\n{\nhelper(1)\n}\n''' else 2\n}\n\"\"\"\n",
+        "x = f\"\"\"\n{\na or'''\n{\nhelper(1)\n}\n'''\n}\n\"\"\"\n",
+        "x = 1 if\"\"\"\r\n{\r\nhelper(1)\r\n}\r\n\"\"\" else 2\r\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+    // Invalid Python (identifier glued to a string): must not panic or expose.
+    for body in [
+        "x = perf\"\"\"\n{\nhelper(1)\n}\n\"\"\"\n",
+        "x = buf\"\"\"\n{\nhelper(1)\n}\n\"\"\"\n",
+        "x = orf\"\"\"\n{\nhelper(1)\n}\n\"\"\"\n",
+        "x = \u{e9}f\"\"\"\n{\nhelper(1)\n}\n\"\"\"\n",
+        "x = f\"\"\"\n{\norf'''\n{\nhelper(1)\n}\n'''\n}\n\"\"\"\n",
+        "x = f\"\"\"\n{\n\u{3b4}rf'''\n{\nhelper(1)\n}\n'''\n}\n\"\"\"\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+    // The genuine prefixes still open fields.
+    assert!(sees_call("x = (f\"\"\"\n{\nhelper(1)\n}\n\"\"\")\n"));
+    assert!(sees_call(
+        "x = 1 if f\"\"\"\n{\nhelper(1)\n}\n\"\"\" else 2\n"
+    ));
+}
