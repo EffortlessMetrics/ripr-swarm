@@ -342,6 +342,13 @@ fn a_shadowed_assert_eq_hides_direct_rows() -> Result<(), String> {
     let test = format!("{NOOP_ASSERT_EQ}{}", test(THREE_ROWS));
     let findings = predicate_findings(&lib_with("    in_stock && paid\n", ""), &test)?;
     assert!(!infection_credited(&findings), "{findings:?}");
+    let returned = return_value_findings(&lib_with("    in_stock && paid\n", ""), &test)?;
+    assert!(
+        returned
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{returned:?}"
+    );
     Ok(())
 }
 
