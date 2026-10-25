@@ -11187,6 +11187,12 @@ id = "RIPR-SPEC-0144"
 name = "temporary 0.11 release-control lens"
 spec = "docs/specs/RIPR-SPEC-0144-release-control-lens.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/live_head/producer/tests.rs::proposal_dispatch_serializes_the_complete_typed_manifest_without_accepting_it",
+  "xtask/src/reports/release/candidate_harness/live_head/producer/tests.rs::proposal_dispatch_refuses_incomplete_stale_and_unknown_inputs_before_emission",
+  "xtask/src/reports/release/candidate_harness/live_head/producer/tests.rs::proposal_dispatch_refuses_unsafe_and_existing_destinations",
+  "xtask/src/reports/release/candidate_harness/live_head/producer/tests.rs::proposal_dispatch_refuses_serialization_growth_past_the_aggregate_input_budget",
+  "xtask/src/reports/release/candidate_harness/live_head/producer/tests.rs::proposal_partial_write_retains_the_incomplete_directory_and_existing_bytes",
+  "xtask/src/termination_qualification/tests.rs::the_termination_consumer_binds_runtime_produced_manifest_bytes",
   "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_custody_does_not_require_historical_registry",
   "xtask/src/reports/release/candidate_harness/live_head/tests.rs::producer_output_without_independently_accepted_digest_is_not_authority",
   "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_refuses_templates_missing_bindings_and_predicted_source",
@@ -11245,6 +11251,7 @@ fixtures = [
 code = [
   "xtask/src/reports/release/candidate_harness/live_head.rs",
   "xtask/src/reports/release/candidate_harness/live_head/input.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/producer.rs",
   "xtask/src/reports/release/candidate_harness/input.rs",
   "xtask/src/reports/release/candidate_harness/source.rs",
   "xtask/src/reports/release/candidate_harness/source/inventory.rs",
@@ -13337,6 +13344,7 @@ tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_twin_seam_at_its_line",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_inner_seam_when_nested",
   "crates/ripr/src/cli/commands/agent_card.rs::tests::prose_prints_each_limitation_once",
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::prose_words_enums_for_a_newcomer_and_omits_the_schema_line",
   "crates/ripr/src/cli/commands/agent_card.rs::tests::truncated_inventory_refuses_and_complete_inventory_does_not",
   "crates/ripr/src/lsp/tests.rs::seam_repair_card_binds_only_through_the_complete_raw_candidates",
   "crates/ripr/src/lsp/tests.rs::refresh_carries_repair_card_candidates_only_for_a_complete_inventory",
@@ -18885,6 +18893,28 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+[[behavior]]
+id = "RIPR-SPEC-0319"
+name = "Every named limitation and stop reason carries a next step"
+spec = "docs/specs/RIPR-SPEC-0319-classification-keyed-guidance.md"
+tests = [
+  "crates/ripr/src/domain/limit_guidance.rs::tests::every_static_limit_names_an_actionable_next_step",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::every_stop_reason_names_an_actionable_next_step",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::unresolved_edge_next_steps_are_conditional_and_name_the_limit",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::next_steps_are_distinct_per_kind",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::next_steps_make_no_runtime_or_coverage_claim",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::static_limit_kinds_all_is_a_gap_free_ordinal_sequence",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::stop_reasons_all_is_a_gap_free_ordinal_sequence",
+]
+code = [
+  "crates/ripr/src/domain/limit_guidance.rs",
+  "crates/ripr/src/output/human/sections.rs",
+  "crates/ripr/src/output/human/explain.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0319-classification-keyed-guidance.md",
+]
+metrics = ["unit_test_pass_rate"]
 
 [[behavior]]
 id = "RIPR-SPEC-0310"
