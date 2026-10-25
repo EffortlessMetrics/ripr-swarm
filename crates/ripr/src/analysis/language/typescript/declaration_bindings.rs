@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 enum Value {
     Root(tests_extract::TestDeclarationRoot, bool),
     Namespace,
+    GlobalObject,
 }
 
 #[derive(Clone)]
@@ -53,6 +54,7 @@ struct Scope {
 pub(super) struct DeclarationBindings {
     scopes: Vec<Scope>,
     stack: Vec<usize>,
+    variable_scopes: Vec<usize>,
     lexical_functions: bool,
     opaque: bool,
     global_writes: Vec<String>,
@@ -72,6 +74,7 @@ impl DeclarationBindings {
         let mut index = Self {
             scopes: Vec::new(),
             stack: Vec::new(),
+            variable_scopes: Vec::new(),
             lexical_functions: admission.block_functions_are_lexical,
             opaque: false,
             global_writes: Vec::new(),
@@ -188,7 +191,7 @@ impl DeclarationBindings {
         };
         for member in &path.members {
             value = match (value, member.as_str()) {
-                (Value::Namespace, member) => root_value(member)?,
+                (Value::Namespace | Value::GlobalObject, member) => root_value(member)?,
                 (
                     Value::Root(root, skipped),
                     "only" | "concurrent" | "sequential" | "serial" | "parallel",
@@ -208,7 +211,7 @@ impl DeclarationBindings {
     // still carry the runner into a mutation or an opaque call.
     fn potential_runner(&self, path: &Alias, remaining: usize) -> bool {
         if remaining == 0 {
-            return false;
+            return true;
         }
         if self.resolve(path, remaining).is_some() {
             return true;
@@ -297,6 +300,60 @@ impl DeclarationBindings {
         }
     }
 
+    fn escape_arguments(&mut self, arguments: &[Argument<'_>]) {
+        for argument in arguments {
+            if let Argument::SpreadElement(spread) = argument {
+                self.escape_value(&spread.argument);
+            } else if let Some(value) = argument.as_expression() {
+                self.escape_value(value);
+            }
+        }
+    }
+
+    fn escape_value(&mut self, value: &Expression<'_>) {
+        if let Some(path) = Alias::of(value) {
+            self.escaped.push(path);
+            return;
+        }
+        match value.get_inner_expression() {
+            Expression::ArrayExpression(array) => {
+                for element in &array.elements {
+                    if let oxc_ast::ast::ArrayExpressionElement::SpreadElement(spread) = element {
+                        self.escape_value(&spread.argument);
+                    } else if let Some(value) = element.as_expression() {
+                        self.escape_value(value);
+                    }
+                }
+            }
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    match property {
+                        ObjectPropertyKind::ObjectProperty(property) => {
+                            self.escape_value(&property.value)
+                        }
+                        ObjectPropertyKind::SpreadProperty(spread) => {
+                            self.escape_value(&spread.argument)
+                        }
+                    }
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.escape_value(&conditional.consequent);
+                self.escape_value(&conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.escape_value(&logical.left);
+                self.escape_value(&logical.right);
+            }
+            Expression::SequenceExpression(sequence) => {
+                for value in &sequence.expressions {
+                    self.escape_value(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn bind_unknown(&mut self, name: &str) {
         if let Some(index) = self.stack.last().copied() {
             self.scopes[index]
@@ -312,7 +369,9 @@ fn root_value(name: &str) -> Option<Value> {
         "xdescribe" | "xcontext" | "xsuite" | "xit" | "xtest" | "xspecify" => (&name[1..], true),
         other => (other, false),
     };
-    if Test.matches_identifier(name) {
+    if matches!(name, "globalThis" | "window" | "self" | "global") {
+        Some(Value::GlobalObject)
+    } else if Test.matches_identifier(name) {
         Some(Value::Root(Test, skipped))
     } else if Describe.matches_identifier(name) {
         Some(Value::Root(Describe, skipped))
@@ -354,7 +413,10 @@ impl<'a> Visit<'a> for DeclarationBindings {
 
     fn enter_node(&mut self, kind: AstKind<'a>) {
         match kind {
-            AstKind::Program(program) => self.push(program.span, &program.body),
+            AstKind::Program(program) => {
+                self.push(program.span, &program.body);
+                self.variable_scopes.extend(self.stack.last().copied());
+            }
             AstKind::Function(function) => {
                 self.push(
                     function.span,
@@ -363,12 +425,14 @@ impl<'a> Visit<'a> for DeclarationBindings {
                         .as_ref()
                         .map_or(&[], |body| body.statements.as_slice()),
                 );
+                self.variable_scopes.extend(self.stack.last().copied());
                 if let Some(id) = &function.id {
                     self.bind_unknown(id.name.as_str());
                 }
             }
             AstKind::ArrowFunctionExpression(arrow) => {
-                self.push(arrow.span, &arrow.body.statements)
+                self.push(arrow.span, &arrow.body.statements);
+                self.variable_scopes.extend(self.stack.last().copied());
             }
             AstKind::BlockStatement(block) => self.push(block.span, &block.body),
             AstKind::CatchClause(catch) => {
@@ -402,8 +466,14 @@ impl<'a> Visit<'a> for DeclarationBindings {
                     self.bind_unknown(id.name.as_str());
                 }
             }
-            AstKind::StaticBlock(block) => self.push(block.span, &block.body),
-            AstKind::TSModuleBlock(block) => self.push(block.span, &block.body),
+            AstKind::StaticBlock(block) => {
+                self.push(block.span, &block.body);
+                self.variable_scopes.extend(self.stack.last().copied());
+            }
+            AstKind::TSModuleBlock(block) => {
+                self.push(block.span, &block.body);
+                self.variable_scopes.extend(self.stack.last().copied());
+            }
             AstKind::FormalParameters(params) => {
                 for id in params
                     .items
@@ -448,11 +518,11 @@ impl<'a> Visit<'a> for DeclarationBindings {
                     ));
                 }
             }
-            AstKind::CallExpression(call) => {
-                for argument in &call.arguments {
-                    if let Some(path) = argument.as_expression().and_then(Alias::of) {
-                        self.escaped.push(path);
-                    }
+            AstKind::CallExpression(call) => self.escape_arguments(&call.arguments),
+            AstKind::NewExpression(call) => self.escape_arguments(&call.arguments),
+            AstKind::ReturnStatement(returned) => {
+                if let Some(value) = &returned.argument {
+                    self.escape_value(value);
                 }
             }
             AstKind::VariableDeclaration(declaration) => {
@@ -470,16 +540,25 @@ impl<'a> Visit<'a> for DeclarationBindings {
                     }
                     if let Some(init) = declarator.init.as_ref().and_then(Alias::of) {
                         for id in declarator.id.get_binding_identifiers() {
-                            // A var may be visible in the enclosing function as
-                            // well as this block's conservative shadow index.
-                            for scope in self.stack.iter().copied() {
+                            let floor = self.variable_scopes.last().copied().unwrap_or(0);
+                            for scope in self.stack.iter().rev().copied() {
+                                if scope < floor {
+                                    break;
+                                }
                                 if let Some(binding) =
                                     self.scopes[scope].bindings.get_mut(id.name.as_str())
                                 {
                                     binding.potential.push(init.clone());
                                 }
+                                if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
+                                    break;
+                                }
                             }
                         }
+                    } else if let Some(init) = &declarator.init {
+                        // An object/array can carry the runner into an otherwise
+                        // unresolved data flow; do not establish dormancy.
+                        self.escape_value(init);
                     }
                     if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
                         || declaration.declare
@@ -535,6 +614,16 @@ impl<'a> Visit<'a> for DeclarationBindings {
     }
 
     fn leave_node(&mut self, kind: AstKind<'a>) {
+        if matches!(
+            kind,
+            AstKind::Program(_)
+                | AstKind::Function(_)
+                | AstKind::ArrowFunctionExpression(_)
+                | AstKind::StaticBlock(_)
+                | AstKind::TSModuleBlock(_)
+        ) {
+            self.variable_scopes.pop();
+        }
         if matches!(
             kind,
             AstKind::Program(_)

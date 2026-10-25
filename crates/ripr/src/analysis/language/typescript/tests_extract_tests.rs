@@ -1325,3 +1325,47 @@ fn skipped_suite_bindings_cover_alias_options_and_block_locals() {
         );
     }
 }
+
+#[test]
+fn skipped_suite_bindings_isolate_mutation_provenance_and_dormant_values() {
+    let file = Path::new("test/binding.test.ts");
+    for source in [
+        "const d = {}; { const d = describe; } d.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });",
+        "const d = {}; function f() { var d = describe; } d.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });",
+        "describe.skip('off', flag ? () => { it('dormantA', () => {}); } : () => { it('dormantB', () => {}); });",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices() {
+    let file = Path::new("test/binding.test.ts");
+    let mut deep = String::from("let a0 = describe; ");
+    for index in 1..=34 {
+        deep.push_str(&format!("let a{index} = a{}; ", index - 1));
+    }
+    deep.push_str("a34.skip = custom; describe.skip('off', () => { it('live', () => {}); });");
+    for source in [
+        deep.as_str(),
+        "Object.assign(...[describe, { skip: custom }]); describe.skip('off', () => { it('live', () => {}); });",
+        "new Customizer(describe); describe.skip('off', () => { it('live', () => {}); });",
+        "const g = globalThis; g.describe = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "describe.skip(String((() => { it('live', () => {}); return 'off'; })()), () => { it('dormant', () => {}); });",
+        "describe.skip(`${(() => { it('live', () => {}); return 'off'; })()}`, () => { it('dormant', () => {}); });",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}

@@ -4475,6 +4475,15 @@ impl UnextractedTestFinder<'_> {
     /// chains — that the extractor did not index. Only checked at statement
     /// position: nested calls (assertions, helpers) are never registrations.
     fn visit_call(&mut self, call: &oxc_ast::ast::CallExpression<'_>, statement_position: bool) {
+        self.visit_call_with_arguments(call, statement_position, false);
+    }
+
+    fn visit_call_with_arguments(
+        &mut self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        statement_position: bool,
+        evaluated_arguments: bool,
+    ) {
         // A known-empty table's callback cannot register descendants. Keep
         // scanning evaluated title/options expressions, but do not report
         // inline callbacks as dropped active registrations.
@@ -4552,7 +4561,24 @@ impl UnextractedTestFinder<'_> {
                 return;
             }
         }
-        self.visit_arguments(&call.arguments);
+        if evaluated_arguments {
+            self.visit_evaluated_arguments(&call.arguments);
+        } else {
+            self.visit_arguments(&call.arguments);
+        }
+    }
+
+    fn visit_evaluated_arguments(&mut self, arguments: &[Argument<'_>]) {
+        for argument in arguments {
+            if self.gap.is_some() {
+                return;
+            }
+            if let Argument::SpreadElement(spread) = argument {
+                self.visit_empty_table_evaluated_expression(&spread.argument);
+            } else if let Some(value) = argument.as_expression() {
+                self.visit_empty_table_evaluated_expression(value);
+            }
+        }
     }
 
     /// Empty-table arguments still evaluate calls and comma operands;
@@ -4569,7 +4595,7 @@ impl UnextractedTestFinder<'_> {
                 }
             }
             Expression::CallExpression(call) => {
-                self.visit_call(call, true);
+                self.visit_call_with_arguments(call, true, true);
                 if self.gap.is_none() {
                     match runtime_expression(&call.callee) {
                         Expression::ArrowFunctionExpression(arrow) => {
@@ -4583,6 +4609,24 @@ impl UnextractedTestFinder<'_> {
                         _ => {}
                     }
                 }
+            }
+            Expression::TemplateLiteral(template) => {
+                for value in &template.expressions {
+                    self.visit_empty_table_evaluated_expression(value);
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.visit_empty_table_evaluated_expression(&conditional.test);
+                self.visit_empty_table_evaluated_expression(&conditional.consequent);
+                self.visit_empty_table_evaluated_expression(&conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.visit_empty_table_evaluated_expression(&logical.left);
+                self.visit_empty_table_evaluated_expression(&logical.right);
+            }
+            Expression::BinaryExpression(binary) => {
+                self.visit_empty_table_evaluated_expression(&binary.left);
+                self.visit_empty_table_evaluated_expression(&binary.right);
             }
             expression => self.visit_expression(expression, false),
         }
