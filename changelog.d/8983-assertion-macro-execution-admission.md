@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `assert`, `assert_ne` and the `debug_assert*` macros (bare or `std::`/`core::`-qualified) now pass the same execution admission as `assert_eq`: an assertion that cannot run (after a `return`, in an uncalled function or closure, a false `if`, an impossible match arm, `cfg!(any())`) no longer credits a return-value or side-effect finding, and a dead sibling does not change a live assertion's credit (#8983).
