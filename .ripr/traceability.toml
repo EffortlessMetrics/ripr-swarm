@@ -6625,6 +6625,18 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_public_packet_when_decoded_then_producer_limitations_and_wire_are_retained",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_omitted_or_empty_packet_limitations_then_full_consumer_defaults_to_empty",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_null_or_malformed_packet_limitations_then_full_consumer_refuses",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_unknown_optional_packet_properties_then_known_facts_and_opaque_wire_survive",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_future_limitation_kind_then_full_consumer_preserves_its_kind_and_detail",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_exposed_finding_without_gap_then_public_packet_emits_explicit_null_witness",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_public_packet_when_rendered_then_complete_wire_is_recorded",
+  "crates/ripr/tests/diagnostic_witness_json.rs::given_empty_limitations_when_roundtripped_then_omitted_array_is_restored",
+  "crates/ripr/tests/diagnostic_witness_json.rs::given_populated_limitations_when_roundtripped_then_every_row_is_retained",
+  "crates/ripr/tests/diagnostic_witness_json.rs::given_absent_or_null_optional_facts_then_both_decode_to_none",
+  "crates/ripr/tests/diagnostic_witness_json.rs::given_null_or_malformed_limitations_then_deserialization_still_refuses",
+  "crates/ripr/tests/diagnostic_witness_json.rs::given_optional_witness_facts_when_roundtripped_then_presence_and_values_survive",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_after_end_delivery_does_not_duplicate",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_end_retains_retry_custody",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_queued_drain_retains_retry_custody",

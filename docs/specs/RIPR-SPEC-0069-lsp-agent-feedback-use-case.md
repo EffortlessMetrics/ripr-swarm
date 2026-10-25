@@ -156,6 +156,20 @@ named limitations. The same typed witness is projected into diagnostic data,
 hover, context packets, and copy-context actions without renderer-specific
 derivation.
 
+The typed witness must round-trip through its own JSON representation,
+including when `limitations` is empty and omitted. An absent `limitations`
+field decodes as an empty array; explicit `null` or a malformed array is
+rejected. Optional facts retain present values, including empty strings and
+zero confidence. Absent or `null` optional facts decode as unavailable and
+serialize as omitted fields; the reader does not invent missing evidence.
+This compatibility is tested inside the complete context packet produced by
+the public renderer. Unknown optional witness properties must not prevent
+reading known evidence, but the typed witness does not retain them for
+reserialization. Forwarders must keep the opaque JSON document to retain
+extensions. Unknown limitation kinds retain their producer-supplied kind and
+detail strings. The context packet emits an explicit `null` witness when an
+exposed finding has no unresolved discriminator.
+
 The server also emits the versioned `ripr/analysisStatus` notification and
 returns the same `analysis_status` object from `ripr.collectWorkspaceStatus`.
 Its stable fields are:

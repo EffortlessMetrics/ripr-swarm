@@ -3499,7 +3499,6 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
       "oracle_strength": "weak",
       "oracle_location": { "file": "tests/pricing.rs", "line": 44 }
     },
-    "suggested_assertion": null,
     "explain_command": "ripr explain --root /work/repo --diff /work/repo/change.diff probe:src_lib.rs:predicate:bbaa2c25",
     "confidence": { "value": 0.75, "basis": "static_only" },
     "limitations": [
@@ -3536,13 +3535,20 @@ retained-count fallback and floor as check findings: older findings without
 matched-total metadata supply their known retained row count, which cannot
 establish how many rows an older producer discarded. `related_tests` remains
 the selected bounded window. Identical eight-row windows with totals 12 and
-13 therefore remain distinguishable. `witness` is additive and is omitted
-when an exposed finding has no unresolved discriminator. It contains only
+13 therefore remain distinguishable. `witness` is additive and is explicitly
+`null` when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
-producer cannot identify them, and `suggested_assertion` remains `null` until
-the producer supplies a symbol-resolved assertion template. `limitations[]`
-names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `probe.owner_signature` (#7796) carries the changed
+producer cannot identify them, and `suggested_assertion` is omitted until
+the producer supplies a symbol-resolved assertion template. The typed witness
+reader accepts absent or `null` optional facts as unavailable and preserves
+present values, including empty strings and zero confidence. `limitations[]`
+names unavailable evidence; an empty list is omitted and the reader restores
+it as an empty list. An explicit `null` or malformed limitations list is
+rejected. Unknown witness properties are accepted and ignored by the typed
+reader, so typed reserialization does not preserve those properties. Consumers
+that need to forward unknown properties must retain the complete JSON value.
+Renderers must not infer evidence from paths, lines, classes, or prose.
+`probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
 agent stub` reads — so an agent can write the call without opening the
 source. It is optional and absent whenever the shape cannot be honestly
