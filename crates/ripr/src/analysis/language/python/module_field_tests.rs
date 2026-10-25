@@ -192,6 +192,9 @@ fn patched_module_object_is_not_credited() -> Check {
         "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\n@patch(\"shop.route.response\")\ndef test_it(fake):\n    checkout(True)\n    assert response.status_code == 422\n",
         "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    with patch(\"shop.route.response\"):\n        checkout(True)\n    assert response.status_code == 422\n",
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    route.response = object()\n    checkout(True)\n    assert response.status_code == 422\n",
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    route.__setattr__(\"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it(mp):\n    mp.delattr(route, \"response\")\n    checkout(True)\n    assert response.status_code == 422\n",
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
     ] {
         let class = classify_with_test(test_src)?;
