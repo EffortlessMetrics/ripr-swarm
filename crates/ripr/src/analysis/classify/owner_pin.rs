@@ -193,7 +193,12 @@ fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
         .split(';')
         .filter_map(|statement| {
             let (before, tree) = statement.trim().rsplit_once("use ")?;
-            Some((tree, before.contains("#[")))
+            // Only an attribute attached to this `use` gates it, not one on
+            // an enclosing `mod` or an earlier item.
+            let attached = before
+                .rfind(['{', '}'])
+                .map_or(before, |at| &before[at + 1..]);
+            Some((tree, attached.contains("#[")))
         })
         .collect();
     KNOWN_COMPARISON_MACROS

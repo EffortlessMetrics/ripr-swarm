@@ -12493,3 +12493,20 @@ fn known_comparison_macros_match_the_syntax_plain_nested_list() {
     syntax.sort_unstable();
     assert_eq!(classify, syntax);
 }
+
+#[test]
+fn comparison_macro_imports_are_gated_only_by_their_own_attributes() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    // First statement of an attributed module, and after an attributed item.
+    assert!(imported(
+        "#[cfg(test)]\nmod tests {\nuse float_cmp::approx_eq;\n}\n"
+    ));
+    assert!(imported(
+        "#[derive(Debug)]\nstruct X {}\nuse float_cmp::approx_eq;\n"
+    ));
+    // An attribute on the `use` itself, or another binding of the name.
+    assert!(!imported("#[cfg(any())]\nuse float_cmp::approx_eq;\n"));
+    assert!(!imported(
+        "use float_cmp::approx_eq;\nfn f() {\nuse other::approx_eq;\n}\n"
+    ));
+}
