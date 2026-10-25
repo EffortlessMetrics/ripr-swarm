@@ -148,3 +148,31 @@ fn file_level_bindings_resolve_in_order_and_without_a_per_name_rescan() {
         "extraction took {elapsed:?}; per-name rescans are back"
     );
 }
+
+#[test]
+fn an_unrecorded_write_withholds_the_binding_for_every_test() {
+    use super::tests_extract::extract_tests;
+    use std::path::Path;
+
+    // `b` is rewritten inside a helper the scope walk does not record, so
+    // its constructor is withheld in every test (`reset` is a plain function
+    // binding with no constructor); `a` keeps its own. The
+    // verdict is computed once per name and shared across tests, so every
+    // test must see the same answer.
+    let source = "let a = new Cart(); let b = new Cart();\nfunction reset() { b = null; }\ntest('one', () => { expect(a.total()).toBe(1); });\ntest('two', () => { expect(b.total()).toBe(2); });\n";
+    let tests = extract_tests(Path::new("rebound.test.ts"), source);
+    assert_eq!(tests.len(), 2);
+    for test in &tests {
+        let bound: Vec<(&str, Option<&str>)> = test
+            .scope_bindings
+            .iter()
+            .map(|binding| (binding.name.as_str(), binding.constructed_by.as_deref()))
+            .collect();
+        assert_eq!(
+            bound,
+            vec![("a", Some("Cart")), ("b", None), ("reset", None)],
+            "{}",
+            test.name
+        );
+    }
+}
