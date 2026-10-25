@@ -161,6 +161,36 @@ async function downloadVSCodeWithRetry(
   throw lastError;
 }
 
+// Must match REQUIRED_TITLE_SEPARATOR in suite/index.ts (not imported: that
+// module loads mocha, which the launcher does not need).
+const REQUIRED_TITLE_SEPARATOR = '|';
+
+/**
+ * Tests the lane exists to prove, by full mocha title. The suite fails the
+ * host run if any of them skipped or never ran (RIPR_TEST_REQUIRE_RAN), so a
+ * lane cannot go green on its smoke tests while the real-server journeys it
+ * names silently `this.skip()` (#10195).
+ */
+function requiredJourneyTitles(
+  workspaceTrustMode: string,
+  testServerPath: string | undefined
+): string[] {
+  if (workspaceTrustMode === 'untrusted') {
+    return ['Packaged Workspace Trust untrusted host keeps an actionable repair packet out of the clipboard'];
+  }
+  const titles = ['Packaged Workspace Trust trusted host copies an actionable repair packet'];
+  if (testServerPath) {
+    titles.push(
+      'Extension Smoke real server surfaces seam diagnostic, hover provider, and agent actions',
+      'Extension Smoke real server invalidates a seam action across deferred save and full refresh'
+    );
+  }
+  if (process.env.RIPR_TEST_PACKAGED_SERVER_PATH) {
+    titles.push('Standard LSP compatibility probe accepts the real packaged server through initialize and shutdown');
+  }
+  return titles;
+}
+
 async function runUntrustedTests(
   vscodeExecutablePath: string,
   extensionDevelopmentPath: string,
@@ -263,6 +293,11 @@ async function main() {
     }
 
     const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
+    if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
+      process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(workspaceTrustMode, testServerPath).join(
+        REQUIRED_TITLE_SEPARATOR
+      );
+    }
     if (workspaceTrustMode === 'untrusted') {
       await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
@@ -274,6 +309,9 @@ async function main() {
       });
     }
 
+    // The multi-root host greps a different suite, so the main host's required
+    // journeys are not registered there.
+    delete process.env.RIPR_TEST_REQUIRE_RAN;
     if (workspaceTrustMode === 'trusted') {
       // Same test-host lane, separate empty profile: other suites open files,
       // mutate configuration and restart servers, which would mask ambiguity.

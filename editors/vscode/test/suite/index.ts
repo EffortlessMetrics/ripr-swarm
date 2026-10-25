@@ -6,6 +6,28 @@ export interface RunOutcome {
   executed: number;
   failures: number;
   failedBeforeHooks: string[];
+  /** Required tests (RIPR_TEST_REQUIRE_RAN) that did not pass in this run. */
+  missingRequired?: string[];
+}
+
+/** Separator for RIPR_TEST_REQUIRE_RAN; test titles contain commas. */
+export const REQUIRED_TITLE_SEPARATOR = '|';
+
+export function parseRequiredTitles(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(REQUIRED_TITLE_SEPARATOR)
+    .map((title) => title.trim())
+    .filter((title) => title.length > 0);
+}
+
+/**
+ * Required tests that did not pass. A `this.skip()` test, a failed test and a
+ * test that was never registered all land here: a lane that names a journey as
+ * its proof must have actually run it, not merely run something else.
+ */
+export function missingRequiredTitles(required: string[], passed: Iterable<string>): string[] {
+  const passedTitles = new Set(passed);
+  return required.filter((title) => !passedTitles.has(title));
 }
 
 /**
@@ -18,6 +40,7 @@ export function validateRunOutcome({
   executed,
   failures,
   failedBeforeHooks,
+  missingRequired = [],
 }: RunOutcome): string | undefined {
   if (failedBeforeHooks.length > 0) {
     const lines = [
@@ -38,6 +61,12 @@ export function validateRunOutcome({
   }
   if (failures > 0) {
     return `${failures} tests failed.`;
+  }
+  if (missingRequired.length > 0) {
+    return [
+      `${missingRequired.length} required test${missingRequired.length === 1 ? '' : 's'} did not pass (skipped, absent or failed); result is not_run for:`,
+      ...missingRequired.map((title) => `- ${title}`)
+    ].join('\n');
   }
   return undefined;
 }
@@ -83,10 +112,13 @@ export function run(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const failedBeforeHooks: string[] = [];
+    const passedTitles: string[] = [];
+    const requiredTitles = parseRequiredTitles(process.env.RIPR_TEST_REQUIRE_RAN);
     let hookFailures = 0;
     const runner = mocha.run((failures: number) => {
       const executed = executedFromStats(runner.stats, hookFailures);
-      const reason = validateRunOutcome({ executed, failures, failedBeforeHooks });
+      const missingRequired = missingRequiredTitles(requiredTitles, passedTitles);
+      const reason = validateRunOutcome({ executed, failures, failedBeforeHooks, missingRequired });
       if (reason !== undefined) {
         reject(new Error(reason));
         return;
@@ -96,6 +128,11 @@ export function run(): Promise<void> {
     // mocha starts suites on a later tick (Runner.immediately(prepare)), so a
     // listener attached here observes every failure, including a before-all
     // hook death that precedes the first executed test.
+    runner.on('pass', (test: { fullTitle?: () => string }) => {
+      if (typeof test.fullTitle === 'function') {
+        passedTitles.push(test.fullTitle());
+      }
+    });
     runner.on('fail', (runnable: { title?: string; type?: string }) => {
       if (runnable.type === 'hook') {
         hookFailures += 1;

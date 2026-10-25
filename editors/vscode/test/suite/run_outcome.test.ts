@@ -1,5 +1,11 @@
 import * as assert from 'assert';
-import { executedFromStats, validateRunOutcome } from './index';
+import {
+  REQUIRED_TITLE_SEPARATOR,
+  executedFromStats,
+  missingRequiredTitles,
+  parseRequiredTitles,
+  validateRunOutcome,
+} from './index';
 
 suite('run outcome guard', () => {
   test('a before-all setup death names the hook and what still executed', () => {
@@ -84,6 +90,54 @@ suite('run outcome guard', () => {
   test('a clean run validates', () => {
     assert.strictEqual(
       validateRunOutcome({ executed: 5, failures: 0, failedBeforeHooks: [] }),
+      undefined
+    );
+  });
+});
+
+suite('required journeys', () => {
+  const journey = 'Extension Smoke real server surfaces seam diagnostic, hover provider, and agent actions';
+
+  test('titles containing commas survive the env round trip', () => {
+    const value = ['a, b', journey].join(REQUIRED_TITLE_SEPARATOR);
+    assert.deepStrictEqual(parseRequiredTitles(value), ['a, b', journey]);
+    assert.deepStrictEqual(parseRequiredTitles(undefined), []);
+    assert.deepStrictEqual(parseRequiredTitles(' | '), []);
+  });
+
+  test('a required test that was skipped or never registered is missing', () => {
+    assert.deepStrictEqual(missingRequiredTitles([journey], ['some other test']), [journey]);
+    assert.deepStrictEqual(missingRequiredTitles([journey], []), [journey]);
+  });
+
+  test('a required test that passed is not missing', () => {
+    assert.deepStrictEqual(missingRequiredTitles([journey], [journey, 'other']), []);
+  });
+
+  test('a lane whose smoke tests pass but whose required journey skipped is not_run', () => {
+    const reason = validateRunOutcome({
+      executed: 40,
+      failures: 0,
+      failedBeforeHooks: [],
+      missingRequired: [journey],
+    });
+    assert.ok(reason?.includes('not_run'), reason);
+    assert.ok(reason?.includes(journey), reason);
+  });
+
+  test('ordinary failures are reported before missing journeys', () => {
+    const reason = validateRunOutcome({
+      executed: 40,
+      failures: 2,
+      failedBeforeHooks: [],
+      missingRequired: [journey],
+    });
+    assert.strictEqual(reason, '2 tests failed.');
+  });
+
+  test('no required journeys leaves a clean run clean', () => {
+    assert.strictEqual(
+      validateRunOutcome({ executed: 3, failures: 0, failedBeforeHooks: [], missingRequired: [] }),
       undefined
     );
   });
