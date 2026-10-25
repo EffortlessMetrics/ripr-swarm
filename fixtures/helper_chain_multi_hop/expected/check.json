@@ -45,7 +45,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach first_char: leading_space_classifies_other"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach first_char: leading_space_classifies_other", "binding_return_relation: changed binding `head` initializer `input.chars().next().map_or('!', |c| c)` -> `input.chars().next().map_or('?', |c| c)` reaches the returned expression `head` at line 3 as a whole binding", "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed binding"],
       "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
         "5": "assert_eq!(classify(\" x\"), \"other\");"

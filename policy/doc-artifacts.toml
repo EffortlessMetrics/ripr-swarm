@@ -1906,11 +1906,3 @@ path = "docs/specs/RIPR-SPEC-0356-uncompiled-rust-files-contribute-no-tests.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the uncompiled-file contract: a Rust file that no Cargo target, manifest path, module declaration or include can compile contributes no related test and no lexical-fallback limitation, and any doubt keeps it indexed as before."
-
-[[artifact]]
-id = "RIPR-SPEC-0360"
-kind = "spec"
-path = "docs/specs/RIPR-SPEC-0360-rust-loop-accumulator-update.md"
-status = "proposed"
-owner = "product-analysis"
-standalone_reason = "Issue #6485 records the loop-accumulator contract: a changed update of a zero-initialized local the owner returns gets a return_value probe, an exact pin credits it only when it walks a non-empty literal input and pins a nonzero total, and an exact pin ripr cannot read is withheld, never a gap."

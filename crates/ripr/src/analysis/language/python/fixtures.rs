@@ -91,8 +91,10 @@ pub(super) fn attach_fixture_defs(
             if test.direct_parametrized.contains(parameter) {
                 continue;
             }
-            if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST {
-                break;
+            // An override of `caplog` is always resolved: the log reading
+            // depends on it however many other fixtures the test requests.
+            if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST && parameter != "caplog" {
+                continue;
             }
             if let Some(def) = resolve(&test.file, parameter, defs_by_file) {
                 attached.push(def.clone());

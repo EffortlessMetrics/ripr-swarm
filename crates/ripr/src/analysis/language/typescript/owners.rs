@@ -1478,6 +1478,25 @@ fn extract_imports_from_statements_inner(
                 let Some(init) = &declarator.init else {
                     continue;
                 };
+                // One member of a literal require: `const f = require('./y').f`
+                // picks the named export `f` out of the module (#9188). It is
+                // the twin of `const { f } = require('./y')`, so it records the
+                // same named import. A call on the member or a computed key
+                // other than a string literal is not read.
+                if let Some((member_source, member)) = require_member_source(init)
+                    && let Some(name) = binding_identifier_name(&declarator.id)
+                {
+                    push_unique_import(
+                        &mut out,
+                        TypeScriptImport {
+                            source: member_source,
+                            imported: Some(member),
+                            local: name.to_string(),
+                            namespace: false,
+                        },
+                    );
+                    continue;
+                }
                 let source_str = require_string_literal_source(init);
                 let Some(source_str) = source_str else {
                     continue;
@@ -1541,6 +1560,34 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
         return None;
     };
     Some(literal.value.to_string())
+}
+
+/// The source and member of `require("<literal>").member` (or the string
+/// literal spelling `require("<literal>")["member"]`), for `const f =
+/// require("./y").f` (#9188). `None` for any other initializer, so a call on
+/// the member, a computed key and a dynamic `require` argument stay unread.
+fn require_member_source(expr: &Expression<'_>) -> Option<(String, String)> {
+    let read = require_member_parts(expr)?;
+    // `.default` is an ES default only for a transpiled module; a native
+    // CommonJS module has no such property, so it is not read as the import.
+    (read.1 != "default").then_some(read)
+}
+
+fn require_member_parts(expr: &Expression<'_>) -> Option<(String, String)> {
+    match expr {
+        Expression::StaticMemberExpression(member) if !member.optional => {
+            let source = require_string_literal_source(&member.object)?;
+            Some((source, member.property.name.as_str().to_string()))
+        }
+        Expression::ComputedMemberExpression(member) if !member.optional => {
+            let source = require_string_literal_source(&member.object)?;
+            let Expression::StringLiteral(key) = &member.expression else {
+                return None;
+            };
+            Some((source, key.value.to_string()))
+        }
+        _ => None,
+    }
 }
 
 /// Extract the key name from an object-pattern binding property.

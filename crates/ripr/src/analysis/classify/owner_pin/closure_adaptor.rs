@@ -505,10 +505,15 @@ pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
     };
     let expected = expected.trim();
     match loan {
-        None => {
+        None if literal_sequence(&argument).is_some() => {
             literal_sequence(&argument).is_some_and(|elements| !elements.is_empty())
                 && nonzero_integer_literal(expected)
         }
+        // A constant-row table (`for (xs, want) in [(&[3, 4], 7), ..]`) runs
+        // the call once per row: some row must walk a non-empty sequence and
+        // pin a nonzero literal in the same row. Both columns must be
+        // readable constant-row cells of one table, or the pin refuses.
+        None => table_row_sums_to_nonzero(test, call_text, &argument, expected),
         Some(loan) => {
             let parameter =
                 |text: &str| loan.parameters.iter().position(|name| name == text.trim());
@@ -541,6 +546,46 @@ pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
             })
         }
     }
+}
+
+/// [`pinned_run_sums_to_nonzero`] through one constant-row table: both the
+/// walked argument and the expected value are plain identifiers bound by the
+/// same table loop, and some row pairs a non-empty literal sequence with a
+/// nonzero integer literal. A short row, a cell that is not a literal and a
+/// loop that can leave early have no column, so the pin refuses.
+fn table_row_sums_to_nonzero(
+    test: &TestSummary,
+    call_text: &str,
+    argument: &str,
+    expected: &str,
+) -> bool {
+    let (argument, expected) = (argument.trim(), expected.trim());
+    if !super::is_plain_identifier(argument) || !super::is_plain_identifier(expected) {
+        return false;
+    }
+    let mut found = test.body.match_indices(call_text);
+    let Some((at, _)) = found.next().filter(|_| !call_text.is_empty()) else {
+        return false;
+    };
+    if found.next().is_some() {
+        return false;
+    }
+    let (Some(sequences), Some(wanted)) = (
+        constant_table_column_around(&test.body, argument, at),
+        constant_table_column_around(&test.body, expected, at),
+    ) else {
+        return false;
+    };
+    sequences.len() == wanted.len()
+        && sequences
+            .iter()
+            .zip(&wanted)
+            .map(|(cell, want)| literal_sequence(cell).map(|elements| (elements, want)))
+            .collect::<Option<Vec<_>>>()
+            .is_some_and(|rows| {
+                rows.iter()
+                    .any(|(elements, want)| !elements.is_empty() && nonzero_integer_literal(want))
+            })
 }
 
 /// A decimal integer literal other than zero, with an optional sign, digit

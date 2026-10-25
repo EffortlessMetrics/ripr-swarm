@@ -257,3 +257,60 @@ fn a_module_the_resolver_cannot_name_exactly_adds_no_test() -> Result<(), String
     assert!(shadowed.related_tests.is_empty(), "{shadowed:?}");
     Ok(())
 }
+
+fn exported_table() -> String {
+    format!("#[macro_export]\n{TABLE}")
+}
+
+#[test]
+fn an_exported_generator_named_by_path_reads_like_the_hand_written_test() -> Result<(), String> {
+    // `tests/macros.rs` exports the table; `tests/cases.rs` names it with
+    // `use crate::gate_table;` and no `#[macro_use]` anywhere.
+    let by_path = TempRepo::create(&layout(
+        "mod macros;\nmod cases;\n",
+        Some(&exported_table()),
+        &format!("use crate::gate_table;\n{BOUNDARY_ROWS}"),
+    ))?
+    .predicate()?;
+    assert_eq!(by_path.class, ExposureClass::Exposed, "{by_path:?}");
+    assert_eq!(
+        related_names(&by_path),
+        vec!["nine_is_closed", "ten_is_open"],
+        "{by_path:?}"
+    );
+
+    // Without the import the name is not in scope for rustc either.
+    let unimported = TempRepo::create(&layout(
+        "mod macros;\nmod cases;\n",
+        Some(&exported_table()),
+        BOUNDARY_ROWS,
+    ))?
+    .predicate()?;
+    assert!(unimported.related_tests.is_empty(), "{unimported:?}");
+    Ok(())
+}
+
+#[test]
+fn an_exported_generator_that_is_not_the_only_one_adds_no_test() -> Result<(), String> {
+    let invoking = format!("use crate::gate_table;\n{BOUNDARY_ROWS}");
+    for (label, extra) in [
+        ("second export", exported_table()),
+        ("local definition of the name", TABLE.to_string()),
+        (
+            "export the scope cannot list",
+            format!("mod inner {{\n{}}}\n", exported_table()),
+        ),
+    ] {
+        let mut files = layout("mod macros;\nmod other;\nmod cases;\n", None, &invoking);
+        files.push(("tests/macros.rs", exported_table()));
+        files.push(("tests/other.rs", extra));
+        let refused = TempRepo::create(&files)?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{label}: {refused:?}");
+    }
+
+    // A macro that is not exported cannot be named by `crate::`.
+    let private = TempRepo::create(&layout("mod macros;\nmod cases;\n", Some(TABLE), &invoking))?
+        .predicate()?;
+    assert!(private.related_tests.is_empty(), "{private:?}");
+    Ok(())
+}

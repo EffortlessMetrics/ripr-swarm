@@ -419,3 +419,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (36)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
