@@ -544,6 +544,9 @@ fn a_method_owner_keeps_its_receiver_identity() -> Result<(), String> {
     for (label, receiver) in [
         ("loop-inline-nested-date", "new Svc(1, new Date())"),
         ("loop-inline-nested-map", "new Svc(new Map())"),
+        ("loop-inline-arg-cast", "new Svc(opts as any)"),
+        ("loop-inline-arg-number-cast", "new Svc(1 as number)"),
+        ("loop-inline-arg-object-cast", "new Svc({ a: 1 } as Cfg)"),
     ] {
         let body = format!(
             "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({receiver}.retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);"

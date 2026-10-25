@@ -1189,6 +1189,19 @@ fn without_receiver_casts(receiver: &str) -> String {
         });
         let Some(open) = open else { break };
         let inner = &end[open + 1..];
+        // Only a bare grouping paren is a cast group; `Svc(opts as any)` is an
+        // argument list and `.retry` still belongs to the constructed `Svc`.
+        let before = end[..open].trim_end();
+        let word = before
+            .rsplit(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .next()
+            .unwrap_or("");
+        let call_like = before.ends_with(['.', '>', ')', ']'])
+            || (!word.is_empty()
+                && !matches!(word, "await" | "new" | "return" | "typeof" | "void"));
+        if call_like {
+            break;
+        }
         match inner.find(" as ") {
             Some(at) if !inner[at..].contains(['(', ')']) => {
                 text = format!("{}{}", &end[..open], &inner[..at]);
@@ -2012,6 +2025,23 @@ mod tests {
         }
         assert!(!hands_mock_to_owner(
             "(other as any).retry(fn, 2);",
+            &["retry"],
+            Receivers::Members(&svc, "retry"),
+            "fn"
+        ));
+        // A constructor's or callee's argument list is not a cast group.
+        assert_eq!(
+            without_receiver_casts("new Svc(opts as any)"),
+            "new Svc(opts as any)"
+        );
+        assert_eq!(
+            without_receiver_casts("other (svc as any)"),
+            "other (svc as any)"
+        );
+        assert_eq!(without_receiver_casts("(svc as any)"), "svc");
+        assert_eq!(without_receiver_casts("await (svc as any)"), "await svc");
+        assert!(!hands_mock_to_owner(
+            "other (svc as any).retry(fn, 2);",
             &["retry"],
             Receivers::Members(&svc, "retry"),
             "fn"
