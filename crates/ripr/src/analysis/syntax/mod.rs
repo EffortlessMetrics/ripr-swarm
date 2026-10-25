@@ -3,14 +3,17 @@ pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
 mod local_test_macros;
+pub(crate) mod loop_accumulator;
 mod macro_scope;
 mod module_tree;
+mod mut_parameter;
 mod name_scope;
 mod nesting;
 mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{

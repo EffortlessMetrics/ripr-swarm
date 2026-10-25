@@ -29,8 +29,8 @@ use super::sink_alignment::{
     CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
 };
 use super::static_limits::{
-    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
-    unpinned_equality_dunder_limit,
+    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, module_object_rebind_limit,
+    static_limit_for_focused_change, unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -448,6 +448,15 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
+    .or_else(|| {
+        module_object_rebind_limit(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            alignment.credited.as_ref().filter(|_| alignment.observes()),
+        )
+    })
     .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
     .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
     .or_else(|| {

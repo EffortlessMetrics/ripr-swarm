@@ -148,8 +148,11 @@ identity input invalidates the
 ID so an earlier suppression cannot silently select a different value. Genuine
 repeated expressions retain distinct ordinal-suffixed IDs. The public-path
 metamorphic and stale-suppression controls are in
-`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
-fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). Distinct expressions
+that share an fp8 at one owner take their collision ordinals from a full
+payload digest, so their IDs do not depend on diff order (#8838). The
+sole-expression half of #8838, a lone changed expression whose fp8 equals a
+different earlier expression's, remains unmet acceptance; duplicate-expression
 ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
@@ -704,6 +707,13 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 (#4216), and so does any file with no indexed function or no file facts. The
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
+
+A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
+no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
+(`impl<Item, const N: usize> Drop` before `for Holder<Item, N>` and `{` on later
+lines). It declares only, so it seeds a single `static_unknown` probe like a
+one-line `impl ... {` header (#8389) and never `field_construction` for a
+const-generic bound or `call_deletion` for a generic attribute (#10244).
 
 ## Implementation Mapping
 

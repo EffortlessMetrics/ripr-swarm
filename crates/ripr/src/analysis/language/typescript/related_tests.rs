@@ -1209,16 +1209,9 @@ pub(crate) fn related_test_candidates<'a>(
             .into_iter()
             .map(|index| &all_tests[index as usize])
             .filter(|test| in_owner_package(test))
-            .filter(|test| {
-                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
-            })
-            .map(|test| {
-                related_candidate(
-                    test,
-                    TypeScriptRelationKind::ModuleEntryCall,
-                    owner,
-                    alias_map,
-                    workspace_root,
+            .filter_map(|test| {
+                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
                 )
             })
             .collect();
@@ -1423,10 +1416,15 @@ fn module_entry_relation(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
-) -> bool {
-    owner.module_entries.iter().any(|entry| {
+) -> Option<TypeScriptRelationKind> {
+    // A test that reaches the owner through any ordinary entry keeps the weak
+    // `ModuleEntryCall` reading; `DecoratedMethodCall` holds only when every
+    // entry the test reaches is a decorated method.
+    let mut decorated = false;
+    let mut ordinary = false;
+    for entry in &owner.module_entries {
         let entry_owner = module_entry_owner(owner, entry);
-        owner_call_relation(
+        if owner_call_relation(
             test,
             &entry_owner,
             reexport_index,
@@ -1434,7 +1432,19 @@ fn module_entry_relation(
             workspace_root,
         )
         .is_some_and(TypeScriptRelationKind::uses_oracle)
-    })
+        {
+            if entry.decorated.is_some() {
+                decorated = true;
+            } else {
+                ordinary = true;
+            }
+        }
+    }
+    match (ordinary, decorated) {
+        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
+        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
+        (false, false) => None,
+    }
 }
 
 /// The owner as a test of `entry` sees it: same module, the entry's exported
@@ -1443,6 +1453,23 @@ pub(crate) fn module_entry_owner(
     owner: &TypeScriptOwner,
     entry: &TypeScriptModuleEntry,
 ) -> TypeScriptOwner {
+    if let Some(decorated) = entry.decorated.as_ref() {
+        // A method the decorator wraps: a test reaches it through a receiver
+        // the test constructs, like any instance method of that class.
+        return TypeScriptOwner {
+            name: entry.name.clone(),
+            owner_kind: OwnerKind::Method,
+            class_name: Some(decorated.class_name.clone()),
+            exported_as_default: false,
+            default_object_member: false,
+            method_kind: TypeScriptMethodKind::Ordinary,
+            module_entries: Vec::new(),
+            params: Vec::new(),
+            arity: None,
+            source_text: None,
+            ..owner.clone()
+        };
+    }
     if let Some(method_kind) = entry.class_member {
         // A sibling method of the owner's own class: a test reaches it
         // through a receiver the test constructs, like any instance method.
@@ -1654,6 +1681,46 @@ pub(crate) fn receiver_owner_call_relation(
     false
 }
 
+/// The receivers the test authenticates for a method owner: locals built from
+/// the owner's class (`const svc = new Svc()`, in the body or an enclosing
+/// scope) for an instance method, the class names for a static one. A member
+/// call through any other receiver is another binding.
+pub(crate) fn owner_method_receiver_names(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    match owner.owner_kind {
+        OwnerKind::ClassMethod => {
+            class_names_for_class_method_owner(test, owner, alias_map, workspace_root)
+        }
+        OwnerKind::Method => {
+            let constructor_names =
+                constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            let mut receivers =
+                receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+            for binding in &test.scope_bindings {
+                if binding
+                    .constructed_by
+                    .as_ref()
+                    .is_some_and(|constructor| constructor_names.contains(constructor))
+                    && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
+                    && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+                {
+                    push_unique_string(&mut receivers, binding.name.clone());
+                }
+            }
+            // An inline `new Cls().method()` is authenticated by its class.
+            for constructor in &constructor_names {
+                push_unique_string(&mut receivers, format!("new {constructor}"));
+            }
+            receivers
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn class_method_owner_call_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -1678,7 +1745,7 @@ pub(crate) fn class_method_owner_call_relation(
 /// scope (a `describe` body or parameter, a loop header, a hook write, a
 /// test callback parameter) rebinds `name` for this test, so a call through
 /// `name` reaches that binding rather than an import or owner of the name.
-fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+pub(crate) fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
     test.scope_bindings
         .iter()
         .any(|binding| binding.name == name && !binding.file_level)
@@ -2977,6 +3044,7 @@ fn ts_relation_to_domain(
         // The test calls a same-module export that calls the owner: the
         // TypeScript form of a production helper that delegates to the owner.
         TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
+        TypeScriptRelationKind::DecoratedMethodCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::ModuleValueUse
@@ -2992,7 +3060,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::ClassMethodCall => RelationConfidence::High,
         TypeScriptRelationKind::ImportedOwnerCall
         | TypeScriptRelationKind::ReExportChainFollowed
-        | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
+        | TypeScriptRelationKind::ModuleEntryCall
+        | TypeScriptRelationKind::DecoratedMethodCall => RelationConfidence::Medium,
         TypeScriptRelationKind::ModuleValueUse
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
