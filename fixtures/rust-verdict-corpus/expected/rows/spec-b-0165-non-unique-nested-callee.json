@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0165-non-unique-nested-callee",
+  "subject_id": "authored-spec-b-match",
+  "origin": "authored",
+  "anchor": "src/r_ambiguous.rs:26",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "recursive_helper_non_unique_callee",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

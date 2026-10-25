@@ -1,0 +1,12 @@
+diff --git a/src/m_char.rs b/src/m_char.rs
+--- a/src/m_char.rs
++++ b/src/m_char.rs
+@@ -10,7 +10,7 @@
+ 
+ pub fn classify_char(c: char) -> &'static str {
+     let final_label = tag_char(c);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

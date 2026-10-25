@@ -242,3 +242,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (21)
+
+Reason:
+RIPR-SPEC-0224: Python no_assertion row miss on an extraction-complete assertion-free call-bearing test (#5491)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
