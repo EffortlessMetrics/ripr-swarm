@@ -2428,11 +2428,82 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                 },
             };
             caller_tail_forwards_call(&hop.caller, callee, &hop.call_text)
+                // #10284: a caller that binds its callee's name
+                // (`let is_bulk = |_| true;`) calls the binding, and a
+                // user macro may expand to an early `return` the textual
+                // return scan cannot see.
+                && !caller_rebinds_parameter(&hop.caller.body, callee)
+                && !caller_invokes_opaque_macro(&hop.caller.body)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
                 })
         })
+}
+
+/// Standard and logging macros whose expansion holds no `return` of its
+/// own: any `return` in their arguments is caller text the return scan
+/// already reads. Panicking ones (`assert!`, `panic!`) end the test, they
+/// do not change the forwarded value.
+const TRANSPARENT_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "dbg",
+    "format",
+    "format_args",
+    "write",
+    "writeln",
+    "vec",
+    "matches",
+    "concat",
+    "stringify",
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "error",
+    "event",
+    "span",
+];
+
+/// Whether `body` invokes a macro outside [`TRANSPARENT_MACROS`] (#10284).
+/// A path-qualified macro (`tracing::info!`) is judged by its last segment.
+fn caller_invokes_opaque_macro(body: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    masked.match_indices('!').any(|(at, _)| {
+        let is_invocation = masked
+            .get(at + 1..)
+            .is_some_and(|rest| rest.trim_start().starts_with(['(', '[', '{']));
+        let name_start = masked
+            .get(..at)
+            .and_then(|head| {
+                head.char_indices()
+                    .rev()
+                    .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+                    .map(|(index, c)| index + c.len_utf8())
+            })
+            .unwrap_or(0);
+        let name = masked.get(name_start..at).unwrap_or_default();
+        is_invocation
+            && at
+                .checked_sub(1)
+                .and_then(|before| bytes.get(before))
+                .is_some_and(|&before| before.is_ascii_alphanumeric() || before == b'_')
+            && !TRANSPARENT_MACROS.contains(&name)
+    })
 }
 
 /// Whether `receiver` is exactly one receiver expression: `self`, or a
@@ -3672,6 +3743,10 @@ mod tests {
             "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
             "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
+            // #10284 controls: standard and logging macros expand to no
+            // `return` of their own, and a `!=` is not a macro.
+            "pub fn w(qty: u32) -> u32 {\n    println!(\"{qty}\");\n    tracing::info!(qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    debug_assert!(qty != 0);\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             // Controls for the value comparison: distinct values forward.
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 6 }\n}",
             "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"b\" } else { \"a\" }\n}",
@@ -3714,6 +3789,11 @@ mod tests {
             "pub fn w(qty: u32) -> Option<bool> {\n    let q = Some(qty)?;\n    Some(is_bulk(q))\n}",
             // method call with the same name is not the hop
             "pub fn w(qty: u32) -> bool {\n    self.is_bulk(qty)\n}",
+            // #10284: a local binding shadows the callee
+            "pub fn w(qty: u32) -> u32 {\n    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            // #10284: a user macro may hide an early `return`
+            "pub fn w(qty: u32) -> u32 {\n    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    crate::bail![qty];\n    if is_bulk(qty) { 5 } else { 0 }\n}",
         ] {
             assert!(
                 !chain_forwards_owner_result("is_bulk", &one_hop_chain(body)),

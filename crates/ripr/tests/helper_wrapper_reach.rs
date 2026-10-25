@@ -251,6 +251,38 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
     Ok(())
 }
 
+// #10284: neither twin borrows the wrapper's pins when the wrapper binds
+// the helper's name or runs a user macro that may return first; a logging
+// macro keeps both twins credited.
+#[test]
+fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), String> {
+    for wrapper in [
+        "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+    ] {
+        let source = bulk_source(wrapper, BOUNDARY_TESTS);
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_ne!(finding["classification"], "exposed", "{wrapper}\n{finding}");
+        }
+    }
+    let logged = bulk_source(
+        "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+        BOUNDARY_TESTS,
+    );
+    assert_eq!(
+        predicate_finding(&logged, BULK_DIFF)?["classification"],
+        "exposed"
+    );
+    assert_eq!(
+        family_finding(&logged, BULK_DIFF, "return_value")?["classification"],
+        "exposed"
+    );
+    Ok(())
+}
+
 #[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
