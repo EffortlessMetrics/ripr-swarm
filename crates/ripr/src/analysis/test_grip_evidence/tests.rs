@@ -19710,3 +19710,45 @@ fn value_facts_keep_one_fact_per_test_file() {
         vec![Some(Path::new("tests/a.rs")), Some(Path::new("tests/b.rs"))]
     );
 }
+
+#[test]
+fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<(), String> {
+    let test_body = "#[test]\n\
+         fn boundary() {\n\
+             assert_eq!(discounted_total(100, 100), 90);\n\
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (
+            PathBuf::from("src/pricing.rs"),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 \
+                 { if amount >= threshold { amount - 10 } else { amount } }\n",
+        ),
+        (PathBuf::from("tests/first_tests.rs"), test_body),
+        (PathBuf::from("tests/second_tests.rs"), test_body),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+
+    let mut files_with_facts = evidence
+        .observed_values
+        .iter()
+        .filter_map(|fact| fact.file.clone())
+        .collect::<Vec<_>>();
+    files_with_facts.sort();
+    files_with_facts.dedup();
+    assert_eq!(
+        files_with_facts,
+        vec![
+            PathBuf::from("tests/first_tests.rs"),
+            PathBuf::from("tests/second_tests.rs")
+        ],
+        "facts: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
