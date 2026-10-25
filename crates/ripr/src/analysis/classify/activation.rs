@@ -3983,7 +3983,10 @@ pub(in crate::analysis) fn computed_input_parameters(
                 {
                     continue;
                 }
-                let Some(arguments) = call_arguments(&call.text, &call.name) else {
+                let Some(arguments) =
+                    owner_name_call_text(&call.text, &target.name, is_free(target))
+                        .and_then(|text| call_arguments(text, &call.name))
+                else {
                     continue;
                 };
                 called = true;

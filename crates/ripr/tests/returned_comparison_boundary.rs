@@ -769,6 +769,14 @@ fn assert_identity_unresolved(findings: &[Finding]) -> Result<(), String> {
     assert_eq!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
     assert_gap_named(findings, false)?;
     assert!(
+        !owner
+            .activation
+            .observed_values
+            .iter()
+            .any(|value| value.value == "x == 101"),
+        "{owner:?}"
+    );
+    assert!(
         owner.ripr.infect.summary.contains("call identity"),
         "{owner:?}"
     );
@@ -789,7 +797,7 @@ fn bare_import_call_values_require_the_owner_identity() -> Result<(), String> {
             ),
         )?;
         if expected_owner {
-            assert_gap_named(&results, false)?;
+            assert_boundary_credited(&results)?;
         } else {
             assert_identity_unresolved(&results)?;
         }
@@ -827,7 +835,7 @@ fn workspace_sibling_call_values_require_the_owner_identity() -> Result<(), Stri
             &extra,
         )?;
         if expected_owner {
-            assert_gap_named(&results, false)?;
+            assert_boundary_credited(&results)?;
         } else {
             assert_identity_unresolved(&results)?;
         }
@@ -888,10 +896,42 @@ fn workspace_sibling_local_calls_require_the_owner_identity() -> Result<(), Stri
         let results =
             findings_after_with("", NEW, OLD, &format!("use thr::thr;\n{FAR_ONLY}"), &extra)?;
         if expected_owner {
-            assert_gap_named(&results, false)?;
+            assert_boundary_credited(&results)?;
         } else {
             assert_identity_unresolved(&results)?;
         }
+    }
+    Ok(())
+}
+
+fn assert_boundary_credited(findings: &[Finding]) -> Result<(), String> {
+    let owner = family(findings, "return_value")?;
+    assert_gap_named(findings, false)?;
+    assert_eq!(owner.ripr.infect.state.as_str(), "yes", "{owner:?}");
+    assert!(
+        owner
+            .activation
+            .observed_values
+            .iter()
+            .any(|value| value.value == "x == 101"),
+        "{owner:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn computed_associated_and_method_calls_do_not_name_the_free_owner() -> Result<(), String> {
+    for call in ["StaticRival::thr(base + 1)", "MethodRival.thr(base + 1)"] {
+        let results = findings(
+            NEW,
+            OLD,
+            &format!(
+                "use thr as owner_crate;\nstruct StaticRival;\nimpl StaticRival {{ fn thr(x: i32) -> bool {{ x > 0 }} }}\nstruct MethodRival;\nimpl MethodRival {{ fn thr(&self, x: i32) -> bool {{ x > 0 }} }}\n{IDENTITY_FAR}\n#[test]\nfn at() {{\n    assert!(!owner_crate::thr(50));\n    let base = 100;\n    assert!({call});\n}}\n"
+            ),
+        )?;
+        assert_gap_named(&results, true)?;
+        let owner = family(&results, "return_value")?;
+        assert_ne!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
     }
     Ok(())
 }
