@@ -935,3 +935,16 @@ fn computed_associated_and_method_calls_do_not_name_the_free_owner() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn a_comparison_nested_in_a_returned_match_keeps_its_return_reading() -> Result<(), String> {
+    let results = findings(
+        "    match x { value if value > 101 => true, _ => false }",
+        "    match x { value if value > 100 => true, _ => false }",
+        &format!("use thr::thr;\n{FAR_ONLY}"),
+    )?;
+    let owner = family(&results, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
+    assert_gap_named(&results, false)?;
+    Ok(())
+}

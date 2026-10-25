@@ -1282,9 +1282,10 @@ fn missing_discriminator_facts(
     // A returned comparison shares both resolved gaps and unresolved input
     // identity with the predicate lens; withheld rows cannot fabricate gaps.
     let mut returned_unresolved = None;
-    if let Some(view) = returned_comparison_view(probe)
+    let returned_view = returned_comparison_view(probe);
+    if let Some(view) = returned_view.as_ref()
         && let Some(fact) = missing_boundary_discriminator(
-            &view,
+            view,
             owner_fn,
             related_tests,
             flow_sinks,
@@ -1295,12 +1296,18 @@ fn missing_discriminator_facts(
         )
         && returned_unresolved.is_none()
         && !owner_fn.is_some_and(|owner| {
-            observed_input_separates_threshold_move(&view, owner, related_tests)
+            observed_input_separates_threshold_move(view, owner, related_tests)
         })
     {
         missing.push(fact);
     }
-    if returned_unresolved.is_some() {
+    // An entire match can contain comparison-shaped tokens (including =>).
+    // Its unsupported operand is not a returned comparison input limitation.
+    if returned_unresolved.is_some()
+        && returned_view
+            .as_ref()
+            .is_some_and(|view| is_top_level_comparison(&view.expression))
+    {
         *unresolved_boundary = returned_unresolved;
     }
     if (matches!(probe.family, ProbeFamily::ErrorPath)
