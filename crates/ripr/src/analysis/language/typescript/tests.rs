@@ -1663,6 +1663,34 @@ fn normalized_path_strips_dot_prefix_and_normalizes_separators() {
 }
 
 #[test]
+fn normalized_path_eq_matches_plain_paths() {
+    assert!(normalized_path_eq(Path::new("src/a/b.ts"), "src/a/b.ts"));
+    assert!(normalized_path_eq(Path::new("./src/a.ts"), "src/a.ts"));
+    assert!(normalized_path_eq(Path::new("././x.ts"), "x.ts"));
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "src/b.ts"));
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "other/a.ts"));
+}
+
+#[test]
+fn normalized_path_eq_agrees_with_normalized_path_on_backslash_spellings() {
+    // #10024: a literal backslash-spelled path collides with the
+    // forward-slash spelling under normalized_path; the eq helper must keep
+    // recognizing it through the allocating slow path.
+    for (path, expected) in [
+        (r"src\a\b.ts", "src/a/b.ts"),
+        (r".\src\b.ts", "src/b.ts"),
+        (r"src/a\b.ts", "src/a/b.ts"),
+    ] {
+        assert!(
+            normalized_path_eq(Path::new(path), expected),
+            "{path:?} must equal {expected:?}"
+        );
+        assert_eq!(normalized_path(Path::new(path)), expected);
+    }
+    assert!(!normalized_path_eq(Path::new(r"src\a\b.ts"), "src/a/c.ts"));
+}
+
+#[test]
 fn extract_owners_recognizes_function_declaration() {
     let owners = extract_owners(
         Path::new("src/lib.ts"),
