@@ -8556,6 +8556,7 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
   "xtask/src/tests/operand_callee_honesty.rs::later_binding_contract_rejects_false_credit_and_vacuity",
   "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_gets_no_unseen_reach_allowance",
@@ -13514,6 +13515,10 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/operand_whitespace.rs::both_spellings_have_the_same_rust_tokens_and_native_values",
+  "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
+  "crates/ripr/tests/operand_whitespace.rs::a_nonzero_shipping_pin_discriminates_both_spellings",
+  "crates/ripr/tests/operand_whitespace.rs::compact_spelling_preserves_callee_identity_refusals",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",

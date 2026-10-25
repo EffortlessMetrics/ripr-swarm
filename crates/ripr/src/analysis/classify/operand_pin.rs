@@ -166,8 +166,8 @@ pub(in crate::analysis) fn operand_only_pin(
     })
 }
 
-/// `name: left <op> right` with plain identifier operands and one binary
-/// operator, written with spaces around it.
+/// `name: left <op> right` with plain identifier operands and one supported
+/// binary operator, regardless of whitespace around that operator.
 fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
     let trimmed = expression.trim().trim_end_matches(',').trim();
     let (name, value) = trimmed.split_once(':')?;
@@ -175,13 +175,12 @@ fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
         return None;
     }
     let name = name.trim();
-    let parts = value.split_whitespace().collect::<Vec<_>>();
-    let [left, operator, right] = parts.as_slice() else {
-        return None;
-    };
-    let binary = matches!(*operator, "+" | "-" | "*" | "/" | "%" | "|" | "^" | "&");
-    (binary && is_identifier(name) && is_identifier(left) && is_identifier(right) && left != right)
-        .then_some((name, *left, *right))
+    let (left, right) = value.split_once(['+', '-', '*', '/', '%', '|', '^', '&'])?;
+    let (left, right) = (left.trim(), right.trim());
+    // Requiring two identifiers still refuses compound operators, additional
+    // expressions, comments, paths, calls, unary operands and parentheses.
+    (is_identifier(name) && is_identifier(left) && is_identifier(right) && left != right)
+        .then_some((name, left, right))
 }
 
 /// Whether `operand` is established to hold a built-in-operator value, so the
@@ -1928,13 +1927,38 @@ mod tests {
 
     #[test]
     fn only_a_plain_binary_initializer_is_read() {
-        assert_eq!(
-            binary_field_initializer("total: a + b"),
-            Some(("total", "a", "b"))
-        );
-        assert_eq!(binary_field_initializer("total: a + b + c"), None);
-        assert_eq!(binary_field_initializer("total: f(a) + b"), None);
-        assert_eq!(binary_field_initializer("total: a + a"), None);
-        assert_eq!(binary_field_initializer("total: a::b + c"), None);
+        for operator in ["+", "-", "*", "/", "%", "|", "^", "&"] {
+            for (before, after) in [(" ", " "), ("", ""), ("", " "), (" ", ""), ("\t", "\n")] {
+                let expression = format!("total: a{before}{operator}{after}b,");
+                assert_eq!(
+                    binary_field_initializer(&expression),
+                    Some(("total", "a", "b")),
+                    "{expression}"
+                );
+            }
+        }
+        for expression in [
+            "total: a + b + c",
+            "total: f(a) + b",
+            "total: a + a",
+            "total: a::b + c",
+            "total: a&&b",
+            "total: a||b",
+            "total: a<<b",
+            "total: a>>b",
+            "total: a==b",
+            "total: a+=b",
+            "total: a+b*c",
+            "total: a+f(b)",
+            "total: a+&b",
+            "total: (a)+b",
+            "total: a/*comment*/+b",
+            "total: a/**/b",
+            "total: a**b",
+            "total: r#a+b",
+            "total: -a+b",
+        ] {
+            assert_eq!(binary_field_initializer(expression), None, "{expression}");
+        }
     }
 }

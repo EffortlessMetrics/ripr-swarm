@@ -878,7 +878,10 @@ wrong credits.
    cannot notice the field replaced by one of its operands when, for the
    pinned input, the field equals that operand. The changed initializer is
    `f: a <op> b` with two distinct plain identifier operands and one binary
-   operator, and both operands are established primitive, so the dropped
+   operator. Whitespace around that operator does not change the rule:
+   `a + b`, `a+b`, `a+ b`, and `a +b` have the same operand discriminator.
+   This does not admit compound operators, comments, calls, paths, unary
+   operands or parentheses. Both operands are established primitive, so the dropped
    operator is a built-in one: a parameter of a primitive type, a `let`
    annotated with one, a numeric or bool literal, an arithmetic
    combination of established names and literals with the accepted operators
