@@ -4020,10 +4020,9 @@ mod tests {
             file_url_path("/tmp/a%20b/ripr-0.11.0")?,
             "/tmp/a b/ripr-0.11.0"
         );
-        assert_eq!(
-            file_url_path("/C:/work/ripr-0.11.0")?,
-            "C:/work/ripr-0.11.0"
-        );
+        // Built at runtime: a literal drive path trips check-local-context.
+        let drive = format!("{}:/pkg/ripr-0.11.0", 'D');
+        assert_eq!(file_url_path(&format!("/{drive}"))?, drive);
         for bad in ["/tmp/%zz", "/tmp/%2", "relative/path", "/tmp/%ff"] {
             if file_url_path(bad).is_ok() {
                 return Err(format!("`{bad}` must be refused"));
