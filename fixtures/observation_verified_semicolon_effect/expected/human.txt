@@ -30,7 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/observation_verified_semicolon_effect/input --diff <cwd>/fixtures/observation_verified_semicolon_effect/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
   ripr context --root <cwd>/fixtures/observation_verified_semicolon_effect/input --diff <cwd>/fixtures/observation_verified_semicolon_effect/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
-  no repair start offered: repair route not ready (missing evidence: observable sink localization); run `ripr repair probe:src_lib.rs:call_deletion:934aa430 --root <cwd>/fixtures/observation_verified_semicolon_effect/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: observable sink localization; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

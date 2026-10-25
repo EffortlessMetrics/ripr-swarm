@@ -788,7 +788,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     band: an old result already outside the band, a result within `1e-9`
     (relative) of the band edge, a non-literal argument, a positional
     band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode).
+    without the old line (repo mode). The `py-bands-*` cases pin the
+    abstentions: a positional band (an edit the band absorbs and one it
+    rejects, the latter a documented missed credit), a `**` spread,
+    named constants for the expected value and band, a two-statement
+    owner, a method owner and a decorated owner.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
@@ -823,8 +827,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     receiver is `logging` or a module-level `name = logging.getLogger(...)`
     (a detached `logging.Logger(...)` or any other object abstains), the
     method is not `exception` (its traceback can hold the asserted text),
-    and the test never rebinds `caplog`. An assertion about unrelated text
-    keeps its verdict.
+    and the test never rebinds `caplog`. `caplog` must be pytest's own
+    fixture: the test requests it as a parameter and no `@pytest.fixture`
+    in its module or a `conftest.py` up its directory chain defines a
+    fixture of that name; otherwise the reading abstains. An assertion about
+    unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
@@ -848,6 +855,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     concatenation, an assertion message and a membership joined by `and`
     all read the same way, while a membership against any other receiver
     is not read.
+    A local alias of a captured-log read (`msgs = caplog.text`,
+    `.messages` or `.records`) reads as the read itself only when the name
+    is bound once, to the read, at the assertion's own indentation and after
+    every owner call, and appears nowhere else in the test but the
+    assertion statement (a wrapped assertion counts as one statement). An
+    alias that is appended to, rebound, deleted, read in a comprehension,
+    taken before the call or inside a nested block keeps the abstention, as
+    does a name spelled inside a quoted literal (single, double or triple
+    quoted), which is data. A local called `text`, `messages` or `records`
+    is not confused with the attribute of `caplog.text` and the like. `caplog`'s
+    reads are rebuilt on each access, so an alias taken before the call
+    would hold earlier records (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
@@ -1334,7 +1353,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   39, and rules 1, 2, 4 and 9 alongside them);
   `python/hypothesis.rs` unit tests pin `@given` pairing and `@example`
   rows.
-- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15),
+- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15; the
+  `py-conjuncts-*` cases add an exact owner conjunct credited, an exact
+  conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
+  comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
   (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
   `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
@@ -1367,14 +1389,19 @@ and the test is `tests/test_subject.py`, which imports each owner from
   (#6597) score credited under rules 12 to 14; the `py-almost-*` cases
   cover rule 12's other forms (default and `places=None` credited,
   explicit `places=` and `delta=`, the positional `delta`, a spread and a
-  non-`self` receiver scored as a gap),
+  non-`self` receiver scored as a gap), the `py-raises-*` cases cover
+  rules 13 and 14 (a callable-form `raises` or `assertRaises`, with and
+  without `match=`, and a coarse length read of a bound exception score
+  as gaps; a bound `.exception` compared with `==` and an `.args` index
+  score credited),
   `py-spec0233-ex11-fluent-helper` scores limited under rule 3, and
   `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
   rule 20. Example 34's `exc.value is not None` and length forms have
   cases (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`,
-  #7546); the corpus has no `assertRaises` callable,
-  `assertRaises ... as cm` or other example 34 form yet, and each needs
-  its own case before those parts read as established.
+  #7546); `assertRaises` callable and `assertRaises ... as cm` now have
+  cases (`py-raises-callable-unittest`,
+  `py-raises-bound-unittest-exception`), and any other example 34 form
+  needs its own case before that part reads as established.
   Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
   mutant the `assert_called_once_with` expectation kills, which scores
   credited under rule 17's called-parameter form, and a sign case

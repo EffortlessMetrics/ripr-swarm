@@ -399,12 +399,31 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target, or
-  not the whole bound value, is not credited. A `:` ends a target position only
-  when it closes a compound-statement header whose brackets balance outside
-  string literals and comments (`if ")": ( r), x = ...` rebinds, a dict value
-  `{"k": (r), 1}` does not); a header split across lines is a known limit: a
-  one-line-suite rebind after it is not seen and the receiver stays credited. Extra, keyword, starred or trailing-comma
+  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
+  (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
+  is not credited, as is an augmented assignment after a header or `;`
+  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  mentions the name other than as a dotted value or class pattern (`case (r):`,
+  `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
+  demoted too, a deliberate miss). Within one
+  bracketed target, a comment, a backslash continuation or a run of blanks
+  before the name, its closing bracket or the `=` / `in` / `as` after it, and
+  a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
+  A `for` or `as` inside a string or after a `#` comment is text, so
+  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  them closed by this: a multi-line tuple target whose earlier elements sit on
+  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
+  (the credit-keeping direction); and a dict key at the start of a continuation
+  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
+  (a miss). A `:` ends a target
+  position only when it closes a compound-statement header whose brackets
+  balance outside string literals (single, double and tripled quotes, escaped
+  quotes) and comments (`if ")": ( r), x = ...` and
+  `if x == '''it's''': ( r), x = ...` rebind, a dict value `{"k": (r), 1}` does
+  not). A header whose brackets do not balance, or that is split across
+  lines, is not read as a header, so a one-line-suite rebind after it is not
+  seen and the receiver stays credited (the credit-keeping direction, a known
+  limit). Extra, keyword, starred or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`

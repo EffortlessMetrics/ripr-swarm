@@ -437,6 +437,11 @@ impl RelatedTestCandidateIndex {
                         .get(hop.caller.name.as_str())
                         .map(Vec::as_slice),
                 );
+                // A hop whose caller is a `Display`/`Debug` `fmt` is reached
+                // through formatting that never spells `fmt` (#8999).
+                if fmt_dispatch::is_fmt_dispatch_owner(&hop.caller) {
+                    selected.extend(self.fmt_dispatch_tests.iter().copied());
+                }
             }
         }
 
@@ -739,6 +744,17 @@ pub(in crate::analysis) fn find_related_tests_with_candidate_index<'a>(
     )
 }
 
+/// A helper-chain hop whose caller is a `Display`/`Debug` `fmt` owner (#8999):
+/// the caller, the indexed functions named like it (the exactly-one-impl gate)
+/// and its memoized dispatch context.
+struct FmtEntryHop<'a> {
+    caller: &'a FunctionSummary,
+    /// The caller's impl self type, for the entity-identity refusals.
+    self_type: String,
+    same_name_ids: Vec<&'a str>,
+    context: std::sync::Arc<Option<fmt_dispatch::FmtContext>>,
+}
+
 fn find_related_tests_with_candidates<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -991,6 +1007,39 @@ fn find_related_tests_with_candidates<'a>(
         && owner_fn.is_some_and(|owner| {
             owner.item.container == crate::analysis::facts::FunctionContainer::Free
         });
+    // #8999: a changed helper whose only chain entry is a `Display`/`Debug`
+    // `fmt` is reached by a test that formats a value of that impl's type
+    // (`merge.to_string()`) without naming `fmt` or the helper. One entry per
+    // fmt hop: the caller, the indexed functions named like it (the
+    // exactly-one-impl gate) and the memoized context.
+    let fmt_entry_hops: Vec<FmtEntryHop<'_>> = helper_chain
+        .map(|chain| {
+            chain
+                .hops
+                .iter()
+                .enumerate()
+                // Every hop from the helper up through the fmt caller must be
+                // a direct call: a macro hop carries reach only, and a hop
+                // below the fmt one is on the path the test's formatting runs.
+                .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
+                .map(|(_, hop)| hop)
+                .filter(|hop| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
+                .filter_map(|hop| {
+                    Some(FmtEntryHop {
+                        caller: &hop.caller,
+                        self_type: impl_self_type_name(&hop.caller.id.0)?,
+                        same_name_ids: index
+                            .functions()
+                            .iter()
+                            .filter(|function| function.name == hop.caller.name)
+                            .map(|function| function.id.0.as_str())
+                            .collect(),
+                        context: fmt_contexts.context(index, &hop.caller),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -1294,8 +1343,40 @@ fn find_related_tests_with_candidates<'a>(
         // call relation (#6694, #6672): the typed chain is stronger
         // evidence than file proximity or a name token, and demoting it
         // let a tested wrapper's private helper read as file-level reach.
-        let helper_chain_reaches =
-            !calls_owner && !assertions_reference_owner && calls_helper_entry;
+        // #8999: a fmt entry is judged separately from `calls_helper_entry`
+        // so it never rides that signal's cross-package bypasses: only an
+        // in-package test can use it.
+        // Evaluated independently of `calls_owner`: an unrelated same-named
+        // method call elsewhere in the test must not hide a real formatting
+        // reach. The in-package check is explicit because a name-only owner
+        // call can pass the package guard below.
+        let dispatches_to_helper_fmt_entry = !calls_helper_entry
+            && !property_only_owner_call
+            && owner_package_prefix
+                .as_ref()
+                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && fmt_entry_hops.iter().any(|entry| {
+                Option::as_ref(&entry.context).is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        entry.caller,
+                        &entry.same_name_ids,
+                        context,
+                    )
+                }) && !impl_identity_is_shadowed(
+                    test,
+                    entry.caller,
+                    &entry.self_type,
+                    index
+                        .files()
+                        .get(&test.file)
+                        .map(|facts| facts.data().source.as_ref()),
+                    index,
+                )
+            });
+        let helper_chain_reaches = !calls_owner
+            && !assertions_reference_owner
+            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1336,7 +1417,7 @@ fn find_related_tests_with_candidates<'a>(
                 .files()
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref());
-            owner_call_relation_reason(
+            let by_name = owner_call_relation_reason(
                 test,
                 owner_fn,
                 owner_name,
@@ -1344,7 +1425,14 @@ fn find_related_tests_with_candidates<'a>(
                 test_source,
                 index,
                 dispatches_to_fmt,
-            )
+            );
+            // A name-only call (an unrelated same-named method) never hides
+            // the formatting reach of a helper-entry `fmt` (#8999).
+            if by_name == RelationReason::WeakTokenSubstring && dispatches_to_helper_fmt_entry {
+                RelationReason::HelperOwnerCall
+            } else {
+                by_name
+            }
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
             // the bounded helper-transfer chain (#3296).
@@ -2052,6 +2140,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                             && super::call_identity::unit_test_relative_import_names_entry(
                                 index,
                                 &test.file,
+                                &test.name,
+                                test.start_line,
                                 &import.path,
                                 caller,
                             )))
@@ -4517,6 +4607,60 @@ fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bo
     bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
 }
 
+/// Whether the test's own scope rebinds the owner's impl type or trait (the
+/// #6951 / #6950 / #7067 / #7053 / #7087 entity-identity refusals), so a
+/// receiver named like the type is not the production type. Shared by the
+/// direct owner-call relation and the formatting helper-entry route (#8999).
+fn impl_identity_is_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    impl_type: &str,
+    test_source: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    let owner_scope =
+        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
+    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
+    // too, mirroring the pin-side single-file check.
+    let raw_impl_type = format!("r#{impl_type}");
+    if test_source.is_some_and(|source| {
+        super::owner_pin::test_module_shadows_type(
+            test,
+            source,
+            impl_type,
+            owner_scope.in_file(&test.file),
+        ) || super::owner_pin::file_renames_to(source, impl_type)
+            || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
+    }) || super::owner_pin::parent_chain_shadows_type(test, impl_type, owner_scope, index)
+    {
+        return true;
+    }
+    // #7053: a trait-impl owner is also shadowed by a same-named `trait`
+    // declared in the test's own module scope: `Render::render(..)` and
+    // `.render()` there name the test-local trait, so the production impl is
+    // never called. The refusal is spelling-blind — path-qualified
+    // `self::`/`super::`/`crate::` trait paths refuse the same way — and a
+    // trait-declaration default-method owner shares it (#7123). A trait the
+    // symbol id names (even a generic one) counts, and so does one declared
+    // at the root of an out-of-line parent module of the test file (#7087).
+    let owner_trait = owner_trait_name(&owner.id.0);
+    if owner_trait.as_deref().is_some_and(|trait_name| {
+        test_source.is_some_and(|source| {
+            super::owner_pin::test_module_shadows_trait(
+                test,
+                source,
+                trait_name,
+                owner_scope.in_file(&test.file),
+            )
+        })
+    }) || owner_trait.as_deref().is_some_and(|trait_name| {
+        super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
+    }) {
+        return true;
+    }
+    false
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -4622,44 +4766,7 @@ fn owner_call_relation_reason(
     // refuses the same way (#6950). A single-file `use ... as <type>`
     // rebinds the receiver too (#7067), in either spelling, exactly as it
     // refuses the owner pin.
-    let owner_scope =
-        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
-    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
-    // too, mirroring the pin-side single-file check.
-    let raw_impl_type = format!("r#{impl_type}");
-    if test_source.is_some_and(|source| {
-        super::owner_pin::test_module_shadows_type(
-            test,
-            source,
-            &impl_type,
-            owner_scope.in_file(&test.file),
-        ) || super::owner_pin::file_renames_to(source, &impl_type)
-            || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
-    }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
-    {
-        return RelationReason::WeakTokenSubstring;
-    }
-    // #7053: a trait-impl owner is also shadowed by a same-named `trait`
-    // declared in the test's own module scope: `Render::render(..)` and
-    // `.render()` there name the test-local trait, so the production impl is
-    // never called. The refusal is spelling-blind — path-qualified
-    // `self::`/`super::`/`crate::` trait paths refuse the same way — and a
-    // trait-declaration default-method owner shares it (#7123). A trait the
-    // symbol id names (even a generic one) counts, and so does one declared
-    // at the root of an out-of-line parent module of the test file (#7087).
-    let owner_trait = owner_trait_name(&owner.id.0);
-    if owner_trait.as_deref().is_some_and(|trait_name| {
-        test_source.is_some_and(|source| {
-            super::owner_pin::test_module_shadows_trait(
-                test,
-                source,
-                trait_name,
-                owner_scope.in_file(&test.file),
-            )
-        })
-    }) || owner_trait.as_deref().is_some_and(|trait_name| {
-        super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
-    }) {
+    if impl_identity_is_shadowed(test, owner, &impl_type, test_source, index) {
         return RelationReason::WeakTokenSubstring;
     }
     // The formatting dispatch already bound the value to this impl's type

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check` no longer restates "repair route not ready" and points back at the gate. A finding whose repair route is not ready now says ripr cannot build a repair packet for it yet, lists the missing evidence, and sends the reader to the Next step and a `ripr check` rerun. The shared refusal label printed by `ripr repair`, `ripr continue` and the MCP detail is unchanged (#9244).

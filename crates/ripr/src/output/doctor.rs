@@ -1103,6 +1103,22 @@ impl DoctorReport {
         });
     }
 
+    /// Record the `.mcp.json` verdict (#10347): `pass` when the `ripr` server
+    /// entry matches what `ripr init --mcp` writes, `advisory` otherwise. It
+    /// never changes the overall status.
+    pub(crate) fn add_mcp_config_check(&mut self, ok: bool, evidence: String) {
+        self.checks.push(DoctorCheck {
+            name: "mcp_config".to_string(),
+            status: if ok {
+                DoctorCheckStatus::Pass
+            } else {
+                DoctorCheckStatus::Advisory
+            },
+            evidence: Some(evidence),
+            elapsed_ms: None,
+        });
+    }
+
     /// Add a runtime probe and fail the report only when a required probe
     /// fails. Optional preview/tooling probes remain visible in JSON without
     /// turning a Rust-only or otherwise advisory setup into a false failure.
