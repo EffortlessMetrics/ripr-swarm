@@ -153,8 +153,15 @@ fn given_null_or_malformed_packet_limitations_then_full_consumer_refuses()
         // The envelope remains syntactically valid JSON; its nested typed
         // witness contract, rather than transport parsing, must reject it.
         let wire = serde_json::to_string(&value)?;
-        assert!(serde_json::from_str::<Value>(&wire).is_ok());
-        assert!(serde_json::from_str::<PacketReader>(&wire).is_err());
+        let _: Value = serde_json::from_str(&wire)?;
+        let error = match serde_json::from_str::<PacketReader>(&wire) {
+            Ok(_) => return Err("invalid witness limitations were accepted".into()),
+            Err(error) => error,
+        };
+        assert!(
+            error.is_data(),
+            "typed witness must reject the valid JSON data"
+        );
     }
     Ok(())
 }

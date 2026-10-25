@@ -105,7 +105,18 @@ fn given_null_or_malformed_limitations_then_deserialization_still_refuses()
     for invalid in [Value::Null, json!(false), json!(""), json!({}), json!([{}])] {
         let mut value = baseline.clone();
         value["limitations"] = invalid;
-        assert!(serde_json::from_value::<DiagnosticWitness>(value).is_err());
+        let error = match serde_json::from_value::<DiagnosticWitness>(value) {
+            Ok(_) => {
+                return Err(<serde_json::Error as serde::de::Error>::custom(
+                    "invalid witness limitations were accepted",
+                ));
+            }
+            Err(error) => error,
+        };
+        assert!(
+            error.is_data(),
+            "typed witness must reject the supplied data"
+        );
     }
     Ok(())
 }
