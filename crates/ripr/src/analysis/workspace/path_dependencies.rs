@@ -478,6 +478,46 @@ impl PathDependencyScopeExpansion {
         }
     }
 
+    /// Typed form of [`Self::scope_disclosure`] for the analysis outcome, so
+    /// consumers that read the report instead of stderr (CI summaries, LSP,
+    /// MCP, agents) see why dependents may be missing and what to do next.
+    /// `None` exactly when the graph is `complete` (#10182).
+    pub(crate) fn scope_limitation(
+        &self,
+    ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let (detail, recovery) = match self.status {
+            PathDependencyGraphStatus::Complete => return Ok(None),
+            PathDependencyGraphStatus::Limited => (
+                "The path-dependency graph is limited: at least one Cargo.toml could not be \
+                 parsed, so reverse-dependency scope expansion used a partial edge inventory \
+                 and may have missed crates that depend on the changed packages, along with \
+                 their tests.",
+                "Fix the Cargo.toml that fails to parse (run `cargo metadata` to see which), \
+                 then re-run the analysis.",
+            ),
+            PathDependencyGraphStatus::Unavailable => (
+                "The path-dependency graph is unavailable: no local Cargo.toml manifest was \
+                 found, so reverse-dependency scope expansion did not run and the diff scope \
+                 stays the changed packages; crates that depend on them, and their tests, were \
+                 not searched.",
+                "Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), \
+                 then re-run the analysis.",
+            ),
+        };
+        Ok(Some(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery)?,
+            )
+            .with_detail(detail)?,
+        ))
+    }
+
     /// The computed dependent package roots, consuming the expansion.
     pub(crate) fn into_dependent_package_roots(self) -> BTreeSet<String> {
         self.dependent_package_roots
