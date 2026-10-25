@@ -193,3 +193,28 @@ fn a_generated_test_case_comparison_beside_a_proximity_oracle_keeps_its_limit() 
     }
     Ok(())
 }
+
+#[test]
+fn a_generated_comparison_on_a_constant_return_is_not_a_limit() -> Result<(), String> {
+    // The owner is called, but `rows` returns a literal, so the generated
+    // `=> 110` comparison cannot notice a changed owner. Calling that "an
+    // unreadable comparison" would hide the missing discriminator (#10302).
+    let constant = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
+    let found = findings(constant)?;
+    if found.iter().any(limited) {
+        return Err(format!(
+            "a constant-return generated comparison must stay a gap: {:?}",
+            summary(&found)
+        ));
+    }
+    // The same row returning the owner's value keeps the named limit.
+    let live = constant.replace("let _ = surcharge(base);\n        110", "surcharge(base)");
+    let found = findings(&live)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}

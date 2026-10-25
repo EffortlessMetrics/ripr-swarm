@@ -585,6 +585,7 @@ fn generated_assertion_witness(
             .attrs
             .iter()
             .any(|attribute| generates_assertion(attribute))
+            && !crate::analysis::syntax::returns_only_a_literal(&test.body)
             && direct
                 .iter()
                 .any(|related| related.name == test.name && related.file == test.file)

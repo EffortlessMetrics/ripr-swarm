@@ -1,4 +1,5 @@
 mod adapter;
+mod constant_return;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
@@ -13,6 +14,7 @@ mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use constant_return::returns_only_a_literal;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
