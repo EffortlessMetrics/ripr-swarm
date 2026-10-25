@@ -4445,3 +4445,68 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
     );
     Ok(())
 }
+
+/// The nightly `first-run-main` job gates the committed
+/// `first-run-main-baseline.json` against the rows `cargo xtask first-run`
+/// writes. This runs the same comparison on rows built here, so a baseline
+/// refresh or a converter change cannot silently stop failing the lane on a
+/// crate that stops ending decisive (#9276).
+#[test]
+fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let baseline = check_baseline(
+        serde_json::from_str(include_str!(
+            "../../../../metrics/dx-scoreboard/first-run-main-baseline.json"
+        ))
+        .map_err(|err| err.to_string())?,
+    )?;
+    let boards = vec!["first_run".to_string()];
+    let gate = |third: (&str, &str)| -> Result<Value, String> {
+        let mut lines = Vec::new();
+        for (case, verdict, reading) in [
+            ("semver-1.0.23", "exposed", "agrees with the tests"),
+            ("fastrand-2.3.0", "exposed", "agrees with the tests"),
+            ("bytesize-1.3.0", third.0, third.1),
+        ] {
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"secs","value":3.0,"budget":60,"better":"lower"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"{verdict}","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"{reading}","budget":null,"better":"review_on_change"}}"#));
+        }
+        let samples = parse_ingest(&parse_ingest_text(&lines.join("\n"))?, &config)?;
+        // A runner class the baseline was not recorded on, as on a hosted
+        // runner: only the verdict rows are compared.
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("hosted-runner"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    let healthy = gate(("exposed", "agrees with the tests"))?;
+    assert_eq!(
+        healthy["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        gate_failure_message(&healthy)
+    );
+    let regressed = gate(("infection_unknown", "unresolved"))?;
+    assert_eq!(regressed["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&regressed);
+    // The decisive count is what fails the gate; the changed verdict list
+    // is listed for review on the unknown-verdict row.
+    assert!(
+        message.contains("first_run.decisive_verdicts"),
+        "decisive_verdicts not named in: {message}"
+    );
+    assert!(
+        regressed["gate"]["review"]
+            .to_string()
+            .contains("first_run.unknown_verdicts"),
+        "unknown_verdicts not listed for review: {}",
+        regressed["gate"]["review"]
+    );
+    Ok(())
+}

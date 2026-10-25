@@ -21,7 +21,8 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # Raising it is a reviewed edit with a reason.
 # 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
-missed_credit_ceiling = 145
+# 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
+missed_credit_ceiling = 146
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
