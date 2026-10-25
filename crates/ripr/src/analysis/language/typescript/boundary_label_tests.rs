@@ -6,7 +6,9 @@
 //! comparison. A wrong label steers a repair agent to the wrong test, so when
 //! the changed operator cannot be located unambiguously no label is named.
 
-use super::tests::{missing_discriminator_values, test_owner, weak_direct_test_for};
+use super::tests::{
+    direct_test_with_assertion, missing_discriminator_values, test_owner, weak_direct_test_for,
+};
 use super::*;
 
 const TWO_COMPARISONS_OLD: &str = "  if (isDone || index > stopIndex || readingCount >= concurrency || total - headIndex >= backpressure) {";
@@ -141,6 +143,91 @@ fn returned_ternary_condition_edit_names_the_changed_comparison() {
 }
 
 #[test]
+fn trailing_operand_deletion_keeps_the_label() {
+    assert_eq!(
+        boundary_label(Some("  if (total > limit + 1) {"), "  if (total > limit) {").as_deref(),
+        Some("total == limit")
+    );
+}
+
+#[test]
+fn leading_operand_deletion_keeps_the_label() {
+    assert_eq!(
+        boundary_label(Some("  if (x + a > b) {"), "  if (a > b) {").as_deref(),
+        Some("a == b")
+    );
+}
+
+#[test]
+fn operand_deletion_in_a_compound_condition_names_that_comparison() {
+    let old = "  if (c || total > limit + 1 || d >= e) {";
+    let new = "  if (c || total > limit || d >= e) {";
+    assert_eq!(
+        boundary_label(Some(old), new).as_deref(),
+        Some("total == limit")
+    );
+}
+
+#[test]
+fn generics_and_arrows_are_not_comparison_sites() {
+    let old = "  if (n.length > 0 && ((x) => x) && y: Array<Array<string>>) {";
+    let new = "  if (n.length >= 0 && ((x) => x) && y: Array<Array<string>>) {";
+    // The generic `<`/`>` and the arrow `=>` add no sites the edit touched.
+    assert_eq!(
+        boundary_label(Some(old), new).as_deref(),
+        Some("n.length == 0")
+    );
+}
+
+#[test]
+fn call_or_paren_operand_names_no_boundary() {
+    let old = "  if (xs.map((x) => x).length > 0 && a > b) {";
+    let new = "  if (xs.map((x) => x).length >= 0 && a > b) {";
+    assert_eq!(boundary_label(Some(old), new), None);
+    let old = "  if (a > f(b) && c > d) {";
+    let new = "  if (a >= f(b) && c > d) {";
+    assert_eq!(boundary_label(Some(old), new), None);
+}
+
+#[test]
+fn shift_operator_is_not_a_comparison_site() {
+    let old = "  if (a >> 1 > b) {";
+    let new = "  if (a >> 1 >= b) {";
+    assert!(boundary_text(Some(old), new).contains(">= b"));
+}
+
+#[test]
+fn trailing_comment_is_not_code() {
+    let old = "  if (a > b || c >= d) { // c > d";
+    let new = "  if (a >= b || c >= d) { // c > d";
+    assert_eq!(boundary_label(Some(old), new).as_deref(), Some("a == b"));
+}
+
+#[test]
+fn nullish_coalesce_is_a_site() {
+    let old = "  if ((a ?? 0) > 5 && b > c) {";
+    let new = "  if ((a ?? 1) > 5 && b > c) {";
+    // The edit touches the `??` comparison only; `b > c` is not named.
+    assert_ne!(boundary_label(Some(old), new).as_deref(), Some("b == c"));
+}
+
+#[test]
+fn non_returned_ternary_condition_edit_names_the_changed_comparison() {
+    let old = "  x > 1 && y >= 2 ? foo() : bar();";
+    let new = "  x > 1 && y > 2 ? foo() : bar();";
+    assert_eq!(boundary_label(Some(old), new).as_deref(), Some("y == 2"));
+}
+
+#[test]
+fn non_ascii_identifiers_tokenize_as_words() {
+    let old = "  if (größe > a || b >= c) {";
+    let new = "  if (größe >= a || b >= c) {";
+    // The discriminator keeps ASCII operands only, so no label is named, but
+    // the changed comparison is still located whole.
+    assert!(boundary_text(Some(old), new).starts_with("größe >= a"));
+}
+
+#[test]
 fn non_predicate_family_reads_the_whole_line() {
     let line = "  return a >= b || c >= d;";
     assert_eq!(
@@ -196,5 +283,59 @@ fn finding_for_non_comparison_edit_omits_the_boundary_label() -> Result<(), Stri
             && !text.contains("== backpressure"),
         "invented boundary leaked into the finding: {text}"
     );
+    Ok(())
+}
+
+#[test]
+fn regex_literal_contents_are_not_comparison_sites() {
+    let old = "  if (/a>b/.test(tag) || total > limit) {";
+    let new = "  if (/a>=b/.test(tag) || total > limit) {";
+    // The edit is inside the regex; no comparison changed.
+    assert_eq!(boundary_label(Some(old), new), None);
+    // A changed comparison beside a regex is still named.
+    let old2 = "  if (/a>b/.test(tag) || x > y || total > limit) {";
+    let new2 = "  if (/a>b/.test(tag) || x > y || total >= limit) {";
+    assert_eq!(
+        boundary_label(Some(old2), new2).as_deref(),
+        Some("total == limit")
+    );
+    // Character classes and escapes do not end the literal early.
+    let old = "  if (/[/>]\\/x/.test(t) || a > b) {";
+    let new = "  if (/[/>=]\\/x/.test(t) || a > b) {";
+    assert_eq!(boundary_label(Some(old), new), None);
+    // Division after an operand is not a regex.
+    let text = boundary_text(Some("  if (a / 2 > b / 3) {"), "  if (a / 2 >= b / 3) {");
+    assert!(text.contains(">= b / 3"), "{text}");
+}
+
+#[test]
+fn finding_for_regex_edit_names_no_boundary_and_is_not_exposed() -> Result<(), String> {
+    let owner = test_owner("applyDiscount", "src/lib.ts");
+    let test = direct_test_with_assertion(
+        "discount test",
+        "applyDiscount",
+        "expect(applyDiscount(a, b)).toBe(90)",
+        "toBe",
+        1,
+        OracleKind::ExactValue,
+        OracleStrength::Strong,
+    );
+    let finding = classify_change_with_alias_state(
+        Path::new("src/lib.ts"),
+        2,
+        "  if (/a>=b/.test(tag) || total > limit) {",
+        Some("  if (/a>b/.test(tag) || total > limit) {"),
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(!matches!(finding.class, ExposureClass::Exposed));
+    assert_eq!(missing_discriminator_values(&finding), Vec::<String>::new());
+    let text = format!("{:?} {:?}", finding.missing, finding.evidence);
+    assert!(!text.contains("a == b"), "regex content leaked: {text}");
     Ok(())
 }

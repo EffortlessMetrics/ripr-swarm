@@ -219,7 +219,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
     }
 }
 
-fn direct_test_with_assertion(
+pub(super) fn direct_test_with_assertion(
     test_name: &str,
     owner_name: &str,
     body_text: impl Into<String>,

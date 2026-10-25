@@ -409,7 +409,59 @@ fn tokenize_boundary_line(line: &str) -> Option<Vec<BoundaryToken<'_>>> {
             at += close + 2;
             continue;
         }
-        let len = if matches!(ch, '"' | '\'' | '`') {
+        // A regex literal is one opaque token: its `<`/`>`/`=` are not
+        // comparisons. A `/` after an operand is division.
+        let regex_start = ch == '/'
+            && tokens.last().is_none_or(|previous: &BoundaryToken<'_>| {
+                matches!(
+                    previous.text,
+                    "(" | ","
+                        | "="
+                        | ":"
+                        | "!"
+                        | "&"
+                        | "|"
+                        | "?"
+                        | "{"
+                        | ";"
+                        | "["
+                        | "&&"
+                        | "||"
+                        | "??"
+                        | "=>"
+                        | "=="
+                        | "==="
+                        | "!="
+                        | "!=="
+                        | "return"
+                )
+            });
+        let len = if regex_start {
+            let mut escaped = false;
+            let mut in_class = false;
+            let mut close = None;
+            for (idx, inner) in rest.char_indices().skip(1) {
+                if escaped {
+                    escaped = false;
+                } else if inner == '\\' {
+                    escaped = true;
+                } else if inner == '[' {
+                    in_class = true;
+                } else if inner == ']' {
+                    in_class = false;
+                } else if inner == '/' && !in_class {
+                    close = Some(idx + 1);
+                    break;
+                }
+            }
+            // Unterminated: the changed operator cannot be located.
+            let close = close?;
+            let flags = rest
+                .get(close..)?
+                .find(|c: char| !c.is_ascii_alphabetic())
+                .unwrap_or(rest.len() - close);
+            close + flags
+        } else if matches!(ch, '"' | '\'' | '`') {
             let mut escaped = false;
             let mut close = None;
             for (idx, inner) in rest.char_indices().skip(1) {
@@ -518,17 +570,38 @@ pub(crate) fn typescript_changed_boundary_text<'a>(
                 })
                 .count();
             let end = new_tokens.len() - suffix;
-            (!(prefix == new_tokens.len() && new_tokens.len() == old_tokens.len()))
-                .then_some((prefix, end))
+            // Whether the old tokens the edit removed include a delimiter
+            // (`isDone ||`): then a pure deletion removed a whole operand, not
+            // a piece of a neighbouring comparison.
+            let removed_delimiter = old_tokens
+                .get(prefix..old_tokens.len() - suffix)
+                .is_some_and(|removed| {
+                    removed
+                        .iter()
+                        .any(|token| is_boundary_delimiter(token.text))
+                });
+            (!(prefix == new_tokens.len() && new_tokens.len() == old_tokens.len())).then_some((
+                prefix,
+                end,
+                removed_delimiter,
+            ))
         });
     let touched: Vec<(usize, usize)> = sites
         .iter()
         .map(|&site| boundary_site_span(&new_tokens, site))
         .filter(|&(first, last)| match edit {
             None => true,
-            // A pure deletion touches a comparison only from inside it.
-            Some((start, end)) if start == end => first < start && start <= last,
-            Some((start, end)) => start <= last && end > first,
+            // A pure deletion touches a comparison from inside it, or at its
+            // edge when only operand pieces went (`limit + 1` to `limit`). A
+            // removed delimiter (`isDone ||`) belongs to no comparison.
+            Some((start, end, removed_delimiter)) if start == end => {
+                if removed_delimiter {
+                    first < start && start <= last
+                } else {
+                    first <= start && start <= last + 1
+                }
+            }
+            Some((start, end, _)) => start <= last && end > first,
         })
         .collect();
     match touched.as_slice() {
@@ -537,6 +610,20 @@ pub(crate) fn typescript_changed_boundary_text<'a>(
         // untouched; the dedicated ternary-arm guards own that change, and
         // the condition remains its boundary.
         [] if condition.is_some() && sites.len() == 1 => Cow::Borrowed(new_line),
+        // The span stopped at a paren: the operand is a call or a
+        // parenthesized group (`f(x).length > 0`, `a > f(b)`), which the
+        // narrowed text would misread, so the changed operator is not located.
+        [(first, last)]
+            if first
+                .checked_sub(1)
+                .and_then(|before| new_tokens.get(before))
+                .is_some_and(|token| token.text == ")")
+                || new_tokens
+                    .get(*last + 1)
+                    .is_some_and(|token| token.text == "(") =>
+        {
+            Cow::Borrowed("")
+        }
         [(first, last)] => match new_line.get(new_tokens[*first].start..new_tokens[*last].end) {
             Some(text) => Cow::Borrowed(text),
             None => Cow::Borrowed(""),
