@@ -1157,3 +1157,30 @@ test("own skip", async t => {
     let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
     assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
 }
+
+#[test]
+fn partial_extraction_disclosure_matches_every_extracted_start_in_a_large_file() {
+    let file = Path::new("test/many.test.ts");
+    let mut source = String::from("import { it, expect } from 'vitest';\n");
+    for index in 0..5_000 {
+        source.push_str(&format!(
+            "it('t{index}', () => {{ expect(f{index}()).toBe({index}); }});\n"
+        ));
+    }
+    let tests = extract_tests(file, &source);
+    assert_eq!(tests.len(), 5_000);
+    assert!(
+        detect_partial_test_extraction(file, &source, &tests).is_none(),
+        "every registration was extracted, so none may be reported as dropped"
+    );
+
+    source.push_str("function register() {\n  it('late', () => { expect(late()).toBe(1); });\n}\n");
+    let tests = extract_tests(file, &source);
+    assert_eq!(tests.len(), 5_000);
+    let gap = detect_partial_test_extraction(file, &source, &tests);
+    assert_eq!(
+        gap.map(|gap| gap.sample_line),
+        Some(5_000 + 3),
+        "the one registration inside a helper must still be disclosed"
+    );
+}
