@@ -1665,7 +1665,8 @@ fn target_context_roots(
                     .parent()
                     .and_then(Path::file_name)
                     .is_some_and(|p| p == "tests"))
-                || !recognized_target_root(root, src_dirs)
+                || !(recognized_target_root(root, src_dirs)
+                    || index.member_crates.is_custom_lib_path_root(root))
         })
     {
         return None;
