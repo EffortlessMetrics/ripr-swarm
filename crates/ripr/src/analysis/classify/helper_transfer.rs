@@ -1414,6 +1414,23 @@ pub(crate) fn helper_return_value(
         // Masking blanks a string literal, so a line that is one whole
         // literal reads empty here; it is the tail, not a skipped line.
         if cleaned.is_empty() && strict_literal(raw_line.trim().trim_end_matches(';')).is_some() {
+            // Masking also blanks the interior of a multi-line raw string,
+            // and an `async` body or an early `return` makes the last
+            // literal something other than the value the call yields.
+            let word = |name: &str| {
+                masked
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|token| token == name)
+            };
+            if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
+                || helper.body.contains("r#")
+                || helper.body.contains("r\"")
+                || word("async")
+                || word("return")
+                || tail.is_some()
+            {
+                return None;
+            }
             if tail.is_some() {
                 return None;
             }
@@ -1443,7 +1460,9 @@ pub(crate) fn helper_return_value(
     // A helper whose tail is one strict literal returns it whatever its
     // inputs are (`fn pick(_kind: &str) -> &'static str { "alpha" }`).
     // Only a whole-token literal counts, so no operation is evaluated.
-    if let Some(literal) = strict_literal(&tail) {
+    if let Some(literal) =
+        strict_literal(&tail).filter(|text| super::match_transfer::is_single_literal(text))
+    {
         return match super::value_transfer::evaluate_initializer(&literal, inputs) {
             super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
             _ => None,

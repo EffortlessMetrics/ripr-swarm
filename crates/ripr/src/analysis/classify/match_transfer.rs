@@ -235,7 +235,7 @@ fn literal_alternatives(pattern: &str) -> Option<Vec<TypedValue>> {
 
 /// True when `text` is exactly one quoted literal: the first unescaped
 /// closing quote is the last character.
-fn is_single_literal(text: &str) -> bool {
+pub(super) fn is_single_literal(text: &str) -> bool {
     let mut characters = text.char_indices();
     let Some((_, open)) = characters.next() else {
         return false;
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn guard_binding_range_and_computed_shapes_fail_closed() -> Result<(), String> {
-        let cases: [(&str, &str); 7] = [
+        let cases: [(&str, &str); 9] = [
             (
                 "guard arm",
                 "        \"word\" if kind.len() > 2 => \"alpha\",",
@@ -433,6 +433,11 @@ mod tests {
                 "char literal against a string scrutinee",
                 "        'w' => \"alpha\",",
             ),
+            (
+                "mixed-type alternatives",
+                "        'w' | \"word\" => \"alpha\",",
+            ),
+            ("char range pattern", "        'a'..='z' => \"alpha\","),
         ];
         let index = RustIndex::default();
         let eval = root_eval(&index);
@@ -518,7 +523,7 @@ mod tests {
         assert_eq!(returned(&helper, "\"a\\tb\"")?, "alpha");
         assert_eq!(returned(&helper, "\"c|d\"")?, "alpha");
         // The two-character text `\t` is not the decoded tab.
-        assert_eq!(returned(&helper, "\"a b\"")?, "other");
+        assert_eq!(returned(&helper, "\"a\\\\tb\"")?, "other");
         assert_eq!(returned(&helper, "\"c\"")?, "other");
         Ok(())
     }
@@ -667,9 +672,45 @@ mod tests {
         let two =
             index_with("fn pick(_kind: &str) -> &'static str {\n    \"alpha\"\n    \"beta\"\n}");
         assert!(resolve(&two).is_none(), "two literal lines must refuse");
+        // A quote-bounded expression is not a whole literal.
+        let concat = index_with("fn pick(_kind: &str) -> String {\n    \"a\" + \"b\"\n}");
+        assert!(
+            resolve(&concat).is_none(),
+            "a quoted expression must refuse, got {:?}",
+            resolve(&concat)
+        );
         // A computed tail is not a whole literal.
         let computed = index_with("fn pick(kind: &str) -> String {\n    kind.to_uppercase()\n}");
         assert!(resolve(&computed).is_none(), "a computed tail must refuse");
         Ok(())
+    }
+
+    #[test]
+    fn raw_string_interiors_async_bodies_and_early_returns_are_not_literal_tails() {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {\n    match kind {\n        \"word\" => pick(kind),\n        _ => \"other\",\n    }\n}",
+        );
+        let bodies = [
+            "fn pick(_k: &str) -> &'static str {\n    r#\"\n\"x\"\n\"#\n}",
+            "async fn pick(_k: &str) -> &'static str {\n    \"x\"\n}",
+            "fn pick(k: &str) -> &'static str {\n    \"x\";\n    return k;\n}",
+        ];
+        for body in bodies {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![label.clone(), match_fn("pick", body)],
+                ..Default::default()
+            });
+            let eval = root_eval(&index);
+            assert!(
+                super::super::helper_transfer::helper_return_value(
+                    &label,
+                    &inputs(&[("kind", "\"word\"")]),
+                    &eval,
+                )
+                .is_none(),
+                "{body}"
+            );
+        }
     }
 }
