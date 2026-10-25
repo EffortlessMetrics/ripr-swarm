@@ -1,0 +1,963 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/recording_double_observer_refusals/input",
+  "summary": {"changed_rust_files":5,"probes":10,"findings":10,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":10,"changed_files_by_language":[{"language":"rust","files":5}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:8c2c8889d11123eae91043345d967f46fb507f8b681ec38c228f697f0753bcbf","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":5,"changed_line_count":10,"candidate_line_count":5,"probe_count":10,"finding_count":10},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_let_else.rs:call_deletion:fbb4d2a8",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_let_else.rs:call_deletion:fbb4d2a8",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/let_else.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_let_else: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_let_else: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/let_else.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_let_else: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/let_else.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_let_else(&mut recorder, 3);",
+        "22": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "n = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "n = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/let_else.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/let_else.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_let_else.rs:side_effect:e3ecfb19",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_let_else.rs:side_effect:e3ecfb19",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/let_else.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_let_else: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_let_else: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/let_else.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_let_else: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/let_else.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_let_else(&mut recorder, 3);",
+        "22": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "n = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "n = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/let_else.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/let_else.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_owned_clone.rs:call_deletion:832b944c",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_owned_clone.rs:call_deletion:832b944c",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/owned_clone.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_owned_clone: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_owned_clone: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/owned_clone.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_owned_clone: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/owned_clone.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_owned_clone(&mut recorder, 3);",
+        "22": "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "n = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "n = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/owned_clone.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/owned_clone.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/owned_clone.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/owned_clone.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_owned_clone.rs:side_effect:64c4dbe2",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_owned_clone.rs:side_effect:64c4dbe2",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/owned_clone.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_owned_clone: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_owned_clone: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/owned_clone.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_owned_clone: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/owned_clone.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_owned_clone(&mut recorder, 3);",
+        "22": "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "n = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "n = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/owned_clone.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/owned_clone.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/owned_clone.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/owned_clone.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_raw_binding.rs:call_deletion:ef9b1af4",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_raw_binding.rs:call_deletion:ef9b1af4",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/raw_binding.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_raw_binding: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_raw_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value items = 1 at line 21", "source function argument value items = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_raw_binding: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/raw_binding.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_raw_binding(&mut recorder, &[1, 2]);",
+        "22": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "items = 1",
+            "context": "function_argument"
+          },
+          {
+            "line": 21,
+            "value": "items = 2",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "items = 1",
+          "context": "function_argument"
+        },
+        {
+          "line": 21,
+          "value": "items = 2",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/raw_binding.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/raw_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/raw_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/raw_binding.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_raw_binding.rs:side_effect:a6de246b",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_raw_binding.rs:side_effect:a6de246b",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/raw_binding.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_raw_binding: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_raw_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value items = 1 at line 21", "source function argument value items = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_raw_binding: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/raw_binding.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_raw_binding(&mut recorder, &[1, 2]);",
+        "22": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "items = 1",
+            "context": "function_argument"
+          },
+          {
+            "line": 21,
+            "value": "items = 2",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "items = 1",
+          "context": "function_argument"
+        },
+        {
+          "line": 21,
+          "value": "items = 2",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/raw_binding.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/raw_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/raw_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/raw_binding.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_raw_receiver.rs:call_deletion:705f92d0",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_raw_receiver.rs:call_deletion:705f92d0",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/raw_receiver.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_raw_receiver: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_raw_receiver: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_receiver.rs:23 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 25", "source assertion argument value \"n=3\" at line 26"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_raw_receiver: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/raw_receiver.rs:23)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "report_raw_receiver(&mut recorder, 3);",
+        "26": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "n = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 26,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "n = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 26,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/raw_receiver.rs",
+          "line": 23,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/raw_receiver.rs:23) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/raw_receiver.rs:23) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/raw_receiver.rs:23)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_raw_receiver.rs:side_effect:33d3c050",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_raw_receiver.rs:side_effect:33d3c050",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/raw_receiver.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_raw_receiver: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_raw_receiver: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_receiver.rs:23 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 25", "source assertion argument value \"n=3\" at line 26"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_raw_receiver: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/raw_receiver.rs:23)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "report_raw_receiver(&mut recorder, 3);",
+        "26": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "n = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 26,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "n = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 26,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/raw_receiver.rs",
+          "line": 23,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/raw_receiver.rs:23) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/raw_receiver.rs:23) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/raw_receiver.rs:23)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_unicode_binding.rs:call_deletion:cbcd6182",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_unicode_binding.rs:call_deletion:cbcd6182",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/unicode_binding.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_unicode_binding: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_unicode_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/unicode_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value café = 1 at line 21", "source function argument value café = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_unicode_binding: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/unicode_binding.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_unicode_binding(&mut recorder, &[1, 2]);",
+        "22": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "café = 1",
+            "context": "function_argument"
+          },
+          {
+            "line": 21,
+            "value": "café = 2",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "café = 1",
+          "context": "function_argument"
+        },
+        {
+          "line": 21,
+          "value": "café = 2",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/unicode_binding.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/unicode_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/unicode_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/unicode_binding.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_unicode_binding.rs:side_effect:c1f54828",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_unicode_binding.rs:side_effect:c1f54828",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/unicode_binding.rs",
+        "line": 13,
+        "expression": "sink.send(format!(\"n={n}\"))"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach report_unicode_binding: exact_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach report_unicode_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/unicode_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value café = 1 at line 21", "source function argument value café = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"sink.send(format!(\"n={n}\"))","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach report_unicode_binding: exact_line", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_line` (src/unicode_binding.rs:19)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "21": "report_unicode_binding(&mut recorder, &[1, 2]);",
+        "22": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 21,
+            "value": "café = 1",
+            "context": "function_argument"
+          },
+          {
+            "line": 21,
+            "value": "café = 2",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "\"n=3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 21,
+          "value": "café = 1",
+          "context": "function_argument"
+        },
+        {
+          "line": 21,
+          "value": "café = 2",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "\"n=3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_line",
+          "file": "src/unicode_binding.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_line` (src/unicode_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_line` (src/unicode_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_line` (src/unicode_binding.rs:19)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

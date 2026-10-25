@@ -12,9 +12,10 @@ the asserted field is observed. A raw-named local Recorder shadows a trusted
 root double and writes a constant instead of the sent argument. A const-pattern
 let-else exits before the changed call.
 
-Separate native controls show the clone original and wrong payload both complete
-passing harnesses. Binding controls exit before a completed harness; they are
-execution fault witnesses, not passing test qualification. The isolated admissible
+Separate native controls show clone and receiver-alias originals and wrong
+payloads both complete passing harnesses. Raw/Unicode binding and let-else controls
+exit before a completed harness; they are execution fault witnesses, not passing
+test qualification. The isolated admissible
 exact-line positive remains in the public verdict corpus and focused API suite.
 
 ## When

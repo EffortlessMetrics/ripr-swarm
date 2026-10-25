@@ -1,0 +1,54 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/recording_double_observer_refusals/input
+
+Summary: 10 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 10 unknown); 10 of 10 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 5 changed file(s), 10 changed line(s), 5 candidate line(s), 10 probe(s), 10 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/let_else.rs:13
+  Static exposure: unknown (severity: note, confidence 0.92)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: sink.send(format!("n={n}"))
+  Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+  Related test: src/let_else.rs:19 exact_line (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: `exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the
+    double recorded, and ripr does not follow the changed value through the double's own method into
+    that field, so ripr does not report a gap. Check that the test's setup reaches the changed code
+    and that its expectation differs between the old and the new behavior; add a test only if either
+    fails
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach yes: Related tests appear to reach report_let_else: exact_line
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_let_else.rs:call_deletion:fbb4d2a8
+  ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_let_else.rs:call_deletion:fbb4d2a8
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_let_else.rs:call_deletion:fbb4d2a8 --root <cwd>/fixtures/recording_double_observer_refusals/input` for the full gate's answer
+No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
+
+Hidden:
+  9 lower-priority finding(s) omitted from default human output.
+    - ./src/let_else.rs:13 (unknown)
+    - ./src/owned_clone.rs:13 (unknown)
+    - ./src/owned_clone.rs:13 (unknown)
+    - ./src/raw_binding.rs:13 (unknown)
+    - ./src/raw_binding.rs:13 (unknown)
+    - ./src/raw_receiver.rs:13 (unknown)
+    - ./src/raw_receiver.rs:13 (unknown)
+    - ./src/unicode_binding.rs:13 (unknown)
+    - ./src/unicode_binding.rs:13 (unknown)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
