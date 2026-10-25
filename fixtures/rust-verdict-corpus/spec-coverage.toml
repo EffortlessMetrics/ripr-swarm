@@ -58,7 +58,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 40
+trap_floor = 41
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -987,6 +987,11 @@ reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+# A changed value-default binding that reaches the returned text
+[[spec]]
+id = "RIPR-SPEC-0357"
+scope = "in"
 
 [[spec]]
 id = "RIPR-SPEC-0360"

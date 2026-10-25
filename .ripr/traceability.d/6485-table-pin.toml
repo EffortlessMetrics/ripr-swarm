@@ -1,0 +1,21 @@
+# Registers the loop-accumulator pin tests and corpus cases added for table-driven
+# pins (#6485) and the earlier exact-head repairs under RIPR-SPEC-0360.
+[[extend]]
+id = "RIPR-SPEC-0360"
+tests = [
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_zero_element_does_not_make_the_pin_degenerate",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_cancelling_run_keeps_the_zero_pin_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_mutable_slice_parameter_is_the_shape_but_its_pin_is_not_read",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_nondecimal_zero_total_keeps_the_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::an_empty_argument_beside_the_walked_one_is_not_an_empty_input",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_table_row_with_a_nonempty_input_and_a_nonzero_total_credits_the_update",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_table_that_separates_nothing_or_cannot_be_read_is_withheld_never_a_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_table_after_a_possible_early_exit_keeps_its_gap",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/loop-accumulator-table-pin.json",
+  "fixtures/rust-verdict-corpus/cases/trap-loop-accumulator-table-zero-rows.json",
+]
+code = [
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs",
+]

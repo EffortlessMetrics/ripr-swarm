@@ -5,6 +5,10 @@
 # with a reason; an entry whose row credits again passes with a note to delete it.
 
 [[entry]]
+case = "py-bands-positional-band-outside"
+reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
+
+[[entry]]
 case = "py-fixtures-deposit"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e3feef1..619ef98 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ 
+ /// Text before the first `-`; the whole text when there is none.
+ pub fn family_unpinned(sku: &str) -> &str {
+-    let end = sku.find('-').unwrap_or(sku.len());
++    let end = sku.find('-').unwrap_or_else(|| sku.len());
+     &sku[..end]
+ }
+ 

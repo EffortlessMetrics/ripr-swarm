@@ -1,0 +1,54 @@
+{
+  "case_id": "default-flow-unpinned",
+  "subject_id": "authored-default-flow",
+  "diff": "cases/default-flow-unpinned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "default_branch_never_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = sku.find('-').unwrap_or_else(|| 0);",
+        "mutated_line": "let end = sku.find('-').unwrap_or_else(|| 0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an undashed SKU yields the empty text"
+      },
+      {
+        "replacement": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
+        "mutated_line": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
+        "outcome": "tests_failed",
+        "failing_test": "tests::unpinned_family_of_a_dashed_sku",
+        "equivalence_review": "not equivalent: BOLT-M8 yields BOLT-M8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "unpinned_family_of_a_dashed_sku pins only a dashed SKU, so the default branch of the lookup never runs under an assertion. A changed default (0 for the length) passes; a changed separator fails. The edit rewrites the default, which no test pins. RIPR-SPEC-0357 negative: an unpinned default earns no credit.",
+  "labeling_observation": {
+    "ripr_commit": "6657a7ab6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0357#1"
+  ]
+}

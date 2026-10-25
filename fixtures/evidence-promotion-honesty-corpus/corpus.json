@@ -13045,6 +13045,47 @@
         }
       ]
     },
+    {
+      "id": "rust_module_reach_super_import_in_file_tests",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_super_import_in_file_tests",
+      "vector": "super_import_from_an_in_file_test_module_reaches_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_module_reach_super_import_in_file_wrong_module",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_super_import_in_file_wrong_module",
+      "vector": "super_import_from_an_in_file_test_module_of_another_scope_is_not_credited",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
       {
         "id": "rust_semicolon_effect_line18_side_effect",
         "language": "rust",

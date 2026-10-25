@@ -1,0 +1,39 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/module_reach_super_import_in_file_tests/input
+
+Summary: 2 probes (2 exposed, 0 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:2
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
+  Changed behavior: 10 <= qty
+  Related test (1 of 2 matched rows): src/lib.rs:14 discount_boundary
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach yes: Related tests appear to reach is_bulk: discount_boundary
+    - infection yes: Detected related test input at the changed boundary
+    - 11 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_tests/input --diff <cwd>/fixtures/module_reach_super_import_in_file_tests/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
+  ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_tests/input --diff <cwd>/fixtures/module_reach_super_import_in_file_tests/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:41e056ec --root <cwd>/fixtures/module_reach_super_import_in_file_tests/input` for the full gate's answer
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

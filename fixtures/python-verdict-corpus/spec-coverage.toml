@@ -768,6 +768,11 @@ scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 [[spec]]
+id = "RIPR-SPEC-0357"
+scope = "out"
+reason = "Rust-only changed-binding return flow; not a python verdict example"
+
+[[spec]]
 id = "RIPR-SPEC-0360"
 scope = "out"
 reason = "Rust-only loop-accumulator credit; not a python verdict example"
