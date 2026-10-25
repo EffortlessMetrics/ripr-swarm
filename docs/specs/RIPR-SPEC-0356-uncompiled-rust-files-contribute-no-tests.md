@@ -60,8 +60,9 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    its package's `src/lib.rs` or `src/main.rs` is indexed.
 3. No Rust source or `Cargo.toml` of the workspace mentions its file name as a
    substring anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
-   `path`, a `build =`), no `.rs` literal is written with an escape or a
-   backslash, no source declares a `mod` of its stem, no source builds a `mod`
+   `path`, a `build =`), no `path` attribute or key, or `include!` operand, contains a
+   backslash (escape, line continuation or separator), names compare
+   ASCII-case-insensitively, no source declares a `mod` of its stem, no source builds a `mod`
    or `include!` operand from a macro metavariable (any `$` beside a
    `mod`/`include` word, whatever comments or strings intervene) or passes a
    computed `include!` operand, and the file is not a `mod.rs`.

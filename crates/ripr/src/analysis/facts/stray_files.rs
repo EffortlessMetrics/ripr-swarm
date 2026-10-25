@@ -57,9 +57,12 @@ pub(super) fn never_compiled(
     if candidates.is_empty() {
         return out;
     }
-    let candidate_names: BTreeSet<&str> = candidates
+    // Names compare ASCII-case-insensitively: a case-insensitive filesystem
+    // resolves `#[path]` operands that differ from the file only in case.
+    let candidate_names: BTreeSet<String> = candidates
         .iter()
         .filter_map(|file| file.file_name().and_then(|name| name.to_str()))
+        .map(str::to_ascii_lowercase)
         .collect();
     let mut referenced_names: BTreeSet<String> = BTreeSet::new();
     let mut declared_modules: BTreeSet<String> = BTreeSet::new();
@@ -68,10 +71,14 @@ pub(super) fn never_compiled(
         if builds_module_operands(source) {
             return out;
         }
-        if escapes_a_rs_literal(source) {
+        if spells_a_path_with_escapes(source) {
             return out;
         }
-        collect_referenced_file_names(source, &candidate_names, &mut referenced_names);
+        collect_referenced_file_names(
+            &source.to_ascii_lowercase(),
+            &candidate_names,
+            &mut referenced_names,
+        );
         collect_declared_modules(source, &mut declared_modules);
     }
     let mut manifests: BTreeSet<PathBuf> = manifest_dirs
@@ -87,10 +94,14 @@ pub(super) fn never_compiled(
         };
         match std::fs::read_to_string(&path) {
             Ok(text) => {
-                if escapes_a_rs_literal(&text) {
+                if spells_a_path_with_escapes(&text) {
                     return BTreeSet::new();
                 }
-                collect_referenced_file_names(&text, &candidate_names, &mut referenced_names);
+                collect_referenced_file_names(
+                    &text.to_ascii_lowercase(),
+                    &candidate_names,
+                    &mut referenced_names,
+                );
             }
             // A workspace without a root manifest is fine; any other
             // unreadable manifest is doubt.
@@ -113,7 +124,9 @@ pub(super) fn never_compiled(
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
-        if !referenced_names.contains(name) && !declared_modules.contains(stem) {
+        if !referenced_names.contains(&name.to_ascii_lowercase())
+            && !declared_modules.contains(&stem.to_ascii_lowercase())
+        {
             out.insert(file.clone());
         }
     }
@@ -182,26 +195,30 @@ fn without_comments(source: &str) -> String {
 /// a bare substring match only ever adds doubt.
 fn collect_referenced_file_names(
     text: &str,
-    candidate_names: &BTreeSet<&str>,
+    candidate_names: &BTreeSet<String>,
     out: &mut BTreeSet<String>,
 ) {
     for name in candidate_names {
-        if text.contains(name) {
-            out.insert((*name).to_string());
+        if text.contains(name.as_str()) {
+            out.insert(name.clone());
         }
     }
 }
 
-/// True when a `.rs` literal carries a backslash before the extension, so an
-/// escape (`\u{72}ust.rs`) or a Windows separator could spell a name the
-/// substring scan cannot match.
-fn escapes_a_rs_literal(text: &str) -> bool {
-    text.match_indices(".rs").any(|(at, _)| {
-        let line_start = text[..at].rfind('\n').map_or(0, |newline| newline + 1);
-        let literal_start = text[line_start..at]
-            .rfind('"')
-            .map_or(line_start, |quote| line_start + quote);
-        text[literal_start..at].contains('\\')
+/// True when a `path` attribute or key, or an `include!`, is followed by a
+/// backslash before its operand closes (an escape such as `\x2e`, `\u{72}`,
+/// a line continuation or a Windows separator), so the operand could spell a
+/// name the substring scan cannot match.
+fn spells_a_path_with_escapes(text: &str) -> bool {
+    ["path", "include!"].iter().any(|key| {
+        text.match_indices(key).any(|(at, _)| {
+            let window = &text[at..];
+            let end = window
+                .char_indices()
+                .find(|&(index, ch)| index > 300 || ch == ']' || ch == ')')
+                .map_or(window.len(), |(index, _)| index);
+            window[..end].contains('\\')
+        })
     })
 }
 
@@ -232,7 +249,7 @@ fn collect_modules_in(source: &str, out: &mut BTreeSet<String>) {
             .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
             .collect();
         if !name.is_empty() {
-            out.insert(name);
+            out.insert(name.to_ascii_lowercase());
         }
     }
 }
@@ -262,13 +279,16 @@ mod tests {
 
     #[test]
     fn referenced_names_match_inside_any_literal_or_path() {
-        let candidates: BTreeSet<&str> =
-            ["x.rs", "my hay.rs", "a(1).rs", "it's.rs", "bench-main.rs"].into();
+        let candidates: BTreeSet<String> =
+            ["x.rs", "my hay.rs", "a(1).rs", "it's.rs", "bench-main.rs"]
+                .map(String::from)
+                .into();
         let mut names = BTreeSet::new();
         collect_referenced_file_names(
-            "#[path = \"../benchmarks/x.rs\"] mod a; \
-             #[path = \"../my hay.rs\"] mod b; #[path=\"a(1).rs\"] mod c; \
-             #[path = \"it's.rs\"] mod d; [[bench]]\npath = \"z/bench-main.rs\"",
+            &"#[path = \"../benchmarks/x.rs\"] mod a; \
+              #[path = \"../my hay.rs\"] mod b; #[path=\"a(1).rs\"] mod c; \
+              #[path = \"it's.rs\"] mod d; [[bench]]\npath = \"z/Bench-Main.rs\""
+                .to_ascii_lowercase(),
             &candidates,
             &mut names,
         );
@@ -276,13 +296,23 @@ mod tests {
     }
 
     #[test]
-    fn rs_literals_with_escapes_are_doubt() {
-        assert!(escapes_a_rs_literal("#[path = \"\\u{72}ust.rs\"] mod m;"));
-        assert!(escapes_a_rs_literal("path = \"benchmarks\\hay.rs\""));
-        assert!(!escapes_a_rs_literal(
+    fn escaped_path_operands_are_doubt() {
+        for doubt in [
+            "#[path = \"\\u{72}ust.rs\"] mod m;",
+            "path = \"benchmarks\\hay.rs\"",
+            "#[path = \"../rust-\\\n  library.rs\"] mod m;",
+            "#[path = \"../rust-library\\x2ers\"] mod m;",
+            "#[path = \"../rust-library\\u{2e}rs\"] mod m;",
+            "include!(\"gen\\x2ers\");",
+        ] {
+            assert!(spells_a_path_with_escapes(doubt), "{doubt}");
+        }
+        assert!(!spells_a_path_with_escapes(
             "#[path = \"../hay.rs\"] mod m; // \\n"
         ));
-        assert!(!escapes_a_rs_literal("let s = \"a\\n\";\nmod m; // x.rs"));
+        assert!(!spells_a_path_with_escapes(
+            "let s = \"a\\n\";\nmod m; // x.rs"
+        ));
     }
 
     #[test]
@@ -446,6 +476,21 @@ mod index_tests {
                 "escape",
                 "benchmarks/rust.rs",
                 "mod o { #[path = \"../../benchmarks/\\u{72}ust.rs\"] mod h; }\n",
+            ),
+            (
+                "hex",
+                "benchmarks/rust.rs",
+                "mod o { #[path = \"../../benchmarks/rust\\x2ers\"] mod h; }\n",
+            ),
+            (
+                "continuation",
+                "benchmarks/rust-library.rs",
+                "mod o { #[path = \"../../benchmarks/rust-\\\n   library.rs\"] mod h; }\n",
+            ),
+            (
+                "case",
+                "benchmarks/Rust-Library.rs",
+                "mod o { #[path = \"../../benchmarks/rust-library.rs\"] mod h; }\n",
             ),
         ] {
             let lib_source = format!("{LIB}{lib}");
