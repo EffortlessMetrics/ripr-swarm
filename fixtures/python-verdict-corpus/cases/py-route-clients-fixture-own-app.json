@@ -1,0 +1,44 @@
+{
+  "case_id": "py-route-clients-fixture-own-app",
+  "subject_id": "authored-py-pytest-route-clients",
+  "diff": "cases/py-route-clients-fixture-own-app.diff",
+  "anchor": {
+    "file": "routeclients/orders.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_conftest_client_fixture_over_the_owners_app",
+  "hard_case": "the test's client is a conftest fixture, so the app it targets is named in another file",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"count\": 3}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the response count changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`orders` is registered on `routeclients.orders.app`. `tests/conftest.py` builds the `client` fixture over that same `app`, so the adapter resolves the client to the owner's application and the relation keeps its oracle. `test_orders_respond` only asserts the response is not None; a changed count passes it.",
+  "labeling_observation": {
+    "ripr_commit": "1818f481",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

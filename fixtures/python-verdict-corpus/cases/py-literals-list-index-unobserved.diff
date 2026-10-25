@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -35,7 +35,7 @@ def roles():
+ 
+ def staff():
+     return [
+-        "owner",
++        "founder",
+         "editor",
+     ]
+ 
