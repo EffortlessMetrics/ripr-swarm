@@ -18593,3 +18593,71 @@ fn analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder() -> Result<(), Strin
     );
     Ok(())
 }
+
+/// #10349: identical enum-member lines in two enums mint over an
+/// `Enum::Member` identity the finding's probe does not carry. `High = 1,`
+/// in `Enum20990` and `Enum62211` share the eight-hex fingerprint `1a061247`;
+/// ranking must use the minted identity, so the full payload digest puts
+/// `Enum62211` (`1a06124726cd…`) before `Enum20990` (`1a0612476682…`) in
+/// either diff order.
+#[test]
+fn analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder() -> Result<(), String> {
+    let root = ts_unique_tempdir("enum-collision-order")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export enum Enum20990 {\n  High = 1,\n}\nexport enum Enum62211 {\n  High = 1,\n}\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let member = |line: usize| crate::analysis::diff::ChangedLine {
+        line,
+        new_side_line: line,
+        text: "  High = 1,".to_string(),
+    };
+    let ids_by_line = |added_lines: Vec<crate::analysis::diff::ChangedLine>| {
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines,
+            removed_lines: Vec::new(),
+        }];
+        let result = TypeScriptAdapter.analyze_diff(&options, &policy, &changed_files)?;
+        let mut ids = result
+            .findings
+            .iter()
+            .map(|finding| (finding.probe.location.line, finding.id.clone()))
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok::<_, String>(ids)
+    };
+    let first_enum_first = ids_by_line(vec![member(2), member(5)]);
+    let second_enum_first = ids_by_line(vec![member(5), member(2)]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (first_enum_first, second_enum_first) = (first_enum_first?, second_enum_first?);
+
+    let base = "probe:src_lib.ts:typescript_preview_enum_member:1a061247";
+    assert_eq!(
+        first_enum_first,
+        vec![(2, format!("{base}.2")), (5, base.to_string())],
+        "fixture must be an actual fp8 collision ranked by payload digest"
+    );
+    assert_eq!(
+        first_enum_first, second_enum_first,
+        "line-to-id association must not follow diff order"
+    );
+    Ok(())
+}

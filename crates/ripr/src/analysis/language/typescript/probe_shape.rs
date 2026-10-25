@@ -1057,15 +1057,24 @@ fn first_typescript_string_literal(text: &str) -> Option<String> {
 /// pass keep the base content fingerprint — both occurrences genuinely
 /// share the same (path, family, owner, expression) content; the ordinal
 /// only disambiguates identity, matching the Rust path's behavior.
-pub(crate) fn dedup_typescript_probe_ids(findings: &mut [Finding]) {
+pub(crate) fn dedup_typescript_probe_ids(
+    findings: &mut [Finding],
+    minted_owners: &std::collections::HashMap<usize, String>,
+) {
     let keyed = findings
         .iter()
-        .map(|finding| {
+        .enumerate()
+        .map(|(index, finding)| {
             let probe = &finding.probe;
-            let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
             // Every TypeScript producer minted its id over
-            // `normalize_expression(probe.expression)` and, where it names
-            // one, the probe's own owner.
+            // `normalize_expression(probe.expression)` and an owner: the
+            // probe's own, or the `Enum::Member` identity an enum-member
+            // finding was minted with (`minted_owners`, by finding index).
+            let owner = minted_owners
+                .get(&index)
+                .map(String::as_str)
+                .or_else(|| probe.owner.as_ref().map(|owner| owner.0.as_str()))
+                .unwrap_or("");
             let expression = probes::normalize_expression(&probe.expression);
             (
                 probe.id.0.clone(),
