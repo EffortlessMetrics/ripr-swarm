@@ -10069,6 +10069,7 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/app/navigation.rs::tests::repair_route_refusal_advisory_names_state_and_recovery",
   "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
   "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row",
   "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete",

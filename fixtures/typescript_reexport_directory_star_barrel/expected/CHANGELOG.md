@@ -215,3 +215,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_directory_star_barrel (19)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

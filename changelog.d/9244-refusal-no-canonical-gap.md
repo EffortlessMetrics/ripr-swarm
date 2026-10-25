@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check` no longer answers a finding with no canonical gap by pointing back at the gate that would repeat the refusal. The line now says the finding names no missing discriminator, so there is no seam to start a repair from, and sends the reader to the Next step above. The unreadable-config, classification-failed and several-seams refusals name their own recovery too (#9244).

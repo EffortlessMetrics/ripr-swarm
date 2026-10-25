@@ -506,8 +506,14 @@ omission instead of leaving it silent (#8729): when the producer-owned gate
 computes a refusal — no canonical gap to bind, an unreadable authority, a
 seam-limit-truncated candidate set, zero or several binding seams, or an
 ineligible seam — the drill-down prints one advisory line of the shape
-`no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
-for the full gate's answer`. A static-limited finding never gets the runnable
+`no repair start offered: <state>; <recovery>`. Where the gate can
+still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
+full gate's answer``. A refusal whose gate answer would only repeat it names
+its own recovery instead (#9244): a finding with no canonical gap says it names
+no missing discriminator and sends the reader to the Next step above; an
+unreadable config names `ripr.toml` and the `ripr check` rerun; several binding
+seams route to `ripr pilot --root <root>`; a classification failure says the
+gate prints the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),
 but a refusal the pipeline did compute is still named there, so "the gate
 refused this seam" cannot read as "analysis could not decide". A run with no

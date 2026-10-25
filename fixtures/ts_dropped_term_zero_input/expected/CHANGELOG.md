@@ -133,3 +133,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_dropped_term_zero_input (12)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless ts_dropped_term_zero_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

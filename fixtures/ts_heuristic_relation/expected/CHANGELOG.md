@@ -481,3 +481,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_heuristic_relation (26)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
