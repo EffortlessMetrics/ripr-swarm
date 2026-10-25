@@ -3146,6 +3146,12 @@ fn multiline_collection_preserves_single_line_token_identity() -> Result<(), Str
             "labels() == [1, 2] == list((1, 2))",
             ExposureClass::Exposed,
         ),
+        (
+            "return [1, 1]",
+            "return [1, 2]",
+            "list(labels()) == [1, 2] and bool(1)",
+            ExposureClass::Exposed,
+        ),
     ] {
         let before = format!("    {before}");
         let after = format!("    {after}");

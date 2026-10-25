@@ -442,8 +442,28 @@ pub(super) fn oracle_observes_changed_dict_element(
     changed_keys: &[String],
     changed_values: &[String],
 ) -> bool {
+    oracle_observes_changed_dict_element_with_collection(
+        oracle,
+        changed_keys,
+        changed_values,
+        legacy_whole_collection_comparison(oracle),
+    )
+}
+
+fn legacy_whole_collection_comparison(oracle: &str) -> bool {
+    ["=={", "== {", "==[", "== ["]
+        .iter()
+        .any(|needle| oracle.contains(needle))
+}
+
+fn oracle_observes_changed_dict_element_with_collection(
+    oracle: &str,
+    changed_keys: &[String],
+    changed_values: &[String],
+    whole_collection_observed: bool,
+) -> bool {
     // A whole-collection comparison (`== {...}` / `== [...]`) observes every element.
-    if oracle_compares_whole_collection(oracle) {
+    if whole_collection_observed {
         return true;
     }
     // Observes a changed value literal (e.g. the new `9090` / `"failure"`), but
@@ -546,8 +566,9 @@ fn oracle_observes_changed_list_element(
     oracle: &str,
     changed_indices: &[usize],
     changed_values: &[String],
+    whole_collection_observed: bool,
 ) -> bool {
-    if oracle_compares_whole_collection(oracle) {
+    if whole_collection_observed {
         return true;
     }
     for value in changed_values {
@@ -1113,18 +1134,30 @@ pub(super) fn classify_sink_alignment_prepared(
         .any(|unit| super::oracles::unittest_list::literal_text(&unit.text))
         && super::oracles::unittest_list::literal_change_discriminated(element_old, element_new);
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
+        let whole_collection_observed = if literal_lines.is_some() {
+            oracle_compares_whole_collection(&unit.text)
+                || unit
+                    .test
+                    .is_some_and(|test| oracle_compares_owner_collection(&unit.text, test, owner))
+        } else {
+            legacy_whole_collection_comparison(&unit.text)
+        };
         if super::oracles::unittest_list::literal_text(&unit.text) {
             list_equality_discriminates
-        } else if (dict_change.is_some() || list_change.is_some())
-            && unit
-                .test
-                .is_some_and(|test| oracle_compares_owner_collection(&unit.text, test, owner))
-        {
-            true
         } else if let Some((changed_keys, changed_values)) = &dict_change {
-            oracle_observes_changed_dict_element(&unit.text, changed_keys, changed_values)
+            oracle_observes_changed_dict_element_with_collection(
+                &unit.text,
+                changed_keys,
+                changed_values,
+                whole_collection_observed,
+            )
         } else if let Some((changed_indices, changed_values)) = &list_change {
-            oracle_observes_changed_list_element(&unit.text, changed_indices, changed_values)
+            oracle_observes_changed_list_element(
+                &unit.text,
+                changed_indices,
+                changed_values,
+                whole_collection_observed,
+            )
         } else {
             true
         }
