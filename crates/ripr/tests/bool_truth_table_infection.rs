@@ -4,7 +4,7 @@
 //! from its one-step mutations read `yes`; anything else keeps its reading.
 
 use ripr::domain::StageState;
-use ripr::{CheckInput, CheckOutput, Finding, Mode, OutputFormat, check_workspace};
+use ripr::{CheckInput, CheckOutput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -229,5 +229,91 @@ fn a_body_with_a_leading_statement_stays_unknown() -> Result<(), String> {
         &test(THREE_ROWS),
     )?;
     assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+/// The `return_value` findings on the reordered chain.
+fn return_value_findings(lib: &str, test: &str) -> Result<Vec<Finding>, String> {
+    let findings =
+        findings_on_changed_line(lib, "    in_stock && paid", "    paid && in_stock", test)?;
+    let returned = findings
+        .into_iter()
+        .filter(|finding| finding.probe.family.as_str() == "return_value")
+        .collect::<Vec<_>>();
+    assert!(!returned.is_empty(), "no return_value finding");
+    Ok(returned)
+}
+
+#[test]
+fn exercised_rows_complete_the_returned_tail_and_read_exposed() -> Result<(), String> {
+    let findings =
+        return_value_findings(&lib_with("    in_stock && paid\n", ""), &test(THREE_ROWS))?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed
+                && finding.ripr.propagate.state == StageState::Yes),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_loop_fed_argument_never_completes_the_returned_tail() -> Result<(), String> {
+    // The surviving mutant `banned && has_ticket` shape: the loop varies one
+    // argument and the other is pinned, so no literal row pair separates the
+    // chain; the returned tail must not read exposed (grid-bool-property).
+    let looped = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    for in_stock in [true, false] {\n        assert!(!can_ship(false, in_stock));\n    }\n}\n";
+    let findings = return_value_findings(&lib_with("    in_stock && paid\n", ""), looped)?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_macro_that_names_the_owner_stays_unknown() -> Result<(), String> {
+    let makes =
+        "\nmacro_rules! ship {\n    ($a:expr, $b:expr) => {\n        can_ship($a, $b)\n    };\n}\n";
+    let findings = predicate_findings(
+        &lib_with("    in_stock && paid\n", makes),
+        &test(THREE_ROWS),
+    )?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+/// One live strong row plus a second test that spends the other rows
+/// somewhere they do not run or cannot fail.
+fn split_rows(second: &str) -> String {
+    format!(
+        "use truth_table::can_ship;\n\n#[test]\nfn one() {{\n    assert!(can_ship(true, true));\n}}\n\n{second}\n"
+    )
+}
+
+#[test]
+fn rows_that_do_not_run_or_cannot_fail_are_not_counted() -> Result<(), String> {
+    for second in [
+        "#[test]\n#[ignore]\nfn two() {\n    assert!(!can_ship(true, false));\n    assert!(!can_ship(false, true));\n}",
+        "#[test]\nfn two() {\n    if false {\n        assert!(!can_ship(true, false));\n        assert!(!can_ship(false, true));\n    }\n}",
+        "#[test]\nfn two() {\n    let _c = || assert!(!can_ship(true, false));\n}",
+        "#[test]\nfn two() {\n    let r = can_ship(true, false);\n    assert!(r == r);\n}",
+        "#[test]\nfn two() {\n    assert!(!can_ship(true, false) || true);\n    assert!(!can_ship(false, true) || true);\n}",
+        "#[test]\nfn two() {\n    assert!(can_ship(true, false) || true);\n}",
+    ] {
+        let lib = lib_with("    in_stock && paid\n", "");
+        let predicates = predicate_findings(&lib, &split_rows(second))?;
+        assert!(!infection_credited(&predicates), "{second}: {predicates:?}");
+        let returned = return_value_findings(&lib, &split_rows(second))?;
+        assert!(
+            returned
+                .iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{second}: {returned:?}"
+        );
+    }
     Ok(())
 }

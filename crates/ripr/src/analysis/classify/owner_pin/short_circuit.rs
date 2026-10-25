@@ -723,7 +723,7 @@ mod tests {
         assert!(and.runs_tell_apart_one_step_mutants(&[tt.clone(), tf.clone(), ft, ff.clone()]));
         // No row where the operands differ: `a || b` agrees everywhere.
         assert!(!and.runs_tell_apart_one_step_mutants(&[tt.clone(), ff.clone()]));
-        // `(true, false)` alone cannot see `false` or a negated `b`.
+        // `(true, false)` alone agrees with the constant `false` and with `!a && b`.
         assert!(!and.runs_tell_apart_one_step_mutants(std::slice::from_ref(&tf)));
         // `(true, true)` and `(true, false)` already separate every mutant.
         assert!(and.runs_tell_apart_one_step_mutants(&[tt.clone(), tf.clone()]));

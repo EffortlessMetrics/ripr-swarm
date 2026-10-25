@@ -65,14 +65,33 @@ boundary when every item holds:
 4. Every related test reaches the owner only by direct calls with plain
    boolean or decimal literal arguments, one owner call per line, with no
    table, builder, helper or user macro that could feed other inputs.
+   Each such test is a plain `#[test]` (no `#[ignore]`, `#[should_panic]` or
+   other attribute) whose body is only top-level `assert!([!]owner(..));` or
+   `assert_eq!`/`assert_ne!` of an owner call against `true`/`false`: a row
+   under a branch, a closure, a binding, a message or a tautology such as
+   `r == r` or `|| true` is not a row.
 5. Every owner call's arguments are readable, and across the calls some row
    gives a different value for the chain than each of: the other connective,
    the constant `true`, the constant `false`, and the chain with any single
    operand negated.
 
-Anything else keeps its existing reading. The rule decides only that the
-rows reach and separate the mutations; it grants no oracle strength and no
-propagation or reveal credit.
+6. For the `return_value` probe on that same chain, the owner's tail is the
+   returned value even though a digit-free chain carries no value marker.
+   The probe then gets a `ReturnValue` sink and the direct-return witness may
+   complete, so a strong exact oracle on the call reads `exposed`. Without
+   rules 1 to 5 the sink stays unknown and propagation is unchanged.
+
+Conditions the code adds to rule 3: a bare-name mention of the owner in any
+non-test function, or in a `macro_rules!` body, counts as another caller (the
+`macro_rules!` scan now also runs for `return_value` probes); a literal
+boundary in the changed expression or an unresolved boundary input keeps the
+existing reading; a related test that never names the owner and calls no other
+related test cannot call the owner and contributes neither a run nor its table
+rows (this skipping is shared with the #7970 short-circuit rule).
+
+Anything else keeps its existing reading. The rule decides that the rows reach
+and separate the mutations and that the chain is the returned value; it grants
+no oracle strength, which stays the reveal stage's judgment.
 
 ## Required Evidence
 
@@ -80,9 +99,9 @@ propagation or reveal credit.
   `(true,false)`, `(false,true)`) on `in_stock && paid` reads infection
   `yes`.
 - Negatives: a single row, a test pinning only `(true, true)` and `(false,
-  false)`, a literal-free call, a table-driven test, an owner with another
+  false)`, a loop-fed argument (`for banned in [true, false]`) with a surviving mutant that must not read `exposed`, a table-driven test, an owner with another
   caller, a comparison operand and an owner body with a leading statement
-  each keep `infection_unknown`.
+  each keep `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`.
 
 ## Known Limits
 

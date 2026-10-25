@@ -4,6 +4,7 @@ use super::activation::{
     is_computed_value_expression, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::probes::same_connectives;
 use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
@@ -162,8 +163,75 @@ fn boolean_truth_table_is_exercised(
     let Some(chain) = ShortCircuitTail::parse(&owner.body, &probe.expression) else {
         return false;
     };
-    owner_literal_runs(activation, related_tests, owner, chain.parameters())
-        .is_some_and(|runs| chain.runs_tell_apart_one_step_mutants(&runs))
+    // A row counts only when it is live and its result is asserted bare: a
+    // call under `#[ignore]`, an `if`, a closure or a tautology (`r == r`,
+    // `|| true`) separates nothing at runtime.
+    related_tests
+        .iter()
+        .filter(|test| !word_call_offsets(&test.body, &owner.name).is_empty())
+        .all(|test| only_bare_row_assertions(test, &owner.name))
+        && owner_literal_runs(activation, related_tests, owner, chain.parameters())
+            .is_some_and(|runs| chain.runs_tell_apart_one_step_mutants(&runs))
+}
+
+/// `test` is a plain `#[test]` whose body is nothing but top-level
+/// `assert!([!]owner(..))`, `assert_eq!`/`assert_ne!` of an owner call
+/// against `true`/`false` (either order), each ending in `;`. The call's
+/// arguments are plain literals (`owner_call_has_plain_literal_arguments`).
+/// Anything else (a `let`, a branch, a message argument, a path-qualified
+/// call, a trailing expression, an attribute besides `#[test]`) declines.
+fn only_bare_row_assertions(test: &TestSummary, owner: &str) -> bool {
+    if test.attrs.iter().any(|attr| attr.trim() != "#[test]") {
+        return false;
+    }
+    let body = test.body.as_ref();
+    let (Some(open), Some(close)) = (body.find('{'), body.rfind('}')) else {
+        return false;
+    };
+    if open >= close {
+        return false;
+    }
+    let inner = &body[open + 1..close];
+    let masked = mask_comments_and_strings(inner);
+    if masked.len() != inner.len() || inner.contains("//") || inner.contains("/*") {
+        return false;
+    }
+    let mut statements = masked.split(';').collect::<Vec<_>>();
+    if statements.pop().is_none_or(|rest| !rest.trim().is_empty()) || statements.is_empty() {
+        return false;
+    }
+    let is_bool = |text: &str| matches!(text.trim(), "true" | "false");
+    let is_call = |text: &str| {
+        let text = text.trim();
+        text.strip_prefix(owner)
+            .is_some_and(|rest| rest.starts_with('(') && rest.ends_with(')'))
+            && owner_call_has_plain_literal_arguments(text, owner)
+    };
+    statements.iter().all(|statement| {
+        let statement = statement.trim();
+        if let Some(argument) = statement
+            .strip_prefix("assert!(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            return is_call(argument.trim().strip_prefix('!').unwrap_or(argument));
+        }
+        ["assert_eq!(", "assert_ne!("].iter().any(|macro_open| {
+            statement
+                .strip_prefix(macro_open)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .and_then(|arguments| {
+                    // The call holds a comma, so split on the last comma
+                    // when the call is first and the first when it is not.
+                    let (first, last) = arguments.rsplit_once(',')?;
+                    if is_call(first) && is_bool(last) {
+                        return Some(());
+                    }
+                    let (first, rest) = arguments.split_once(',')?;
+                    (is_bool(first) && is_call(rest)).then_some(())
+                })
+                .is_some()
+        })
+    })
 }
 
 /// RIPR-SPEC-0353: the returned-value sink of an all-bool `&&`/`||` owner

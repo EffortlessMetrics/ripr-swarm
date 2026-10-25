@@ -18939,6 +18939,10 @@ tests = [
   "crates/ripr/tests/bool_truth_table_infection.rs::another_caller_of_the_owner_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::rows_fed_through_a_table_stay_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_body_with_a_leading_statement_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::exercised_rows_complete_the_returned_tail_and_read_exposed",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_loop_fed_argument_never_completes_the_returned_tail",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_macro_that_names_the_owner_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_do_not_run_or_cannot_fail_are_not_counted",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus/cases/grid-bool-exact.json",
