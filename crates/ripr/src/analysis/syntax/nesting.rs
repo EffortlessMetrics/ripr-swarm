@@ -796,6 +796,49 @@ mod tests {
         }
     }
 
+    /// `frontmatter_end` must never skip more than the parser lexes as its
+    /// frontmatter token: compare against the real token boundary for
+    /// accepted and rejected shapes (small payloads; the boundary does not
+    /// depend on size).
+    #[test]
+    fn frontmatter_skip_matches_the_parsers_frontmatter_token() {
+        let sources = [
+            "---\n[dependencies]\n---\nfn main() {}\n",
+            "-----\n[dependencies]\n-----\nfn main() {}\n",
+            "\n\n---\nx = 1\n---\nfn main() {}\n",
+            "#!/usr/bin/env cargo\n---cargo\n[dependencies]\n---\nfn main() {}\n",
+            "---\r\nx = 1\r\n---  \r\nfn main() {}\r\n",
+            "---\nx = 1\n---\n\nfn main() {}\n",
+            "---\nA\n----\nfn main() {}\n---\n",
+            "---\n---x\nfn main() {}\n---\n",
+            "---\nx = 1\n---\n\n---\nfn main() {}\n",
+            "#! [x]\n---\nx = 1\n---\nfn main() {}\n",
+            "\u{a0}\n---\nx = 1\n---\nfn main() {}\n",
+            "#![feature(frontmatter)]\n---\nx = 1\n---\nfn main() {}\n",
+            "--\nx = 1\n--\nfn main() {}\n",
+            "  ---\nx = 1\n  ---\nfn main() {}\n",
+            "\u{feff}---\nx = 1\n---\nfn main() {}\n",
+            "---\nx = 1\nfn main() {}\n",
+            "fn main() {}\n",
+        ];
+        for source in sources {
+            let parse = parse_source_file(source);
+            let lexed = parse
+                .syntax_node()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.kind() == ra_ap_syntax::SyntaxKind::FRONTMATTER)
+                .map_or(0, |token| usize::from(token.text_range().end()));
+            let skipped = frontmatter_end(source);
+            // Skipping nothing is always safe; skipping must stop at the
+            // parser's boundary.
+            assert!(
+                skipped == 0 || skipped == lexed,
+                "{source:?}: skipped {skipped}, parser frontmatter ends at {lexed}"
+            );
+        }
+    }
+
     #[test]
     fn statement_boundaries_reset_chains() {
         let statements: String = (0..5_000)
