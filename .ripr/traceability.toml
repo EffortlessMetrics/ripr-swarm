@@ -16793,6 +16793,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::an_alias_line_with_a_trailing_comment_is_still_an_alias",
   "crates/ripr/src/analysis/language/python/tests.rs::a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_fixture_renamed_to_caplog_then_the_logged_text_abstains",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_fixture_declared_through_an_aliased_pytest_import_then_it_is_recorded",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_an_aliased_fixture_overriding_caplog_then_the_logged_text_abstains",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_replaced_or_unrelated_caplog_rename_then_the_builtin_caplog_is_still_credited",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_the_builtin_caplog_then_the_logged_text_is_credited",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_conftest_or_module_caplog_fixture_then_the_logged_text_abstains",
@@ -16828,6 +16830,7 @@ fixtures = [
   "fixtures/python_caplog_alias_in_literal",
   "fixtures/python_caplog_custom_fixture",
   "fixtures/python_caplog_renamed_fixture",
+  "fixtures/python_caplog_aliased_fixture_import",
   "fixtures/python_caplog_builtin_beside_fixtures",
   "fixtures/python_assertion_helper_field",
   "fixtures/python_assertion_helper_wrong_receiver",
@@ -16841,6 +16844,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/python/caplog_text.rs",
+  "crates/ripr/src/analysis/language/python/fixtures.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/message_pin.rs",
