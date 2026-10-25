@@ -923,15 +923,48 @@ fn related_candidates_have_log_membership_limit(
                     // may overlap; `assert` and `caplog.text` are scaffolding.
                     caplog_membership_literals(&assertion.gate_text)
                         .iter()
-                        .any(|checked| words(checked).iter().any(|word| changed.contains(word)))
+                        .any(|checked| {
+                            words(&checked.literal)
+                                .iter()
+                                .any(|word| changed.contains(word))
+                        })
+                        // Indexed and list forms over `caplog.messages` or
+                        // `caplog.records` (`caplog.records[0].message == ...`,
+                        // `caplog.messages == [...]`) are not evaluated: any
+                        // shared word abstains.
+                        || (assertion.gate_text.contains("caplog.messages")
+                            || assertion.gate_text.contains("caplog.records"))
+                            && words(&assertion.gate_text)
+                                .iter()
+                                .any(|word| changed.contains(word))
                 })
         })
 }
 
-/// The string literals an assertion checks for membership in `caplog.text`,
+/// How an assertion compares its literal with what the logging call emitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CaplogRead {
+    /// `"<text>" in caplog.text`: a substring of the formatted record text.
+    Text,
+    /// `"<text>" in caplog.messages` or `any(r.message == "<text>" ...)`: one
+    /// whole formatted message.
+    MessageEquals,
+    /// `any("<text>" in r.message for r in caplog.records)`: a substring of one
+    /// formatted message.
+    MessageContains,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CaplogMembership {
+    pub(super) literal: String,
+    pub(super) read: CaplogRead,
+}
+
+/// The string literals an assertion checks against the captured log records
+/// (`caplog.text`, `caplog.messages`, or `any(...)` over `caplog.records`),
 /// read from the parsed expression so spacing, parentheses, line breaks and
 /// implicit literal concatenation do not change what is recognized.
-pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<CaplogMembership> {
     caplog_literals(gate_text, false)
 }
 
@@ -939,11 +972,11 @@ pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
 /// membership or an `and` chain of them. A literal under `or` is not one of
 /// them (`assert A in caplog.text or B in caplog.text` still passes when A
 /// alone disappears), so crediting an edit never reads through an `or`.
-pub(super) fn caplog_required_literals(gate_text: &str) -> Vec<String> {
+pub(super) fn caplog_required_literals(gate_text: &str) -> Vec<CaplogMembership> {
     caplog_literals(gate_text, true)
 }
 
-fn caplog_literals(gate_text: &str, conjunctive_only: bool) -> Vec<String> {
+fn caplog_literals(gate_text: &str, conjunctive_only: bool) -> Vec<CaplogMembership> {
     let expression = gate_text.trim_start();
     let expression = expression.strip_prefix("assert").unwrap_or(expression);
     let mut literals = Vec::new();
@@ -953,7 +986,109 @@ fn caplog_literals(gate_text: &str, conjunctive_only: bool) -> Vec<String> {
     literals
 }
 
-fn collect_caplog_membership_literals(expr: &Expr, conjunctive_only: bool, out: &mut Vec<String>) {
+fn string_constant(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Str(text) => Some(text.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `<name>.message` or `<name>.getMessage()` for the loop variable `name`.
+fn is_record_message(expr: &Expr, name: &str) -> bool {
+    let is_name = |value: &Expr| matches!(value, Expr::Name(n) if n.id.as_str() == name);
+    match expr {
+        Expr::Attribute(attribute) => {
+            attribute.attr.as_str() == "message" && is_name(&attribute.value)
+        }
+        Expr::Call(call) => {
+            call.args.is_empty()
+                && call.keywords.is_empty()
+                && matches!(
+                    call.func.as_ref(),
+                    Expr::Attribute(attribute)
+                        if attribute.attr.as_str() == "getMessage" && is_name(&attribute.value)
+                )
+        }
+        _ => false,
+    }
+}
+
+/// `[r.message for r in caplog.records]` (or `r.getMessage()`): the formatted
+/// message of every captured record.
+fn is_record_messages_list(expr: &Expr) -> bool {
+    let Expr::ListComp(list) = expr else {
+        return false;
+    };
+    let [comprehension] = list.generators.as_slice() else {
+        return false;
+    };
+    let Expr::Name(target) = &comprehension.target else {
+        return false;
+    };
+    !comprehension.is_async
+        && comprehension.ifs.is_empty()
+        && expr_full_name(&comprehension.iter).as_deref() == Some("caplog.records")
+        && is_record_message(&list.elt, target.id.as_str())
+}
+
+/// `any("<text>" in r.message for r in caplog.records)` and the `==` forms.
+fn caplog_records_any(call: &ast::ExprCall) -> Option<CaplogMembership> {
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "any")
+        || call.args.len() != 1
+        || !call.keywords.is_empty()
+    {
+        return None;
+    }
+    let Expr::GeneratorExp(generator) = &call.args[0] else {
+        return None;
+    };
+    let [comprehension] = generator.generators.as_slice() else {
+        return None;
+    };
+    if comprehension.is_async
+        || !comprehension.ifs.is_empty()
+        || expr_full_name(&comprehension.iter).as_deref() != Some("caplog.records")
+    {
+        return None;
+    }
+    let Expr::Name(target) = &comprehension.target else {
+        return None;
+    };
+    let name = target.id.as_str();
+    let Expr::Compare(compare) = generator.elt.as_ref() else {
+        return None;
+    };
+    let [op] = compare.ops.as_slice() else {
+        return None;
+    };
+    let [other] = compare.comparators.as_slice() else {
+        return None;
+    };
+    match op {
+        ast::CmpOp::In if is_record_message(other, name) => Some(CaplogMembership {
+            literal: string_constant(&compare.left)?,
+            read: CaplogRead::MessageContains,
+        }),
+        ast::CmpOp::Eq if is_record_message(&compare.left, name) => Some(CaplogMembership {
+            literal: string_constant(other)?,
+            read: CaplogRead::MessageEquals,
+        }),
+        ast::CmpOp::Eq if is_record_message(other, name) => Some(CaplogMembership {
+            literal: string_constant(&compare.left)?,
+            read: CaplogRead::MessageEquals,
+        }),
+        _ => None,
+    }
+}
+
+fn collect_caplog_membership_literals(
+    expr: &Expr,
+    conjunctive_only: bool,
+    out: &mut Vec<CaplogMembership>,
+) {
     match expr {
         Expr::BoolOp(bool_op) => {
             if conjunctive_only && bool_op.op != ast::BoolOp::And {
@@ -963,19 +1098,19 @@ fn collect_caplog_membership_literals(expr: &Expr, conjunctive_only: bool, out: 
                 collect_caplog_membership_literals(value, conjunctive_only, out);
             }
         }
+        Expr::Call(call) => out.extend(caplog_records_any(call)),
         Expr::Compare(compare)
-            if compare.ops.len() == 1
-                && matches!(compare.ops[0], ast::CmpOp::In)
-                && compare
-                    .comparators
-                    .first()
-                    .and_then(expr_full_name)
-                    .is_some_and(|name| name == "caplog.text") =>
+            if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::In) =>
         {
-            if let Expr::Constant(constant) = compare.left.as_ref()
-                && let ast::Constant::Str(text) = &constant.value
-            {
-                out.push(text.clone());
+            let comparator = compare.comparators.first();
+            let read = match comparator.and_then(expr_full_name).as_deref() {
+                Some("caplog.text") => CaplogRead::Text,
+                Some("caplog.messages") => CaplogRead::MessageEquals,
+                _ if comparator.is_some_and(is_record_messages_list) => CaplogRead::MessageEquals,
+                _ => return,
+            };
+            if let Some(literal) = string_constant(&compare.left) {
+                out.push(CaplogMembership { literal, read });
             }
         }
         _ => {}

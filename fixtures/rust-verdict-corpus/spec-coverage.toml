@@ -546,6 +546,12 @@ id = "RIPR-SPEC-0238"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 
+# Python Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0028"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
 # `ripr plus` last-good receipt
 [[spec]]
 id = "RIPR-SPEC-0239"

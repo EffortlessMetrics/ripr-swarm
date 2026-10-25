@@ -742,126 +742,126 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```python
-def apply_discount(amount: float, threshold: float) -> float:
-    if amount >= threshold:
-        return amount * 0.9
-    return amount
-```
+   ```python
+   def apply_discount(amount: float, threshold: float) -> float:
+       if amount >= threshold:
+           return amount * 0.9
+       return amount
+   ```
 
-Existing tests:
+   Existing tests:
 
-```python
-def test_discount_applies_above_threshold():
-    assert apply_discount(100, 50) == 90
+   ```python
+   def test_discount_applies_above_threshold():
+       assert apply_discount(100, 50) == 90
 
-def test_no_discount_below_threshold():
-    assert apply_discount(10, 50) == 10
-```
+   def test_no_discount_below_threshold():
+       assert apply_discount(10, 50) == 10
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `apply_discount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
-- missing discriminator: `amount == threshold`
-- finding emits `language = "python"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `apply_discount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
+   - missing discriminator: `amount == threshold`
+   - finding emits `language = "python"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Error path with `pytest.raises`:
+2. Error path with `pytest.raises`:
 
-```python
-def test_rejects_negative_amount():
-    with pytest.raises(ValueError):
-        apply_discount(-1, 50)
-```
+   ```python
+   def test_rejects_negative_amount():
+       with pytest.raises(ValueError):
+           apply_discount(-1, 50)
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `error-path`
-- the `pytest.raises` context manager is recorded as the discriminator
-  surface
+   - oracle: `error-path`
+   - the `pytest.raises` context manager is recorded as the discriminator
+     surface
 
-Decorator indirection limit:
+3. Decorator indirection limit:
 
-```python
-@retry(times=3)
-def fetch_total(client):
-    return client.get_total()
-```
+   ```python
+   @retry(times=3)
+   def fetch_total(client):
+       return client.get_total()
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "decorator_indirection"`; finding
-  stays conservative.
+   - probe emits `static_limit_kind = "decorator_indirection"`; finding
+     stays conservative.
 
-Functools memoization is not decorator indirection:
+4. Functools memoization is not decorator indirection:
 
-```python
-from functools import lru_cache
+   ```python
+   from functools import lru_cache
 
-@lru_cache
-def format_year(year):
-    return "%03d" % (year % 100)
+   @lru_cache
+   def format_year(year):
+       return "%03d" % (year % 100)
 
-@lru_cache(maxsize=None)
-def century_index(year):
-    return year % 1000
-```
+   @lru_cache(maxsize=None)
+   def century_index(year):
+       return year % 1000
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- neither owner emits `decorator_indirection`;
-- a direct exact-value test on `format_year` can credit the owner;
-- a related test that reaches `century_index` without observing the
-  changed return remains a gap.
+   - neither owner emits `decorator_indirection`;
+   - a direct exact-value test on `format_year` can credit the owner;
+   - a related test that reaches `century_index` without observing the
+     changed return remains a gap.
 
-Typing markers are not decorator indirection:
+5. Typing markers are not decorator indirection:
 
-```python
-from typing import final, override
+   ```python
+   from typing import final, override
 
-class Child(Base):
-    @override
-    def rate(self, n):
-        return n + 1
-```
+   class Child(Base):
+       @override
+       def rate(self, n):
+           return n + 1
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- `@final`, `@override` and `@no_type_check` written as plain names (and
-  `typing.` / `typing_extensions.` qualified or aliased spellings; the
-  `typing_extensions` spelling covers `final` and `override` only) return the
-  function unchanged, so the owner emits no `decorator_indirection`;
-- a rebound receiver, a competing alias, a local same-named decorator, a
-  marker written as a call (`@final(wrapper)`), a file where the marker name
-  appears anywhere other than a `@name` decorator line or a `typing` /
-  `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
-  target, nested or class-scope rebind, `try`/`except` import fallback), a
-  star import from another module, or any decorator in the file that is not
-  a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
-  `decorator_indirection`. This is a lexical fail-closed screen, not a scope
-  analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
-  `contextlib.contextmanager` and `property` also stay limited.
+   - `@final`, `@override` and `@no_type_check` written as plain names (and
+     `typing.` / `typing_extensions.` qualified or aliased spellings; the
+     `typing_extensions` spelling covers `final` and `override` only) return the
+     function unchanged, so the owner emits no `decorator_indirection`;
+   - a rebound receiver, a competing alias, a local same-named decorator, a
+     marker written as a call (`@final(wrapper)`), a file where the marker name
+     appears anywhere other than a `@name` decorator line or a `typing` /
+     `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+     target, nested or class-scope rebind, `try`/`except` import fallback), a
+     star import from another module, or any decorator in the file that is not
+     a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+     `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+     analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
+     `contextlib.contextmanager` and `property` also stay limited.
 
-Simple route decorator repair:
+6. Simple route decorator repair:
 
-```python
-@api.post("/checkout")
-def checkout(coupon_expired):
-    response.status_code = 422
-```
+   ```python
+   @api.post("/checkout")
+   def checkout(coupon_expired):
+       response.status_code = 422
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- route decorator is preserved as owner context rather than treated as
-  arbitrary decorator indirection;
-- probe can emit a field/object repair card with missing discriminator
-  `response.status_code == 422`;
-- finding remains `preview` / advisory and does not execute route
-  registration.
+   - route decorator is preserved as owner context rather than treated as
+     arbitrary decorator indirection;
+   - probe can emit a field/object repair card with missing discriminator
+     `response.status_code == 422`;
+   - finding remains `preview` / advisory and does not execute route
+     registration.
 
 ## Test Mapping
 

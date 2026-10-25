@@ -768,12 +768,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     method is not `exception` (its traceback can hold the asserted text),
     and the test never rebinds `caplog`. An assertion about unrelated text
     keeps its verdict.
-    `caplog.messages` and `caplog.records` are not read by this rule. The
+    The same evaluation reads the captured records' formatted messages,
+    which carry no record header: `"<text>" in caplog.messages` and
+    `"<text>" in [r.message for r in caplog.records]` (or
+    `r.getMessage()`) compare one whole message, and
+    `any(<text> in r.message for r in caplog.records)` finds the text
+    inside one message (`any(r.message == <text> ...)`, in either operand
+    order, compares a whole one). Indexed or whole-list forms (`caplog.records[0].message == ...`,
+    `caplog.messages == [...]`), a filtered `any(...)`, and `not in`
+    abstain when they share a word with the changed message. The
     membership is read from the parsed assertion, not its text layout:
     extra spacing, parentheses, line breaks, implicit literal
     concatenation, an assertion message and a membership joined by `and`
-    all read the same way, while a membership against any receiver other
-    than `caplog.text` is not read.
+    all read the same way, while a membership against any other receiver
+    is not read.
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
