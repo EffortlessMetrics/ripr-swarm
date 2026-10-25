@@ -2107,7 +2107,9 @@ fn header_effects(source: &str, statements: &[Stmt], names: &[String]) -> bool {
         // Everything else runs at import: a call, an import, or any use of an
         // imported object (`X = OBJ.attr`, `assert OBJ == 1`, `with CTX:`,
         // `for i in ITEMS:`, `if OBJ:`) can run code through dunders and
-        // properties. `if (True):` counts too: an accepted recall cost.
+        // properties. A `(` anywhere in the statement (`if (True):` too) is
+        // an accepted recall cost; the shared `module_level_effects` check
+        // enforces it as well and this repeats it as defense in depth.
         other => {
             let body = text(other.range());
             body.contains('(') || mentions_word(body, "import") || mentions_import(body)

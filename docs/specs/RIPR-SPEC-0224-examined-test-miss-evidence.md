@@ -298,25 +298,27 @@ Python does not yet write:
   `importlib`, `__import__`, `lambda`, `partial`, `builtins`) appears; and
   no module-level `def`/`class` header (decorator outside the inert list,
   call in a default, annotation, return annotation, base or keyword) or
-  module-level statement outside a function body (headers included) that
-  holds a call, an import, or any use of an imported object other than
+  module-level statement outside a function body (headers included) holds a
+  call, an import, or any use of an imported object other than
   `pytest`/`unittest` (`X = OBJ.attr`, `assert OBJ == 1`, `with CTX:`,
-  `for i in ITEMS:`, `if OBJ:`) runs code at import, and a decorator counts
-  as inert only when its whole text is a dotted name with at most one flat
-  argument group (no nested call, subscript hiding a call or boolean) whose
-  head is on the inert list and which mentions no import (any `(` in a
-  module statement, even `if (True):`, withholds through the shared
-  module-effect check). Accepted recall costs, all fail-closed: a module
-  docstring or string naming the owner or an imported name or the word
-  `import`, `X = sys.platform`, a def annotated with an imported type,
-  `skipif(sys.version_info < (3, 8))`, and any string holding `(`; no `import` appears in the test body; no import other than the
-  owner, `pytest` and `unittest` is used in the body; and
+  `for i in ITEMS:`, `if OBJ:`), since each runs code at import; a decorator
+  counts as inert only when its whole text is a dotted name with at most one
+  flat argument group (no nested call, no subscript or boolean hiding a call)
+  whose head is on the inert list and which mentions no import; any `(` in a
+  module statement, even `if (True):`, withholds, enforced by the shared
+  module-effect check and duplicated in the header check as defense in depth;
+  no `import` appears in the test body; no import other than the owner,
+  `pytest` and `unittest` is used in the body; and
   every mention of the owner, strings and comments included, is one of
   `callable(owner)`, `owner is [not] None`, `owner.__name__`/`__qualname__`/
   `__module__`/`__doc__` or a bare `assert owner`. Only a function owner is
   claimed (a method is reached through an instance whose constructor is
   unread, a constant by a plain read), and only on a `weakly_exposed` finding
-  without a static limit. Withheld, so the row keeps no miss: any other
+  without a static limit. Accepted recall costs, all fail-closed: a module
+  docstring or string naming the owner, an imported name or the word `import`,
+  `X = sys.platform`, a def annotated with an imported type,
+  `skipif(sys.version_info < (3, 8))`, and any string holding `(`.
+  Withheld, so the row keeps no miss: any other
   mention or use of the owner (alias, value, attribute, string), any
   unvouched call (helper, project import, `map`), a fixture-name,
   dunder-protocol, helper-owner, fixture-owner or activation-limited
