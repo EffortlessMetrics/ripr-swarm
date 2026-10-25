@@ -451,6 +451,32 @@ fn a_callback_parameter_named_like_the_mock_is_not_the_mock() -> Result<(), Stri
         "loop-callback-local",
         "  const fn = mock.fn();\n  assert.equal(await withRetry(async () => { const fn = async () => \"ok\"; return fn(); }, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
     )?;
+    // A declaration in a nested block or function, a type annotation or a
+    // loop head does not rebind the callback's own `fn`.
+    for (label, callback) in [
+        (
+            "loop-local-block",
+            "async () => { if (false) { const fn = 1; } return fn(); }",
+        ),
+        (
+            "loop-local-nested-fn",
+            "async () => { const g = () => { const fn = 1; return fn; }; g(); return fn(); }",
+        ),
+        (
+            "loop-local-annotation",
+            "async () => { const r: ReturnType<typeof fn> = fn(); return r; }",
+        ),
+        (
+            "loop-local-loop-head",
+            "async () => { for (const c of fn.mock.calls) {} return fn(); }",
+        ),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects(withRetry({callback}, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_abstains(label, &finding);
+    }
     assert_stays_a_gap(
         "loop-function-shadow",
         "  const fn = mock.fn();\n  assert.equal(await withRetry(async function (fn: any) { return fn(); }, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
@@ -480,6 +506,17 @@ fn a_method_owner_keeps_its_receiver_identity() -> Result<(), String> {
     let foreign = "  class Other { retry(_task: unknown, attempts: number) { return attempts; } }\n  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  (new Other()).retry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);";
     let finding = run("loop-inline-foreign", SVC, OLD, NEW, &svc_test(foreign))?;
     assert_gap("loop-inline-foreign", &finding);
+    // A `new` inside the constructor arguments is not the receiver's class.
+    for (label, receiver) in [
+        ("loop-inline-nested-date", "new Svc(1, new Date())"),
+        ("loop-inline-nested-map", "new Svc(new Map())"),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({receiver}.retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+        );
+        let finding = run(label, SVC, OLD, NEW, &svc_test(&body))?;
+        assert_abstains(label, &finding);
+    }
     // The owner's own inline constructor still hands the mock over.
     let genuine = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(new Svc().retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
     let finding = run("loop-inline-genuine", SVC, OLD, NEW, &svc_test(genuine))?;

@@ -356,15 +356,50 @@ enum Receivers<'a> {
     Namespaces(&'a [String]),
 }
 
-/// The class of an inline receiver `new Cls(...)` or `(new Cls(...))`.
+/// The class of an inline receiver whose expression ends the text: `new Cls(…)`
+/// or `(new Cls(…))`. A `new` nested in the constructor arguments, or a call
+/// that merely receives a constructed value (`wrap(new Cls())`), is not it.
 fn inline_constructed_class(receiver: &str) -> Option<&str> {
-    let at = receiver.rfind("new ")?;
-    if receiver[..at].chars().next_back().is_some_and(is_word) {
-        return None;
+    let args_end = receiver.trim_end().strip_suffix(')')?;
+    let mut depth = 1usize;
+    let open = args_end.char_indices().rev().find_map(|(i, ch)| match ch {
+        ')' => {
+            depth += 1;
+            None
+        }
+        '(' => {
+            depth -= 1;
+            (depth == 0).then_some(i)
+        }
+        _ => None,
+    })?;
+    let head = args_end[..open].trim_end();
+    let start = head
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !is_word(*c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let class = &head[start..];
+    let before = head[..start].trim_end();
+    if !class.is_empty() && !matches!(class, "await" | "return") {
+        let constructed = before
+            .strip_suffix("new")
+            .is_some_and(|rest| !rest.chars().next_back().is_some_and(is_word));
+        return constructed.then_some(class);
     }
-    let rest = receiver[at + 4..].trim_start();
-    let end = rest.find(|c: char| !is_word(c)).unwrap_or(rest.len());
-    (end > 0).then(|| &rest[..end])
+    // A bare group `(new Cls())`, possibly after `await`.
+    let lead = ["await", "return"]
+        .iter()
+        .find_map(|word| {
+            head.strip_suffix(word)
+                .filter(|rest| !rest.chars().next_back().is_some_and(is_word))
+        })
+        .map_or(head, str::trim_end);
+    let grouping =
+        lead.is_empty() || lead.ends_with(['(', ',', '=', ';', '{', '[', ':', '?', '&', '|']);
+    grouping
+        .then(|| inline_constructed_class(&args_end[open + 1..]))
+        .flatten()
 }
 
 fn is_word(c: char) -> bool {
@@ -525,23 +560,53 @@ fn parameter_scoped(text: &str, at: usize, name: &str) -> bool {
         })
 }
 
-/// Whether `body` declares `name` itself (`const name = …`, `let { name } = …`):
-/// inside a closure that is a new binding, not the outer value.
+/// Whether the function `body` (parameters and block) declares `name` itself
+/// at its own top level (`const name = …`, `let { name } = …`): inside the
+/// closure that is a new binding, not the outer value. A declaration in a
+/// nested block or function, a loop head (`for (const name of …)`) and a type
+/// annotation are not.
 fn declares_local(body: &str, name: &str) -> bool {
-    ["const", "let", "var"].iter().any(|keyword| {
-        body.match_indices(keyword).any(|(at, _)| {
-            let after = &body[at + keyword.len()..];
-            if body[..at].chars().next_back().is_some_and(is_word)
-                || !after.chars().next().is_some_and(char::is_whitespace)
-            {
-                return false;
-            }
-            let end = after.find(['=', ';', '\n']).unwrap_or(after.len());
-            after[..end]
-                .split(|c: char| !is_word(c))
-                .any(|word| word == name)
-        })
-    })
+    let (mut braces, mut parens) = (0usize, 0usize);
+    for (at, ch) in body.char_indices() {
+        match ch {
+            '{' => braces += 1,
+            '}' => braces = braces.saturating_sub(1),
+            '(' | '[' => parens += 1,
+            ')' | ']' => parens = parens.saturating_sub(1),
+            _ => {}
+        }
+        if braces != 1 || parens != 0 || !is_word(ch) {
+            continue;
+        }
+        let rest = &body[at..];
+        let Some(keyword) = ["const", "let", "var"].into_iter().find(|keyword| {
+            rest.starts_with(keyword) && rest[keyword.len()..].starts_with(char::is_whitespace)
+        }) else {
+            continue;
+        };
+        let before = &body[..at];
+        let starts_statement = before.chars().next_back().is_some_and(|c| !is_word(c))
+            && (before.trim_end().ends_with(['{', '}', ';'])
+                || before[before.trim_end().len()..].contains('\n'));
+        if !starts_statement {
+            continue;
+        }
+        let pattern = rest[keyword.len()..].trim_start();
+        let pattern = if pattern.starts_with(['{', '[']) {
+            &pattern[..group_end(pattern, 0)]
+        } else {
+            &pattern[..pattern
+                .find([':', '=', ';', ',', '\n'])
+                .unwrap_or(pattern.len())]
+        };
+        if pattern
+            .split(|c: char| !is_word(c))
+            .any(|word| word == name)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether `at` sits in a function body other than a test registration
@@ -1380,6 +1445,25 @@ mod tests {
             Receivers::Bare,
             mock,
         )
+    }
+
+    #[test]
+    fn an_inline_receiver_names_the_class_it_ends_with() {
+        for (receiver, class) in [
+            ("new Svc()", Some("Svc")),
+            ("await assert.rejects(new Svc(1, new Date())", Some("Svc")),
+            ("new Svc(new Map())", Some("Svc")),
+            ("(new Svc(new Map()))", Some("Svc")),
+            ("await (new Svc())", Some("Svc")),
+            ("wrap(new Svc())", None),
+            ("new Other(new Svc()).inner()", None),
+            ("make<T>(new Svc())", None),
+            ("svc", None),
+            ("new", None),
+            ("é(", None),
+        ] {
+            assert_eq!(inline_constructed_class(receiver), class, "{receiver}");
+        }
     }
 
     #[test]
