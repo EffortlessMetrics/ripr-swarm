@@ -7285,7 +7285,21 @@ mod tests {
         test_file_source: &str,
         calls: &[&str],
     ) -> (ActivationEvidence, Vec<TestSummary>) {
-        let owner = function("pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}");
+        constant_boundary_activation_for_owner(
+            "pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}",
+            constant_source,
+            test_file_source,
+            calls,
+        )
+    }
+
+    fn constant_boundary_activation_for_owner(
+        owner_body: &str,
+        constant_source: &str,
+        test_file_source: &str,
+        calls: &[&str],
+    ) -> (ActivationEvidence, Vec<TestSummary>) {
+        let owner = function(owner_body);
         let mut index = crate::analysis::rust_index::RustIndex::default();
         index.insert_file_only(
             PathBuf::from("src/lib.rs"),
@@ -7433,6 +7447,45 @@ mod tests {
             "{:?}",
             opaque.missing_discriminators
         );
+    }
+
+    #[test]
+    fn a_rebound_parameter_does_not_make_a_constant_argument_the_boundary() {
+        // #9197 with #10199's file provenance: `score(LIMIT)` names the
+        // constant, but the owner rebinds `amount` before the comparison, so
+        // the argument is not the compared value and no "argument names
+        // constant" fact (with its test file) is listed. The unrebound owner
+        // is the positive control and keeps the fact.
+        let calls = ["score(5);", "score(crate::LIMIT);"];
+        let names_constant = |owner: &str| {
+            let (activation, _) = constant_boundary_activation_for_owner(
+                owner,
+                "const LIMIT: i32 = 5 * 2;",
+                "use app::score;",
+                &calls,
+            );
+            activation.observed_values.iter().any(|fact| {
+                fact.text.contains("argument names constant LIMIT")
+                    && fact.file.as_deref() == Some(std::path::Path::new("tests/score.rs"))
+            })
+        };
+        assert!(names_constant(
+            "pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}"
+        ));
+        assert!(names_constant(
+            "pub fn score(amount: i32) -> bool {\n    let other = 1; amount > LIMIT\n}"
+        ));
+        for rebinding in [
+            "let amount = amount + 1;",
+            "let mut amount = amount; amount += 1;",
+        ] {
+            assert!(
+                !names_constant(&format!(
+                    "pub fn score(amount: i32) -> bool {{\n    {rebinding} amount > LIMIT\n}}"
+                )),
+                "{rebinding}"
+            );
+        }
     }
 
     #[test]
