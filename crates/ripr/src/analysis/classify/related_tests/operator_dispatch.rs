@@ -258,11 +258,7 @@ fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
             return false;
         }
         let typed = after.starts_with(':') && !after.starts_with("::");
-        // `a | b` is the operator itself, not a closure parameter list: a
-        // parameter sits between `|`/`,`/`mut` and `|`/`,`/`:`.
-        let opens = before.ends_with('|') || before.ends_with(',') || before.ends_with("mut");
-        let closes = after.starts_with('|') || after.starts_with(',');
-        let closure = opens && closes;
+        let closure = in_closure_parameters(masked, at, end);
         let pattern = before.ends_with("for")
             || before.ends_with("Some(")
             || before.ends_with("Ok(")
@@ -271,6 +267,29 @@ fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
             || before.ends_with("ref mut");
         typed || closure || pattern
     })
+}
+
+/// Whether the name at `at..end` sits between two `|` with only pattern text
+/// between: `|a|`, `|x, a|`, `|&a|`, `|(x, a)|`, `|[x, a]|`. `a | b` is the
+/// operator itself, so a lone `|` on one side does not count, and anything
+/// else (`=`, `;`, `{`) between the name and a `|` means it is not a parameter.
+fn in_closure_parameters(masked: &str, at: usize, end: usize) -> bool {
+    let pattern_byte = |byte: u8| {
+        is_ident_byte(byte)
+            || byte.is_ascii_whitespace()
+            || matches!(byte, b',' | b'&' | b'(' | b')' | b'[' | b']' | b':')
+    };
+    let bytes = masked.as_bytes();
+    let opens = bytes[..at]
+        .iter()
+        .rev()
+        .find(|&&byte| !pattern_byte(byte))
+        .is_some_and(|&byte| byte == b'|');
+    let closes = bytes[end..]
+        .iter()
+        .find(|&&byte| !pattern_byte(byte))
+        .is_some_and(|&byte| byte == b'|');
+    opens && closes
 }
 
 /// A path (`a`, `Money::zero`) that starts like an identifier.

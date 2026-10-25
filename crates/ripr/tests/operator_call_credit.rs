@@ -282,7 +282,7 @@ fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> 
 
 #[test]
 fn operands_that_are_not_established_as_the_impl_type_stay_unrelated() -> Result<(), String> {
-    let bodies: [(&'static str, &'static str); 12] = [
+    let bodies: [(&'static str, &'static str); 15] = [
         ("integers", "assert_eq!(1 + 2, 3);"),
         (
             "parameter of a nested fn shadows the binding",
@@ -295,6 +295,18 @@ fn operands_that_are_not_established_as_the_impl_type_stay_unrelated() -> Result
         (
             "untyped closure parameter shadows the binding",
             "let a = Money(1);\n        let inc = |a| a + 1;\n        assert_eq!(inc(1), 2);\n        let _ = a;",
+        ),
+        (
+            "reference-pattern closure parameter shadows the binding",
+            "let a = Money(5);\n        let v = [1i64, 2];\n        let s: i64 = v.iter().map(|&a| (a + 1)).sum();\n        assert_eq!(s, 5);\n        let _ = a;",
+        ),
+        (
+            "tuple-pattern closure parameter shadows the binding",
+            "let a = Money(5);\n        let v = [(1i64, 2i64)];\n        let s: i64 = v.iter().map(|(x, a)| (a + x)).sum();\n        assert_eq!(s, 3);\n        let _ = a;",
+        ),
+        (
+            "array-pattern closure parameter shadows the binding",
+            "let a = Money(5);\n        let v = [[1i64, 2i64]];\n        let s: i64 = v.iter().map(|[x, a]| (a + x)).sum();\n        assert_eq!(s, 3);\n        let _ = a;",
         ),
         (
             "reference operands select the impl for &Money",
