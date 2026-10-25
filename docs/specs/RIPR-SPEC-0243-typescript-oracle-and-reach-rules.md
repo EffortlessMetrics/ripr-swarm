@@ -830,7 +830,7 @@ prove its condition costs an abstention or a gap, never a credit.
 
 **Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
 that imports `expect` and `test` from `@playwright/test` reads like its
-plain form in six places:
+plain form in seven places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -870,6 +870,11 @@ plain form in six places:
    pair. The base must be the owner call or a local alias of it; a field
    whose value is unchanged, another object's field and another owner keep
    the old reading.
+7. `test.describe(name, body)` (and `.describe.serial`, `.describe.parallel`
+   and `.only` on them) is a suite spelled as a member of the `test` root
+   (#10177). Its nested tests are extracted like those of a `describe`.
+   `.skip` and `.fixme` stay inactive, and a `test` that is not the runner
+   import is not a suite root.
 
 **Rule 17. `t.skip()` / `t.todo()` inside a test body withdraws the test
 (#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
