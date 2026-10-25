@@ -19,7 +19,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return importlib.import_module(module_name).handle(payload, strict=True)
-  Analyzer limit: Static limit `missing_import_graph`: the changed line uses dynamic import syntax such as `importlib.import_module(...)` or `__import__(...)`; the Python preview adapter does not…
+  Analyzer limit: Static limit `missing_import_graph`: the changed line uses dynamic import syntax
+    such as `importlib.import_module(...)` or `__import__(...)`; the Python preview adapter does not
+    build an import graph or resolve imported implementation semantics
   Related test: tests/test_plugin_loader.py:4 test_run_plugin_returns_payload_status
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
