@@ -4697,10 +4697,14 @@ mod repair_summary_tests {
             .join("agent-receipt.json");
         let lines = repair_after_summary_lines(&missing);
         assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
-        let expected_prefix = format!(
-            "could not read {} to summarize the result: ",
-            missing.display()
-        );
+        // Diagnostics print through human_path: `/` separators on Windows,
+        // the native spelling on Unix.
+        let printed = if cfg!(windows) {
+            missing.display().to_string().replace('\\', "/")
+        } else {
+            missing.display().to_string()
+        };
+        let expected_prefix = format!("could not read {printed} to summarize the result: ");
         assert!(
             lines
                 .first()

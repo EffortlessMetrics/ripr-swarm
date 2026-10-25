@@ -297,8 +297,8 @@ mod tests {
             message,
             format!(
                 "swarm ingest --result {} must stay under root {}",
-                outside.display(),
-                root.display()
+                crate::output::path::human_path(&outside),
+                crate::output::path::human_path(&root)
             )
         );
         let Err(message) = validate_result_path(&root, Path::new("../outside.json")) else {

@@ -3826,7 +3826,9 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
             "refusal must echo the caller-supplied base: {value}"
         ));
     }
-    if value["root"] != root_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&root_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -3896,7 +3898,9 @@ fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), Strin
         "repository_root_unusable",
         "analysis/repository-root",
     )?;
-    if value["root"] != plain_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&plain_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -4147,7 +4151,9 @@ fn diff_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
             "refusal must echo the caller-supplied mode: {value}"
         ));
     }
-    if value["root"] != root_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&root_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -4348,7 +4354,9 @@ fn agent_packet_json_unusable_root_emits_refusal_envelope() -> Result<(), String
         "repository_root_unusable",
         "analysis/repository-root",
     )?;
-    if value["root"] != root_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&root_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -8617,7 +8625,7 @@ fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
     assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
     let packet = root.join("target/ripr/workflow/agent-packet.json");
     assert!(
-        stdout.contains(&packet.display().to_string()),
+        stdout.contains(&printed_path(&packet)),
         "before summary must name the root-resolved packet:\n{stdout}"
     );
     assert!(stdout.contains("Next, after the test edit: "), "{stdout}");
@@ -8652,7 +8660,7 @@ fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
         "target/ripr/workflow/agent-verify.json",
     ] {
         assert!(
-            stdout.contains(&root.join(artifact).display().to_string()),
+            stdout.contains(&printed_path(&root.join(artifact))),
             "after summary must name the root-resolved {artifact}:\n{stdout}"
         );
     }
