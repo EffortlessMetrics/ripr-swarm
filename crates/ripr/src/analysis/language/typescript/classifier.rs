@@ -6009,6 +6009,18 @@ pub(crate) fn classify_resolved_owner(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
+    // A one-line guard whose condition is unchanged was edited in its
+    // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
+    // the changed behavior; the shape stays unrecognised rather than crediting
+    // a test at an unchanged threshold.
+    let probe_shape = if probe_shape.specific
+        && inline_guard_condition(line_text).is_some_and(|condition| {
+            old_line_text.and_then(inline_guard_condition) == Some(condition)
+        }) {
+        TypeScriptProbeShape::ambiguous_fallback()
+    } else {
+        probe_shape
+    };
     // RIPR-SPEC-0243 rule 15: a declared concise arrow is the owner's return
     // only when it declares the owner itself; a local arrow nested in the
     // owner binds another name and returns nothing.
@@ -6744,6 +6756,7 @@ pub(crate) fn classify_resolved_owner(
                 pin_facts: &pin_facts,
                 changed_field: changed_field.as_ref(),
             },
+            boundary_fact: missing_discriminators.first(),
         },
         related_candidates,
         &predicate_activations,
