@@ -1,0 +1,7 @@
+//! RIPR-SPEC-0048 acceptance example 4.
+
+pub const RETRY_LIMIT: u32 = 3;
+
+pub fn should_retry(attempt: u32) -> bool {
+    attempt < RETRY_LIMIT
+}
