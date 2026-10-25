@@ -21,14 +21,14 @@
         "mutated_line": "x * 2",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: tripled(2) becomes 4, still positive"
+        "equivalence_review": "not equivalent: tripled(2) becomes 4, still non-zero"
       },
       {
         "replacement": "x * 4",
         "mutated_line": "x * 4",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: tripled(2) becomes 8, still positive"
+        "equivalence_review": "not equivalent: tripled(2) becomes 8, still non-zero"
       }
     ]
   },
@@ -39,12 +39,12 @@
       "limited"
     ]
   },
-  "reasoning": "The guard condition is `!looks_right(value)`, a helper call whose meaning ripr does not read. The helper only requires a positive value, so both mutants survive; ripr must not credit the opaque guard. Spec cells: RIPR-SPEC-0154#4.",
+  "reasoning": "The guard condition is the unnegated helper call `looks_wrong(value)`, whose meaning ripr does not read. The helper only rejects zero, so both mutants survive; ripr must not read an oracle into the opaque guard. Spec cells: RIPR-SPEC-0154#4.",
   "labeling_observation": {
-    "ripr_commit": "ae90b830",
+    "ripr_commit": "b9b86106bc",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
-      "weakly_exposed"
+      "reachable_unrevealed"
     ],
     "excerpt_parity": "matched"
   },

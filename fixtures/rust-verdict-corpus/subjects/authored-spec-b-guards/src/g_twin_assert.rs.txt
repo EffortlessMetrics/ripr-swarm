@@ -1,0 +1,15 @@
+//! The assert! twin of the relational guard: a weak relational check.
+
+pub fn rating(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_positive_input_rates_above_zero_g_twin_assert() {
+        assert!(rating(2) > 0);
+    }
+}

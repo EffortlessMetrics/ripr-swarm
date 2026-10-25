@@ -41,7 +41,7 @@
   },
   "reasoning": "The guard `if !(score(2) > 0)` is the twin of the weak relational assert!(score(2) > 0); any positive score passes, so both mutants survive. Spec cells: RIPR-SPEC-0154#6.",
   "labeling_observation": {
-    "ripr_commit": "ae90b830",
+    "ripr_commit": "b9b86106bc",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "weakly_exposed"
@@ -50,5 +50,11 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0154#6"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "test": "a_positive_input_scores_above_zero_g_twin_strength",
+    "spec": "RIPR-SPEC-0154#6"
+  }
 }

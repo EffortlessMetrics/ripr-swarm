@@ -18,5 +18,23 @@
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "relational_check",
+      "strength": "weak",
+      "test": "the_banner_names_the_user_g_contains",
+      "spec": "RIPR-SPEC-0154#5"
+    },
+    "observed_kind": "relational_check",
+    "observed_strength": "weak",
+    "observed_all": [
+      {
+        "test": "the_banner_names_the_user_g_contains",
+        "kind": "relational_check",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
 }

@@ -31,7 +31,11 @@
     },
     {
       "path": "src/g_opaque.rs",
-      "sha256": "af517d200b099bf6973a300d3361c3a96b980bbf194a972305d335b715ce22f3"
+      "sha256": "d40bdb27832a4bf2528d1f14eaf348549883750f71842132fe760c2a4733ac01"
+    },
+    {
+      "path": "src/g_twin_assert.rs",
+      "sha256": "d3616a25bb6bedbfa24b489ea5101e2dfb4d8f6764d99fcdf11892e4e178f150"
     },
     {
       "path": "src/g_twin_strength.rs",
@@ -39,7 +43,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "2f02a1f6107ac5a803ab2469697ede8c1b2b4f80babcca5f6ba74f6d8e195609"
+      "sha256": "77d9ec853df514e779c7d025ba7b59104a38e0413d2390a92251353d5892a5d2"
     }
   ]
 }

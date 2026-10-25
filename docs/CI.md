@@ -447,17 +447,48 @@ and single-platform CI was the root cause enabling both.
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
-- **Logs are redirected, not piped.** Each cargo step writes its log with a
-  file redirect and replays it with `cat`. A `| tee` pipe stays open until
-  every process holding its write end exits, so one test leaking a child kept
+- **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
+- **Test steps run under `windows-advisory-run`** (#9272, #9660). The
+  `--no-default-features` test step and both workspace runs go through
+  `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
+  Object on Windows). It streams output to the job log as it arrives and into
+  the log file, ends the whole tree at its own deadline (40 minutes for the
+  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  names every test libtest reported as running for over 60 seconds with no
+  result, so a stuck run points at a test. It records cargo's exit code in the
+  status file (124 when it enforced the deadline, 127 when the command could
+  not start) and exits 0, so test outcomes stay advisory and a missing status is
+  still reported as missing evidence by the summarizer. Both streams share one
+  pipe so cargo's `Running` headers and libtest's results keep the order the
+  summarizer attributes by. It also bounds the wait for output after cargo
+  exits and requests termination of the process tree when a descendant keeps
+  the pipe open (a Job Object kills the whole tree on Windows), which is what a
+  `| tee` could not do: a test that leaks a child kept
   the step alive after cargo finished until the 90-minute job limit cancelled
-  the whole lane (#9272, run 39549631529). Each cargo step also carries its
-  own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
-  no status file, which the summarizer reports as missing evidence. The job
-  deadline (270 minutes) exceeds the sum of the cargo step deadlines (15+45+15+75+75), so
-  those steps alone cannot exhaust it (setup, summary compilation and the
-  manual isolation repeats have no separate deadline). The manual nested-alias
-  isolation repeats use the same redirect-and-replay form.
+  the whole lane (run 39549631529), and two jobs ran for hours past a
+  75-minute step limit with no output (jobs 119992784688 and 120026188944). The
+  runner executable is copied to `target/advisory-run/` first, because
+  `cargo test --workspace` rebuilds `xtask.exe` and Windows will not replace a
+  running image. Job-log delivery runs on its own thread behind a bounded
+  queue, so a stalled job-log pipe cannot delay the deadline: the log file keeps
+  every line and the runner reports what the job log lost. Termination runs on a helper thread that owns the child, because the
+  owner's reap and its drop poll without a bound; the runner observes the
+  primary for ten seconds, abandons a call that has not returned in twenty, and
+  reports a failed or unconfirmed termination instead of waiting indefinitely
+  or claiming success.
+  A read error on the command's pipe or a write error on the log file means the
+  log may be incomplete, so the status file is withheld and the summarizer
+  refuses the step. Repeating `--timeout-minutes`, `--log` or `--status` is
+  refused. The Windows-native forced-deadline control runs with
+  `workflow_dispatch` input `runner_probe_only` (job
+  `windows-advisory-runner-probe`), without the full lanes. The check steps still redirect to a file and replay it with
+  `cat`. Every step also carries its own `timeout-minutes` as a backstop above
+  the runner deadline, and later steps run under `!cancelled()`. The job
+  deadline (270 minutes) exceeds the sum of the step deadlines
+  (15+45+15+15+75+75, including the runner build), so those steps alone cannot
+  exhaust it (setup, summary compilation and the manual isolation repeats have
+  no separate deadline). The manual nested-alias isolation repeats use the
+  redirect-and-replay form.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -1150,6 +1181,22 @@ the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
 
+### Merge-ready Conflict Notice
+
+A `merge-ready` label on a PR that conflicts with its base starts no
+`routed-rust.yml` run, because GitHub creates no `pull_request` run without a
+test-merge ref (#9842, #9250).
+`.github/workflows/merge-ready-conflict-notice.yml` closes that silence. It runs
+on `pull_request_target: [labeled]` for the `merge-ready` label only, reads the
+PR's `mergeable_state` through the API (retrying while GitHub computes it), and
+for a `dirty` PR posts one comment per head SHA plus a failing
+`merge-ready conflict` commit status. A mergeable PR gets nothing from it except the clearing of a conflict status it posted earlier on the same head, and a
+head or base branch that changed after the request is ignored. If mergeability is still uncomputed after the retries it warns and exits, and the label can be re-applied. The failing status is keyed to the head SHA: it clears with the next push, or when a re-applied label finds the conflict gone. The workflow checks out and runs
+no PR code, takes only the PR number, head SHA and base branch name as `env` values, uses no
+third-party actions, and holds job-level `pull-requests: write` and
+`statuses: write` only. It is a notice, not a required check; the author merges
+the base branch, resolves the conflict, and re-applies `merge-ready`.
+
 ### PR Staleness Watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates
@@ -1182,7 +1229,7 @@ minutes), so before calling a head dark the watchdog also lists
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Drafts and fork heads are
-skipped, as are PRs without the `merge-ready` label (no request was made). No PR comments are posted; each sweep's summary table is the audit
+skipped, as are PRs without the `merge-ready` label (no request was made). The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.

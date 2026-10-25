@@ -1,3 +1,0 @@
-case = "spec-b-0154-negated-matches-guard"
-issue = 10121
-reason = "A negated-matches! Err-return guard credits the exact-value oracle, but the return-value probe stays weakly_exposed (observation_unverified) while its assert!(matches!(..)) twin exposes (#10121)."

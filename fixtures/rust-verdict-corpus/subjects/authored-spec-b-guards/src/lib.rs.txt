@@ -7,4 +7,5 @@ pub mod g_contains;
 pub mod g_matches;
 pub mod g_neq;
 pub mod g_opaque;
+pub mod g_twin_assert;
 pub mod g_twin_strength;

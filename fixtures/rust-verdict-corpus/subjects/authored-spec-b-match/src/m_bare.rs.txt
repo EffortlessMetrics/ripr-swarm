@@ -1,0 +1,26 @@
+//! A bare identifier pattern binds the whole scrutinee.
+
+pub fn label_bare(kind: &str) -> &'static str {
+    match kind {
+        word => "alpha",
+    }
+}
+
+pub fn classify_bare(input: &str) -> &'static str {
+    let final_label = label_bare(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_binding_arm_is_alpha_m_bare() {
+        assert_eq!(classify_bare("word"), "word");
+    }
+}

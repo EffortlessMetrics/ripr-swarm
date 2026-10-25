@@ -1,0 +1,12 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -19,7 +19,7 @@ def notify(user):
+ 
+ def refund(order):
+     if order > 0:
+-        log.warning("refunded: %s", order)
++        log.warning("refunded: %s pii", order)
+         return True
+     return False
+ 

@@ -42,7 +42,7 @@
   },
   "reasoning": "The tests return Err from , the twin of assert!(actual == expected, ..); the row at 2 pins the product, so both mutants of tripled fail them. Spec cells: RIPR-SPEC-0154#1.",
   "labeling_observation": {
-    "ripr_commit": "ae90b830",
+    "ripr_commit": "b9b86106bc",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

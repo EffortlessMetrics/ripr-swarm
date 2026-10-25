@@ -42,7 +42,7 @@
   },
   "reasoning": "The production predicate is still a probe while a cfg(test) panic-guard helper sits beside it; the direct asserts at 11 and 10 straddle the boundary, so both mutants fail the test. Spec cells: RIPR-SPEC-0154#3.",
   "labeling_observation": {
-    "ripr_commit": "ae90b830",
+    "ripr_commit": "b9b86106bc",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

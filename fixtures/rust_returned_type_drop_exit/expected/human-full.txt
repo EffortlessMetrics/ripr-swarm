@@ -75,7 +75,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  The related test `makes` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
+  The related test `makes` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_exit/input --diff <cwd>/fixtures/rust_returned_type_drop_exit/diff.patch --mode fast probe:src_lib.rs:return_value:d6c89ab3
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_exit/input --diff <cwd>/fixtures/rust_returned_type_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:return_value:d6c89ab3

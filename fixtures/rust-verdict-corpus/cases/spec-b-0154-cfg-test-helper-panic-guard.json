@@ -42,7 +42,7 @@
   },
   "reasoning": "The changed line is the guard inside the cfg(test) helper expect_class; test-only code seeds no probe, so ripr stays silent. Both mutants make the helper panic on the matching rows and fail the test. Spec cells: RIPR-SPEC-0154#3.",
   "labeling_observation": {
-    "ripr_commit": "ae90b830",
+    "ripr_commit": "b9b86106bc",
     "full_checkout_verdict": "silent",
     "full_checkout_classifications": [],
     "excerpt_parity": "matched"

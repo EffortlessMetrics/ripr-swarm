@@ -42,10 +42,10 @@
   },
   "reasoning": "The test returns Err from `if !matches!(value, 2)`, the twin of assert!(matches!(value, 2)), so both mutants of doubled change value away from 2 and fail it. Spec cells: RIPR-SPEC-0154#2.",
   "labeling_observation": {
-    "ripr_commit": "ae90b830",
-    "full_checkout_verdict": "gap",
+    "ripr_commit": "b9b86106bc",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "weakly_exposed"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   },
