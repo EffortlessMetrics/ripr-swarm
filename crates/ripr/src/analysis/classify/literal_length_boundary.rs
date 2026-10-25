@@ -246,6 +246,14 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
                 return None;
             }
             let range = site.range?;
+            if !context
+                .index
+                .files()
+                .get(&test.file)
+                .is_some_and(|facts| straight_line_call(&facts.source, test.start_line, &range))
+            {
+                return None;
+            }
             let (input, width) = literal_arguments(&site.text)?;
             rows.push(LiteralLengthRow {
                 test_file: test.file.clone(),
@@ -353,6 +361,98 @@ fn literal_arguments(text: &str) -> Option<(String, usize)> {
         return None;
     }
     Some((input, width.parse().ok()?))
+}
+
+/// The row's call must run whenever its test runs: a direct statement of the
+/// test body, with no branch, loop, closure, `?` or early exit anywhere in it.
+/// Without this an assertion under `if false { .. }` would still supply a row.
+fn straight_line_call(source: &str, test_start_line: usize, call: &Range<usize>) -> bool {
+    let line_start = source
+        .split_inclusive('\n')
+        .take(test_start_line.saturating_sub(1))
+        .map(str::len)
+        .sum::<usize>();
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let Some(rest) = masked.get(line_start..) else {
+        return false;
+    };
+    let Some(open) = rest.find('{').map(|at| at + line_start) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (at, byte) in masked.bytes().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return false;
+    };
+    if call.start <= open || call.end > close {
+        return false;
+    }
+    let body = masked.get(open + 1..close).unwrap_or_default();
+    if body.contains(['{', '}']) && {
+        // Only the macro-invocation parentheses/brackets of straight-line
+        // statements are expected; any inner brace is a block or branch.
+        masked
+            .get(open + 1..call.start)
+            .is_none_or(|before| before.contains(['{', '}']))
+    } {
+        return false;
+    }
+    !body.contains('?')
+        && !has_closure_head(body)
+        && !body
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| {
+                matches!(
+                    word,
+                    "if" | "else"
+                        | "match"
+                        | "loop"
+                        | "while"
+                        | "for"
+                        | "return"
+                        | "break"
+                        | "continue"
+                        | "async"
+                        | "move"
+                        | "unsafe"
+                )
+            })
+}
+
+/// A closure head: `|args|`, or an empty `||` where an operand is expected
+/// (a boolean `a || b` has an operand before it and stays admitted).
+fn has_closure_head(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    bytes.iter().enumerate().any(|(at, byte)| {
+        if *byte != b'|' {
+            return false;
+        }
+        let single = bytes.get(at + 1) != Some(&b'|') && (at == 0 || bytes[at - 1] != b'|');
+        if single {
+            return true;
+        }
+        if bytes.get(at + 1) != Some(&b'|') {
+            return false;
+        }
+        bytes[..at]
+            .iter()
+            .rev()
+            .find(|b| !b.is_ascii_whitespace())
+            .is_none_or(|prev| matches!(prev, b'=' | b'(' | b',' | b'{' | b';' | b':' | b'&'))
+    })
 }
 
 fn row_is_asserted(row: &LiteralLengthRow, assertion: &OracleFact, source: &str) -> bool {

@@ -105,7 +105,10 @@ exercised boundary from a missing one.
   call range. An equality between that row's UTF-8 byte length and its width
   establishes infection. Credit also requires the existing admitted
   owner-return pin on that same source call; another row, same-line call,
-  assertion message or foreign owner cannot supply it. The owner AST
+  assertion message or foreign owner cannot supply it. A row is admitted only
+  when its call is a direct statement of a test body that has no branch, loop,
+  closure, `?` or early exit, so an assertion under `if false` supplies none.
+  The owner AST
   establishes the comparison as the returned value, supplied to the existing
   propagation authority as an owner-bound return sink. Derived local values
   are rendered as assignment facts; rendered `==` text grants no authority.

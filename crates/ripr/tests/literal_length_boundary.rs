@@ -369,3 +369,32 @@ fn same_named_foreign_owner_and_weak_oracle_do_not_get_credit() -> Result<(), St
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:#?}");
     Ok(())
 }
+
+#[test]
+fn a_single_equal_row_or_a_conditionally_run_row_is_not_credited() -> Result<(), String> {
+    // `<=` -> `>=` / `==` survives a lone equal row.
+    let lone = candidate().replace("assert!(!fits(\"abcd\", 3));", "");
+    assert_eq!(finding(&lone)?.class, ExposureClass::InfectionUnknown);
+    for (from, to) in [
+        (
+            "assert!(!fits(\"abcd\", 3));",
+            "if false { assert!(!fits(\"abcd\", 3)); }",
+        ),
+        (
+            "assert!(fits(\"abc\", 3));",
+            "if false { assert!(fits(\"abc\", 3)); }",
+        ),
+        (
+            "assert!(!fits(\"abcd\", 3));",
+            "return; assert!(!fits(\"abcd\", 3));",
+        ),
+        (
+            "assert!(!fits(\"abcd\", 3));",
+            "let f = || assert!(!fits(\"abcd\", 3));",
+        ),
+    ] {
+        let source = candidate().replace(from, to);
+        assert_ne!(finding(&source)?.class, ExposureClass::Exposed, "{to}");
+    }
+    Ok(())
+}
