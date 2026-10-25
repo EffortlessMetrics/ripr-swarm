@@ -553,3 +553,25 @@ fn given_a_fixture_renamed_to_caplog_then_the_logged_text_abstains() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn given_a_replaced_or_unrelated_caplog_rename_then_the_builtin_caplog_is_still_credited()
+-> Result<(), String> {
+    let renamed = "import pytest\n\n\n@pytest.fixture(name=\"caplog\")\ndef custom_recorder():\n    return Recorder()\n";
+    // A later def of the binding replaces the renamed fixture (#10444 review).
+    let replaced = format!("{renamed}\n\ndef custom_recorder():\n    return None\n");
+    // `caplog` spelled in `params=` is data, not the registered name.
+    let params = "import pytest\n\n\n@pytest.fixture(params=['name=\"caplog\"'])\ndef sample(request):\n    return request.param\n";
+    for conftest in [replaced.as_str(), params] {
+        assert_eq!(
+            log_edit(&[
+                ("src/audit.py", AUDIT_PY),
+                ("tests/conftest.py", conftest),
+                ("tests/test_audit.py", PINNED),
+            ])?,
+            (ExposureClass::Exposed, None),
+            "{conftest}"
+        );
+    }
+    Ok(())
+}
