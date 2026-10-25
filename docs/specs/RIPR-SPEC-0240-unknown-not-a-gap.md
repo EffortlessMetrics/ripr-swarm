@@ -720,9 +720,10 @@ Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
 `fixture_setup_owns_only_exclusively_acquired_roots`, and
 `plain_test_cfg_uses_the_shared_predicate_authority`.
 The framework recorder positive is now
-`a_hand_written_recorder_compared_by_field_is_credited`; the older framework
-catalog below retains its original withholding name. The framework suite retains
-the concrete/collection/count/order controls.
+`a_hand_written_recorder_compared_by_field_is_credited`. The
+`a_hand_written_recorder_compared_by_field_is_withheld` catalog entry below is
+its historical name. The framework suite retains the concrete/collection/count/order
+controls.
 
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 
