@@ -26,7 +26,7 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "perl-hostile-autoload-field"
-reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
+reason = "Tests catch the rewrite, but the changed sub is reached only through AUTOLOAD or a glob-assigned closure, so ripr abstains (limited) on purpose rather than credit a test it cannot attribute statically (#9483)."
 
 [[entry]]
 case = "perl-hostile-constant-tax"
@@ -34,7 +34,7 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "perl-hostile-glob-double"
-reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
+reason = "Tests catch the rewrite, but the changed sub is reached only through AUTOLOAD or a glob-assigned closure, so ripr abstains (limited) on purpose rather than credit a test it cannot attribute statically (#9483)."
 
 [[entry]]
 case = "perl-hostile-line-directive-pad"
