@@ -86,3 +86,17 @@ Wrong-implementation scored row:
   "findings_contradicted": 0,
   "contradiction_counts": {}
 }
+
+Current outer rewrite precision refresh:
+The outer case now uses `return (value)`, an unconditional identity rewrite.
+Its three runtime executions were refreshed; the other six were also replayed.
+The wrong-implementation inner-owner experiment is unaffected: it uses its own unchanged diff and subject.
+Native corpus check exit 0 after the outer rewrite refresh:
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running `target/debug/xtask verdict-corpus check --language python`
+$ CARGO_HOME=<cargo-home> RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=<rustup-home> cargo build -p ripr
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.67s
+verdict-corpus: 241 cases; false verdicts 0.0041 (1/241), contradictions 0.0000 (0/241); wrote target/ripr/reports/verdict-corpus/python
+verdict-corpus: spec examples covered 1.0000 (57/57), floor 57
+verdict-corpus: operator grid covers 21/21 cells (floor 21); traps credited 0/17 (ceiling 0)

@@ -4,7 +4,7 @@ diff --git a/nested/core.py b/nested/core.py
 @@ -1,5 +1,5 @@
  def f(value):
 -    return value
-+    return +value
++    return (value)
  
  
  def g(value):
