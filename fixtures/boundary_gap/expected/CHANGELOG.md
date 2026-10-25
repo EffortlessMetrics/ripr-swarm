@@ -1155,7 +1155,7 @@ dependent verify commitments and receipt byte hashes only.
 
 ### Cross-file macro_rules! test tables classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.101 to 1.102 for
+The same snapshots follow corpus cache generation 1.102 to 1.103 for
 `macro_rules!` test tables whose generator is defined in another file
 (RIPR-SPEC-0117 example 9, #6925), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
@@ -1224,3 +1224,10 @@ content commitment, dependent verify commitments and receipt byte hashes only.
 The same snapshots follow corpus cache generation 1.99 to 1.100 for the
 equal-valued arm sink limit (#9843), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
+
+### multi-line equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.101 to 1.102 for the
+rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
