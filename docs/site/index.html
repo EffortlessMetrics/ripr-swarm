@@ -33,7 +33,7 @@
     <main id="main" tabindex="-1">
       <section class="hero wrap" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Static test analysis · Rust / Cargo</p>
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Free and open source · Static test analysis</p>
           <h1 id="hero-title">Write tests that<br><em>notice the change.</em></h1>
           <p class="hero-description">Your diff changes behavior. Do your tests check it? ripr reads the change and related tests, explains possible assertion gaps, and suggests a focused next test.</p>
           <div class="hero-actions">
@@ -78,16 +78,29 @@
         <div class="example-evidence">
           <div class="test-snippet">
             <p class="code-caption">Existing tests · below and above</p>
-            <pre><code>assert_eq!(discounted_total(50, 100), 50);
+            <pre><code id="existing-tests">assert_eq!(discounted_total(50, 100), 50);
 assert_eq!(discounted_total(10_000, 100), 9_990);</code></pre>
           </div>
           <div class="finding">
             <p class="finding-label"><span aria-hidden="true">◉</span> A boundary to inspect</p>
             <p class="code-caption">Selected lines · 0.11 development fixture output</p>
-            <pre><code>Changed behavior: amount &gt;= discount_threshold
+            <pre><code id="fixture-output">Changed behavior: amount &gt;= discount_threshold
 Missing discriminator: amount == discount_threshold
 Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions</code></pre>
             <a href="https://github.com/EffortlessMetrics/ripr-swarm/blob/67f48e6ef567302ab7e104a2dfa83db5f8cd422c/fixtures/boundary_gap/expected/human.txt">Read the checked fixture <span class="arrow" aria-hidden="true"></span></a>
+            <p class="fixture-replay">To replay it from a development checkout with the matching development build:</p>
+            <pre><code id="fixture-command">ripr check --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch --mode fast</code></pre>
+          </div>
+          <div class="test-snippet boundary-repair">
+            <p class="code-caption">Add the missing equality case</p>
+            <p>If equality should receive the discount, add this test beside the existing tests:</p>
+            <pre><code id="boundary-test">#[test]
+fn equality_gets_discount() {
+    assert_eq!(discounted_total(100, 100), 90);
+}</code></pre>
+            <p>The <code>&gt;=</code> version returns <code>90</code>; the old <code>&gt;</code> version returns <code>100</code> and fails this assertion. Run the focused test:</p>
+            <pre><code id="boundary-test-command">cargo test equality_gets_discount</code></pre>
+            <p class="step-note">Choose the expected result from your intended behavior. This test runs your code; ripr’s finding is static evidence.</p>
           </div>
         </div>
       </section>

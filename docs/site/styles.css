@@ -79,7 +79,7 @@ h1 em { color: var(--teal); font-weight: 400; }
 .principles p { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding-block: 23px; margin: 0; font-size: .84rem; }
 .principles p + p { padding-left: 22px; }
 .principles span { color: var(--teal); margin-right: 17px; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .7rem; }
-.example-section { display: grid; grid-template-columns: .86fr 1.14fr; gap: 90px; align-items: center; }
+.example-section { display: grid; grid-template-columns: .86fr 1.14fr; gap: 90px; align-items: start; }
 .section-intro h2 { margin-bottom: 24px; }
 .section-intro > p:not(.eyebrow) { color: var(--muted); font-size: .92rem; }
 .section-intro .text-link { margin-top: 7px; }
@@ -91,6 +91,9 @@ h1 em { color: var(--teal); font-weight: 400; }
 .finding-label span { margin-right: 6px; }
 .finding pre { font-size: .8rem; line-height: 1.9; margin: 19px 0 18px; }
 .finding a { font-size: .74rem; }
+.finding .fixture-replay { font-size: .78rem; margin: 20px 0 0; }
+.boundary-repair { margin-top: 20px; border-radius: 6px; }
+.boundary-repair > p:not(.code-caption) { color: var(--muted); font-size: .84rem; margin-block: 16px; }
 
 .limits-band { background: #eae5da; border-block: 1px solid var(--line); }
 .limits-content { display: grid; grid-template-columns: .86fr 1.14fr; gap: 90px; padding-block: 45px; }

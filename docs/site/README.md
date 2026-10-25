@@ -47,6 +47,12 @@ SHA-256 hashes with the sources.
 
 For a website change:
 
+- Run `python3 docs/site/test_example.py` with Cargo on `PATH`. It checks local
+  links/assets and fixture excerpts, then executes the page's focused equality
+  test in an isolated copy of the boundary fixture. Both original tests must pass
+  with the old condition, while the new equality test must reject it. The matching
+  development build is required to replay the displayed ripr fixture command;
+  the page's 0.10.0 install remains a separate published-version workflow.
 - Validate HTML and run a browser accessibility scan such as axe-core. Automated
   scans provide partial accessibility evidence.
 - Check desktop and mobile layouts at 320, 375, 768, and 1440 CSS pixels, 200%
