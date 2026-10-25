@@ -8842,6 +8842,135 @@ fn caplog_messages_and_records_outside_the_bounded_shape_keep_abstaining() -> Re
     Ok(())
 }
 
+const ABSENCE_READS: [&str; 4] = [
+    "assert \"deprecated warning\" not in caplog.text",
+    "assert \"deprecated warning\" not in caplog.messages",
+    "assert not any(\"deprecated warning\" in r.message for r in caplog.records)",
+    "assert \"deprecated warning\" not in [r.message for r in caplog.records]",
+];
+
+#[test]
+fn caplog_absence_reads_the_edit_breaks_are_credited() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: an assertion that a text is absent passes on
+    // the old message and fails once the edit puts the text in it.
+    for assertion in ABSENCE_READS {
+        // A whole-message read needs the message to equal the text; a
+        // substring read needs only to contain it.
+        let new_call = if assertion.contains("caplog.text") || assertion.contains("any(") {
+            "log.warning(\"deprecated warning: %s\", balance)"
+        } else {
+            "log.warning(\"deprecated warning\")"
+        };
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_reads_the_edit_keeps_absent_stay_a_gap() -> Result<(), String> {
+    for assertion in ABSENCE_READS {
+        for new_call in [
+            // The text is still absent after the edit.
+            "log.warning(\"balance low: %s\", balance)",
+            // The text arrives below the pinned capture level, so no record
+            // holds it and the absence assertion keeps passing.
+            "log.info(\"deprecated warning: %s\", balance)",
+        ] {
+            assert_eq!(
+                classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+                (ExposureClass::WeaklyExposed, None),
+                "{assertion} / {new_call}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_with_a_whole_message_compares_the_whole_message() -> Result<(), String> {
+    // `not in caplog.messages` holds the text only when a whole message equals
+    // it, so a longer message that contains the text keeps the assertion green.
+    let test = captured_records_test("assert \"deprecated\" not in caplog.messages");
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"deprecated: %s\", balance)",
+            &test
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_inside_an_and_chain_is_required_and_inside_an_or_is_not() -> Result<(), String> {
+    let breaks = "log.warning(\"low balance: %s deprecated warning\", balance)";
+    // Both conjuncts must hold; the edit breaks the absence one.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            breaks,
+            &captured_records_test(
+                "assert \"deprecated warning\" not in caplog.text and \"low balance: 5\" in caplog.text"
+            )
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    // An `or` can pass on the other side, so nothing is credited or called a gap.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            breaks,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"deprecated warning\" not in caplog.text or \"low balance: 5\" in caplog.text\n"
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_that_already_fails_before_the_edit_is_not_evaluated() -> Result<(), String> {
+    // The old message contains the text, so the test cannot be reading the
+    // edit: it fails before and after.
+    let finding = classify_log_text_edit(
+        AUDIT_OWNER,
+        "log.warning(\"balance low: %s\", balance)",
+        &captured_records_test("assert \"low balance\" not in caplog.messages"),
+    )?;
+    assert_ne!(finding.0, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn not_any_over_other_output_keeps_its_assertion_shape() {
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_cli(result):\n    assert not any(\"low balance\" in line for line in result.stdout)\n",
+    );
+    let shapes: Vec<_> = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|a| a.oracle_shape))
+        .collect();
+    assert!(!shapes.is_empty(), "assertions must be extracted");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| *shape != PythonOracleShape::OutputAssertion),
+        "{shapes:?}"
+    );
+}
+
 #[test]
 fn comprehension_over_other_output_keeps_its_assertion_shape() {
     // Only `caplog.records` comprehensions became output observations; a loop
