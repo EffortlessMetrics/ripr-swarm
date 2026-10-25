@@ -518,7 +518,7 @@ fn reexport_spellings(statements: &[Statement<'_>]) -> BTreeSet<String> {
 /// Loader identity for the bounded awaited-root import exemption. Mutable
 /// loaders and same-spelled helpers cannot establish a callable runner. The
 /// ambient `require` syntax contract does not prove runtime module resolution.
-fn program_require_is_known(
+pub(super) fn program_require_is_known(
     statements: &[Statement<'_>],
     imports: &[TypeScriptImport],
     block_functions_are_lexical: bool,

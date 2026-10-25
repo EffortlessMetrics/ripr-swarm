@@ -1014,3 +1014,12 @@ surface = "repo"
 classification = "metadata"
 reason = "Per-PR document-artifact fragments merged into policy/doc-artifacts.toml so parallel spec PRs do not append to the same ledger tail."
 covered_by = ["cargo xtask check-doc-artifacts"]
+
+[[allow]]
+glob = "policy/*_allowlist.d/*.txt"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR count-policy allowlist rows merged into policy/process_allowlist.txt and policy/network_allowlist.txt so parallel PRs do not append to the same list tail."
+covered_by = ["cargo xtask check-process-policy", "cargo xtask check-network-policy"]
