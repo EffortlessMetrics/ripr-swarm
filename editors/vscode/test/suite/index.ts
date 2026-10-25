@@ -1,6 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import Mocha from 'mocha';
+import { REQUIRED_TITLE_SEPARATOR } from '../requiredJourneys';
+
+export { REQUIRED_TITLE_SEPARATOR };
 
 export interface RunOutcome {
   executed: number;
@@ -9,9 +12,6 @@ export interface RunOutcome {
   /** Required tests (RIPR_TEST_REQUIRE_RAN) that did not pass in this run. */
   missingRequired?: string[];
 }
-
-/** Separator for RIPR_TEST_REQUIRE_RAN; test titles contain commas. */
-export const REQUIRED_TITLE_SEPARATOR = '|';
 
 export function parseRequiredTitles(value: string | undefined): string[] {
   return (value ?? '')

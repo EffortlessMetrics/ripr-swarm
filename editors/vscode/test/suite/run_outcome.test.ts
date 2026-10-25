@@ -95,7 +95,7 @@ suite('run outcome guard', () => {
   });
 });
 
-suite('required journeys', () => {
+suite('required journey guard', () => {
   const journey = 'Extension Smoke real server surfaces seam diagnostic, hover provider, and agent actions';
 
   test('titles containing commas survive the env round trip', () => {
