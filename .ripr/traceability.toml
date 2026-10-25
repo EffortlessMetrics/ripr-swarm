@@ -19265,6 +19265,10 @@ tests = [
   "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_computed_tail_is_not_a_return_flow",
   "crates/ripr/src/analysis/probes/binding_return.rs::tests::an_intervening_use_or_early_exit_is_not_a_return_flow",
   "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_let_inside_a_nested_block_is_not_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::an_unterminated_previous_line_makes_the_tail_a_different_expression",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::each_early_exit_form_blocks_the_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_start_bound_and_get_tail_are_range_bound_flows",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::the_changed_line_must_be_the_let",
   "crates/ripr/src/analysis/probes/diff.rs::tests::changed_binding_return_flow_keeps_the_probe_on_the_changed_line",
   "crates/ripr/src/analysis/language/rust/probes.rs::tests::changed_binding_return_evidence_is_disclosure_only",
 ]

@@ -53,17 +53,19 @@ branch.
 
 ### Relation (stage 1, no new credit)
 
-A changed `let [mut] NAME = INIT;` in a function body has a **return flow**
-when all of these hold:
+A changed single-line `let [mut] NAME = INIT;` (one statement, ending in `;`,
+sitting directly in the function's body block) has a **return flow** when all
+of these hold:
 
-1. After the `let`, `NAME` is not shadowed, reassigned, compound-assigned,
-   mutably borrowed, captured by a closure, or named inside a macro.
-2. The function's tail expression (or the operand of a `return` that no
-   statement can bypass) is exactly one of: `NAME`; a reference to an
-   indexed range bounded by `NAME` (`&EXPR[..NAME]`, `&EXPR[NAME..]`); or a
-   `get`/`get_unchecked` call with a range bounded by `NAME`.
-3. No statement between the `let` and the tail returns early or branches on a
-   value derived from `NAME`.
+1. After the `let`, no statement mentions `NAME` except the tail. That rules
+   out a shadow, a reassignment, a borrow, a closure capture and a macro use.
+2. The function's tail expression is exactly one of: `NAME`; `&PATH[..NAME]`
+   or `&PATH[NAME..]`; `PATH.get(..NAME)` or `PATH.get_unchecked(..NAME)`
+   (also the `NAME..` start form), where `PATH` is an identifier or field path.
+   A single-line `unsafe { ... }` around the tail is read through.
+3. No statement between the `let` and the tail contains `return`, `break` or
+   `?`, and the statement before the tail is terminated (`;`, `{` or `}`), so
+   the tail is not the continuation of a longer expression.
 
 The probe stays at the changed line and keeps its `static_unknown` class. The
 finding carries the relation and says which of the three flows applies, so the
@@ -76,13 +78,15 @@ class, or strengthens an oracle.
 
 A return flow earns credit only when all of these also hold:
 
-1. `INIT` is `RECEIVER.unwrap_or(D)` or `RECEIVER.unwrap_or_else(|| D)`, and
-   `D` has no side effect (a literal, a parameter, `PARAM.len()`).
+1. `INIT` is `RECEIVER.unwrap_or(D)` or `RECEIVER.unwrap_or_else(|| D)`, `D`
+   has no side effect (a literal, a parameter, `PARAM.len()`), and the changed
+   span of `INIT` is exactly `D`: an edit to `RECEIVER` is not credited.
 2. The flow is injective in the binding: the whole binding, or a range
-   bound over a string or slice (a different bound returns a different value
-   or panics).
+   bound over a string or slice with a fixed base (a different in-range bound
+   returns a different value; an out-of-range bound is detected by a safe
+   slice, and is not claimed for `get_unchecked`).
 3. A related test calls the owner with an input for which the value evaluator
-   proves `RECEIVER` is `None`, so the default is taken, and asserts the
+   (`classify/value_transfer.rs` is the only authority) proves `RECEIVER` is `None`, so the default is taken, and asserts the
    owner's return with an exact equality on that same call.
 
 An edit that changes the default is then noticed by that assertion. If the
@@ -93,7 +97,7 @@ A rebound, shadowed or captured binding never reaches stage 2.
 ## Required Evidence
 
 - Stage 1: the binding-to-return relation is recorded for the whole-binding and
-  range-bound flows; each blocker in condition 1 and 3 keeps the generic reading.
+  range-bound flows; each blocker in conditions 1 and 3 (rebound, shadowed, intervening use, each early-exit form, unterminated previous line) keeps the generic reading.
 - Stage 2: the credited case, plus one negative each for an unpinned default, a
   rebound binding, and a default that is called but not asserted.
 - Corpus negatives (present before the relation lands): `default-flow-unpinned`,

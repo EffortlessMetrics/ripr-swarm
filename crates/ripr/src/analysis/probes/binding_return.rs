@@ -64,6 +64,10 @@ pub(crate) fn resolve_changed_binding_return(
     if changed_offset >= lines.len() {
         return None;
     }
+    let changed_text = lines.get(changed_offset)?.trim_start();
+    if !changed_text.starts_with("let ") || !contains_token(changed_text, binding) {
+        return None;
+    }
     // The signature may span lines; the body block is the first brace the
     // scan opens, and the changed `let` must sit directly inside it.
     let mut depth = 0isize;
@@ -101,6 +105,23 @@ pub(crate) fn resolve_changed_binding_return(
         statements.push((offset, trimmed));
     }
     let (tail_offset, tail_text) = statements.last().copied()?;
+    // A tail that continues an unterminated line is a different expression.
+    let previous = statements
+        .len()
+        .checked_sub(2)
+        .and_then(|at| statements.get(at))
+        .map(|(_, line)| *line);
+    if let Some(previous) = previous
+        && !(previous.ends_with(';') || previous.ends_with('{') || previous.ends_with('}'))
+    {
+        return None;
+    }
+    if previous.is_none() {
+        let before_tail = lines.get(changed_offset)?.trim_end();
+        if !before_tail.ends_with(';') {
+            return None;
+        }
+    }
     let flow_kind = tail_flow(tail_text, binding)?;
     // No statement between the let and the tail mentions the binding, which
     // also rules out a shadow, a reassignment, a borrow and a capture.
@@ -241,5 +262,47 @@ mod tests {
     fn a_let_inside_a_nested_block_is_not_a_return_flow() {
         let body = "fn f(s: &str, b: bool) -> &str {\n    if b {\n        let end = s.len();\n        return &s[..end];\n    }\n    s\n}\n";
         assert_eq!(resolve(body, "end", 2), None);
+    }
+
+    #[test]
+    fn an_unterminated_previous_line_makes_the_tail_a_different_expression() {
+        let body = "fn f(s: &str, base: usize) -> usize {\n    let end = s.len();\n    base +\n    end\n}\n";
+        assert_eq!(resolve(body, "end", 1), None);
+        let slice = "fn f(s: &str, p: &str) -> String {\n    let end = s.len();\n    p.to_string() +\n    &s[..end]\n}\n";
+        assert_eq!(resolve(slice, "end", 1), None);
+    }
+
+    #[test]
+    fn each_early_exit_form_blocks_the_flow() {
+        for exit in ["return;", "let _t = s.get(..1)?;", "loop { break; }"] {
+            let body = format!(
+                "fn f(s: &str) -> &str {{\n    let end = s.len();\n    {exit}\n    &s[..end]\n}}\n"
+            );
+            assert_eq!(resolve(&body, "end", 1), None, "{exit}");
+        }
+    }
+
+    #[test]
+    fn a_start_bound_and_get_tail_are_range_bound_flows() -> Result<(), String> {
+        let start = "fn f(s: &str) -> &str {\n    let n = s.len();\n    &s[n..]\n}\n";
+        assert_eq!(
+            resolve(start, "n", 1).ok_or("start")?.kind,
+            ReturnFlowKind::RangeBound
+        );
+        let get = "fn f(s: &str) -> Option<&str> {\n    let n = s.len();\n    s.get(..n)\n}\n";
+        assert_eq!(
+            resolve(get, "n", 1).ok_or("get")?.kind,
+            ReturnFlowKind::RangeBound
+        );
+        for bad in ["&s[..=n]", "&s[a..n]", "&other(s)[..n]", "&s[..n2]"] {
+            let body = format!("fn f(s: &str) -> &str {{\n    let n = s.len();\n    {bad}\n}}\n");
+            assert_eq!(resolve(&body, "n", 1), None, "{bad}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_changed_line_must_be_the_let() {
+        assert_eq!(resolve(FAMILY, "end", 2), None);
     }
 }

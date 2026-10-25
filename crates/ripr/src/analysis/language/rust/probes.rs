@@ -205,7 +205,7 @@ pub(super) fn attach_changed_binding_return_evidence(
         flow.kind.label()
     ));
     finding.evidence.push(
-        "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed default"
+        "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed binding"
             .to_string(),
     );
 }

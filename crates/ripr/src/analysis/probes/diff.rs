@@ -795,6 +795,10 @@ fn changed_binding_return_flow(
     if !text.ends_with(';') || masked_paren_delta(text) != 0 || masked_brace_delta(text) != 0 {
         return None;
     }
+    // One statement on the line: a second `let` after `;` could shadow it.
+    if initializer.contains(';') {
+        return None;
+    }
     let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;
     resolve_changed_binding_return(
         binding,

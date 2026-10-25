@@ -23,9 +23,7 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # spec0048-label-rendered-observed) whose initializer-call and const shapes
 # abstain today; analyzer fix tracked in #9871.
 # 148: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
-# 149: plus default-flow-rebound (RIPR-SPEC-0357 negative: a rebound binding
-# is not a return flow, so its discriminating test abstains by design).
-missed_credit_ceiling = 149
+missed_credit_ceiling = 148
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
