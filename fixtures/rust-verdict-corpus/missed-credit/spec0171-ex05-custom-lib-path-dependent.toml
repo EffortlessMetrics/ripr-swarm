@@ -1,0 +1,2 @@
+case = "spec0171-ex05-custom-lib-path-dependent"
+reason = "Cross-package wrapper witness now abstains as a named reach limit (#10163)."

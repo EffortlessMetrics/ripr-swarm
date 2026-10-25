@@ -11,21 +11,15 @@
 # `floor` is the covered-example count `verdict-corpus check` protects. Raise
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
+# Abstained rows whose tests do catch the change (missed credit) are accepted
+# one file each under `missed-credit/<case>.toml` (case + reason), never as a
+# shared number, so PRs moving different rows do not conflict (#10222). A row
+# that newly misses credit fails `verdict-corpus check` until it is fixed or
+# accepted by a reviewed new file; an accepted row that credits again passes
+# with a note to delete its file.
+
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 220
-
-# Most abstained rows whose tests do catch the change (missed credit). A
-# regression fails `verdict-corpus check`; an improvement passes with a note
-# to lower this number (not a failure, so concurrent fixes do not collide).
-# Raising it is a reviewed edit with a reason.
-# 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
-# shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
-# 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-# 147 (#9197): plus `strsim-sorensen-dice-equal`, which compares a local rebound
-# from the parameter (`let a = a.chars()..collect()`), so the name-only credit
-# is withheld and the row abstains; fail-closed by design. Measured on the
-# combined tree.
-missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -930,12 +924,10 @@ id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
 
-
 [[spec]]
 id = "RIPR-SPEC-0300"
 scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
-
 
 [[spec]]
 id = "RIPR-SPEC-0309"

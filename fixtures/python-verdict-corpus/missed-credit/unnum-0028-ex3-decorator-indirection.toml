@@ -1,0 +1,2 @@
+case = "unnum-0028-ex3-decorator-indirection"
+reason = "Abstains by design (RIPR-SPEC-0028 example 3): a decorator that may wrap the call is not credited although the test catches the change."

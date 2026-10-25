@@ -1,0 +1,2 @@
+case = "strsim-sorensen-dice-equal"
+reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Verdict-corpus missed credit is now accepted one row per file (`fixtures/*-verdict-corpus/missed-credit/<case>.toml`) instead of the shared `missed_credit_ceiling` line, so parallel PRs that move different rows no longer conflict. A new missed-credit row still fails `verdict-corpus check` and names the row; an accepted row that credits again passes with a note to delete its file (#10222).

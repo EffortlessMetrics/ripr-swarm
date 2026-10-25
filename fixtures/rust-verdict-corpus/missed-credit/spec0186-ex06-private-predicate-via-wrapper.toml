@@ -1,0 +1,2 @@
+case = "spec0186-ex06-private-predicate-via-wrapper"
+reason = "The private-predicate-via-wrapper shape now abstains as limited and is no longer known-false (#10143)."

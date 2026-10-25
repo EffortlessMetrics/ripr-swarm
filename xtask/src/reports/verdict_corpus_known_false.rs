@@ -29,10 +29,40 @@ pub(crate) struct KnownFalse {
 /// The directory of entry files inside a corpus directory.
 pub(crate) const KNOWN_FALSE_DIR: &str = "known-false";
 
-/// Read every `known-false/<case>.toml`. The file stem must equal the `case`
-/// it holds, so one case has one path and a duplicate cannot be added.
-pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String> {
-    let dir = corpus_dir.join(KNOWN_FALSE_DIR);
+/// One accepted missed credit: an abstained row whose tests do discriminate
+/// the change. Its own file, `missed-credit/<case>.toml`, so a PR that moves
+/// one row touches one file and never the lines of a neighbour (#10222).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MissedCredit {
+    pub(crate) case: String,
+    pub(crate) reason: String,
+}
+
+/// The directory of missed-credit entry files inside a corpus directory.
+pub(crate) const MISSED_CREDIT_DIR: &str = "missed-credit";
+
+/// An entry file's `case`, which must equal the file stem.
+trait CaseEntry: for<'de> Deserialize<'de> {
+    fn case(&self) -> &str;
+}
+
+impl CaseEntry for KnownFalse {
+    fn case(&self) -> &str {
+        &self.case
+    }
+}
+
+impl CaseEntry for MissedCredit {
+    fn case(&self) -> &str {
+        &self.case
+    }
+}
+
+/// Read every `<dir_name>/<case>.toml` of a corpus. The file stem must equal
+/// the `case` it holds, so one case has one path and a duplicate cannot be added.
+fn load_case_files<T: CaseEntry>(corpus_dir: &Path, dir_name: &str) -> Result<Vec<T>, String> {
+    let dir = corpus_dir.join(dir_name);
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -48,27 +78,34 @@ pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String>
     let mut entries = Vec::new();
     for path in paths {
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            return Err(format!(
-                "{} is not a `.toml` known-false entry",
-                path.display()
-            ));
+            return Err(format!("{} is not a `.toml` entry file", path.display()));
         }
         let text = std::fs::read_to_string(&path)
             .map_err(|err| format!("read {}: {err}", path.display()))?;
-        let entry: KnownFalse =
+        let entry: T =
             toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if stem != entry.case {
+        if stem != entry.case() {
             return Err(format!(
                 "{} holds case `{}`; name the file `{}.toml`",
                 path.display(),
-                entry.case,
-                entry.case
+                entry.case(),
+                entry.case()
             ));
         }
         entries.push(entry);
     }
     Ok(entries)
+}
+
+/// Read every `known-false/<case>.toml`.
+pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String> {
+    load_case_files(corpus_dir, KNOWN_FALSE_DIR)
+}
+
+/// Read every `missed-credit/<case>.toml`.
+pub(crate) fn load_missed_credit_entries(corpus_dir: &Path) -> Result<Vec<MissedCredit>, String> {
+    load_case_files(corpus_dir, MISSED_CREDIT_DIR)
 }
 
 fn is_false(outcome: Outcome) -> bool {
@@ -104,6 +141,27 @@ pub(crate) fn known_false_ledger_violations(
         if !case_ids.contains(entry.case.as_str()) {
             violations.push(format!(
                 "known_false case `{}` in {ledger_label} is not a corpus case; remove the entry",
+                entry.case
+            ));
+        }
+    }
+    let mut accepted = BTreeSet::new();
+    for entry in &ledger.missed_credit {
+        if !accepted.insert(entry.case.as_str()) {
+            violations.push(format!(
+                "{ledger_label} lists missed-credit case `{}` twice",
+                entry.case
+            ));
+        }
+        if entry.reason.trim().is_empty() {
+            violations.push(format!(
+                "missed-credit case `{}` in {ledger_label} needs a `reason`",
+                entry.case
+            ));
+        }
+        if !case_ids.contains(entry.case.as_str()) {
+            violations.push(format!(
+                "missed-credit case `{}` in {ledger_label} is not a corpus case; remove the entry",
                 entry.case
             ));
         }
@@ -150,34 +208,49 @@ pub(crate) fn known_false_gate(
     }
 }
 
-/// Rows where the tests discriminate the change but ripr abstained instead of
-/// crediting it: a safe answer that still leaves credit unclaimed.
-fn missed_credit(rows: &[CaseRow]) -> usize {
+/// Ids of rows where the tests discriminate the change but ripr abstained
+/// instead of crediting it: a safe answer that still leaves credit unclaimed.
+fn missed_credit(rows: &[CaseRow]) -> BTreeSet<&str> {
     rows.iter()
         .filter(|row| row.truth == TruthState::Discriminated && row.outcome == Outcome::Abstained)
-        .count()
+        .map(|row| row.case_id.as_str())
+        .collect()
 }
 
-/// Gate `missed_credit_ceiling`: above it is a regression and fails. Below it
-/// is an improvement that passes with a note to lower the ceiling; failing
-/// there would make every concurrent fix PR edit the same number and
-/// deadlock main. A ledger without a ceiling does not gate missed credit.
+/// Gate the accepted missed-credit rows (`missed-credit/<case>.toml`). A
+/// missed-credit row without an entry is a regression and fails, naming it. An
+/// entry whose row no longer misses credit is an improvement that passes with
+/// a note to delete its file: each file is its own line, so two PRs moving
+/// different rows never conflict, and a fix never deadlocks main on a shared
+/// number. The count is derived from the entries, never stored (#10222).
 fn missed_credit_gate(
-    missed: usize,
+    missed: &BTreeSet<&str>,
     ledger: &Ledger,
     ledger_label: &str,
 ) -> Result<Option<String>, String> {
-    let Some(ceiling) = ledger.missed_credit_ceiling else {
-        return Ok(None);
-    };
-    if missed > ceiling {
+    let accepted: BTreeSet<&str> = ledger
+        .missed_credit
+        .iter()
+        .map(|e| e.case.as_str())
+        .collect();
+    let unlisted: Vec<&str> = missed.difference(&accepted).copied().collect();
+    if !unlisted.is_empty() {
         return Err(format!(
-            "verdict-corpus: {missed} abstained rows had tests that catch the change, above the missed_credit_ceiling of {ceiling} in {ledger_label}; a verdict stopped crediting a discriminating test. Fix the regression; raising the ceiling is a reviewed edit with a reason"
+            "verdict-corpus: {} abstained row(s) had tests that catch the change but {ledger_label} accepts no missed credit for them; a verdict stopped crediting a discriminating test. Fix the regression; accepting it adds `{MISSED_CREDIT_DIR}/<case>.toml` with a reason and is a reviewed edit:\n{}",
+            unlisted.len(),
+            unlisted
+                .iter()
+                .map(|case| format!("  - {case}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         ));
     }
-    Ok((missed < ceiling).then(|| {
+    let stale: Vec<&str> = accepted.difference(missed).copied().collect();
+    Ok((!stale.is_empty()).then(|| {
         format!(
-            "verdict-corpus: {missed} abstained rows had tests that catch the change, below the missed_credit_ceiling of {ceiling} in {ledger_label}; lower the ceiling to {missed} so the improvement cannot regress"
+            "verdict-corpus: {} accepted missed-credit row(s) in {ledger_label} no longer miss credit; delete {MISSED_CREDIT_DIR}/<case>.toml so the improvement cannot regress: {}",
+            stale.len(),
+            stale.join(", ")
         )
     }))
 }
@@ -203,7 +276,7 @@ pub(crate) fn apply_known_false_gate(
         .err()
         .into_iter()
         .collect();
-    match missed_credit_gate(missed_credit(rows), &ledger, &label) {
+    match missed_credit_gate(&missed_credit(rows), &ledger, &label) {
         Ok(Some(note)) => println!("{note}"),
         Ok(None) => {}
         Err(failure) => failures.push(failure),
@@ -288,31 +361,73 @@ mod tests {
         assert!(err.contains("owning `issue`"), "{err}");
     }
 
-    fn ceiling(value: Option<usize>) -> Result<Ledger, String> {
-        let line = value.map_or(String::new(), |v| format!("missed_credit_ceiling = {v}\n"));
-        ledger(&line)
+    fn accepting(cases: &[&str]) -> Result<Ledger, String> {
+        let mut ledger = ledger("")?;
+        ledger.missed_credit = cases
+            .iter()
+            .map(|case| MissedCredit {
+                case: (*case).to_string(),
+                reason: "accepted".to_string(),
+            })
+            .collect();
+        Ok(ledger)
+    }
+
+    fn set<'a>(cases: &[&'a str]) -> BTreeSet<&'a str> {
+        cases.iter().copied().collect()
     }
 
     #[test]
-    fn missed_credit_ceiling_fails_up_and_notes_down() -> Result<(), String> {
-        assert_eq!(missed_credit_gate(3, &ceiling(Some(3))?, "l.toml")?, None);
-        let up = missed_credit_gate(4, &ceiling(Some(3))?, "l.toml").err();
-        assert!(
-            up.is_some_and(|e| e.contains("above")),
-            "regression must fail"
+    fn a_new_missed_credit_fails_and_an_improvement_notes() -> Result<(), String> {
+        let accepted = accepting(&["a", "b"])?;
+        // Exactly the accepted rows: clean.
+        assert_eq!(
+            missed_credit_gate(&set(&["a", "b"]), &accepted, "l.toml")?,
+            None
         );
-        // An improvement passes with a note, so concurrent fix PRs do not collide.
-        let down = missed_credit_gate(2, &ceiling(Some(3))?, "l.toml")?;
-        assert!(down.is_some_and(|n| n.contains("lower the ceiling to 2")));
-        // No ceiling, no gate.
-        assert_eq!(missed_credit_gate(99, &ceiling(None)?, "l.toml")?, None);
+        // Negative experiment: a row that newly misses credit has no entry, so
+        // the gate fails and names it.
+        let err = missed_credit_gate(&set(&["a", "b", "c"]), &accepted, "l.toml")
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("  - c") && !err.contains("  - a"), "{err}");
+        // Swapping one row for another keeps the count and still fails.
+        let swapped = missed_credit_gate(&set(&["a", "c"]), &accepted, "l.toml")
+            .err()
+            .unwrap_or_default();
+        assert!(swapped.contains("  - c"), "{swapped}");
+        // An improvement passes with a note naming the file to delete, so
+        // concurrent fix PRs do not collide.
+        let note = missed_credit_gate(&set(&["a"]), &accepted, "l.toml")?.unwrap_or_default();
+        assert!(note.contains("delete") && note.contains('b'), "{note}");
+        // Nothing accepted and nothing missed is clean.
+        assert_eq!(
+            missed_credit_gate(&set(&[]), &accepting(&[])?, "l.toml")?,
+            None
+        );
         Ok(())
     }
 
-    /// A ceiling set above the real count would pass the gate with only a
-    /// note, so pin each committed ceiling to its blessed rows.
     #[test]
-    fn committed_ceilings_equal_the_blessed_missed_credit() -> Result<(), String> {
+    fn missed_credit_entries_are_structurally_checked() -> Result<(), String> {
+        let mut ledger = accepting(&["a", "a", "ghost"])?;
+        ledger.missed_credit[0].reason = " ".to_string();
+        let ids: BTreeSet<&str> = ["a"].into_iter().collect();
+        let found = known_false_ledger_violations(&ids, &ledger, "ledger.toml");
+        for needle in ["twice", "needs a `reason`", "not a corpus case"] {
+            assert!(
+                found.iter().any(|v| v.contains(needle)),
+                "{needle}: {found:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Entries that outnumber the real missed credit would pass the gate with
+    /// only a note, so pin each committed entry set to its blessed rows. The
+    /// accepted count is derived from the files, never stored on a shared line.
+    #[test]
+    fn committed_missed_credit_entries_equal_the_blessed_missed_credit() -> Result<(), String> {
         for language in ["rust", "typescript", "python", "perl"] {
             let dir = crate::dogfood::repo_rooted_fixture_path(&format!(
                 "fixtures/{language}-verdict-corpus"
@@ -320,13 +435,49 @@ mod tests {
             let rows = super::super::expected_report(&dir)?.rows;
             let ledger = coverage::load_ledger(&dir)?;
             let missed = missed_credit(&rows);
-            assert!(missed > 0, "{language} has no missed credit to count");
+            assert!(
+                !missed.is_empty(),
+                "{language} has no missed credit to count"
+            );
+            let accepted: BTreeSet<&str> = ledger
+                .missed_credit
+                .iter()
+                .map(|e| e.case.as_str())
+                .collect();
             assert_eq!(
-                ledger.missed_credit_ceiling,
-                Some(missed),
-                "{language} missed_credit_ceiling must equal the blessed count"
+                accepted, missed,
+                "{language} missed-credit/ entries must equal the blessed missed rows"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn an_inline_ceiling_line_is_refused() -> Result<(), String> {
+        let dir = crate::tests::temp_dir("missed-credit-inline-ceiling");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        std::fs::write(
+            dir.join(coverage::LEDGER_FILE),
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\nmissed_credit_ceiling = 3\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let err = coverage::load_ledger(&dir).err().unwrap_or_default();
+        assert!(err.contains("missed-credit/"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn missed_credit_files_load_by_case_name() -> Result<(), String> {
+        let dir = crate::tests::temp_dir("missed-credit-entry-files");
+        let entries = dir.join(MISSED_CREDIT_DIR);
+        std::fs::create_dir_all(&entries).map_err(|err| err.to_string())?;
+        std::fs::write(entries.join("a.toml"), "case = \"a\"\nreason = \"why\"\n")
+            .map_err(|err| err.to_string())?;
+        assert_eq!(load_missed_credit_entries(&dir)?.len(), 1);
+        std::fs::write(entries.join("b.toml"), "case = \"c\"\nreason = \"why\"\n")
+            .map_err(|err| err.to_string())?;
+        let err = load_missed_credit_entries(&dir).err().unwrap_or_default();
+        assert!(err.contains("name the file `c.toml`"), "{err}");
         Ok(())
     }
 

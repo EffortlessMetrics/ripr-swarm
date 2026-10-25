@@ -424,12 +424,16 @@ listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
 
-`missed_credit_ceiling` in `spec-coverage.toml` counts `abstained` rows whose
-truth is `discriminated`: tests that catch the change while ripr says
-unknown. A whole-corpus `check` fails when the count rises above the ceiling
-and passes with a printed note when it falls below it, so a fix lowers the
-ceiling but concurrent fixes never deadlock on the same number. A corpus
-without the key is not gated.
+Missed credit, an `abstained` row whose truth is `discriminated` (tests that
+catch the change while ripr says unknown), is accepted one row per file:
+`missed-credit/<case>.toml` in the corpus directory holds `case` and a
+`reason`, and the file name is the case id. The count is derived from the files,
+never stored, so two PRs that move different rows never edit the same line (a
+`missed_credit_ceiling` line in `spec-coverage.toml` is rejected). A
+whole-corpus `check` fails on a missed-credit row without an entry, naming it
+(a swap that keeps the count still fails), and passes with a printed note
+naming the file to delete when an accepted row no longer misses credit, so a
+fix never deadlocks concurrent fixes. A `--case` subset is never gated on it.
 
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is
