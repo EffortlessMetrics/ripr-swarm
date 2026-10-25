@@ -413,9 +413,9 @@ enum SelfOperand {
 }
 
 /// One place in a test where an operator trait's syntax is spelled.
-struct OperatorSite {
-    at: usize,
-    len: usize,
+pub(in crate::analysis) struct OperatorSite {
+    pub(in crate::analysis) at: usize,
+    pub(in crate::analysis) len: usize,
     operand: SelfOperand,
 }
 
@@ -518,7 +518,11 @@ fn operator_sites(trait_name: &str, code: &str) -> Option<Vec<OperatorSite>> {
 /// operator has an operand before it and is not part of a longer operator
 /// (`->`, `=>`, `&&`, `||`; `<=` is still ordering) or a closure parameter
 /// list; a unary one has none.
-fn operator_positions(code: &str, op: &str, binary: bool) -> Vec<OperatorSite> {
+pub(in crate::analysis) fn operator_positions(
+    code: &str,
+    op: &str,
+    binary: bool,
+) -> Vec<OperatorSite> {
     let stripped;
     let code = if op == "|" {
         stripped = without_closure_params(code);
@@ -572,7 +576,7 @@ fn operand_char_before(code: &str, at: usize) -> bool {
         .trim_end()
         .chars()
         .next_back()
-        .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']'))
+        .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '}'))
 }
 
 /// The `Self` operand ending just before byte `end`.
@@ -759,7 +763,7 @@ fn is_literal_token(token: &str) -> bool {
 /// throws the value away, and so does a name that nothing reads again; any
 /// other statement (an assertion, a reassignment, a destructuring `let`)
 /// might feed an assertion.
-fn result_is_used(code: &str, at: usize) -> bool {
+pub(in crate::analysis) fn result_is_used(code: &str, at: usize) -> bool {
     let (start, end) = statement_bounds(code, at);
     let Some(pattern) = code[start..end].trim().strip_prefix("let ") else {
         return true;

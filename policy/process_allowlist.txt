@@ -8,6 +8,9 @@
 # Process spawning belongs in adapters, smoke tests, and xtask. New occurrences
 # must name the owner and reason instead of drifting into domain or analysis
 # logic unnoticed.
+#
+# New rows go in their own file under policy/process_allowlist.d/ (same
+# format) so parallel PRs do not append to this list's tail (#9859).
 
 crates/ripr/src/analysis/language/python/admission.rs|subprocess.run|1|python-admission-data|#5491: string-literal entry in the assertion-like callee list so an imported subprocess exit-code check withholds no_assertion; the analyzer never spawns a process.
 crates/ripr/src/analysis/language/python/row_miss_tests.rs|subprocess.run|1|python-admission-data|#5491: Python source text in a fixture string proving a subprocess exit-code check withholds no_assertion; nothing is executed.
@@ -221,5 +224,3 @@ tools/repo-policy/tests/runner_inventory_diagnostics.rs|Command::new|1|runner-di
 tools/repo-policy/tests/runner_inventory_diagnostics.rs|use std::process::Command|1|runner-diagnostic-proof|#8858: import for the same bounded local-only route-shell fixture helper.
 tools/repo-policy/tests/wheel_trap_markers.rs|Command::new|1|wheel-trap-marker-proof|#9044: bounded Linux-only replay of the checked-in wheel qualification trap generators and generated Bash wrappers with literal marker and native-status oracles; no wheel builds, network or publication.
 tools/repo-policy/tests/wheel_trap_markers.rs|use std::process::Command|1|wheel-trap-marker-proof|#9044: import for the same bounded test-only trap replay.
-crates/ripr/tests/no_rust_diff_reads_no_rust.rs|Command::new|1|cli-tests|Runs the built ripr binary (`check --diff`) against an isolated temp workspace with a private RIPR_CACHE_DIR to prove a docs-only diff reads no workspace Rust. No shell, network, or user-repository mutation.
-crates/ripr/tests/no_rust_diff_reads_no_rust.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.
