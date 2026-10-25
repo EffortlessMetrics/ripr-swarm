@@ -107,6 +107,22 @@ fn stdout(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
+/// `merge-tree --write-tree` needs Git 2.38. Older Git must degrade to a warning,
+/// not fail the run, so the test asserts whichever contract the local Git can reach.
+fn merge_tree_supported(work: &Path) -> bool {
+    git(
+        work,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "HEAD",
+            "HEAD",
+        ],
+    )
+    .is_ok()
+}
+
 #[test]
 fn conflicting_base_move_fails_early_and_names_the_cause() -> Result<(), String> {
     let (work, head) = admitted_merge("conflict", |w| {
@@ -114,6 +130,14 @@ fn conflicting_base_move_fails_early_and_names_the_cause() -> Result<(), String>
     })?;
     let out = run_step(&work, "main")?;
     let text = stdout(&out);
+    if !merge_tree_supported(&work) {
+        assert_eq!(out.status.code(), Some(0), "{text}");
+        assert!(
+            text.contains("::warning title=Conflict re-check unavailable"),
+            "{text}"
+        );
+        return Ok(());
+    }
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(
         text.contains("::error title=Base moved and now conflicts::main moved"),

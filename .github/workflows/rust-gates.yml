@@ -476,6 +476,7 @@ jobs:
           CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
           CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
+          BASE_STILL_MERGES_RESULT: ${{ steps.base_still_merges.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
           SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
         run: |
@@ -502,6 +503,7 @@ jobs:
             printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
             printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
+            printf '| base_still_merges | %s |\n' "${BASE_STILL_MERGES_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"
             echo ""
