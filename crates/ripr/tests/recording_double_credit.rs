@@ -300,6 +300,7 @@ fn a_scalar_shadow_drops_slice_provenance() -> Result<(), String> {
             "items",
             "r#items",
         ),
+        ("Unicode NFC aliases", "café", "café", "café"),
     ] {
         let candidate = source("self.lines.push(line);", "&mut dyn Sink", body).replace(
             "n: u32) {",
