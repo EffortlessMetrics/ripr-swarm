@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust: a boolean `assert!`/`debug_assert!` in a context that never runs (after `return`, an uncalled function or closure, `if false`, an impossible match arm, `cfg!(any())`) no longer credits a return-value finding. A live `assert!(approx_eq!(..))` keeps its credit. Two corpus rows (`lib-rstest-values-matrix-relational`, `idiom-seeded-loop-relational-bound`) move from `gap` to `limited` because an `#[values]` matrix and a seeded loop are not established as running, the same reading the equality family already has (#10389).

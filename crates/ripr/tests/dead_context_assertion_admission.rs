@@ -181,16 +181,6 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                     let live = context == "direct" || context == "mixed";
                     if !live {
                         for family in &families {
-                            // Residual: a boolean `assert!`/`debug_assert!` still
-                            // credits a return-value finding from a dead context.
-                            // Gating it also demotes live `assert!(approx_eq!(..))`
-                            // rows in the Rust verdict corpus, so it is a separate
-                            // claim (#10389).
-                            if *family == "return_value"
-                                && matches!(macro_name, "assert" | "debug_assert")
-                            {
-                                continue;
-                            }
                             assert!(
                                 !credited(family),
                                 "{key}: dead assertion credited {family}: {classes:?}"
@@ -280,6 +270,69 @@ fn helper_borne_assertions_keep_credit_for_every_admitted_macro() -> Result<(), 
             matches!(effect.class.as_str(), "exposed" | "weakly_exposed"),
             "{macro_name}: helper-borne assertion lost credit: {}",
             effect.class.as_str()
+        );
+    }
+    Ok(())
+}
+
+/// A boolean `assert!` whose operand only nests an unresolved third-party
+/// comparison macro (`float_cmp::approx_eq!`) keeps its return-value credit
+/// when it runs, while an operand that can leave the test does not (#10389).
+#[test]
+fn boolean_assert_with_nested_macro_operand_credits_only_when_it_runs_and_cannot_exit()
+-> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("boolean_assert_nested_macro");
+    let production = "pub fn compute_score(base: i32) -> i32 {\n    base * 2\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn compute_score(base: i32) -> i32 {\n-    base + 1\n+    base * 2\n }\n";
+    let cases = [
+        (
+            "live_nested_macro",
+            "assert!(approx_eq!(i32, compute_score(4), 8));",
+            true,
+        ),
+        (
+            "nested_macro_with_exit",
+            "assert!(approx_eq!(i32, compute_score(4), { return; }));",
+            false,
+        ),
+        (
+            "nested_macro_after_return",
+            "return;\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "dead_plain",
+            "return;\nassert!(compute_score(4) == 8);",
+            false,
+        ),
+    ];
+    for (name, body, credited) in cases {
+        let source = format!(
+            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\nuse float_cmp::approx_eq;\n#[test]\nfn compute_score_observed() {{\n{body}\n}}\n}}\n"
+        );
+        let root = root_dir.join(name);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"nested_macro_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| f.probe.family.as_str() == "return_value")
+            .ok_or_else(|| format!("{name}: no return_value finding"))?;
+        assert_eq!(
+            matches!(finding.class.as_str(), "exposed" | "weakly_exposed"),
+            credited,
+            "{name}: {}",
+            finding.class.as_str()
         );
     }
     Ok(())

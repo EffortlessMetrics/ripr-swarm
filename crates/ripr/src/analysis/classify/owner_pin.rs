@@ -163,6 +163,16 @@ const ADMITTED_ASSERTION_MACROS: [&str; 6] = [
     "debug_assert",
 ];
 
+/// Whether the masked assertion text holds a token that can leave the test
+/// before the comparison runs (`return`, `break`, `continue`, `yield`, `?`).
+fn operand_holds_exit_token(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.contains('?')
+        || ["return", "break", "continue", "yield"]
+            .iter()
+            .any(|word| !whole_word_offsets(&masked, word).is_empty())
+}
+
 /// The rooted spellings of every admitted assertion macro: each needs the
 /// same root proof.
 const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
@@ -694,7 +704,10 @@ impl OwnerPinSyntax {
             ),
             Some("assert" | "debug_assert") => matches!(
                 family,
-                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ProbeFamily::ReturnValue
+                    | ProbeFamily::MatchArm
+                    | ProbeFamily::SideEffect
+                    | ProbeFamily::CallDeletion
             ),
             _ => false,
         };
@@ -708,6 +721,18 @@ impl OwnerPinSyntax {
             // keeps its credit. The return family keeps refusing (#8927).
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
                 matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
+            }
+            // #10389: a boolean `assert!` whose operand only nests a macro
+            // (`assert!(approx_eq!(f64, ..))`) is not shown dead, only
+            // unresolved: ripr does not expand third-party comparison macros.
+            // The return family keeps the credit it had before this gate
+            // (`rust_assertion_context_unestablished` would demote live
+            // rows of the verdict corpus); an operand that holds an exit
+            // token, or any other refusal, still withholds it.
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroOperandExit(_))) => {
+                family == ProbeFamily::ReturnValue
+                    && matches!(outer.as_deref(), Some("assert" | "debug_assert"))
+                    && !operand_holds_exit_token(&assertion.text)
             }
             Some(_) => false,
         }
