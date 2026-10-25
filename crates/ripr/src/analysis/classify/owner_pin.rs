@@ -868,6 +868,33 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> bool {
+        self.macro_binding_is_unambiguous(test, line, name, index, false)
+    }
+
+    /// RIPR-SPEC-0352: the same decision with exactly one input lifted, the
+    /// target-root placement a `std`/`core`-rooted path needs to verify the
+    /// manifests of the crates that compile the file. Every other refusal
+    /// (bare-name ambiguity, scoped and crate-local bindings, the file's own
+    /// manifest, provenance, source-level rebinding of the root or macro, module
+    /// declarations) stays in force. Used only to name a limit; it never credits.
+    pub(in crate::analysis) fn macro_binding_is_unambiguous_if_unplaced(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        self.macro_binding_is_unambiguous(test, line, name, index, true)
+    }
+
+    fn macro_binding_is_unambiguous(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+        trust_unplaced_standard_root: bool,
+    ) -> bool {
         let name = if let Some(leaf) = drop_in_assertion_leaf(name) {
             let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
                 return false;
@@ -876,8 +903,16 @@ impl OwnerPinSyntax {
             let Some(context) = context.as_ref() else {
                 return false;
             };
-            let Some(placement) = self.target_roots(index).roots(&test.file, index) else {
-                return false;
+            let placement = if trust_unplaced_standard_root
+                && matches!(root, "std" | "core")
+                && self.target_roots(index).disabled
+            {
+                Vec::new()
+            } else {
+                let Some(placement) = self.target_roots(index).roots(&test.file, index) else {
+                    return false;
+                };
+                placement.into_iter().collect()
             };
             let verified = std::iter::once(&test.file)
                 .chain(placement.iter())

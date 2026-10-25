@@ -68,13 +68,28 @@ All of these hold, and any doubt keeps today's behavior:
    no earlier `static_limit_kind`.
 2. The owner is an inherent method with a receiver
    (`requires_inherent_receiver_identity`).
-3. Some indexed test that is not `#[ignore]`, has an assertion and mentions the
-   owner's name has an owner-call relation that is not `direct_owner_call`
-   with the assertion macro gate on, and **is** `direct_owner_call` with the
-   gate off. The comparison runs the complete owner-call relation, so a wrong
+3. Some test that is one of the finding's own related tests (same name and
+   file as a related row) and is not `#[ignore]` has an owner-call relation
+   that is not `direct_owner_call` with the standard-root check enforced, and
+   **is** `direct_owner_call` with only the placement input of that check
+   lifted. The comparison runs the complete owner-call relation, so a wrong
    or message-only receiver, a shadowed or rebound local and a type or trait
-   shadowed in the test's module scope still refuse with the gate off.
-4. Target-root placement is unavailable (`TargetRoots.disabled`).
+   shadowed in the test's module scope still refuse with the check lifted. A
+   test the finding never related (a same-named type in another crate) is not
+   judged.
+4. That test's oracle is not what keeps the gap: at least one of its
+   assertions names the owner and every assertion that names the owner is
+   `strong` under the shared oracle strength owner (`OracleStrength`). A weak or
+   medium check over the owner (`std::assert!(w.read() > 0)`,
+   `std::assert_ne!(w.read(), 0)`) is a gap with the macro trusted too, so it is
+   never withheld. The assertion text, not the test body, is the subject, so an
+   unrelated strong assertion cannot lend its strength to a weak one over the
+   owner, and an unrelated weak one cannot hide a strong one. Strong does not
+   mean credited: with the macro trusted the finding may still read a gap for
+   another reason (for example `observation_unconfirmed`). The rule does not
+   compute that verdict and so does not claim the trusted reading is `exposed`;
+   it declines to say a gap exists only when the oracle is not the reason.
+5. Target-root placement is unavailable (`TargetRoots.disabled`).
 
 ## Behavior
 
@@ -98,6 +113,18 @@ unchanged. Where that consumer reaches the same cause it already reads
 - Withholding when placement is available and the standard macro is rebound
   (`std` renamed to another package, `use fake as std`): that is a real
   source-level refusal and keeps its gap.
+- Withholding a weak or medium oracle, or a mixed test where any assertion over
+  the owner is not strong: the gap stands (a mixed test with a strong
+  assertion also keeps today's gap, by the same doubt-keeps-the-gap rule).
+- Lifting any macro-binding refusal other than the placement input. Bare-name
+  ambiguity (`trusted_macro_ambiguities`), scoped and crate-local names
+  (`scoped_names_for`, `crate_names_for`), source provenance, the file's own
+  manifest, source-level rebinding of `std`/the macro and module declarations
+  stay in force. A visible `macro_rules! assert_eq` above the owner keeps its
+  gap. As a consequence a bare `assert_eq!` in a workspace whose placement is
+  unavailable and that holds another `assert_eq!` definition (for example a
+  `#[macro_export]` one) is still refused by the workspace ambiguity and keeps
+  its gap; only a `std`/`core`-rooted path is withheld.
 - A new schema version or a new stop reason.
 
 ## Required Evidence
@@ -116,14 +143,63 @@ unchanged. Where that consumer reaches the same cause it already reads
 - Negatives that keep their gap: a wrong receiver type, a message-only operand,
   a shadowed local, and the same workspace with a resolvable `#[path]` (placement
   available, `std` bound to `fakestd`).
-- Each of the positive and the negatives is discriminating: removing the
-  post-pass fails the positive; dropping the gate-off comparison or the
-  placement requirement fails the negatives.
-- `cargo xtask verdict-corpus check-all`: only `serde-derive-rename-field-upper`
-  and `serde-derive-rename-variant-lower` move, from `credited` to `limited`.
-  `serde_core` mounts generated code with `include!(concat!(env!("OUT_DIR"),
-  ..))`, so placement is unavailable and a credit cannot be established
-  soundly. They are not known-false rows.
+- More negatives that keep their gap: `std::assert!(w.read() > 0)`,
+  `std::assert_ne!(w.read(), 0)`, a weak assertion over the owner beside an
+  unrelated strong one, a strong assertion on another type beside a weak one
+  over the owner, a visible `macro_rules! assert_eq` above the owner, an
+  `#[ignore]` test, a call outside the assertion (`let read = w.read();
+  std::assert_eq!(read, 4)`, already `direct_owner_call` so nothing is blocked
+  by the macro), and a same-named type with its own test in another crate. One
+  positive keeps the withhold when an unrelated weak assertion sits beside the
+  strong one.
+- Mutation experiments, each run against the integration test (one at a time,
+  reverted) and killed by the named test. Dropping the conjunct that the call
+  is not already `direct_owner_call` with the macro check enforced:
+  `a_call_outside_the_assertion_is_not_blocked_by_the_macro`. Dropping
+  `!is_ignored`: `an_ignored_test_does_not_trigger_the_withhold`. `all` to `any`
+  over the owner assertions, and dropping the strength requirement:
+  `a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable`. Dropping
+  the mention filter: `an_unrelated_weak_assertion_does_not_lift_the_withhold`.
+  Judging every indexed test instead of the finding's related tests:
+  `a_same_named_type_in_another_crate_does_not_trigger_the_withhold`. Lifting
+  the whole macro check instead of the placement input:
+  `a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap`.
+  Unexercised: the "at least one assertion names the owner" guard has no
+  discriminating test (mutating it away leaves every test green) and this spec
+  does not claim it is redundant or proved. It is kept only because it fails
+  closed (no assertion naming the owner keeps the gap). The former `!test.assertions.is_empty()` and
+  `test.body.contains(owner)` conjuncts were removed as subsumed by the
+  assertion-text check. The removal of the post-pass itself and the
+  receiver-negative mutations (dropping the comparison, dropping the placement
+  requirement) were not re-run for this revision.
+- Cache generation decision: `CACHE_SCHEMA_VERSION` (1.99) and the sharded and
+  compact generations (0.106) are not bumped. Every cache in `seam_cache.rs`
+  (`SeamFacts`, `CompactClassifiedSeams`, sharded) stores `ClassifiedSeam`
+  values (seam, `TestGripEvidence`, `SeamGripClass`) produced by
+  `test_grip_evidence`/`seam_classification`; neither names `Finding` or the
+  `apply_probe_and_oracle_limits` post-pass where this rule runs, so no cached
+  classification can bypass it. The shared `inherent_owner_call_resolves`
+  still enforces the macro check, and the lifted reading (`PinGate::trusted`)
+  is reachable only from this rule's judgment, so cached seam output is
+  unchanged. No stale-generation replay is run because no generation moves.
+- Boundary actually implemented (bind the text to this): withhold only for a
+  `std`/`core`-rooted assertion path, when placement is unavailable, for a
+  non-ignored related test whose owner-call resolves once only the placement
+  input is lifted and whose assertions naming the owner are all `strong`. The
+  qualifying positive is `std::assert_eq!(Widget::new().read(), 4)` behind the
+  generated include; the `> 0` and `assert_ne!(.., 0)` controls sit beside it.
+- `cargo xtask verdict-corpus check-all` on this revision: the Rust rows
+  `serde-derive-rename-field-upper` and `serde-derive-rename-variant-lower`
+  read `gap` again (the previous revision moved them to `limited`). Their tests
+  assert through a bare `assert_eq!` inside a loop table, which is decided by
+  name; the bare-name refusal is not lifted by this rule (see Non-Goals), so
+  they are not covered. The corpus expectations and the Rust
+  `missed_credit_ceiling` are not changed here and are recomputed at
+  integration. They are not known-false rows.
+- Executed receipt: the same-file no-op `macro_rules! assert_eq` case
+  (`a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap`) was run on
+  the base `a45614b88` (without this rule) and reads a gap there; the previous
+  revision of this rule withheld it.
 
 ## Acceptance Examples
 
@@ -156,8 +232,12 @@ See `.ripr/traceability.toml`.
 
 - `crates/ripr/src/analysis/classify/receiver_unestablished.rs` owns the rule.
 - `crates/ripr/src/analysis/classify/related_tests.rs`:
-  `inherent_owner_call_resolves_if_macros_trusted` and `PinGate` factor the
-  macro gate out of the owner-call relation.
+  `inherent_owner_call_resolves_if_macros_trusted` and `PinGate` read the
+  owner-call relation with only the placement input of the standard-root check
+  lifted.
+- `crates/ripr/src/analysis/classify/owner_pin.rs`:
+  `macro_binding_is_unambiguous_if_unplaced` is the same decision as
+  `targeted_macro_binding_is_unambiguous` with that one input lifted.
 - `crates/ripr/src/analysis/classifier.rs` marks the finding;
   `crates/ripr/src/analysis/language/rust/mod.rs` consumes the marker.
 - `crates/ripr/src/domain/language.rs` owns the wire value.

@@ -23,7 +23,12 @@
 //!   type, a message-only operand, a shadowed or rebound local, a shadowed
 //!   type) keeps its gap;
 //! - a refusal while placement IS available (a real source-level rebinding of
-//!   `std` or the macro) keeps its gap.
+//!   `std` or the macro) keeps its gap;
+//! - only the placement input of the macro check is lifted: bare-name
+//!   ambiguity, scoped and crate-local bindings and source-level rebinding stay
+//!   in force;
+//! - an oracle that is not `strong` over the owner keeps its gap, because the
+//!   gap holds whether or not the macro is trusted.
 //!
 //! The classifier decides per related test while the run-shared syntax memo is
 //! in scope and leaves a marker; the post-pass here consumes it. Like every
@@ -35,7 +40,7 @@ use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
     inherent_owner_call_resolves_if_macros_trusted, requires_inherent_receiver_identity,
 };
-use crate::analysis::rust_index::{FunctionSummary, RustIndex};
+use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::*;
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustInherentReceiverUnestablished;
@@ -63,13 +68,18 @@ fn blocked_tests(
     {
         return Vec::new();
     }
+    // Only the finding's own related tests are judged: a same-named type in
+    // another crate whose test the finding never related must not trigger.
     index
         .tests()
         .iter()
         .filter(|test| {
-            !is_ignored(test)
-                && !test.assertions.is_empty()
-                && test.body.contains(owner.name.as_str())
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.name == test.name && row.file == test.file)
+                && !is_ignored(test)
+                && assertions_over_owner_are_strong(test, owner)
                 && inherent_owner_call_resolves_if_macros_trusted(test, owner, index, pin_syntax)
         })
         .take(JUDGED_TEST_LIMIT)
@@ -82,6 +92,23 @@ fn blocked_tests(
             )
         })
         .collect()
+}
+
+/// Whether the oracle is not what keeps this test from catching the change: at
+/// least one assertion of the test names the owner, and every assertion that
+/// does is `strong` under the shared oracle strength owner. A weak or medium
+/// check (`assert!(w.read() > 0)`, `assert_ne!(w.read(), 0)`) is a real gap
+/// whether or not the macro is trusted, so it never reaches the withhold. An
+/// unreadable test keeps the gap. The assertion text, not the test body, is the
+/// subject, so an unrelated strong assertion elsewhere in the test cannot lend
+/// its strength to a weak one over the owner.
+fn assertions_over_owner_are_strong(test: &TestSummary, owner: &FunctionSummary) -> bool {
+    let mut over_owner = test
+        .assertions
+        .iter()
+        .filter(|assertion| assertion.text.contains(owner.name.as_str()))
+        .peekable();
+    over_owner.peek().is_some() && over_owner.all(|a| a.strength == OracleStrength::Strong)
 }
 
 /// Classifier side: record that a related test is blocked only by the

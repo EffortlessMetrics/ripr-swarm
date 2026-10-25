@@ -4365,26 +4365,28 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
 
 /// How a receiver check reads the standard assertion macros. `enforced` is the
 /// only production reading: an assertion operand counts only when the macro
-/// binding is verified. `trusted` exists solely to name a refusal that rests on
-/// that unverifiable binding (RIPR-SPEC-0352) and never credits anything.
+/// binding is verified. `trusted` lifts exactly one input, the target-root
+/// placement a `std`/`core`-rooted macro path needs, to name a refusal that
+/// rests on it (RIPR-SPEC-0352); every other macro-binding refusal stays in
+/// force, and it never credits anything.
 #[derive(Clone, Copy)]
 pub(in crate::analysis) struct PinGate<'a> {
     syntax: &'a super::OwnerPinSyntax,
-    gate_macros: bool,
+    trust_unplaced_standard_root: bool,
 }
 
 impl<'a> PinGate<'a> {
     pub(in crate::analysis) fn enforced(syntax: &'a super::OwnerPinSyntax) -> Self {
         Self {
             syntax,
-            gate_macros: true,
+            trust_unplaced_standard_root: false,
         }
     }
 
     fn trusted(syntax: &'a super::OwnerPinSyntax) -> Self {
         Self {
             syntax,
-            gate_macros: false,
+            trust_unplaced_standard_root: true,
         }
     }
 }
@@ -4525,23 +4527,24 @@ fn executable_call_resolves_with(
             .filter(executable)
             .filter_map(ast::MacroCall::cast)
             .any(|call| {
-                let binding_admitted = !pin.gate_macros
-                    || index.is_none_or(|index| {
-                        let offset = u32::from(call.syntax().text_range().start()) as usize;
-                        let line = test.start_line
-                            + test.body[..offset]
-                                .bytes()
-                                .filter(|byte| *byte == b'\n')
-                                .count();
-                        call.path().is_some_and(|path| {
-                            pin_syntax.targeted_macro_binding_is_unambiguous(
-                                test,
-                                line,
-                                &path.syntax().text().to_string(),
-                                index,
-                            )
-                        })
-                    });
+                let binding_admitted = index.is_none_or(|index| {
+                    let offset = u32::from(call.syntax().text_range().start()) as usize;
+                    let line = test.start_line
+                        + test.body[..offset]
+                            .bytes()
+                            .filter(|byte| *byte == b'\n')
+                            .count();
+                    call.path().is_some_and(|path| {
+                        let name = path.syntax().text().to_string();
+                        if pin.trust_unplaced_standard_root {
+                            pin_syntax
+                                .macro_binding_is_unambiguous_if_unplaced(test, line, &name, index)
+                        } else {
+                            pin_syntax
+                                .targeted_macro_binding_is_unambiguous(test, line, &name, index)
+                        }
+                    })
+                });
                 binding_admitted && assertion_arguments_resolve(&call, index, resolves)
             })
 }

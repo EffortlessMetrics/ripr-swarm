@@ -40,11 +40,23 @@ enum Placement {
 struct Workspace {
     root: PathBuf,
     diff: PathBuf,
+    /// The line of the mutated `read` body.
+    owner_line: u64,
 }
 
-fn shared_source(test_statement: &str, read_body: &str) -> String {
+/// What surrounds the test statement in `shared.rs`.
+#[derive(Clone, Copy, Default)]
+struct Shape<'a> {
+    /// Attribute lines before `#[test]`.
+    attrs: &'a str,
+    /// Items above `Widget` in the same file.
+    prelude: &'a str,
+}
+
+fn shared_source(shape: Shape<'_>, test_statement: &str, read_body: &str) -> String {
+    let Shape { attrs, prelude } = shape;
     format!(
-        "pub struct Widget;
+        "{prelude}pub struct Widget;
 pub struct Other;
 impl Widget {{
     pub fn new()->Self{{Widget}}
@@ -57,7 +69,7 @@ impl Other {{
 #[cfg(test)]
 mod tests {{
     use super::*;
-    #[test]
+    {attrs}#[test]
     fn reads(){{ {test_statement} }}
 }}
 "
@@ -84,6 +96,14 @@ fn whole_file_diff(path: &str, before: &str, after: &str) -> String {
 
 impl Workspace {
     fn create(placement: Placement, test_statement: &str) -> Result<Self, String> {
+        Self::create_shaped(placement, Shape::default(), test_statement)
+    }
+
+    fn create_shaped(
+        placement: Placement,
+        shape: Shape<'_>,
+        test_statement: &str,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-receiver-unestablished-{}-{}",
@@ -116,8 +136,8 @@ impl Workspace {
             &package("a", "\n[lib]\ntest = false\ndoctest = false\n"),
         )?;
         write("a/src/lib.rs", "mod shared;\n")?;
-        let before = shared_source(test_statement, "4");
-        let after = shared_source(test_statement, "5");
+        let before = shared_source(shape, test_statement, "4");
+        let after = shared_source(shape, test_statement, "5");
         if !before.contains(MARK) {
             return Err("premise: the mutated line is present".to_string());
         }
@@ -182,7 +202,11 @@ fn main() {
             "change.diff",
             &whole_file_diff("a/src/shared.rs", &before, &after),
         )?;
-        Ok(Self { root, diff })
+        Ok(Self {
+            root,
+            diff,
+            owner_line: 5 + shape.prelude.lines().count() as u64,
+        })
     }
 
     fn run(&self, diff: bool) -> Result<Value, String> {
@@ -217,12 +241,14 @@ fn main() {
             .get("findings")
             .and_then(Value::as_array)
             .ok_or_else(|| "instrument: no findings array".to_string())?;
-        let mut on_owner = findings
-            .iter()
-            .filter(|finding| finding.pointer("/probe/line").and_then(Value::as_u64) == Some(5));
+        let mut on_owner = findings.iter().filter(|finding| {
+            finding.pointer("/probe/line").and_then(Value::as_u64) == Some(self.owner_line)
+        });
         match (on_owner.next(), on_owner.next()) {
             (Some(finding), None) => Ok(finding.clone()),
-            other => Err(format!("premise: one finding on line 5, got {other:?}")),
+            other => Err(format!(
+                "premise: one finding on the owner line, got {other:?}"
+            )),
         }
     }
 
@@ -378,4 +404,151 @@ fn available_placement_keeps_the_rebound_root_gap_and_the_plain_credit() -> Resu
         "premise: the plain standard macro is credited: {plain}"
     );
     Ok(())
+}
+
+/// The statement must be a gap with no limit; the label names the shape.
+fn assert_keeps_gap(label: &str, finding: &Value) -> Result<(), String> {
+    assert_ne!(limit(finding), Some(LIMIT), "{label}: {finding}");
+    assert!(is_gap(finding)?, "{label}: {finding}");
+    Ok(())
+}
+
+/// A weak oracle is a gap whether or not the macro can be trusted, so the
+/// withhold must not hide it: `std::assert!(w.read() > 0)` reads
+/// `weakly_exposed`/`direct_owner_call` with placement available.
+#[test]
+fn a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable() -> Result<(), String> {
+    for (label, statement) in [
+        (
+            "relational assert",
+            "std::assert!(Widget::new().read() > 0);",
+        ),
+        (
+            "assert_ne against a literal",
+            "std::assert_ne!(Widget::new().read(), 0);",
+        ),
+        (
+            "weak assertion over the owner next to an unrelated strong one",
+            "std::assert_eq!(1u32 + 3, 4); std::assert!(Widget::new().read() > 0);",
+        ),
+        (
+            "strong assertion on another type next to a weak one over the owner",
+            "std::assert_eq!(Other::new().read(), 4); std::assert!(Widget::new().read() > 0);",
+        ),
+    ] {
+        let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
+        assert_keeps_gap(label, &finding)?;
+    }
+    Ok(())
+}
+
+/// An unrelated weak assertion elsewhere in the test does not hide that the
+/// strong one over the owner is only blocked by the macro.
+#[test]
+fn an_unrelated_weak_assertion_does_not_lift_the_withhold() -> Result<(), String> {
+    let statement = "std::assert!(true); std::assert_eq!(Widget::new().read(), 4);";
+    let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
+    assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    Ok(())
+}
+
+/// Only the placement-dependent part of the macro check is lifted. A visible
+/// `macro_rules! assert_eq` above `Widget` replaces the bare macro, whatever
+/// the workspace placement, so the assertion is not the standard one and the
+/// gap stays.
+#[test]
+fn a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap() -> Result<(), String> {
+    let shape = Shape {
+        attrs: "",
+        prelude: "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+    };
+    let finding = Workspace::create_shaped(
+        Placement::Generated,
+        shape,
+        "assert_eq!(Widget::new().read(), 4);",
+    )?
+    .finding()?;
+    assert_keeps_gap("bare macro shadowed in the file", &finding)
+}
+
+/// A call that resolves with the macro gate on (it is outside any assertion)
+/// is already credited as a direct call; nothing is blocked by the macro, so
+/// the rule must not claim it. `read` is a local, so the assertion text names
+/// the owner while the call is not inside the macro.
+#[test]
+fn a_call_outside_the_assertion_is_not_blocked_by_the_macro() -> Result<(), String> {
+    let statement = "let read = Widget::new().read(); std::assert_eq!(read, 4);";
+    let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
+    assert_keeps_gap("call outside the assertion", &finding)?;
+    assert_eq!(
+        relations(&finding),
+        vec!["direct_owner_call".to_string()],
+        "premise: the call is credited without the macro: {finding}"
+    );
+    Ok(())
+}
+
+/// An `#[ignore]` test never runs in the default suite, so it cannot be what
+/// stands between the finding and a gap.
+#[test]
+fn an_ignored_test_does_not_trigger_the_withhold() -> Result<(), String> {
+    let shape = Shape {
+        attrs: "#[ignore]\n    ",
+        prelude: "",
+    };
+    let finding = Workspace::create_shaped(Placement::Generated, shape, CONTROL)?.finding()?;
+    assert_keeps_gap("ignored test", &finding)
+}
+
+/// A same-named type in another crate is not the owner: its test is never one
+/// of the finding's related tests, and the withhold must not look at it.
+#[test]
+fn a_same_named_type_in_another_crate_does_not_trigger_the_withhold() -> Result<(), String> {
+    let workspace = Workspace::create(
+        Placement::Generated,
+        "std::assert_eq!(Other::new().read(), 4);",
+    )?;
+    let write = |path: &str, text: &str| -> Result<(), String> {
+        let file = workspace.root.join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(file, text).map_err(|error| error.to_string())
+    };
+    write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"c\"]\nresolver = \"2\"\n",
+    )?;
+    write(
+        "c/Cargo.toml",
+        "[package]\nname = \"c\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )?;
+    write(
+        "c/src/lib.rs",
+        "pub struct Widget;
+impl Widget {
+    pub fn new() -> Self { Widget }
+    pub fn read(&self) -> u32 { 4 }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn reads_c() { std::assert_eq!(Widget::new().read(), 4); }
+}
+",
+    )?;
+    let finding = workspace.finding()?;
+    assert_keeps_gap("same-named type in another crate", &finding)
+}
+
+/// Only a `std`/`core`-rooted path is withheld. A bare `assert_eq!` is decided
+/// by name, and the workspace's `fakestd` exports an `assert_eq!` of its own, so
+/// the bare-name refusal is not placement-dependent and stays in force.
+#[test]
+fn a_bare_assertion_beside_a_workspace_macro_of_the_same_name_keeps_its_gap() -> Result<(), String>
+{
+    let finding = Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?
+        .finding()?;
+    assert_keeps_gap("bare macro beside a workspace macro", &finding)
 }
