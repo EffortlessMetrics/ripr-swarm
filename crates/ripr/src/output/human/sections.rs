@@ -187,10 +187,21 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             label.to_string()
         };
-        out.push_str(&format!(
-            "  {label}: {}\n",
-            trim_field_period(&one_line(missing))
-        ));
+        // #4323 parity: this prose names what is missing and why, and it ends
+        // with the operative classification — a hard `one_line` cut drops that
+        // tail silently (the old clipped card ended "but helper-derived…"
+        // with no pointer to the rest). Wrap like the next-step and
+        // not-credited lines instead of truncating; `--format human-full`
+        // keeps the same text in its Weakness section.
+        let value = trim_field_period(&missing.split_whitespace().collect::<Vec<_>>().join(" "))
+            .to_string();
+        let prefix = format!("  {label}: ");
+        if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{prefix}{value}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&value, &prefix, "    "));
+            out.push('\n');
+        }
     }
     if let Some(test) = finding.related_tests.first() {
         // #4320: the digest shows only the first related-test row; carry the

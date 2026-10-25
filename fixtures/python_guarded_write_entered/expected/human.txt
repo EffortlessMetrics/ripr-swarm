@@ -19,7 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Canonical gap: gap:python:shapes/noter.py:Recorder.note:field_value:field_construction:self.last=fault
   Changed behavior: self.last = "fault"
-  Discriminator (observed, advisory): Related Python test reaches `note` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Discriminator (observed, advisory): Related Python test reaches `note` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value
+    discriminator
   Related test: tests/test_noter.py:3 test_note
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes
