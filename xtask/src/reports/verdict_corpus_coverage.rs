@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const LEDGER_FILE: &str = "spec-coverage.toml";
 pub(crate) const LOCK_FILE: &str = "spec-examples.lock";
+/// Directory of per-spec scope files beside the ledger.
+pub(crate) const SPEC_SCOPES_DIR: &str = "spec-scopes";
 pub(crate) const SPECS_DIR: &str = "docs/specs";
 const LEDGER_SCHEMA: &str = "ripr_verdict_corpus_spec_coverage.v1";
 const SPEC_PREFIX: &str = "RIPR-SPEC-";
@@ -280,7 +282,91 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
     }
     ledger.known_false = super::known_false::load_entries(corpus_dir)?;
     ledger.locked = load_lock(corpus_dir)?;
+    load_spec_scopes(corpus_dir, &mut ledger)?;
     Ok(ledger)
+}
+
+/// One `spec-scopes/<RIPR-SPEC-NNNN>.toml`: the scope of a single spec, or
+/// (with `unmeasured = true`) a spec whose acceptance examples are prose. A new
+/// spec adds this file instead of appending a `[[spec]]` or `[[unmeasured]]`
+/// entry to the shared ledger tail that every spec PR otherwise edits.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpecScopeFile {
+    id: String,
+    #[serde(default)]
+    scope: Option<Scope>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    waived: Vec<Waiver>,
+    #[serde(default)]
+    unmeasured: bool,
+}
+
+/// Read every `spec-scopes/*.toml` into the ledger's `spec` and `unmeasured`
+/// lists. Only an absent directory is optional. The file stem must equal the
+/// spec id, so one spec has one path; a spec also named inline fails the
+/// existing "names twice" check.
+fn load_spec_scopes(corpus_dir: &Path, ledger: &mut Ledger) -> Result<(), String> {
+    let dir = corpus_dir.join(SPEC_SCOPES_DIR);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("read {}: {err}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("list {}: {err}", normalize_path(&dir)))?;
+        paths.push(entry.path());
+    }
+    paths.sort();
+    for path in paths {
+        let label = normalize_path(&path);
+        if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+            return Err(format!("{label} is not a `.toml` spec-scope file"));
+        }
+        let text = fs::read_to_string(&path).map_err(|err| format!("read {label}: {err}"))?;
+        let file: SpecScopeFile =
+            toml::from_str(&text).map_err(|err| format!("parse {label}: {err}"))?;
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("");
+        if stem != file.id {
+            return Err(format!(
+                "{label} holds `{}`; name the file `{}.toml`",
+                file.id, file.id
+            ));
+        }
+        if file.unmeasured {
+            if file.scope.is_some() || !file.waived.is_empty() {
+                return Err(format!(
+                    "{label} is `unmeasured`; it takes a `reason` and no `scope` or `waived`"
+                ));
+            }
+            let Some(reason) = file.reason else {
+                return Err(format!("{label} is `unmeasured` without a `reason`"));
+            };
+            ledger.unmeasured.push(UnmeasuredSpec {
+                id: file.id,
+                reason,
+            });
+        } else {
+            let Some(scope) = file.scope else {
+                return Err(format!(
+                    "{label} needs `scope = \"in\"` or `\"out\"`, or `unmeasured = true`"
+                ));
+            };
+            ledger.spec.push(LedgerSpec {
+                id: file.id,
+                scope,
+                reason: file.reason,
+                waived: file.waived,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Parse `spec-examples.lock`: `RIPR-SPEC-NNNN#K` or `#slug` per line, `#`
