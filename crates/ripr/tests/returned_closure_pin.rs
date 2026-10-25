@@ -218,6 +218,34 @@ mod tests {
     fn pinned() {
         assert_eq!(combiner(2)(3, 4), 10);
     }
+}
+";
+    let finding = finding(
+        lib,
+        2,
+        "    move |x, y| x * k + y",
+        "    move |x, y| k * x + y",
+        ProbeFamily::ReturnValue,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?} {:?}",
+        finding.class,
+        limit(&finding)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_partial_application_of_a_two_argument_closure_is_not_credited() -> Result<(), String> {
+    let lib = "pub fn combiner(k: i32) -> impl Fn(i32, i32) -> i32 {
+    move |x, y| k * x + y
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn partial() {
@@ -233,7 +261,7 @@ mod tests {
         "    move |x, y| k * x + y",
         ProbeFamily::ReturnValue,
     )?;
-    assert_eq!(
+    assert_ne!(
         finding.class,
         ExposureClass::Exposed,
         "{:?} {:?}",

@@ -267,6 +267,12 @@ Thus `(2)(3)` credits `n + x` and `n + x * TWO` with literal `TWO = 2`, while
 A closure bound to a variable and called later, a non-literal call argument,
 a partial application and other operand shapes also keep it (#9490).
 
+The exact assertion must observe the applied owner result. An overwritten or
+shadowed result, a replaced closure, a same-name rival assertion, or an
+assertion inside an uninvoked closure keeps the earlier reading, and a shared
+owner or closure parameter name in an assertion cannot replace the admitted
+pin, including when the numeric model is unestablished.
+
 ### Decisions
 
 1. **Literal sequences only.** Adopted: an element is read only from a
@@ -340,7 +346,7 @@ a partial application and other operand shapes also keep it (#9490).
    value reads `exposed`. With `&[]`, or when the owner's file declares
    its own `Result`, it keeps the pre-0265 reading (#9490).
 
-9. `fn make_adder(n: i32) -> impl Fn(i32) -> i32 { move |x| n + x }` with
+8. `fn make_adder(n: i32) -> impl Fn(i32) -> i32 { move |x| n + x }` with
    `assert_eq!(make_adder(2)(3), 5)`: the return value reads `exposed`. With
    `make_adder(0)(7)`, `make_adder(2)(2)`, a variable argument, or the closure
    bound to a name and called later, it keeps the earlier reading (#9490).
@@ -359,7 +365,8 @@ a partial application and other operand shapes also keep it (#9490).
 - `crates/ripr/tests/returned_closure_pin.rs`: rule 5's credited pin and its
   keeping controls (zero, repeated and non-literal inputs, an unapplied
   closure, a branch in the closure), effective arithmetic/capture collisions,
-  typed primitive authority and qualified owner identity.
+  typed primitive authority, qualified owner identity and result attribution
+  (overwritten, shadowed, replaced, rival and uninvoked-closure assertions).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
