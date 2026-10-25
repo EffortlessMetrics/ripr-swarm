@@ -19350,6 +19350,7 @@ tests = [
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_status_after_pilot_names_the_gap_bound_start",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_refused_variant_is_offered_no_gap_bound_start",
   "crates/ripr/src/app/gap_bound_repair.rs::tests::python_gap_subjects_need_a_printable_tail",
   "crates/ripr/src/app/gap_bound_repair.rs::tests::a_python_lookup_fails_closed_without_one_validated_record",
   "crates/ripr/src/app/gap_bound_repair.rs::tests::a_python_record_the_shared_validator_refuses_is_not_a_start",
