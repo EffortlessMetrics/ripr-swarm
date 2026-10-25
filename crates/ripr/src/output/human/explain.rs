@@ -94,7 +94,8 @@ pub(crate) fn render_verdict_explanation(
         ExposureClass::InfectionUnknown
             | ExposureClass::PropagationUnknown
             | ExposureClass::StaticUnknown
-    ) {
+    ) || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
+    {
         let step = crate::output::next_step::reconcile_next_step(finding);
         if !step.is_empty() {
             out.push_str("  To investigate this uncertainty:\n");
@@ -173,6 +174,9 @@ fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<&RelatedTest>> {
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
 fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
+    if crate::output::next_step::unresolved_edge_guidance(finding).is_some() {
+        return Vec::new();
+    }
     if !matches!(
         finding.class,
         ExposureClass::NoStaticPath
@@ -306,6 +310,28 @@ mod tests {
     use crate::domain::{MissingDiscriminatorFact, OracleKind};
     use crate::output::perl_preview_card::tests::sample_perl_finding;
     use std::path::PathBuf;
+
+    #[test]
+    fn limited_journey_explain_names_the_analysis_boundary_instead_of_a_test_recipe() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence =
+            vec!["limitation_first_unresolved_edge: entry `outer` -> owner `inner`".to_string()];
+        finding.recommended_next_step = Some("call inner directly".to_string());
+        finding.related_tests.clear();
+        let text = render_verdict_explanation(&finding, None);
+        assert!(
+            !text.contains("To change the verdict, a test needs to:"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Tests cannot close this static-analysis limitation"),
+            "{text}"
+        );
+        assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+    }
 
     fn row(oracle: &str, strength: OracleStrength, miss: RelatedTestMiss) -> RelatedTest {
         RelatedTest {

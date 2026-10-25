@@ -1374,12 +1374,86 @@ impl<'a> TransitiveReachIndex<'a> {
         }
     }
 
+    /// Declaration context for display only. The lexical candidate walk is
+    /// unchanged; this does not establish runtime reach across this boundary.
+    pub(in crate::analysis) fn private_helper_boundary(
+        &self,
+        owner_id: &crate::domain::SymbolId,
+        entry_name: &str,
+    ) -> Option<String> {
+        let owners = self
+            .production_functions()
+            .filter(|function| &function.id == owner_id)
+            .collect::<Vec<_>>();
+        let [owner] = owners.as_slice() else {
+            return None;
+        };
+        let [entry] = self.graph().by_name.get(entry_name)?.as_slice() else {
+            return None;
+        };
+        if owner.item.container != FunctionContainer::Free
+            || entry.item.container != FunctionContainer::Free
+        {
+            return None;
+        }
+        let owner_visibility = declaration_visibility(self.index, owner)?;
+        if owner_visibility == "pub" || declaration_visibility(self.index, entry)? != "pub" {
+            return None;
+        }
+        let privacy = if owner_visibility.is_empty() {
+            "private"
+        } else {
+            "restricted-visibility"
+        };
+        Some(format!(
+            "{privacy} helper `{}` behind public entry point `{entry_name}`; candidate path only",
+            owner.name
+        ))
+    }
+
     /// Every production function, for checks that scan impl owners.
     pub(in crate::analysis) fn production_functions(
         &self,
     ) -> impl Iterator<Item = &'a FunctionSummary> + '_ {
         self.graph().by_name.values().flatten().copied()
     }
+}
+
+/// Read the exact indexed declaration, retaining unknown on malformed source,
+/// duplicate declarations, or a stale line/name. Never infer privacy from the
+/// function body's text: that slice starts at `fn` and omits `pub`.
+fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Option<String> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName, ast::HasVisibility};
+    let file = index.files().get(&function.file)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&file.source)?;
+    let declarations = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|node| node.name().is_some_and(|name| name.text() == function.name))
+        .filter(|node| {
+            node.fn_token().is_some_and(|token| {
+                let offset = u32::from(token.text_range().start()) as usize;
+                file.source
+                    .bytes()
+                    .take(offset)
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1
+                    == function.start_line
+            })
+        })
+        .collect::<Vec<_>>();
+    let [declaration] = declarations.as_slice() else {
+        return None;
+    };
+    Some(
+        declaration
+            .visibility()
+            .map(|visibility| visibility.syntax().text().to_string())
+            .unwrap_or_default(),
+    )
 }
 
 /// Finds a deterministic macro-blocked witness for a `no_static_path` Rust
@@ -3062,6 +3136,40 @@ mod tests {
             workspace_authority: None,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn limited_journey_private_helper_detail_requires_exact_declarations() -> Result<(), String> {
+        for (visibility, expected) in [
+            ("", Some("private helper")),
+            ("pub(crate)", Some("restricted-visibility helper")),
+            ("pub", None),
+        ] {
+            let source = format!("pub fn outer() {{ inner(); }}\n{visibility} fn inner() {{}}\n");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                Path::new("src/lib.rs"),
+                &source,
+            )?;
+            let index = index_with_source(facts.functions, Vec::new(), source);
+            let reach = TransitiveReachIndex::new(&index);
+            let owner = SymbolId("src/lib.rs::inner".to_string());
+            let detail = reach.private_helper_boundary(&owner, "outer");
+            assert_eq!(detail.is_some(), expected.is_some(), "{detail:?}");
+            if let Some(expected) = expected {
+                assert!(
+                    detail.as_deref().is_some_and(|text| text.contains(expected)
+                        && text.contains("public entry point `outer`")
+                        && text.contains("candidate path only")),
+                    "{detail:?}"
+                );
+            }
+            assert_eq!(
+                reach.private_helper_boundary(&SymbolId("src/lib.rs::absent".to_string()), "outer"),
+                None
+            );
+            assert_eq!(reach.private_helper_boundary(&owner, "absent"), None);
+        }
+        Ok(())
     }
 
     // (a) Candidate path found -> witness captured naming the test + entry symbol.

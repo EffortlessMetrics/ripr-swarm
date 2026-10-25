@@ -275,6 +275,10 @@ impl FindingNavigation {
     /// runnable test (#5355). It reads the working tree at the same root.
     /// `kind` is the finding's probe family, so the stub targets the seam
     /// the finding reported when its line holds several (#5471).
+    pub(crate) fn stub_seam_command(&self, seam_id: &str) -> String {
+        format!("{} --seam-id {}", self.stub_prefix, shell_arg(seam_id))
+    }
+
     pub(crate) fn stub_command(&self, file: &str, line: usize, kind: &str) -> String {
         format!(
             "{} --at {} --kind {}",

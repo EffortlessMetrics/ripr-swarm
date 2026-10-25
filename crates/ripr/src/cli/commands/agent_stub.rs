@@ -38,7 +38,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         Err(error) => {
             let (refusal_kind, message) = match error {
                 TestStubError::NotFound(message) => ("seam_not_found", message),
-                TestStubError::Ambiguous(message) => ("selector_ambiguous", message),
+                TestStubError::Ambiguous { message, .. } => ("selector_ambiguous", message),
                 TestStubError::Operational(message) => return Err(CommandError::Failure(message)),
             };
             let root = shell_arg(&bound_root(&options.root.to_string_lossy()));

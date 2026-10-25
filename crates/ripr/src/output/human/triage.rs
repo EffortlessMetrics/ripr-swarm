@@ -334,6 +334,7 @@ pub(crate) fn render_human_triage(
             let stub_eligible = finding.class != ExposureClass::Exposed
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
+                && crate::output::next_step::unresolved_edge_guidance(finding).is_none()
                 && !super::sections::untraced_reach_weak_finding(finding)
                 && finding.probe.offers_stub_route()
                 && finding
@@ -423,6 +424,15 @@ pub(crate) fn render_human_triage(
                         out.push_str(&format!("  {command}\n"));
                         super::push_powershell_variant(out, "  ", &command);
                     }
+                    Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
+                        out.push_str(&format!("Choose a test-stub seam: {reason}\n"));
+                        out.push_str("  These syntax choices do not establish a repair binding or close a static limitation.\n");
+                        for seam_id in seam_ids {
+                            let command = navigation.stub_seam_command(seam_id);
+                            out.push_str(&format!("  {command}\n"));
+                            super::push_powershell_variant(out, "  ", &command);
+                        }
+                    }
                     Some(StubRouteDecision::Refused { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
                     }
@@ -479,11 +489,13 @@ pub(crate) fn render_human_triage(
                 String::new()
             };
             out.push_str(&format!(
-                "    - {}:{} ({}{})\n",
+                "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.plain_label(),
-                currentness
+                currentness,
+                finding.probe.family.as_str(),
+                hidden_finding_reason(finding)
             ));
         }
         let remaining = triage.omitted.len() - listed;
@@ -502,6 +514,24 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+fn hidden_finding_reason(finding: &Finding) -> String {
+    let reason = finding
+        .static_limit_kind
+        .map(|kind| kind.describe())
+        .or_else(|| finding.missing.first().map(String::as_str))
+        .unwrap_or_else(|| match finding.class {
+            ExposureClass::NoStaticPath => &finding.ripr.reach.summary,
+            ExposureClass::InfectionUnknown => &finding.ripr.infect.summary,
+            ExposureClass::PropagationUnknown => &finding.ripr.propagate.summary,
+            ExposureClass::Exposed => &finding.ripr.reveal.discriminate.summary,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed => {
+                &finding.ripr.reveal.discriminate.summary
+            }
+            ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
+        });
+    one_line(reason)
+}
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
 /// explicit unknown (#3281) — not base-side evidence — so the #4320
@@ -1364,6 +1394,30 @@ mod tests {
     }
 
     #[test]
+    fn limited_journey_hidden_rows_name_kind_and_reason() {
+        let top = super::super::tests::sample_finding();
+        let mut hidden = test_finding("finding:hidden");
+        hidden.probe.family = ProbeFamily::Predicate;
+        hidden.probe.location = SourceLocation::new("src/lib.rs", 42, 1);
+        hidden.class = ExposureClass::InfectionUnknown;
+        hidden.missing = vec!["No detected boundary input for the changed predicate".to_string()];
+        let mut output = test_output(vec![top, hidden]);
+        output.summary.probes = 2;
+        output.summary.findings = 2;
+        output.summary.weakly_exposed = 1;
+        output.summary.infection_unknown = 1;
+        let rendered = super::super::render(&output);
+        let row = rendered
+            .lines()
+            .find(|line| line.contains("    - src/lib.rs:42"));
+        assert!(
+            row.is_some_and(|line| line.contains("kind: predicate")
+                && line.contains("reason: No detected boundary input")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn check_cases_mirror_the_triage_states() {
         let top = test_finding("finding:top");
         let omitted = test_finding("finding:omitted");
@@ -2033,15 +2087,15 @@ mod tests {
         ]);
         let rendered = super::super::render(&output);
         assert!(
-            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate)\n"),
+            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate); kind:"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:26 (weak, base-side)\n"),
+            rendered.contains("    - src/lib.rs:26 (weak, base-side); kind:"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
+            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness); kind:"),
             "{rendered}"
         );
     }

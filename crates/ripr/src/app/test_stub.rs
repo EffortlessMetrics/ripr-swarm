@@ -149,7 +149,10 @@ pub(crate) enum TestStubError {
     NotFound(String),
     /// Several candidate files or disjoint tied seams match the selector;
     /// no seam was selected and the message names how to disambiguate.
-    Ambiguous(String),
+    Ambiguous {
+        message: String,
+        seam_ids: Vec<String>,
+    },
     Operational(String),
 }
 
@@ -340,6 +343,11 @@ pub(crate) enum StubRouteDecision {
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
     Refused { reason: &'static str },
+    /// Explicit choices from the resolver; no seam or repair is selected.
+    Ambiguous {
+        reason: String,
+        seam_ids: Vec<String>,
+    },
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -390,7 +398,19 @@ pub(crate) fn stub_route_for_finding(
             decision,
         });
     }
-    let resolution = resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
+    let resolution = match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
+        Ok(resolution) => resolution,
+        Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
+            return Some(StubRoute {
+                finding_id: finding.id.clone(),
+                decision: StubRouteDecision::Ambiguous {
+                    reason: message,
+                    seam_ids,
+                },
+            });
+        }
+        Err(_) => return None,
+    };
     let decision = match resolution.outcome {
         // `--at` stubs the nearest gap when the finding's line holds none
         // (#6298). Print the line that stub is for, and only when asking for
@@ -791,10 +811,13 @@ fn resolve_at(
         // A suffix like `src/lib.rs` can name several crates' files; reading
         // one file and applying another file's seam offsets would build a
         // stub for the wrong function.
-        return Err(TestStubError::Ambiguous(format!(
-            "{file} matches more than one file with gaps ({}); pass one of those paths or a seam ID",
-            files.join(", ")
-        )));
+        return Err(TestStubError::Ambiguous {
+            message: format!(
+                "{file} matches more than one file with gaps ({}); pass one of those paths or a seam ID",
+                files.join(", ")
+            ),
+            seam_ids: Vec::new(),
+        });
     }
     let Some(first) = in_file.first() else {
         // Name the parse failure: a file ripr cannot parse has no seams,
@@ -859,12 +882,18 @@ fn resolve_at(
                 .iter()
                 .map(|seam| format!("--seam-id {}", seam.id().as_str()))
                 .collect::<Vec<_>>();
-            return Err(TestStubError::Ambiguous(format!(
-                "{file}:{} holds more than one {} seam, so --at cannot pick one; pass one of: {}",
-                lead.seam().display_line(),
-                lead.seam().kind().as_str(),
-                ids.join(", ")
-            )));
+            return Err(TestStubError::Ambiguous {
+                message: format!(
+                    "{file}:{} holds more than one {} seam, so --at cannot pick one; pass one of: {}",
+                    lead.seam().display_line(),
+                    lead.seam().kind().as_str(),
+                    ids.join(", ")
+                ),
+                seam_ids: tied
+                    .iter()
+                    .map(|seam| seam.id().as_str().to_string())
+                    .collect(),
+            });
         }
     }
     let mut first_refusal = None;
@@ -1147,7 +1176,7 @@ pub(crate) fn revalidate_already_present_stub(
     let fresh = resolve_test_stub(root, config, selector).map_err(|error| match error {
         TestStubError::Operational(message)
         | TestStubError::NotFound(message)
-        | TestStubError::Ambiguous(message) => {
+        | TestStubError::Ambiguous { message, .. } => {
             format!("{message}; the workspace changed after the stub was computed, so rerun `ripr agent stub`")
         }
     })?;
@@ -1617,7 +1646,7 @@ mod tests {
             None,
         );
         assert!(
-            matches!(&result, Err(TestStubError::Ambiguous(message))
+            matches!(&result, Err(TestStubError::Ambiguous { message, .. })
                 if message.contains("crates/a/src/lib.rs, crates/b/src/lib.rs")
                     && message.contains("seam ID")),
             "{:?}",

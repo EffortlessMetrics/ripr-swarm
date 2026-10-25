@@ -1195,6 +1195,114 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
 }
 
 #[test]
+fn limited_journey_check_names_ambiguous_stub_seams() -> Result<(), String> {
+    let scratch = kind_refusal_crate(
+        "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 && b > 20 { 1 } else { 0 }\n}\n",
+    )?;
+    let root = scratch.directory.clone();
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if a > 10 && b > 20 { 1 } else { 0 }",
+        "    if a >= 10 && b > 20 { 1 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    // #10192: preserve the ambiguity and offer explicit, runnable selectors.
+    let seam_ids = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| line.split_once("--seam-id ").map(|(_, id)| id.trim()))
+        .collect::<Vec<_>>();
+    assert_eq!(seam_ids.len(), 2, "{stdout}");
+    assert_ne!(seam_ids[0], seam_ids[1]);
+    assert!(
+        stdout.contains("do not establish a repair binding"),
+        "{stdout}"
+    );
+    for id in seam_ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(["--seam-id", id, "--json"]);
+        let selected = run_bounded(command, &root, "check-seam-choice", Duration::from_mins(2))?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["seam_id"], id);
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["written"], false);
+    }
+
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_public_api_helper_boundary_stays_limited() -> Result<(), String> {
+    let scratch = kind_refusal_crate(include_str!(
+        "../../../fixtures/rust_transitive_reach_positive/input/src/lib.rs"
+    ))?;
+    let root = &scratch.directory;
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname='rust_transitive_reach_positive_fixture'\nversion='0.0.0'\nedition='2024'\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/internal.rs"),
+        "pub(crate) fn inner(a: i32, b: i32) -> i32 {\n    if a >= b { a - b } else { b }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/it.rs"), "use rust_transitive_reach_positive_fixture::outer;\n#[test]\nfn public_api_exact_boundary() { assert_eq!(outer(3, 3), 0); }\n").map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/internal.rs",
+        "    if a > b { a - b } else { b }",
+        "    if a >= b { a - b } else { b }",
+    )?;
+    let text = check_human(root, &diff)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        text.contains("Tests cannot close this static-analysis limitation"),
+        "{text}"
+    );
+    assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+    assert!(
+        text.contains("restricted-visibility helper `inner` behind public entry point `outer`"),
+        "{text}"
+    );
+    assert!(!text.contains("Write a test for it:"), "{text}");
+    let mut explain = ripr_command();
+    explain
+        .args(["explain", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("src/internal.rs:2");
+    let output = run_bounded(explain, root, "limited-explain", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let explanation = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        explanation.contains("Tests cannot close this static-analysis limitation"),
+        "{explanation}"
+    );
+    assert!(
+        !explanation.contains("To change the verdict, a test needs to:"),
+        "{explanation}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
 fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result<(), String> {
     let source = "pub fn pair(a: u32, b: u32) -> bool {\n    a > 10 && b > 20\n}\n";
     let scratch = kind_refusal_crate(source)?;
