@@ -295,6 +295,7 @@ relation are out of scope.
 - `crates/ripr/tests/helper_wrapper_reach.rs`
 - `fixtures/rust_wrapper_boolean_return_discarded`
 - `fixtures/rust_wrapper_user_macro_guard`
+- `fixtures/rust_wrapper_closure_shadowed_callee`
 
 ## Implementation Mapping
 
