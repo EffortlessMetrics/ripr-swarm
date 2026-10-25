@@ -46,8 +46,12 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
+          "type": "maximum_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "mocked_module"
         }
       ]
     },
@@ -69,8 +73,12 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
+          "type": "maximum_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "mocked_module"
         }
       ]
     },
@@ -92,8 +100,12 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
+          "type": "maximum_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "mocked_module"
         }
       ]
     },
