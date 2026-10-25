@@ -111,7 +111,7 @@ pub(in crate::analysis) use propagation_witness::{
     retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness, format_tail_witness,
+    constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;

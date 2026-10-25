@@ -45,6 +45,7 @@ pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod helper_arguments;
+pub(super) mod result_map;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -2870,19 +2871,24 @@ impl OwnerReturnPin {
             changed_line,
         ) {
             Some(path) => path,
-            // RIPR-SPEC-0265 rule 2: only a changed return value that is the
-            // whole admitted adaptor tail; the test side reads the input.
+            // #9870: an exact Result.map rewrite needs an Ok pin, which
+            // establishes that its callback ran. SPEC-0265's iterator tail
+            // instead reads the pinned input on the test side.
             // This fallback implements that spec's amendment of the pin's
             // closure refusal ("a closure in the tail no longer refuses it
             // on this shape") and must stay unguarded: 0265's keeping-pair
             // registry is what tells a closure-carried change apart there.
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
-                closure_adaptor::admitted_owner_adaptor_tail(owner, index)
-                    .filter(|tail| tail.tail_is(&probe.expression))
-                    .map(|tail| ReturnPathGate::Adaptor {
-                        position: tail.position,
-                        requires_ok: tail.collects_result(),
-                    })?
+                if result_map::admitted_rewrite(probe, owner, index).is_some() {
+                    ReturnPathGate::Head("Ok")
+                } else {
+                    closure_adaptor::admitted_owner_adaptor_tail(owner, index)
+                        .filter(|tail| tail.tail_is(&probe.expression))
+                        .map(|tail| ReturnPathGate::Adaptor {
+                            position: tail.position,
+                            requires_ok: tail.collects_result(),
+                        })?
+                }
             }
             None => return None,
         };

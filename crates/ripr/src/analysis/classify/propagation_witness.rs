@@ -361,9 +361,32 @@ pub(in crate::analysis) fn constant_tail_witness(
             },
         },
     };
+    direct_tail_witness(probe, owner, sinks, tail_line, limitation)
+}
+
+/// #9870: the exact Result.map rewrite forwards its callback's payload.
+/// Observation remains the existing per-test Ok owner-return pin's decision.
+pub(in crate::analysis) fn result_map_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    let line = super::owner_pin::result_map::admitted_rewrite(probe, owner, index)?;
+    direct_tail_witness(probe, owner, sinks, line, "result_map_callback_payload")
+}
+
+fn direct_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+    tail_line: usize,
+    limitation: &str,
+) -> Option<PropagationWitnessV1> {
     if tail_line != probe.location.line {
         return None;
     }
+    let identity = normalize_semantic_text(&probe.expression);
     let sink = sinks.iter().find(|sink| {
         sink.owner.as_ref() == Some(&owner.id)
             && sink.kind == FlowSinkKind::ReturnValue

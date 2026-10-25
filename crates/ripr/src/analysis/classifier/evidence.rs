@@ -205,6 +205,16 @@ impl ClassifiedProbeEvidence {
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::result_map_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::format_tail_witness(
                     context.probe,
                     owner,
@@ -884,12 +894,38 @@ impl ClassifiedProbeEvidence {
             arm_selector.as_ref(),
             context.diff_touched,
         );
-        let (observe, discriminate, related_tests, matched_total) = (
+        let (observe, discriminate, mut related_tests, matched_total) = (
             reveal.observe,
             reveal.discriminate,
             reveal.related,
             reveal.related_total,
         );
+        // #9870: an Ok observer in one test does not establish that an Err
+        // assertion in another test ran this callback. Preserve the existing
+        // pin's exact test/assertion admission on each new map-tail row,
+        // including when another row makes the finding exposed.
+        if matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "result_map_callback_payload")
+        ) {
+            for related in related_tests.iter_mut().filter(|row| row.miss.is_none()) {
+                let Some(text) = related.oracle.as_deref() else {
+                    continue;
+                };
+                let pinned = context.related_tests.iter().any(|(test, _)| {
+                    test.file == related.file
+                        && test.name == related.name
+                        && test.start_line == related.line
+                        && test.assertions.iter().any(|assertion| {
+                            assertion.text == text && owner_pin_admits(test, assertion)
+                        })
+                });
+                if !pinned {
+                    related.miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+                }
+            }
+        }
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
         // missing-field fact below no longer stands for this probe. Only an

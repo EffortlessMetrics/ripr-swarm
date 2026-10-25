@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-result-map-callback",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for bounded Result.map forwarding (#9870), retaining the #9869 std-only Buf subject bytes under a distinct subject identity",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "0fe2f6fb2d35d9c09b98c51a283539977a0c65b73003d26c7291eb0cd81da5b8"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "44dd17c33d41a2b75dfa6d3fa27feb368f6eda09231225d64bb648a587726c31"
+    }
+  ]
+}

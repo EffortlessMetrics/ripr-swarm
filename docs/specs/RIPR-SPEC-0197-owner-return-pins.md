@@ -656,6 +656,22 @@ wrong credits.
      bare call (#7082): with the cfg off, `T::name` can reach a trait
      default the index never sees. A bare `name(..)` still never names the
      associated owner (shape 1 above).
+Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
+body rewrites `Ok(f(self.read(args)?, rest))` to
+`self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
+same-container, same-file `self.read` declaration and owner must return standard
+`Result`; rebound `Result`, `Ok` or `Err` names refuse. The callback must use
+one plain binding exactly once in one unconditional expression, optionally in
+a block with no statements. Replacing that binding by the exact receiver plus
+`?` must reconstruct the former `Ok` payload token for token. A matching `Ok`
+owner-return pin establishes callback execution separately for each observing
+test; an `Err`-only assertion, a reach-only sibling or a deferred assertion
+cannot borrow that provenance. Discarded, recomputed or constant callback
+results, changed payloads, multiple binding reads, `move`/async callbacks,
+chained adaptors, aliases, `map_err` and unpaired rewrites retain the previous
+reading. This bounded rule does not change base-deleted findings or establish
+general combinator, callback or mutation adequacy.
+
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
    every input: no closure, `|=` or non-binary `|`, no `&&`/`||` (except
@@ -2442,6 +2458,11 @@ assertions. This repair shares the existing callback without that larger migrati
   receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- `crates/ripr/tests/result_map_callback.rs`: exact and block-tail forwarding;
+  discard/recompute/constant and changed-payload refusals; receiver, binding,
+  conditional, chained-adaptor and alias boundaries; per-test Ok/Err, reach-only
+  and deferred-observer provenance (#9870).
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic
