@@ -262,6 +262,23 @@ fn live_reader_in_another_file_keeps_its_credit_beside_a_rebinding_test() -> Che
 }
 
 #[test]
+fn return_only_assertion_beside_a_rebinding_test_does_not_lift_the_limit() -> Check {
+    let reload = (
+        "tests/test_reload.py",
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_reload():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 422\n",
+    );
+    let returns_only = (
+        "tests/test_return.py",
+        "from shop.route import checkout\n\n\ndef test_return():\n    assert checkout(True) is None\n",
+    );
+    assert_eq!(
+        classify_with_tests(&[returns_only, reload])?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
 fn rebinding_in_the_live_readers_own_file_still_withholds() -> Check {
     // The rebinding evidence is file-level, so a reader beside the rebinding
     // test in one file cannot be told apart from it: fail closed.

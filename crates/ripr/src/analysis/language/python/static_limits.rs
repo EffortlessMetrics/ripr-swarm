@@ -61,17 +61,26 @@ pub(super) fn module_object_rebind_limit(
     related_candidates: &[PythonRelatedCandidate<'_>],
     credited: Option<&CreditedAssertion>,
 ) -> Option<PythonStaticLimit> {
-    let ChangedEffect::ModuleField { object, .. } =
+    let ChangedEffect::ModuleField { object, attr } =
         ChangedEffect::of(line_text, old_line_text, owner, false)?
     else {
         return None;
     };
     let rebinds = |test: &PythonTest| test.constant_rebinding.assigns_attribute(&object);
+    // Only a credit that reads the changed field through the object's own
+    // import is a live read: a return or other assertion that merely names
+    // the owner does not discriminate the write (#10354).
     let live_credit = credited.is_some_and(|credited| {
         related_candidates.iter().any(|candidate| {
-            candidate.test.name == credited.test_name
-                && candidate.test.file == credited.test_file
-                && !rebinds(candidate.test)
+            let test = candidate.test;
+            test.name == credited.test_name
+                && test.file == credited.test_file
+                && !rebinds(test)
+                && test.imports.iter().any(|import| {
+                    import.imported == object
+                        && import_source_module_matches_owner(import, owner, &test.file)
+                        && credited.text.contains(&format!("{}.{attr}", import.alias))
+                })
         })
     });
     if live_credit {

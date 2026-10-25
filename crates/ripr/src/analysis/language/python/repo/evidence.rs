@@ -756,16 +756,27 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
+    let alignment =
+        classify_sink_alignment_with_old(owner, text, None, related, all_tests, false, None);
+    // The same credited test the finding classifier sees, so a live reader
+    // beside a rebinding test is not limited here while its finding is
+    // exposed (#10354).
     let static_limit =
         static_limit_for_focused_change(text, None, None, &focus, owner, "", candidates)
-            .or_else(|| module_object_rebind_limit(text, None, owner, candidates, None))
+            .or_else(|| {
+                module_object_rebind_limit(
+                    text,
+                    None,
+                    owner,
+                    candidates,
+                    alignment.credited.as_ref().filter(|_| alignment.observes()),
+                )
+            })
             .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
             .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
-    let alignment =
-        classify_sink_alignment_with_old(owner, text, None, related, all_tests, false, None);
     let strongest = related
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())
