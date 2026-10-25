@@ -36,7 +36,13 @@ case "$all" in
       touch "$FAKE_DIR/pull.$n.seen"; serve "$FAKE_DIR/pull.$n.json" '{}'
     fi ;;
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
-  *"/workflows/routed-rust.yml/runs"*) serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}' ;;
+  *"/workflows/routed-rust.yml/runs"*)
+    # A `.later.json` fixture answers every look after the first (delayed run visibility).
+    if [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
+      serve "$FAKE_DIR/runs.later.json" '{"workflow_runs":[]}'
+    else
+      touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}'
+    fi ;;
   *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
   *"/comments?"*) serve "$FAKE_DIR/comments.json" '[]' ;;
 esac
@@ -56,6 +62,7 @@ struct Pr {
     in_flight: bool,
     completed_run: bool,
     fresh: bool,
+    late_run: Option<&'static str>,
 }
 
 impl Pr {
@@ -74,6 +81,7 @@ impl Pr {
             in_flight: false,
             completed_run: false,
             fresh: false,
+            late_run: None,
         }
     }
     fn sha(&self) -> String {
@@ -178,6 +186,15 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join("runs.json"),
                 r#"{"workflow_runs":[{"status":"completed","display_title":"Merge-ready request abc"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if let Some(status) = pr.late_run {
+            fs::write(
+                dir.join("runs.later.json"),
+                format!(
+                    r#"{{"workflow_runs":[{{"status":"{status}","display_title":"Merge-ready request abc"}}]}}"#
+                ),
             )
             .map_err(|e| e.to_string())?;
         }
@@ -572,5 +589,21 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
     };
     let outcome = run(&[moved], "dark-moved")?;
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    Ok(())
+}
+
+#[test]
+fn a_run_that_becomes_visible_before_the_notice_is_left_alone() -> Result<(), String> {
+    // The sweep's first look finds no run; by the time the notice is composed an active
+    // request is visible. Re-applying the label would cancel it, so say nothing.
+    for status in ["in_progress", "queued"] {
+        let delayed = Pr {
+            state: "clean",
+            late_run: Some(status),
+            ..Pr::dirty(30)
+        };
+        let outcome = run(&[delayed], &format!("late-{status}"))?;
+        assert_eq!(outcome.comments, 0, "{status}: {}", outcome.summary);
+    }
     Ok(())
 }
