@@ -1,0 +1,57 @@
+{
+  "subject_id": "authored-py-pytest-route-clients",
+  "origin": "authored",
+  "version_label": "authored@1818f481",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "2acea854b7b14ccdabb06bbb15e2a3ad8e5dac9b38626e16c0f29d75e6bd1ad9"
+    },
+    {
+      "path": "routeclients/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "routeclients/archive.py",
+      "sha256": "a4e8258f35aafe3c3c21d292200f0ba454f3b7c2eeff5984dc50462d08ac0960"
+    },
+    {
+      "path": "routeclients/invoices.py",
+      "sha256": "087b1e918eb5c32ec84d6f6db2227b9fb29fd73648d225a7c7bd2aac4d799b52"
+    },
+    {
+      "path": "routeclients/mini.py",
+      "sha256": "e09de5eb8db2d7bbdd7b38fb8b84d1732b82ae1cca7f7af8f74983f3d4bc2866"
+    },
+    {
+      "path": "routeclients/orders.py",
+      "sha256": "4eda0535578b5358da0504ee7cfaee131584ec41802fb27fc18a9a8a7d8447b2"
+    },
+    {
+      "path": "routeclients/reports.py",
+      "sha256": "b33481307d5f9b396ea37d5cda2dfb00980dd499a0b120aeed0c274388e8f515"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "9d9ef4b6e40fa0cf7b14c58de779f795bf85348e94f880743f2ff96b9163b836"
+    },
+    {
+      "path": "tests/invoices/conftest.py",
+      "sha256": "28999725056e7a2e109061dda9d535a9d6af09818bcf8f6169992781b1674b4f"
+    },
+    {
+      "path": "tests/invoices/test_invoices.py",
+      "sha256": "cb48afdc956c688dca2d30e35d41c92d4013de32ef7c7ef1acf58edd6025df3e"
+    },
+    {
+      "path": "tests/test_orders.py",
+      "sha256": "7b8411707420911b106a4c1754cd2913e3d56a70859650d461b1bcb0305ad502"
+    },
+    {
+      "path": "tests/test_reports.py",
+      "sha256": "434b4c317dbcdea83b83d096a4953547195b01f5a7844ade7e4499c9eab1f8b0"
+    }
+  ]
+}

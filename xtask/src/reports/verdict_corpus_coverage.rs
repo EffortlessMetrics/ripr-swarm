@@ -4,7 +4,8 @@
 //! heading, named `RIPR-SPEC-NNNN#K`. Cases cite the examples they label in
 //! `spec_examples`; `spec-coverage.toml` puts every spec with numbered
 //! examples in or out of scope, waives in-scope examples a corpus case
-//! cannot label, and records the covered count the gate protects. Coverage
+//! cannot label, and `spec-examples.lock` lists the covered examples the
+//! gate protects, one per line. Coverage
 //! says which spec examples carry a runtime-labeled case; it says nothing
 //! about whether ripr's verdict on that case is right.
 
@@ -16,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const LEDGER_FILE: &str = "spec-coverage.toml";
+pub(crate) const LOCK_FILE: &str = "spec-examples.lock";
 pub(crate) const SPECS_DIR: &str = "docs/specs";
 const LEDGER_SCHEMA: &str = "ripr_verdict_corpus_spec_coverage.v1";
 const SPEC_PREFIX: &str = "RIPR-SPEC-";
@@ -25,8 +27,11 @@ const EXAMPLES_HEADING: &str = "## Acceptance Examples";
 #[serde(deny_unknown_fields)]
 pub(crate) struct Ledger {
     pub(crate) schema_version: String,
-    /// The covered-example count `verdict-corpus check` protects.
-    pub(crate) floor: usize,
+    /// The covered examples `verdict-corpus check` protects, read from
+    /// `spec-examples.lock` (one line each, so parallel PRs that cover
+    /// different examples never edit the same line).
+    #[serde(skip)]
+    pub(crate) locked: BTreeSet<(String, ExampleKey)>,
     #[serde(default)]
     pub(crate) spec: Vec<LedgerSpec>,
     /// In-scope specs whose acceptance examples are prose, not numbered:
@@ -274,7 +279,54 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
         ));
     }
     ledger.known_false = super::known_false::load_entries(corpus_dir)?;
+    ledger.locked = load_lock(corpus_dir)?;
     Ok(ledger)
+}
+
+/// Parse `spec-examples.lock`: `RIPR-SPEC-NNNN#K` or `#slug` per line, `#`
+/// comments and blank lines ignored. Entries must be sorted and unique, so
+/// an insertion lands at its sorted place and two PRs that lock different
+/// examples do not touch the same line.
+pub(crate) fn load_lock(corpus_dir: &Path) -> Result<BTreeSet<(String, ExampleKey)>, String> {
+    let path = corpus_dir.join(LOCK_FILE);
+    let label = normalize_path(&path);
+    let text = fs::read_to_string(&path).map_err(|err| format!("read {label}: {err}"))?;
+    parse_lock(&text, &label)
+}
+
+fn parse_lock(text: &str, label: &str) -> Result<BTreeSet<(String, ExampleKey)>, String> {
+    let mut locked = BTreeSet::new();
+    let mut previous: Option<(String, ExampleKey)> = None;
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let number = index + 1;
+        let Some(entry) = parse_example_id(line) else {
+            return Err(format!(
+                "{label}:{number}: `{line}` is not `RIPR-SPEC-NNNN#<number or slug>`"
+            ));
+        };
+        if let Some(before) = &previous {
+            if *before == entry {
+                return Err(format!("{label}:{number}: `{line}` is listed twice"));
+            }
+            if *before > entry {
+                return Err(format!(
+                    "{label}:{number}: `{line}` is out of order; keep the lock sorted by spec, then numbers before slugs"
+                ));
+            }
+        }
+        previous = Some(entry.clone());
+        locked.insert(entry);
+    }
+    Ok(locked)
+}
+
+/// The lock line for one example.
+pub(crate) fn lock_line(spec: &str, key: &ExampleKey) -> String {
+    format!("{spec}#{key}")
 }
 
 /// `RIPR-SPEC-NNNN#K` or `RIPR-SPEC-NNNN#slug` as (`RIPR-SPEC-NNNN`, key).
@@ -472,12 +524,16 @@ pub(crate) fn coverage_violations(
         }
     }
     violations.extend(axis_violations(corpus, ledger));
-    let coverage = spec_example_coverage(corpus, ledger, specs);
-    if ledger.floor > coverage.coverage.denominator {
-        violations.push(format!(
-            "{LEDGER_FILE} floor {} exceeds the {} coverable examples",
-            ledger.floor, coverage.coverage.denominator
-        ));
+    for (spec, key) in &ledger.locked {
+        if !specs
+            .get(spec)
+            .is_some_and(|examples| examples.contains(key))
+        {
+            violations.push(format!(
+                "{LOCK_FILE} locks `{}`, but no docs/specs file carries that example; drop the line or restore the example",
+                lock_line(spec, key)
+            ));
+        }
     }
     violations
 }
@@ -581,7 +637,12 @@ pub(crate) fn axis_note(
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct SpecExampleCoverage {
     pub(crate) ledger: String,
-    pub(crate) floor: usize,
+    /// Examples listed in `spec-examples.lock`.
+    pub(crate) locked_examples: usize,
+    /// Locked examples no case covers now: the regression the gate fails on.
+    pub(crate) lost: Vec<String>,
+    /// Covered examples the lock does not list yet; passes with a note.
+    pub(crate) unlocked: Vec<String>,
     /// Covered over in-scope examples minus waived ones.
     pub(crate) coverage: Ratio,
     /// Covered plus waived over all in-scope examples. Waived examples are
@@ -670,6 +731,7 @@ pub(crate) fn spec_example_coverage(
     let cited = citations(corpus);
     let mut by_spec = Vec::new();
     let (mut total, mut covered, mut waived) = (0, 0, 0);
+    let mut covered_keys: BTreeSet<(String, ExampleKey)> = BTreeSet::new();
     let mut in_scope_specs = 0;
     let mut out_of_scope_specs = 0;
     for entry in &ledger.spec {
@@ -693,6 +755,7 @@ pub(crate) fn spec_example_coverage(
             }
             if cited.contains_key(&(entry.id.clone(), number.clone())) {
                 row_covered += 1;
+                covered_keys.insert((entry.id.clone(), number.clone()));
             } else {
                 uncovered.push(number.clone());
             }
@@ -713,7 +776,16 @@ pub(crate) fn spec_example_coverage(
     unmeasured.sort();
     SpecExampleCoverage {
         ledger: format!("{}/{LEDGER_FILE}", super::CORPUS_DIR),
-        floor: ledger.floor,
+        locked_examples: ledger.locked.len(),
+        lost: ledger
+            .locked
+            .difference(&covered_keys)
+            .map(|(spec, key)| lock_line(spec, key))
+            .collect(),
+        unlocked: covered_keys
+            .difference(&ledger.locked)
+            .map(|(spec, key)| lock_line(spec, key))
+            .collect(),
         coverage: ratio(covered, total - waived),
         accounted: ratio(covered + waived, total),
         in_scope_examples: total,
@@ -726,36 +798,50 @@ pub(crate) fn spec_example_coverage(
     }
 }
 
-/// The floor gate. Below the floor fails with what to do; above it passes
-/// and says the floor can be raised.
+/// The lock gate. A locked example no case covers fails with what to do;
+/// covered examples the lock lacks pass and say which lines to add.
 pub(crate) fn floor_gate(coverage: &SpecExampleCoverage) -> Result<Option<String>, String> {
-    let covered = coverage.covered_examples;
-    let floor = coverage.floor;
-    if covered < floor {
+    if !coverage.lost.is_empty() {
         return Err(format!(
-            "verdict-corpus: spec-example coverage fell to {covered}/{} below the floor {floor} in {}; restore the `spec_examples` citations a case lost, or lower `floor` with the reason in the PR when a case was deliberately retired",
-            coverage.coverage.denominator, coverage.ledger
+            "verdict-corpus: {} locked spec example(s) lost their case in {}: {}; restore the `spec_examples` citation a case lost, or drop the line from {} with the reason in the PR when a case was deliberately retired",
+            coverage.lost.len(),
+            coverage.ledger,
+            coverage.lost.join(", "),
+            LOCK_FILE
         ));
     }
-    if covered > floor {
-        return Ok(Some(format!(
-            "verdict-corpus: spec-example coverage {covered}/{} is above the floor {floor}; raise `floor` in {} to {covered} to protect it",
-            coverage.coverage.denominator, coverage.ledger
-        )));
+    if coverage.unlocked.is_empty() {
+        return Ok(None);
     }
-    Ok(None)
+    let shown: Vec<&str> = coverage
+        .unlocked
+        .iter()
+        .take(20)
+        .map(String::as_str)
+        .collect();
+    let more = coverage.unlocked.len() - shown.len();
+    Ok(Some(format!(
+        "verdict-corpus: {} covered spec example(s) are not in {LOCK_FILE} yet; add these lines at their sorted places to protect them: {}{}",
+        coverage.unlocked.len(),
+        shown.join(", "),
+        if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        }
+    )))
 }
 
 pub(crate) fn render_coverage_markdown(coverage: &SpecExampleCoverage) -> String {
     let mut out = String::new();
     out.push_str("\n## Spec example coverage\n\n");
     out.push_str(&format!(
-        "Numbered acceptance examples of in-scope specs that at least one case cites in `spec_examples` ({}). Covered {}/{} ({}); floor {}. Waived {} and accounted (covered plus waived) {}/{}. In-scope specs {}, out-of-scope specs {}.\n",
+        "Numbered acceptance examples of in-scope specs that at least one case cites in `spec_examples` ({}). Covered {}/{} ({}); locked {}. Waived {} and accounted (covered plus waived) {}/{}. In-scope specs {}, out-of-scope specs {}.\n",
         coverage.ledger,
         coverage.coverage.numerator,
         coverage.coverage.denominator,
         coverage.coverage.rate,
-        coverage.floor,
+        coverage.locked_examples,
         coverage.waived_examples,
         coverage.accounted.numerator,
         coverage.accounted.denominator,
