@@ -506,9 +506,36 @@ fn local_executor_pin(test: &TestFact, owner: &FunctionFact, index: &RustIndex) 
             is_ident(helper)
                 && is_helper(helper)
                 && split_arguments(argument).len() == 1
-                && calls(argument, &owner.name)
+                && is_whole_call(argument, &owner.name)
         })
     })
+}
+
+/// The whole text is one call to `name`: `name(..)` with the opening
+/// parenthesis closed by the final character, so a block or sum that merely
+/// contains the call does not count as running it.
+fn is_whole_call(text: &str, name: &str) -> bool {
+    let Some(args) = text
+        .trim()
+        .strip_prefix(name)
+        .and_then(|r| r.strip_prefix('('))
+    else {
+        return false;
+    };
+    let mut depth = 1usize;
+    for (at, ch) in args.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return at + ch.len_utf8() == args.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The changed line calls a method on a `&mut` parameter of the owner, and a

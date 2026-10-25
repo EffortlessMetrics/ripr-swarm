@@ -1265,6 +1265,11 @@ fn an_executor_shape_that_differs_keeps_the_gap() -> Result<(), String> {
             "assert_eq!(block_on(add_tax(100), 1), 110);",
         ),
         (
+            "the argument only contains the owner call",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on({ let _unused = add_tax(100); 110 }), 110);",
+        ),
+        (
             "the expected side is not a literal",
             "pub async fn add_tax(p: u32) -> u32",
             "assert_eq!(block_on(add_tax(100)), add_tax_expected());",
