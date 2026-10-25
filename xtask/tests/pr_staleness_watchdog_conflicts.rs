@@ -516,6 +516,12 @@ fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(
     };
     let outcome = run(&[told], "dark-told")?;
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    assert!(
+        outcome.summary.contains("re-apply notice already posted")
+            && outcome.summary.contains("re-apply notices: 0"),
+        "{}",
+        outcome.summary
+    );
     Ok(())
 }
 
@@ -604,6 +610,21 @@ fn a_run_that_becomes_visible_before_the_notice_is_left_alone() -> Result<(), St
         };
         let outcome = run(&[delayed], &format!("late-{status}"))?;
         assert_eq!(outcome.comments, 0, "{status}: {}", outcome.summary);
+        // The audit row must not advise a re-apply that would cancel the live run.
+        assert!(
+            outcome
+                .summary
+                .contains("in flight (a merge-ready run became visible"),
+            "{status}: {}",
+            outcome.summary
+        );
+        assert!(
+            !outcome.summary.contains("needs merge-ready re-applied")
+                && !outcome.summary.contains("re-apply notice posted")
+                && outcome.summary.contains("re-apply notices: 0"),
+            "{status}: {}",
+            outcome.summary
+        );
     }
     Ok(())
 }

@@ -145,13 +145,13 @@ jobs:
           notify_dark() {
             marker="<!-- merge-ready-dark:$2 -->"
             known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
-            [ "$known" = "0" ] || return 0
+            [ "$known" = "0" ] || return 2
             # The run may have become visible since the sweep's first look: an active request
             # must be left alone (re-applying the label cancels it). A request that finished
             # without the required check (admission refused, cancelled) is a different cause
             # from a push after the label.
             read -r active ran < <(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2&per_page=100" --jq '[.workflow_runs[] | select(.display_title | startswith("Merge-ready request "))] | "\([.[] | select(.status != "completed")] | length) \(length)"' | awk '{a+=$1; t+=$2} END{print a+0, t+0}')
-            [ "$active" = "0" ] || return 0
+            [ "$active" = "0" ] || return 3
             if [ "$ran" = "0" ]; then
               cause="no qualification run exists for head \`${2:0:8}\`: it was pushed after the label was applied, or the label event was dropped"
             else
@@ -223,12 +223,13 @@ jobs:
                 fi
               fi
               if [ "$dark_kind" = "push" ]; then
-                if notify_dark "$number" "$head_sha"; then
-                  told=$((told + 1))
-                  disposition="$disposition; re-apply notice posted"
-                else
-                  disposition="$disposition; re-apply notice failed"
-                fi
+                notify_dark "$number" "$head_sha" && status=0 || status=$?
+                case "$status" in
+                  0) told=$((told + 1)); disposition="$disposition; re-apply notice posted" ;;
+                  2) disposition="$disposition; re-apply notice already posted" ;;
+                  3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)" ;;
+                  *) disposition="$disposition; re-apply notice failed" ;;
+                esac
               fi
             fi
             echo "| #$number | \`${head_sha:0:8}\` | \`$mergeable_state\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
