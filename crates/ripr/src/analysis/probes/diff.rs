@@ -549,7 +549,9 @@ pub(crate) fn probes_for_file_with_relations(
         // line coincidences. External file context retains the index composer
         // authority used by the existing test-evidence exclusion.
         // Other families keep their existing candidate-coordinate handling.
-        let is_test_evidence = if removed_bounds.lines[removed_index] {
+        let is_test_evidence = if removed_bounds.lines[removed_index]
+            || removed_bounds.field_declarations[removed_index]
+        {
             file_is_composed_test_evidence(index, &changed.path)
                 || removed_bounds.old_index.as_ref().is_some_and(|old| {
                     changed_line_is_test_evidence(
@@ -625,6 +627,17 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #9183: a deleted field declaration with no replacement is type
+            // syntax in the old source, not a deleted construction. The
+            // replacement checks above ran on the lexical family, so an
+            // edited field keeps its before/after pairing.
+            let family = if family == ProbeFamily::FieldConstruction
+                && removed_bounds.field_declarations[removed_index]
+            {
+                ProbeFamily::StaticUnknown
+            } else {
+                family
+            };
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 removed,
