@@ -2,7 +2,7 @@ use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
-use super::caplog_text::PythonLogEvidence;
+use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
@@ -937,9 +937,14 @@ fn related_candidates_have_log_membership_limit(
             select_relevant_assertion(&candidate.test.assertions, Some(focus))
                 .assertion()
                 .is_some_and(|assertion| {
+                    // A local alias of a captured-log read (`msgs = caplog.messages`)
+                    // is read as the capture itself: whether it is a faithful
+                    // snapshot is the evaluator's question, not a reason to
+                    // report a gap (#10151).
+                    let gate_text = substitute_caplog_aliases(candidate.test, &assertion.gate_text);
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    caplog_membership_literals(&assertion.gate_text)
+                    caplog_membership_literals(&gate_text)
                         .iter()
                         .any(|checked| {
                             words(&checked.literal)
@@ -950,9 +955,9 @@ fn related_candidates_have_log_membership_limit(
                         // `caplog.records` (`caplog.records[0].message == ...`,
                         // `caplog.messages == [...]`) are not evaluated: any
                         // shared word abstains.
-                        || (assertion.gate_text.contains("caplog.messages")
-                            || assertion.gate_text.contains("caplog.records"))
-                            && words(&assertion.gate_text)
+                        || (gate_text.contains("caplog.messages")
+                            || gate_text.contains("caplog.records"))
+                            && words(&gate_text)
                                 .iter()
                                 .any(|word| changed.contains(word))
                 })

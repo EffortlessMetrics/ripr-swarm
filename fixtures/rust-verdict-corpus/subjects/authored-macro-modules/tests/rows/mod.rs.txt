@@ -1,0 +1,12 @@
+use macro_modules::{fits_child, fits_child_far};
+
+child_table! {
+    child_under(3, 5, true)
+    child_at(5, 5, true)
+    child_over(6, 5, false)
+}
+
+child_far_table! {
+    far_small(1, 5, true)
+    far_large(9, 5, false)
+}

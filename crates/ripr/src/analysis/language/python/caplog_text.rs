@@ -30,6 +30,7 @@ use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion
 use super::boundary::{CallRow, owner_call_rows_for_candidate, unrebound_constants};
 use super::discriminators::python_string_literal_value;
 use super::guard_activation::{condition_holds, leading_whitespace};
+use super::module_constants::mentions_identifier;
 use super::no_behavior::split_top_level_args;
 use super::related_tests::PythonRelatedCandidate;
 use super::static_limits::{CaplogRead, caplog_required_literals};
@@ -121,13 +122,24 @@ pub(super) fn python_log_evidence(
     {
         let assertion =
             select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()?;
-        let literals = caplog_required_literals(&assertion.gate_text);
+        let rows = owner_call_rows_for_candidate(owner, &constants, candidate)?;
+        // A read through a local alias is the same read only where the alias
+        // is a plain snapshot taken after every owner call (#10151).
+        if rows.iter().any(|row| row.file != candidate.test.file) {
+            return None;
+        }
+        let gate = snapshot_alias_gate(
+            candidate.test,
+            assertion.line,
+            &assertion.gate_text,
+            rows.iter().map(|row| row.line),
+        )?;
+        let literals = caplog_required_literals(&gate);
         if literals.is_empty() {
             // Another assertion may catch the edit too; this reading only
             // proves what the caplog assertions say.
             return None;
         }
-        let rows = owner_call_rows_for_candidate(owner, &constants, candidate)?;
         let pin = level_pin(candidate.test, owner)?;
         let mut old_texts = Vec::new();
         let mut new_texts = Vec::new();
@@ -587,6 +599,134 @@ fn body_calls_only_the_owner(body: &str, test: &PythonTest, owner: &PythonOwner)
         }
     }
     true
+}
+
+/// The captured-log reads a test can bind to a local name.
+const CAPLOG_READS: [&str; 3] = ["caplog.text", "caplog.messages", "caplog.records"];
+
+struct CaplogAlias<'a> {
+    name: &'a str,
+    read: &'static str,
+    /// Index of the `<name> = caplog.<read>` line in the test body.
+    index: usize,
+}
+
+/// `<name> = caplog.text|messages|records` lines of a test body.
+fn caplog_aliases(body: &str) -> Vec<CaplogAlias<'_>> {
+    body.lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let (name, value) = line.trim().split_once('=')?;
+            // A trailing comment (`# type: ignore`) is not part of the value.
+            let value = value.split('#').next().unwrap_or_default();
+            let (name, value) = (name.trim(), value.trim());
+            let identifier = !name.is_empty()
+                && !name.starts_with(|ch: char| ch.is_ascii_digit())
+                && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
+            let read = CAPLOG_READS.iter().find(|read| **read == value)?;
+            (identifier && !value.starts_with('=')).then_some(CaplogAlias { name, read, index })
+        })
+        .collect()
+}
+
+/// `text` with each whole-word `name` outside a string literal replaced by
+/// `with`: an alias spelled inside a quoted literal is data, not the alias.
+pub(super) fn replace_identifier(text: &str, name: &str, with: &str) -> String {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        let width = ch.len_utf8();
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+        } else if text[index..].starts_with(name)
+            && !text[..index].chars().next_back().is_some_and(is_word)
+            && !text[index + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
+            out.push_str(with);
+            index += name.len();
+            continue;
+        }
+        out.push(ch);
+        index += width;
+    }
+    out
+}
+
+/// The assertion with every local alias of a captured-log read written as the
+/// read itself. Only for deciding whether the assertion could be about the
+/// changed message: nothing shows the alias is a snapshot of it.
+pub(super) fn substitute_caplog_aliases(test: &PythonTest, gate_text: &str) -> String {
+    caplog_aliases(&test.body_text)
+        .iter()
+        .fold(gate_text.to_string(), |text, alias| {
+            replace_identifier(&text, alias.name, alias.read)
+        })
+}
+
+/// The assertion text with its aliases of captured-log reads replaced by the
+/// reads, or None when an alias is not provably a plain snapshot: the name is
+/// bound once, to the read, at the assertion's own indentation after every
+/// owner call, and appears nowhere else in the test (a mutation, rebinding,
+/// deletion, nested use or other read keeps the abstention). `caplog.text`,
+/// `.messages` and `.records` are rebuilt on each access, so an alias taken
+/// before the call would hold the earlier records.
+fn snapshot_alias_gate(
+    test: &PythonTest,
+    assertion_line: usize,
+    gate_text: &str,
+    owner_call_lines: impl Iterator<Item = usize>,
+) -> Option<String> {
+    let aliases = caplog_aliases(&test.body_text);
+    let mentioned: Vec<_> = aliases
+        .iter()
+        .filter(|alias| mentions_identifier(gate_text, alias.name))
+        .collect();
+    if mentioned.is_empty() {
+        return Some(gate_text.to_string());
+    }
+    let lines: Vec<&str> = test.body_text.lines().collect();
+    let assertion_index = assertion_line.checked_sub(test.line)?;
+    let assertion_lines = assertion_index..assertion_index + gate_text.lines().count().max(1);
+    let last_call = owner_call_lines.max()?;
+    let mut gate = gate_text.to_string();
+    for alias in mentioned {
+        let bound_once = aliases
+            .iter()
+            .filter(|other| other.name == alias.name)
+            .count()
+            == 1;
+        let only_uses = lines.iter().enumerate().all(|(index, line)| {
+            !mentions_identifier(line, alias.name)
+                || index == alias.index
+                || assertion_lines.contains(&index)
+        });
+        let indent = leading_whitespace(lines.get(alias.index)?);
+        let level = lines
+            .get(assertion_index)
+            .is_some_and(|line| leading_whitespace(line) == indent);
+        if !(bound_once && only_uses && level && test.line + alias.index > last_call) {
+            return None;
+        }
+        gate = replace_identifier(&gate, alias.name, alias.read);
+    }
+    Some(gate)
 }
 
 /// The `if <condition>:` lines, outermost first, between the owner's `def`
