@@ -156,7 +156,12 @@ fn judged_for_owner(
             continue;
         }
         let related_direct = is_related(test, true);
-        if related_direct && executor_wraps_owner_call(&code, &owner.name, test, index) {
+        // A sync owner's bare call is its value, not a future an executor
+        // drives: `block_on(owner(..))` on one stays a plain gap (#10143).
+        if related_direct
+            && super::owner_pin::declares_async(owner, index)
+            && executor_wraps_owner_call(&code, &owner.name, test, index)
+        {
             judged.push((label(test), Form::ExecutorWrapped));
         }
     }
@@ -441,28 +446,16 @@ fn executor_wraps_owner_call(code: &str, owner: &str, test: &TestFact, index: &R
         if !is_ident(leaf) || leaf == owner {
             return false;
         }
-        if KNOWN_EXECUTORS.contains(&leaf) {
-            return true;
-        }
-        // A local helper: defined in the test's file, taking a future.
-        callee == leaf
-            && !open[..callee_start].trim_end().ends_with('.')
-            && index.functions().iter().any(|function| {
-                function.name == leaf
-                    && function.file == test.file
-                    && signature(function).contains("Future")
-            })
+        // A helper defined in the test's file is the local-executor reading
+        // (`framework_oracle`, #10143), which also asks for a literal expected
+        // value. Only an executor ripr cannot see the definition of is read here.
+        let defined_locally = callee == leaf
+            && index
+                .functions()
+                .iter()
+                .any(|function| function.name == leaf && function.file == test.file);
+        KNOWN_EXECUTORS.contains(&leaf) && !defined_locally
     })
-}
-
-/// The text of a function up to its body's opening brace.
-fn signature(function: &FunctionFact) -> String {
-    let body: &str = &function.body;
-    let masked = mask_comments_and_strings(body);
-    masked
-        .find('{')
-        .map_or(masked.as_str(), |open| &masked[..open])
-        .to_string()
 }
 
 /// Offset just past the `)` that closes the call whose `(` starts at `open`.

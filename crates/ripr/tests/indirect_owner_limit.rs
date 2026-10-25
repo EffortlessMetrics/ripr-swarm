@@ -387,7 +387,16 @@ const TAX_AFTER: &str = "    p / 10 + p";
 
 #[test]
 fn an_owner_called_inside_a_local_executor_is_a_limit_not_a_gap() -> Result<(), String> {
-    withheld(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER, "local block_on")
+    // #10143's framework rule reads this shape first, so either limit is the
+    // withhold; the case must never fall back to a gap.
+    let findings = edited(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER)?;
+    if findings.iter().any(is_gap) || !findings.iter().any(|f| f.static_limit_kind.is_some()) {
+        return Err(format!(
+            "local block_on: expected a withholding limit, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
 }
 
 #[test]
