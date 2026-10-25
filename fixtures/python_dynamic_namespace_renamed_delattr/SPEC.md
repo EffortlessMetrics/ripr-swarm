@@ -15,7 +15,8 @@ changes from `>` to `>=`.
 
 ## Then
 
-Both changed behaviors remain `weakly_exposed`. A namespace writer can replace
+The module-object write reads `static_unknown` with a `mocked_module` limit, and
+the predicate boundary remains `weakly_exposed`. A namespace writer can replace
 or remove the names that the owner reads, so neither the imported object nor
 constant supplies stable credit. The constant is also withheld as a repair
 target. RIPR-SPEC-0108 pins the two findings independently of golden blessing.

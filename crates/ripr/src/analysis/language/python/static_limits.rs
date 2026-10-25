@@ -3,10 +3,12 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::effect_alignment::ChangedEffect;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
-    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    import_source_module_matches_owner, is_python_identifier_char,
+    line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
 use super::source_utils::SourceText;
@@ -198,6 +200,36 @@ pub(super) fn static_limit_for_focused_change(
             evidence: "static_limit mocked_module: related test uses patch/mock/monkeypatch module syntax"
                 .to_string(),
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
+        });
+    }
+    // A test that rebinds the owner's module object (`route.response = fake`,
+    // `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
+    // object than the owner mutates. Withholding credit alone leaves a weak
+    // finding whose repair card asserts on the stale import, so the finding is
+    // withheld as a runtime-substitution limit like `patch` (#10289).
+    if let Some(ChangedEffect::ModuleField { object, .. }) =
+        ChangedEffect::of(line_text, old_line_text, owner, false)
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                let test = candidate.test;
+                // Only a test that imports the object can read a stale one.
+                test.constant_rebinding.assigns_attribute(&object)
+                    && test.imports.iter().any(|import| {
+                        import.imported == object
+                            && import_source_module_matches_owner(import, owner, &test.file)
+                    })
+            })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MockedModule,
+            evidence: format!(
+                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
+            ),
+            missing: format!(
+                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
+            ),
         });
     }
     if related_candidates_have_property_based_test_limit(related_candidates, focus) {

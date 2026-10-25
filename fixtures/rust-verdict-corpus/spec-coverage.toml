@@ -29,8 +29,9 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # 149 = 147 on main + 2 new measured rows (spec0096-named-binding-used,
 # spec0048-label-rendered-observed) whose initializer-call and const shapes
 # abstain today; analyzer fix tracked in #9871.
-# 148: #9619 credits grid-early-table (emptiness guard rows); 149 - 1 on the merged tree.
-missed_credit_ceiling = 148
+# 148: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
+# 147: minus the one row #9619 credits (grid-early-table). Measured on the combined tree.
+missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -985,6 +986,19 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
+
+# Pure bool chain infection from literal truth-table rows
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "an abstain-when-rows-cannot-separate negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs, and a corpus case would need an abstain-ideal row with no catching test"
+
+[[spec.waived]]
+example = 3
+reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs"
 
 [[spec]]
 id = "RIPR-SPEC-0356"

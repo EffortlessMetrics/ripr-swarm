@@ -172,6 +172,14 @@ exercised boundary from a missing one.
   `self`, readable only as `self.<index>` for an index in range; the cell
   is never an owner parameter value, never copied through a plain
   argument, and never compared against a boundary.
+- A `mut` parameter is the compared operand like any other parameter (#10306)
+  only while the caller's value is what the comparison reads: it is never
+  written, or every write (`n = ..`, `n op= ..`, `&mut n`, a method that may
+  mutate it, a macro that names it) comes after the comparison's `if`
+  condition or sits in the `then` block of an earlier arm of the same
+  `if` / `else if` chain, with no loop, closure or second binding of the name
+  in the function. Any other shape keeps the boundary operand unresolved
+  (`infection_unknown`).
 
 ## Required Evidence
 

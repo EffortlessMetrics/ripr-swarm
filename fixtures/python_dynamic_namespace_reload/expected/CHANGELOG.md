@@ -27,3 +27,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_reload (3)
+
+Reason:
+RIPR-SPEC-0028 / #10289: a module-object write whose related test reloads or replaces the module namespace is withheld as a runtime-substitution static limit (static_unknown) instead of a weak finding whose repair card asserts on the stale imported object. The other finding is unchanged.
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_reload --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
