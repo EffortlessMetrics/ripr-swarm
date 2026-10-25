@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@
+ pub fn score(n: usize) -> u32 {
+     let f = |(Either::Left(n) | Either::Right(n)): Either| {
+         let m = n * 2;
+-        if m == 39 {
++        if m == 40 {
+             return 0;
+         }
+         1

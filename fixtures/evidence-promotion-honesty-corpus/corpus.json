@@ -13371,6 +13371,96 @@
           "type": "must_not_report_clean"
         }
       ]
+    },
+    {
+      "id": "rust_param_rebind_destructuring_let",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_param_rebind_destructuring_let",
+      "vector": "destructuring_let_rebinds_the_parameter_before_the_compared_local",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_param_rebind_match_arm_struct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_param_rebind_match_arm_struct",
+      "vector": "match_arm_struct_pattern_rebinds_the_parameter_before_the_compared_local",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_param_rebind_closure_or_pattern",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_param_rebind_closure_or_pattern",
+      "vector": "closure_or_pattern_parameter_rebinds_the_parameter_before_the_compared_local",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_param_rebind_unrelated_pattern_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_param_rebind_unrelated_pattern_control",
+      "vector": "an_unrelated_pattern_binding_leaves_the_parameter_credited",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
     }
   ]
 }
