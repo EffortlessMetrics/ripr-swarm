@@ -13024,6 +13024,7 @@ fixtures = [
   "fixtures/split_test_boundary_oracle",
   "fixtures/strong_boundary_oracle",
   "fixtures/rust_wrapper_boolean_return_discarded",
+  "fixtures/rust_wrapper_user_macro_guard",
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
@@ -13041,6 +13042,8 @@ outputs = [
   "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md",
   "fixtures/rust_wrapper_boolean_return_discarded/expected/check.json",
   "fixtures/rust_wrapper_boolean_return_discarded/expected/human.txt",
+  "fixtures/rust_wrapper_user_macro_guard/expected/check.json",
+  "fixtures/rust_wrapper_user_macro_guard/expected/human.txt",
   "fixtures/split_test_boundary_oracle/expected/check.json",
   "fixtures/split_test_boundary_oracle/expected/human.txt"
 ]

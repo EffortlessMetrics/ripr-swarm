@@ -5,6 +5,54 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_wrapper_user_macro_guard_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_user_macro_guard",
+      "vector": "wrapper_runs_crate_local_logging_named_macro_that_returns_early",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_user_macro_guard_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_user_macro_guard",
+      "vector": "wrapper_runs_crate_local_logging_named_macro_that_returns_early",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_wrapper_boolean_return_discarded",
       "language": "rust",
       "tier": "pure",

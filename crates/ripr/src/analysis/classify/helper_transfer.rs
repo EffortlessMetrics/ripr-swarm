@@ -2441,11 +2441,11 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
         })
 }
 
-/// Standard and logging macros whose expansion holds no `return` of its
-/// own: any `return` in their arguments is caller text the return scan
-/// already reads. Panicking ones (`assert!`, `panic!`) end the test, they
-/// do not change the forwarded value.
-const TRANSPARENT_MACROS: &[&str] = &[
+/// Standard macros whose expansion holds no `return` of its own: any
+/// `return` in their arguments is caller text the return scan already
+/// reads. Panicking ones (`assert!`, `panic!`) end the test, they do not
+/// change the forwarded value. Trusted bare or under `std`/`core`/`alloc`.
+const TRANSPARENT_STD_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "assert_ne",
@@ -2469,39 +2469,55 @@ const TRANSPARENT_MACROS: &[&str] = &[
     "matches",
     "concat",
     "stringify",
-    "trace",
-    "debug",
-    "info",
-    "warn",
-    "error",
-    "event",
-    "span",
 ];
 
-/// Whether `body` invokes a macro outside [`TRANSPARENT_MACROS`] (#10284).
-/// A path-qualified macro (`tracing::info!`) is judged by its last segment.
+/// Logging macros, trusted only under a `tracing::` or `log::` path: a
+/// bare `info!` may be a crate's own `macro_rules! info` that returns
+/// early, and ripr does not resolve macro bindings here.
+const TRANSPARENT_LOG_MACROS: &[&str] =
+    &["trace", "debug", "info", "warn", "error", "event", "span"];
+
+/// Whether `body` invokes a macro other than a trusted standard or logging
+/// macro (#10284). Unknown, re-pathed (`helpers::info!`) or bare logging
+/// names fail closed: they only withhold forwarding credit.
 fn caller_invokes_opaque_macro(body: &str) -> bool {
     // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
-    // any other identifier before `!` and a delimiter is a macro path, even
-    // with whitespace between (`bail ! (qty)` is valid Rust).
+    // any other path before `!` and a delimiter is a macro path, even with
+    // whitespace between (`bail ! (qty)` is valid Rust).
     const PREFIX_KEYWORDS: &[&str] = &["if", "while", "match", "return", "in", "break", "yield"];
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     masked.match_indices('!').any(|(at, _)| {
         let is_invocation = masked
             .get(at + 1..)
             .is_some_and(|rest| rest.trim_start().starts_with(['(', '[', '{']));
+        if !is_invocation {
+            return false;
+        }
         let head = masked.get(..at).unwrap_or_default().trim_end();
-        let name_start = head
+        let path_start = head
             .char_indices()
             .rev()
-            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ':'))
             .map(|(index, c)| index + c.len_utf8())
             .unwrap_or(0);
-        let name = head.get(name_start..).unwrap_or_default();
-        is_invocation
-            && !name.is_empty()
-            && !PREFIX_KEYWORDS.contains(&name)
-            && !TRANSPARENT_MACROS.contains(&name)
+        let segments: Vec<&str> = head
+            .get(path_start..)
+            .unwrap_or_default()
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        let (Some(&root), Some(&name)) = (segments.first(), segments.last()) else {
+            return false;
+        };
+        let transparent = match segments.len() {
+            1 => PREFIX_KEYWORDS.contains(&name) || TRANSPARENT_STD_MACROS.contains(&name),
+            _ => {
+                (["std", "core", "alloc"].contains(&root) && TRANSPARENT_STD_MACROS.contains(&name))
+                    || (["tracing", "log"].contains(&root)
+                        && TRANSPARENT_LOG_MACROS.contains(&name))
+            }
+        };
+        !transparent
     })
 }
 
@@ -3743,6 +3759,7 @@ mod tests {
             "while !(done) {}",
             "let same = a != b;",
             "assert_eq!(a, b); write!(out, \"x\"); vec![1]",
+            "tracing::info!(qty); log::warn!(\"x\"); std::println!()",
             "let s = \"bail!(x)\"; // bail!(x)",
         ] {
             assert!(!caller_invokes_opaque_macro(body), "{body}");
@@ -3752,6 +3769,11 @@ mod tests {
             "bail ! (x);",
             "bail !\n{ x };",
             "crate::m::bail![x];",
+            // #10351 review: a bare or re-pathed logging name may be a
+            // crate's own early-returning macro.
+            "info!(qty);",
+            "helpers::info!(qty);",
+            "crate::assert!(qty);",
         ] {
             assert!(caller_invokes_opaque_macro(body), "{body}");
         }

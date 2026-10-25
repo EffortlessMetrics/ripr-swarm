@@ -268,8 +268,27 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
             assert_ne!(finding["classification"], "exposed", "{wrapper}\n{finding}");
         }
     }
+    // #10351 review: a crate-local macro may share a logging name and return
+    // before the helper runs, so `qty > 10` would still pass both pins.
+    for name in ["warn", "error", "debug", "info"] {
+        let source = format!(
+            "macro_rules! {name} {{ ($q:expr) => {{ if $q == 10 {{ return 5; }} }}; }}\n\n{}",
+            bulk_source(
+                &format!("    {name}!(qty);\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", "@@ -3,3 +3,3 @@");
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 4, "{name}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{name}\n{finding}");
+        }
+    }
     let logged = bulk_source(
-        "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    println!(\"{qty}\");\n    tracing::info!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
         BOUNDARY_TESTS,
     );
     assert_eq!(
