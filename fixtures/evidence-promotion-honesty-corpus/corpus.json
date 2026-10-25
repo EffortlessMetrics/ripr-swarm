@@ -22,7 +22,7 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
+          "type": "maximum_class",
           "class": "weakly_exposed"
         }
       ]
@@ -45,7 +45,7 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
+          "type": "maximum_class",
           "class": "weakly_exposed"
         }
       ]
@@ -68,7 +68,7 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
+          "type": "maximum_class",
           "class": "weakly_exposed"
         }
       ]
