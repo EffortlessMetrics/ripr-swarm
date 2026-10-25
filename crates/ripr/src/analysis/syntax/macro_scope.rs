@@ -69,11 +69,12 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
                     None => scope.opaque = true,
                 }
             }
-            ast::Item::Module(module) if module.item_list().is_some() => {
-                if module_attributes(&module).0 {
-                    scope.opaque = true;
-                }
+            ast::Item::Module(module)
+                if module.item_list().is_some() && module_attributes(&module).0 =>
+            {
+                scope.opaque = true;
             }
+            ast::Item::Module(module) if module.item_list().is_some() => {}
             ast::Item::Module(module) => {
                 let Some(name) = module.name().map(|name| name.text().to_string()) else {
                     continue;

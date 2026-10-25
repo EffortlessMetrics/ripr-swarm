@@ -472,17 +472,11 @@ mod tests {
 
     #[test]
     fn a_macro_use_module_declared_after_the_call_is_not_in_scope() {
-        let main = format!("t!(a);\n#[macro_use]\nmod macros;\n");
-        let files = [
-            ("tests/main.rs", main.as_str()),
-            ("tests/macros.rs", GENERATOR),
-        ];
+        let main = "t!(a);\n#[macro_use]\nmod macros;\n";
+        let files = [("tests/main.rs", main), ("tests/macros.rs", GENERATOR)];
         assert_eq!(imported(&files, "tests/main.rs"), "");
-        let before = format!("#[macro_use]\nmod macros;\nt!(a);\n");
-        let files = [
-            ("tests/main.rs", before.as_str()),
-            ("tests/macros.rs", GENERATOR),
-        ];
+        let before = "#[macro_use]\nmod macros;\nt!(a);\n";
+        let files = [("tests/main.rs", before), ("tests/macros.rs", GENERATOR)];
         assert!(defines_t(&imported(&files, "tests/main.rs")));
     }
 
