@@ -219,16 +219,21 @@ pub(crate) fn name_scopes_for_fn(
             }
             scopes.push(scope);
         } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
-            let mut scope = NameScope::default();
-            for item in file.items() {
-                record_item(&item, &mut scope);
-            }
-            scopes.push(scope);
+            scopes.push(name_scope_for_file(&file));
         }
         // An `impl` or `trait` binds nothing a path call could name; an
         // associated fn's scope continues at its enclosing module.
     }
     Some(NameScopes { scopes })
+}
+
+/// Direct file bindings, using the same collector as function scopes.
+pub(crate) fn name_scope_for_file(file: &ast::SourceFile) -> NameScope {
+    let mut scope = NameScope::default();
+    for item in file.items() {
+        record_item(&item, &mut scope);
+    }
+    scope
 }
 
 /// Record an item that binds its name only in a nested block or nested fn

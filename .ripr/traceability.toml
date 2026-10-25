@@ -11322,6 +11322,12 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_uses_its_own_import",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_never_borrows_a_library_or_sibling_binding",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_preserves_cfg_and_ambiguity_refusals",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_does_not_guess_a_nested_binary_helpers_root",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_requires_manifest_authority_and_automatic_targets",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_refuses_shadowed_prefixes_and_alternate_module_readings",
   "crates/ripr/src/analysis/syntax/ra.rs::tests::ra_adapter_marks_direct_cfg_helpers_without_registering_tests",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::direct_cfg_helpers_have_evidence_role_on_parser_and_lexical_paths",
   "crates/ripr/src/analysis/source_role_corpus.rs::direct_cfg_helpers_keep_one_executable_test_and_production_controls",

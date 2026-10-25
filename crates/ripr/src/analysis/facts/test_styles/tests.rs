@@ -1401,17 +1401,40 @@ const WRAPPER_MACRO: &str = "#[proc_macro_attribute]\npub fn wrapped_test(attr: 
 const USER: &str = "#[crate::test]\nasync fn aliased() { assert_eq!(crate::value(), 3); }\n#[crate::tests]\nfn lookalike() {}\n#[other::test]\nfn arbitrary() {}\n";
 
 fn alias_test_names(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
+    alias_test_names_with_manifest(files, Some("[package]\nname='app'\nversion='0.1.0'\n"))
+}
+
+fn alias_test_names_with_manifest(
+    files: &[(&str, &str)],
+    manifest: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let root = manifest
+        .map(|manifest| {
+            super::super::drop_in::temp_workspace(
+                "binary-test-alias",
+                &[("app/Cargo.toml", manifest)],
+            )
+        })
+        .transpose()?;
     let mut index = RustIndex::default();
+    if let Some(root) = &root {
+        index.member_crates = super::super::member_crates::MemberCrates::new(root);
+    }
     index.package_names.insert("my_macros".to_string());
     for (file, source) in files {
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new(file), source)?;
         index.insert_file(PathBuf::from(file), facts, true);
     }
-    normalize_index_test_styles(&mut index)?;
-    Ok(index_test_names(&index)
-        .into_iter()
-        .map(str::to_string)
-        .collect())
+    let result = normalize_index_test_styles(&mut index).map(|()| {
+        index_test_names(&index)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    });
+    if let Some(root) = root {
+        let _ = fs::remove_dir_all(root);
+    }
+    result
 }
 
 #[test]
@@ -1576,6 +1599,141 @@ fn crate_test_stays_a_non_test_without_a_resolvable_wrapper() -> Result<(), Stri
         assert!(
             names.is_empty(),
             "{label}: crate::test must not be credited, got {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_uses_its_own_import() -> Result<(), String> {
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", "pub fn library() {}"),
+        ("app/src/main.rs", "fn main() {}"),
+        ("app/src/bin/worker.rs", &binary),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert_eq!(names, ["aliased"]);
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_never_borrows_a_library_or_sibling_binding() -> Result<(), String> {
+    for import in ["", "use external_macros::wrapped_test as test;\n"] {
+        let binary = format!("{import}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", ALIAS_ROOT),
+            ("app/src/bin/sibling.rs", ALIAS_ROOT),
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(names.is_empty(), "unrelated binding credited: {names:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_preserves_cfg_and_ambiguity_refusals() -> Result<(), String> {
+    for (import, expected) in [
+        ("#[cfg(test)]\nuse my_macros::wrapped_test as test;\n", true),
+        (
+            "#[cfg(not(test))]\nuse my_macros::wrapped_test as test;\n",
+            false,
+        ),
+        (
+            "#[cfg(feature = \"x\")]\nuse my_macros::wrapped_test as test;\n",
+            false,
+        ),
+        (
+            "use my_macros::{wrapped_test as test, other as test};\n",
+            false,
+        ),
+    ] {
+        let binary = format!("{import}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert_eq!(names == ["aliased"], expected, "import {import}: {names:?}");
+        if !expected {
+            assert!(names.is_empty());
+        }
+    }
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    let names = alias_test_names(&[
+        ("app/src/bin/worker.rs", &binary),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+        ("other/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert!(names.is_empty(), "ambiguous macro credited: {names:?}");
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_does_not_guess_a_nested_binary_helpers_root() -> Result<(), String> {
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", ALIAS_ROOT),
+        ("app/src/bin/worker/helper.rs", USER),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert!(names.is_empty(), "unresolved root credited: {names:?}");
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Result<(), String> {
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    for manifest in [
+        None,
+        Some("[package]\nname='app'\nversion='0.1.0'\nautobins=false\n"),
+    ] {
+        let names = alias_test_names_with_manifest(
+            &[
+                ("app/src/bin/worker.rs", &binary),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+            manifest,
+        )?;
+        assert!(
+            names.is_empty(),
+            "unconfirmed binary root credited: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_refuses_shadowed_prefixes_and_alternate_module_readings() -> Result<(), String>
+{
+    for extra in [
+        "mod my_macros {}",
+        "use external_macros as my_macros;",
+        "use external_macros::*;",
+        "extern crate external_macros as my_macros;",
+        "make_bindings!();",
+    ] {
+        let binary = format!("{extra}\n{ALIAS_ROOT}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(names.is_empty(), "shadow {extra} credited: {names:?}");
+    }
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    for library in [
+        "#[path=\"bin/worker.rs\"] mod worker;",
+        "mod nested { #[path=\"../bin/worker.rs\"] mod worker; }",
+        "include!(\"bin/worker.rs\");",
+        "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));",
+    ] {
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", library),
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(
+            names.is_empty(),
+            "alternate reading {library} credited: {names:?}"
         );
     }
     Ok(())

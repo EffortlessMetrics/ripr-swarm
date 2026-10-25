@@ -16,7 +16,8 @@
 //! when the alias is established by source the index holds:
 //!
 //! - the crate root (`src/lib.rs`, else `src/main.rs`; every existing root
-//!   must agree) for `crate::test`, or the test's own file for `self::test`,
+//!   must agree), or a manifest-confirmed direct automatic binary root
+//!   (`src/bin/<name>.rs`), for `crate::test`; the test's own file for `self::test`
 //!   has exactly one top-level `use ... as test;` that is ungated or whose `cfg`
 //!   attributes require a test build per `cfg_predicates` (`cfg(test)`,
 //!   `cfg(all(test, <anything>))`, stacked gates); the extra `all(..)`
@@ -42,8 +43,11 @@
 //! seen there and nothing is credited (#10141).
 
 use super::index::{FactArena, IndexedFileFacts};
+use super::member_crates::MemberCrates;
 use super::model::FunctionFact;
-use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::{
+    name_scope_for_file, parse_clean_source_file, rust_module_tree_scan,
+};
 use ra_ap_syntax::AstNode;
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 use ra_ap_syntax::{NodeOrToken, SyntaxKind};
@@ -82,6 +86,7 @@ impl LocalTestAliases {
         files: &BTreeMap<PathBuf, IndexedFileFacts>,
         function_facts: &FactArena<FunctionFact>,
         workspace_crates: &BTreeSet<String>,
+        member_crates: &MemberCrates,
     ) -> Self {
         let mut aliased = BTreeSet::new();
         let mut proc_macros: Option<BTreeMap<String, Vec<PathBuf>>> = None;
@@ -106,7 +111,7 @@ impl LocalTestAliases {
         } else {
             files
                 .keys()
-                .map(|path| (path.clone(), crate_roots(files, path)))
+                .map(|path| (path.clone(), crate_roots(files, path, member_crates)))
                 .collect()
         };
         Self { aliased, roots }
@@ -304,13 +309,64 @@ fn code_tokens(source: &str) -> String {
 /// The crate-root files `file` could belong to: `src/lib.rs` and
 /// `src/main.rs` of its package that the index holds. Empty when the file
 /// is not under a `src` directory (an integration test is its own crate).
-fn crate_roots(files: &BTreeMap<PathBuf, IndexedFileFacts>, file: &Path) -> Vec<PathBuf> {
+fn crate_roots(
+    files: &BTreeMap<PathBuf, IndexedFileFacts>,
+    file: &Path,
+    member_crates: &MemberCrates,
+) -> Vec<PathBuf> {
     let Some(src) = src_dir(file) else {
         return Vec::new();
     };
+    if file.starts_with(src.join("bin")) {
+        return if member_crates.is_default_binary_root(file)
+            && binary_alias_root_is_unambiguous(files, file, src)
+        {
+            vec![file.to_path_buf()]
+        } else {
+            Vec::new()
+        };
+    }
     ["lib.rs", "main.rs"]
         .iter()
         .map(|name| src.join(name))
         .filter(|root| files.contains_key(root))
         .collect()
+}
+
+/// The new binary route refuses unresolved namespace/alternate module
+/// readings. Do not guess through reexports, globs or item-producing macros.
+fn binary_alias_root_is_unambiguous(
+    files: &BTreeMap<PathBuf, IndexedFileFacts>,
+    file: &Path,
+    src: &Path,
+) -> bool {
+    let Some(facts) = files.get(file) else {
+        return false;
+    };
+    let Some(target) = test_alias_target(&facts.source) else {
+        return false;
+    };
+    if matches!(target.first.as_str(), "crate" | "self" | "super") {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(&facts.source) else {
+        return false;
+    };
+    let scope = name_scope_for_file(&parse.tree());
+    if scope.child_modules.contains(&target.first)
+        || scope.defines.contains(&target.first)
+        || scope.imports_of(&target.first).next().is_some()
+        || !scope.globs.is_empty()
+    {
+        return false;
+    }
+    // Until module composition supplies target-specific contexts here,
+    // keep packages with any indexed module/include edge unresolved.
+    files
+        .iter()
+        .filter(|(path, _)| src_dir(path) == Some(src))
+        .all(|(_, facts)| {
+            let scan = rust_module_tree_scan(&facts.source);
+            scan.complete && scan.edges.is_empty()
+        })
 }

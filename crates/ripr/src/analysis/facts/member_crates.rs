@@ -183,6 +183,19 @@ impl MemberCrates {
         self.default_target_root_with_flags(crate_root, &[flag])
     }
 
+    /// A direct automatic `src/bin/<name>.rs` root. Reuse the default
+    /// binary's manifest admission, including its conservative moved-target
+    /// refusals. Explicit targets with autodiscovery disabled stay unresolved.
+    pub(crate) fn is_default_binary_root(&self, crate_root: &Path) -> bool {
+        let Some(bin) = crate_root.parent().filter(|dir| dir.ends_with("src/bin")) else {
+            return false;
+        };
+        crate_root.extension().is_some_and(|ext| ext == "rs")
+            && bin
+                .parent()
+                .is_some_and(|src| self.is_default_unit_target_root(&src.join("main.rs")))
+    }
+
     fn default_target_root_with_flags(&self, crate_root: &Path, required_flags: &[&str]) -> bool {
         let Some(root) = &self.root else {
             return false;
