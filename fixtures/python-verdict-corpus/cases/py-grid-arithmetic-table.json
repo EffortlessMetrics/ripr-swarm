@@ -18,7 +18,6 @@
     "mutants": [
       {
         "replacement": "return height * width",
-        "mutated_line": "return height * width",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "Not globally equivalent: noncommutative __mul__/__rmul__ objects distinguish the swap, including when parameters are annotated int/float. The unchanged numeric table passes both orders."
