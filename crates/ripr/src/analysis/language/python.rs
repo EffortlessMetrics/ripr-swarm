@@ -95,6 +95,7 @@ mod row_reach;
 mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
+mod table_reads;
 mod table_rows;
 #[cfg(test)]
 use discriminators::{

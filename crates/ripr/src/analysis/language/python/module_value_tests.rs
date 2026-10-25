@@ -1003,3 +1003,248 @@ fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
         );
     }
 }
+
+// A dict-literal constant read by a module function (#9619).
+
+const TABLE_OLD: &str = "RATES = {\"gold\": 10, \"silver\": 5}";
+const TABLE_NEW: &str = "RATES = {\"gold\": 10, \"silver\": 6}";
+
+fn table_source(first_line: &str, tail: &str) -> String {
+    format!("{first_line}\n\n\ndef price(tier):\n    return RATES.get(tier, 0)\n{tail}")
+}
+
+fn silver_test(assertion: &str) -> String {
+    format!("from hostile.settings import price\n\n\ndef test_it():\n    {assertion}\n")
+}
+
+fn classify_table(
+    source: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+    new: &str,
+) -> Result<Finding, String> {
+    let own = Path::new("hostile/settings.py");
+    let mut owners = owners_of(source);
+    let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, source)| (Path::new(file), *source))
+            .chain([
+                (own, source),
+                (Path::new("tests/test_settings.py"), test_source),
+            ]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(source)
+        } else {
+            (path == Path::new("tests/test_settings.py")).then_some(test_source)
+        }
+    });
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(TABLE_OLD),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+fn assert_not_credited(finding: &Finding) {
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("module_value_call")),
+        "{:?}",
+        finding.evidence
+    );
+}
+
+#[test]
+fn a_dict_constant_read_through_a_function_is_credited_for_the_pinned_key() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let finding = classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        TABLE_NEW,
+    )?;
+    assert_credited(&finding);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("module_value_read: `RATES` {\"gold\": 10, \"silver\": 5} -> {\"gold\": 10, \"silver\": 6} through `price`")),
+        "{:?}",
+        finding.evidence
+    );
+    // Subscript reads decide the same way.
+    let subscripted = format!("{TABLE_NEW}\n\n\ndef price(tier):\n    return RATES[tier]\n");
+    assert_credited(&classify_table(
+        &subscripted,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_dict_edit_no_assertion_distinguishes_is_not_credited() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    // The test pins the key the edit left alone.
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"gold\") == 10"),
+        TABLE_NEW,
+    )?);
+    // A key the table lacks falls to the default both before and after.
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"bronze\") == 0"),
+        TABLE_NEW,
+    )?);
+    // A missing key raises, which decides nothing.
+    let subscripted = format!("{TABLE_NEW}\n\n\ndef price(tier):\n    return RATES[tier]\n");
+    assert_not_credited(&classify_table(
+        &subscripted,
+        &[],
+        &silver_test("assert price(\"bronze\") == 0"),
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_test_reading_the_table_itself_is_not_credited() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        "from hostile.settings import RATES\n\n\ndef test_it():\n    assert RATES[\"silver\"] == 5\n",
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn dict_literals_outside_the_modelled_shape_are_not_credited() -> Check {
+    let test = silver_test("assert price(\"silver\") == 5");
+    for line in [
+        // A computed value, a duplicate key, a spread, a bool key, a float.
+        "RATES = {\"gold\": 10, \"silver\": rate()}",
+        "RATES = {\"gold\": 10, \"silver\": 6, \"silver\": 5}",
+        "RATES = {**BASE, \"silver\": 6}",
+        "RATES = {True: 10, \"silver\": 6}",
+        "RATES = {\"gold\": 10, \"silver\": 6.0}",
+    ] {
+        assert_not_credited(&classify_table(&table_source(line, ""), &[], &test, line)?);
+    }
+    // A bool lookup key is Python's `1`: left undecided.
+    let int_keys = "RATES = {1: 10, 2: 6}";
+    assert_not_credited(&classify_table(
+        &table_source(int_keys, ""),
+        &[],
+        &silver_test("assert price(True) == 10"),
+        int_keys,
+    )?);
+    // A multi-line literal changes on an entry line, not a statement.
+    let multiline = "RATES = {\n    \"silver\": 6,\n}";
+    assert_not_credited(&classify_table(
+        &table_source(multiline, ""),
+        &[],
+        &test,
+        "    \"silver\": 6,",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_dict_mutated_in_the_module_is_not_credited() -> Check {
+    let test = silver_test("assert price(\"silver\") == 5");
+    for tail in [
+        "\n\ndef tune():\n    RATES[\"silver\"] = 5\n",
+        "\n\ndef tune():\n    RATES.update(silver=5)\n",
+        "\n\ndef tune():\n    RATES.setdefault(\"bronze\", 1)\n",
+        "\n\ndef tune():\n    RATES.pop(\"silver\")\n",
+        "\n\ndef tune():\n    del RATES[\"silver\"]\n",
+        "\n\ndef tune():\n    alias = RATES\n    alias[\"silver\"] = 5\n",
+        "\n\ndef tune(extra):\n    RATES |= extra\n",
+        "\n\nRATES[\"silver\"] = 5\n",
+        "\n\nRATES = {\"silver\": 5}\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &table_source(TABLE_NEW, tail),
+            &[],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dict_mutated_or_aliased_elsewhere_is_not_credited() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    for other in [
+        "from hostile.settings import RATES\n\nRATES[\"silver\"] = 5\n",
+        "from hostile.settings import RATES\n\nRATES.update(silver=5)\n",
+        "from hostile.settings import RATES as table\n",
+        "import hostile.settings as settings\n\nsettings.RATES[\"silver\"] = 5\n",
+        "import hostile.settings as settings\n\nalias = settings.RATES\n",
+        "import hostile.settings as settings\n\nstate = getattr(settings, \"RATES\")\nstate.clear()\n",
+        "from hostile import settings\n\nprint(f\"{settings.RATES.clear()}\")\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &source,
+            &[("hostile/other.py", other)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    // A test file may not mutate it either.
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        "from hostile.settings import RATES, price\n\n\ndef test_it():\n    RATES[\"silver\"] = 5\n    assert price(\"silver\") == 5\n",
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn pure_reads_and_re_exports_elsewhere_keep_the_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    for other in [
+        "from hostile.settings import RATES, price\n\n__all__ = [\"RATES\", \"price\"]\n",
+        "import hostile.settings as settings\n\nGOLD = settings.RATES.get(\"gold\")\n",
+        "from hostile.settings import RATES\n\n\ndef gold():\n    return RATES[\"gold\"]\n",
+    ] {
+        assert_credited(&classify_table(
+            &source,
+            &[("hostile/other.py", other)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    Ok(())
+}

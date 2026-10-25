@@ -540,6 +540,37 @@ fn literal_assignment(source: &SourceText<'_>, stmt: &Stmt) -> Option<PythonModu
     })
 }
 
+/// Whether `name` is a module-scope name bound once, by the one `NAME = {...}`
+/// (or annotated) statement that starts on `line`, with the stability the
+/// scalar constants need (#9619). In-place mutation of the table is a separate
+/// question (`table_reads`).
+pub(super) fn module_table_binding_at(
+    source: &SourceText<'_>,
+    statements: &[Stmt],
+    name: &str,
+    line: usize,
+) -> bool {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return false;
+    };
+    stable.holds(name)
+        && statements.iter().any(|stmt| {
+            let (target, value) = match stmt {
+                Stmt::Assign(assign) => match assign.targets.as_slice() {
+                    [target] => (target, Some(assign.value.as_ref())),
+                    _ => return false,
+                },
+                Stmt::AnnAssign(assign) if assign.simple => {
+                    (assign.target.as_ref(), assign.value.as_deref())
+                }
+                _ => return false,
+            };
+            matches!(target, Expr::Name(target) if target.id.as_str() == name)
+                && matches!(value, Some(Expr::Dict(_)))
+                && line_for_range_start(source, stmt.range()) == line
+        })
+}
+
 /// Every binding of a name in one scope, counted per occurrence. `opaque`
 /// marks a construct that can bind names this walk does not enumerate.
 #[derive(Default)]

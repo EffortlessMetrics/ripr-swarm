@@ -477,6 +477,16 @@ multiline setup remains eligible. A generator test lends no executed-body credit
 Formatted strings remain uncertain in this bounded admission because their
 expressions can carry generator syntax. Statement identity uses the reported
 source assertion, independently of the boolean oracle's normalized gate text.
+A one-line module-level dict literal of unique `str` or `int` keys and scalar
+values (#9619) is a constant of the same kind, read only by a module function
+through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
+itself, a `bool` lookup key, a missing key without a default, a computed or
+spread entry and a multi-line literal decide nothing. The table is mutable in
+place, so credit also requires that no source mention `NAME` other than as an
+import or export, a `.get` read or a subscript read on a line that binds
+nothing (the owning module's defining statement aside): a store through a
+subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
+f-string mention, a file using `getattr`, or a lexing error withholds credit.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
