@@ -1,0 +1,11 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -47,6 +47,6 @@ def purge(record):
+ 
+ def rotate(key):
+     if key > 0:
+-        log.warning("rotated: %s", key)
++        log.warning("rotated: %s retry queued", key)
+         return True
+     return False
