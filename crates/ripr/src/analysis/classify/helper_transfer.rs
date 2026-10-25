@@ -1411,6 +1411,15 @@ pub(crate) fn helper_return_value(
             continue;
         }
         let cleaned = trimmed.trim_end_matches(';').trim();
+        // Masking blanks a string literal, so a line that is one whole
+        // literal reads empty here; it is the tail, not a skipped line.
+        if cleaned.is_empty() && strict_literal(raw_line.trim().trim_end_matches(';')).is_some() {
+            if tail.is_some() {
+                return None;
+            }
+            tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
+            continue;
+        }
         if cleaned.is_empty()
             || cleaned.starts_with("//")
             || cleaned.starts_with('#')
@@ -1431,6 +1440,15 @@ pub(crate) fn helper_return_value(
         tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
     }
     let tail = tail?;
+    // A helper whose tail is one strict literal returns it whatever its
+    // inputs are (`fn pick(_kind: &str) -> &'static str { "alpha" }`).
+    // Only a whole-token literal counts, so no operation is evaluated.
+    if let Some(literal) = strict_literal(&tail) {
+        return match super::value_transfer::evaluate_initializer(&literal, inputs) {
+            super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
+            _ => None,
+        };
+    }
     let is_identifier = !tail.is_empty()
         && tail
             .chars()

@@ -336,3 +336,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (29)
+
+Reason:
+RIPR-SPEC-0164 now resolves a literal-callee arm value and a char scrutinee; the single-row tests leave those two probes weakly_exposed, guard and bare stay infection_unknown
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
