@@ -420,7 +420,10 @@ mod tests {
         // An improvement passes with a note naming the entry to delete, so
         // concurrent fix PRs do not collide.
         let note = missed_credit_gate(&set(&["a"]), &accepted, "l.toml")?.unwrap_or_default();
-        assert!(note.contains("delete") && note.contains('b'), "{note}");
+        assert_eq!(
+            note,
+            "verdict-corpus: 1 accepted missed-credit row(s) in l.toml no longer miss credit; delete its `[[entry]]` from missed-credit.toml so the improvement cannot regress: b"
+        );
         // Nothing accepted and nothing missed is clean.
         assert_eq!(
             missed_credit_gate(&set(&[]), &accepting(&[])?, "l.toml")?,
@@ -507,7 +510,8 @@ mod tests {
         write(
             "[[entry]]\ncase = \"a\"\nreason = \"why\"\n\n[[entry]]\ncase = \"a\"\nreason = \"why\"\n",
         )?;
-        assert!(load_missed_credit_entries(&dir).is_err());
+        let err = load_missed_credit_entries(&dir).err().unwrap_or_default();
+        assert!(err.contains("sorted and unique"), "{err}");
         Ok(())
     }
 
