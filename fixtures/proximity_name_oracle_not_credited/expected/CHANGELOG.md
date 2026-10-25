@@ -291,6 +291,18 @@ Updated:
 ## Pending — proximity_name_oracle_not_credited (25)
 
 Reason:
+RIPR-SPEC-0001 / #8935 / #8389: preserve the enum source fact from each distinct test file at line 6 under file-aware identity and update the omitted-detail count. Origins ride internal located facts; the public ValueFact stays four-field. Unchanged IDs, exposure classes, stages, missing discriminators and repair guidance.
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (25)
+
+Reason:
 RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
 
 Command:

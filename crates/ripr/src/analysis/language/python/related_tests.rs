@@ -27,6 +27,10 @@ pub(super) enum PythonRelationKind {
     LocalBinding,
     DunderProtocol,
     ProtocolEntryCall,
+    /// The test's assertion statically depends on an edited module-level
+    /// constant, directly or through a module function it calls with literal
+    /// arguments, and fails under the new value (`module_value.rs`, #9423).
+    ModuleValueCall,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -50,6 +54,7 @@ impl PythonRelationKind {
             Self::LocalBinding => 4,
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
+            Self::ModuleValueCall => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -69,6 +74,7 @@ impl PythonRelationKind {
                 | Self::ConstructorCall
                 | Self::LocalBinding
                 | Self::ProtocolEntryCall
+                | Self::ModuleValueCall
         )
     }
 
@@ -86,6 +92,7 @@ impl PythonRelationKind {
             Self::LocalBinding => "local_binding",
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
+            Self::ModuleValueCall => "module_value_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -131,25 +138,24 @@ pub(super) fn related_test_candidates<'a>(
             })
         })
         .collect();
+    sort_related_candidates(&mut candidates);
+    candidates
+}
+
+/// Candidate order is owner-level and shared by every changed line of the
+/// owner, so it has no changed family: it ranks by the strongest assertion
+/// overall (focus `None`). Which assertion a row displays and the classifier
+/// judges is the per-change selection in `related_tests_for_candidates`.
+pub(super) fn sort_related_candidates(candidates: &mut [PythonRelatedCandidate<'_>]) {
     candidates.sort_by(|left, right| {
         right
             .relation
             .rank()
             .cmp(&left.relation.rank())
-            .then_with(|| {
-                // Candidate order is owner-level and shared by every changed
-                // line of the owner, so it has no changed family: it ranks by
-                // the strongest assertion overall (focus `None`). Which
-                // assertion a row displays and the classifier judges is the
-                // per-change selection in `related_tests_for_candidates`.
-                let left_rank = strongest_rank(left.test);
-                let right_rank = strongest_rank(right.test);
-                right_rank.cmp(&left_rank)
-            })
+            .then_with(|| strongest_rank(right.test).cmp(&strongest_rank(left.test)))
             .then_with(|| left.test.file.cmp(&right.test.file))
             .then_with(|| left.test.name.cmp(&right.test.name))
     });
-    candidates
 }
 
 /// Most same-module caller hops followed from a changed helper (#4568).

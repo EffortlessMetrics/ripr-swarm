@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ //! A private predicate reached only through a public wrapper whose test pins the edge.
+ 
+-fn is_bulk(qty: u32) -> bool { qty >= 10 }
++fn is_bulk(qty: u32) -> bool { 10 <= qty }
+ 
+ pub fn order_discount(qty: u32) -> u32 {
+     if is_bulk(qty) { 5 } else { 0 }

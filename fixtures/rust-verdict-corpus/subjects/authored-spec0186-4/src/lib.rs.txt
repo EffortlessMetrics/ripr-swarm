@@ -1,0 +1,13 @@
+//! The asserted argument is chosen by a branch that always picks 50, never the edge value 10.
+
+pub fn gate(input: u32) -> bool { input >= 10 }
+
+#[cfg(test)]
+mod tests {
+    use super::gate;
+
+    #[test]
+    fn dead_branch_argument() {
+        assert_eq!(gate(if false { 10 } else { 50 }), true);
+    }
+}
