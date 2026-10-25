@@ -528,3 +528,28 @@ fn given_more_fixtures_than_the_attach_cap_then_a_caplog_override_is_still_found
     );
     Ok(())
 }
+
+#[test]
+fn given_a_fixture_renamed_to_caplog_then_the_logged_text_abstains() -> Result<(), String> {
+    // #10418: the public name, not the def name, is what the test requests.
+    let conftest = "import pytest\n\n\n@pytest.fixture(name=\"caplog\")\ndef custom_recorder():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // A fixture renamed to something else leaves the builtin `caplog` alone.
+    let other = conftest.replace("name=\"caplog\"", "name=\"recorder\"");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &other),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}

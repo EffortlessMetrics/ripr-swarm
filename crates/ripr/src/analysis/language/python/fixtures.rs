@@ -49,6 +49,17 @@ pub(super) fn collect_fixture_defs(
             // module attribute pytest collects, including a renamed
             // `@pytest.fixture(name=...)` def that is not itself recorded.
             defs.retain(|def: &PythonFixtureDef| def.name != name);
+            // A fixture renamed to `caplog` is recorded under that public
+            // name so the captured-log readings see the override (#10418).
+            // Other renamed fixtures stay unrecorded.
+            if renames_to_caplog(source, decorators) {
+                defs.push(PythonFixtureDef {
+                    name: "caplog".to_string(),
+                    file: file.to_path_buf(),
+                    body_text: text_for_range(source, range),
+                    imports: test_imports(file, module_imports, body),
+                });
+            }
             continue;
         }
         defs.push(PythonFixtureDef {
@@ -72,6 +83,18 @@ fn is_plain_fixture(source: &str, decorators: &[Expr]) -> bool {
             && !text_for_range(source, decorator.range())
                 .replace(' ', "")
                 .contains("name=")
+    })
+}
+
+/// A fixture decorator whose `name=` argument is the literal `caplog`.
+fn renames_to_caplog(source: &str, decorators: &[Expr]) -> bool {
+    decorators.iter().any(|decorator| {
+        let names = decorator_names(std::slice::from_ref(decorator));
+        let text = text_for_range(source, decorator.range()).replace(' ', "");
+        names
+            .iter()
+            .any(|name| name == "fixture" || name.ends_with(".fixture"))
+            && (text.contains("name=\"caplog\"") || text.contains("name='caplog'"))
     })
 }
 
