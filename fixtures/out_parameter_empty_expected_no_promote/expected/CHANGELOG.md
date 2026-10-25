@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (5)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
