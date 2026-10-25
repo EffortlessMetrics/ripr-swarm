@@ -4210,9 +4210,11 @@ fn extracted_span_starts(
     source: &str,
     extracted: &[TypeScriptTest],
     covered: &[std::ops::Range<usize>],
-) -> Vec<usize> {
+) -> std::collections::HashSet<usize> {
     let mut watermark = 0usize;
-    let mut starts = Vec::new();
+    // A set, not a Vec: the finder asks about every statement-position call, so
+    // a linear `contains` made this disclosure quadratic in the test count.
+    let mut starts = std::collections::HashSet::with_capacity(extracted.len());
     for test in extracted {
         // A covered factory's own registration is never what a test was
         // extracted from, but an expanded copy can read identically to it
@@ -4231,7 +4233,7 @@ fn extracted_span_starts(
             }
         };
         if let Some(start) = found {
-            starts.push(start);
+            starts.insert(start);
             // The next extracted test starts strictly after this one.
             watermark = start + 1;
         }
@@ -4246,7 +4248,7 @@ fn extracted_span_starts(
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
-    extracted_starts: &'a [usize],
+    extracted_starts: &'a std::collections::HashSet<usize>,
     /// Suite-factory declarations whose registrations the appended
     /// expansions already stand for.
     covered: &'a [std::ops::Range<usize>],
