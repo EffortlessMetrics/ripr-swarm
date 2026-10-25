@@ -9548,7 +9548,7 @@ fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited
         "    (\\\r\n        (r)) = [1]\n",
         // An augmented assignment after a header, `else` or `;`.
         "    if z: r += [1]\n",
-        "    if z:\n        pass\n    else: r += [1]\n",
+        "    if z == 1:\n        pass\n    else: r += [1]\n",
         "    z = 1; r += [1]\n",
         "    for x in y: r += 1\n",
         // A walrus split inside brackets, and a tab before `as`.
