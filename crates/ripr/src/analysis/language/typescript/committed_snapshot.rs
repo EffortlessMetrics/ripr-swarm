@@ -406,11 +406,11 @@ fn delegates_to_other_config(text: &str) -> bool {
 }
 
 /// `text` with the contents of every quoted string that is a value (followed
-/// by `,` or `}`; templates keep theirs for the `${` check) read as spaces, so a label such as `displayName: "projects"` is not
+/// by `,` or `}`) read as spaces, so a label such as `displayName: "projects"` is not
 /// taken for a key (#10295). A string that is a key, a computed key, or a
 /// bracket member keeps its text. Unchanged when the scan cannot be sure of
-/// string boundaries (unterminated string or comment, or a regex literal whose
-/// quote could desynchronise it), so the old refusal stands.
+/// string boundaries (unterminated string or comment, or a template or regex
+/// literal whose quote could desynchronise it), so the old refusal stands.
 fn blank_value_strings(text: &str) -> String {
     let Some(clean) = blank_comments(text) else {
         return text.to_string();
@@ -449,7 +449,9 @@ fn blank_value_strings(text: &str) -> String {
                 out.push(ch);
                 last_significant = ch;
             }
-            // A regex literal can hold a quote this scan would misread.
+            // A template can hold quotes this scan would misread as a string,
+            // and a regex literal likewise.
+            '`' => return text.to_string(),
             '/' if matches!(
                 last_significant,
                 ':' | ',' | '(' | '=' | '[' | '!' | '&' | '|'
