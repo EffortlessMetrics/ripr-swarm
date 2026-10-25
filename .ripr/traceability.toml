@@ -3769,6 +3769,9 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_non_ascii_identifier_prefix_then_the_classifier_credits_no_call",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_non_identifier_non_ascii_neighbours_then_the_call_is_an_intentional_miss",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned_as_an_f_string",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
+  "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
