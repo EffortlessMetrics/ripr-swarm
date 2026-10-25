@@ -89,15 +89,18 @@ ships.
 A return flow would earn credit only when all of these also hold:
 
 1. `INIT` is `RECEIVER.unwrap_or(D)` or `RECEIVER.unwrap_or_else(|| D)`, `D`
-   has no side effect (a literal, a parameter, `PARAM.len()`), and the changed
-   span of `INIT` is exactly `D`: an edit to `RECEIVER` is not credited.
+   has no side effect (a literal, a parameter, `PARAM.len()`). The change is
+   either to `D` alone or a rewrite of the combinator that leaves `RECEIVER`
+   and `D` text-identical; an edit to `RECEIVER` is not credited.
 2. The flow is injective in the binding: the whole binding, or a range
    bound over a string or slice with a fixed base (a different in-range bound
    returns a different value; an out-of-range bound is detected by a safe
    slice, and is not claimed for `get_unchecked`).
-3. A related test calls the owner with an input for which the value evaluator
-   (`classify/value_transfer.rs` is the only authority) proves `RECEIVER` is `None`, so the default is taken, and asserts the
-   owner's return with an exact equality on that same call.
+3. Related tests call the owner with inputs for which the value evaluator
+   (`classify/value_transfer.rs` is the only authority) proves `RECEIVER` is
+   `None` for one and `Some` for another, each asserting the owner's return
+   with an exact equality on that same call. A change to `D` alone needs only
+   the `None` case.
 
 An edit that changes the default is then noticed by that assertion. If the
 default branch is never taken under an assertion (not called, or called with
@@ -120,12 +123,12 @@ A rebound, shadowed or captured binding never reaches stage 2.
 - One binding and one function; no flow through helper calls or struct fields.
 - The value evaluator proves `None` only for the receivers it already
   evaluates (`find`, `rfind`, `strip_prefix`-style lookups on literals).
-
 - The retained row rewrites the combinator (`unwrap_or(D)` to
-  `unwrap_or_else(|| D)`) and leaves `D` and the receiver untouched, so a rule
-  that requires the changed span to be exactly `D` would never credit it. A
-  stage 2 design must instead require both branches (`None` and `Some`) to be
-  pinned by exact equalities on the owner call.
+  `unwrap_or_else(|| D)`) and leaves `D` and the receiver untouched, so a
+  rule limited to an edit of `D` would never credit it. Because the line's
+  value is then what the tests must notice, credit condition 3 requires both
+  branches: one exact equality on the owner call where `RECEIVER` is `None`
+  and one where it is `Some`.
 
 ## Non-Goals
 
