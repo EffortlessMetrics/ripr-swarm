@@ -1,4 +1,4 @@
-<!-- section: Fixed -->
-- Generated command roots preserve the native spelling of Windows verbatim paths
-  that have no plain form. Host-explicit rendering and CLI replay tests protect
-  literal percent signs and percent-looking names from identity encoding (#10116).
+<!-- section: Internal / CI -->
+- Host-explicit command-root rendering tests and a hostile-repository CLI replay
+  protect literal percent signs, percent-looking names, Windows separators and
+  verbatim-prefix handling without changing encoded path identities (#10116).
