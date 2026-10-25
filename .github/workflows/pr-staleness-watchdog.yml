@@ -58,6 +58,9 @@ name: PR Staleness Watchdog
 #   not conflicting (mergeability computed), has no required check and no run in
 #   flight was pushed after the label or lost its label event; the sweep comments
 #   once per head (marker merge-ready-dark) saying to remove and re-apply the label.
+# - The third write retires a stale failure: a draft or unlabeled same-repo PR whose
+#   head still carries this repository's actions-bot `merge-ready conflict` failure gets
+#   a success status instead, since no qualification is requested on it any more (#10136).
 #
 # Each sweep's summary table (PR | head | mergeable_state | disposition) is the
 # audit trail.
@@ -141,6 +144,26 @@ jobs:
             gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null || return 1
           }
 
+          # A draft or unlabeled PR made no qualification request, so a conflict status this
+          # sweep or the notice posted earlier would sit red forever; retire it (#10136).
+          retire_stale() {
+            state="$(ours_state "$2")" || return 1
+            [ "$state" = "failure" ] || return 0
+            # Commit statuses belong to the SHA: another open PR on this head that still
+            # requests merge-ready needs the failure, so leave it.
+            awk -F'\t' -v sha="$2" '$2 == sha && $5 == "false" && $6 == "true" {f = 1} END {exit !f}' <<<"$prs" && return 0
+            # The list snapshot is stale by now: the label or ready state can have come back
+            # (and the label-time notice posted a fresh failure). Read the PR again and retire
+            # only while this same head, in this repository, still makes no request.
+            live_pr="$(gh api "repos/$REPOSITORY/pulls/$1" --jq '[.head.sha, (.head.repo.full_name // "-"), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring)] | join(" ")')" || return 1
+            read -r now_head now_repo now_draft now_requested <<<"$live_pr"
+            [ "${now_head:-}" = "$2" ] && [ "${now_repo:-}" = "$REPOSITORY" ] || return 0
+            [ "${now_draft:-}" = "true" ] || [ "${now_requested:-}" != "true" ] || return 0
+            gh api "repos/$REPOSITORY/statuses/$2" -f state=success -f context="merge-ready conflict" -f description="merge-ready is not requested on this PR" > /dev/null || return 1
+            cleared=$((cleared + 1))
+            disposition="$disposition; stale conflict status retired"
+          }
+
           # A head with no required check and no run in flight, and no conflict to blame,
           # was pushed after the label or lost its label event (#10136): say so once per
           # head, with the remedy, instead of only warning in the job log.
@@ -173,8 +196,10 @@ jobs:
             mergeable_state="n/a" dark_kind=""
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
+              [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
             elif [ "$requested" != "true" ]; then
               disposition="skip: no merge-ready request"
+              [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else

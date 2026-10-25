@@ -541,7 +541,7 @@ fn spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec(
   "description": "isolated",
   "label_method": "isolated",
   "verdict_projection": "isolated",
-  "non_claims": []
+  "non_claims": ["registration control; no analyzer or runtime claim"]
 }"#,
     );
     std::fs::create_dir(corpus_dir.join("subjects")).map_err(|err| err.to_string())?;
@@ -562,6 +562,25 @@ fn spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec(
     assert!(
         err.contains("RIPR-SPEC-0900") && err.contains("missing from"),
         "omitted spec must fail closed, got {err}"
+    );
+    // A stale `[[unmeasured]]` entry is refused once its spec is numbered; it
+    // must not stand in for the explicit `[[spec]]` scope.
+    crate::tests::write(
+        &corpus_dir.join(LEDGER_FILE),
+        r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+
+[[unmeasured]]
+id = "RIPR-SPEC-0900"
+reason = "prose examples"
+"#,
+    );
+    let err = spec_example_coverage_for_corpus(&corpus_dir)
+        .err()
+        .ok_or("numbering an unmeasured spec must fail the coverage producer")?;
+    assert!(
+        err.contains("lists `RIPR-SPEC-0900` as unmeasured, but it now has")
+            && err.contains("`RIPR-SPEC-0900` has numbered acceptance examples but is missing"),
+        "a stale unmeasured entry must not masquerade as a scoped spec: {err}"
     );
     Ok(())
 }
