@@ -187,21 +187,35 @@ const KNOWN_COMPARISON_MACROS: [(&str, &str); 4] = [
 /// crate (no glob, no `as` alias).
 fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
     let imports = mask_comments_and_strings(source);
+    // Every `use` statement that names a macro, as its `use` tree and whether
+    // an attribute (`#[cfg(..)]`) precedes it.
+    let trees: Vec<(&str, bool)> = imports
+        .split(';')
+        .filter_map(|statement| {
+            let (before, tree) = statement.trim().rsplit_once("use ")?;
+            Some((tree, before.contains("#[")))
+        })
+        .collect();
     KNOWN_COMPARISON_MACROS
         .iter()
         .filter(|(name, krate)| {
-            imports.split(';').any(|statement| {
-                statement
-                    .trim()
-                    .rsplit_once("use ")
-                    .map(|(_, tree)| tree)
-                    .is_some_and(|tree| {
-                        tree.trim_start().starts_with(&format!("{krate}::"))
-                            && !tree.contains('*')
-                            && !tree.contains(" as ")
-                            && !whole_word_offsets(tree, name).is_empty()
-                    })
-            })
+            // A `use` of the same name from anywhere else, or a gated one,
+            // could be the binding the assertion resolves to.
+            let mut from_crate = false;
+            for (tree, gated) in &trees {
+                if whole_word_offsets(tree, name).is_empty() {
+                    continue;
+                }
+                let clean = !gated
+                    && tree.trim_start().starts_with(&format!("{krate}::"))
+                    && !tree.contains('*')
+                    && !tree.contains(" as ");
+                if !clean {
+                    return false;
+                }
+                from_crate = true;
+            }
+            from_crate
         })
         .map(|(name, _)| *name)
         .collect()
