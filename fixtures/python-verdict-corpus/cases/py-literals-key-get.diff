@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -43,7 +43,7 @@ def staff():
+ def timeouts():
+     return {
+         "connect": 5,
+-        "read": 30,
++        "recv": 30,
+     }
+ 
+ 

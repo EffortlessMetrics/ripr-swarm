@@ -1,0 +1,44 @@
+{
+  "case_id": "py-route-clients-fixture-rival-app",
+  "subject_id": "authored-py-pytest-route-clients",
+  "diff": "cases/py-route-clients-fixture-rival-app.diff",
+  "anchor": {
+    "file": "routeclients/archive.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_conftest_client_fixture_over_a_rival_app",
+  "hard_case": "a route client call matches the owner's path and verb but is built over another module's `app`",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"count\": 6}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the archive response count changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`archive.app` and `orders.app` both serve `GET /orders`. The conftest `client` fixture is built over `routeclients.orders.app`, so `test_orders_respond` exercises `orders`, never `archived_orders`, and a path-and-verb match would credit the archive owner with a test of another application.",
+  "labeling_observation": {
+    "ripr_commit": "1818f481",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
