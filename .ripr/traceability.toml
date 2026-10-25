@@ -17176,6 +17176,9 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_owner_export_alias_and_global_discard",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_mutated_mock_api",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_registration_argument_effects",
   "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_enclosing_mock_shadow",
   "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_early_return_and_default_parameters",
   "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_retained_corpus_shape_is_exposed",

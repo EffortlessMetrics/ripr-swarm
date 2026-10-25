@@ -263,3 +263,51 @@ fn counted_removal_refuses_export_aliases_and_opaque_reads() -> Result<(), Strin
     )?;
     Ok(())
 }
+
+#[test]
+fn counted_removal_refuses_owner_export_alias_and_global_discard() -> Result<(), String> {
+    control(
+        "owner-export-alias",
+        "function emit(sink: { write(event: string): void }, event: string): void {\n  void event;\n}\nfunction other(sink: { write(event: string): void }, event: string): void { sink.write(event); }\nexport { other as emit };\n",
+        &format!("const sink = {OBJECT}; {SPY} emit(sink, 'a'); {PIN}"),
+        PARAM_IMPORT,
+        false,
+    )?;
+    control(
+        "opaque-discard",
+        "export function emit(sink: { write(event: string): void }, event: string): void {\n  void event;\n  void opaqueGlobal;\n}\n",
+        &format!("const sink = {OBJECT}; {SPY} emit(sink, 'a'); {PIN}"),
+        PARAM_IMPORT,
+        false,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn counted_removal_refuses_mutated_mock_api() -> Result<(), String> {
+    control(
+        "mutated-mock-api",
+        PARAM,
+        &format!("const sink = {OBJECT}; {SPY} emit(sink, 'a'); {PIN}"),
+        &format!(
+            "{PARAM_IMPORT} mock.method = () => ({{ mock: {{ callCount() {{ return 1; }} }} }});"
+        ),
+        false,
+    )
+}
+
+#[test]
+fn counted_removal_refuses_registration_argument_effects() -> Result<(), String> {
+    let test = format!(
+        "import {{ mock, test }} from 'node:test'; import assert from 'node:assert/strict'; {PARAM_IMPORT} test('writes once', () => {{ const sink = {OBJECT}; {SPY} emit(sink, 'a'); {PIN} }}, mock.method = () => ({{ mock: {{ callCount() {{ return 1; }} }} }}));"
+    );
+    let finding = finding_for(
+        "registration-side-effect",
+        NODE_TEST,
+        &[("src/audit.ts", PARAM), ("test/audit.test.ts", &test)],
+        "diff --git a/src/audit.ts b/src/audit.ts\n--- a/src/audit.ts\n+++ b/src/audit.ts\n@@ -2,1 +2,1 @@\n-  sink.write(event);\n+  void event;\n",
+        2,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

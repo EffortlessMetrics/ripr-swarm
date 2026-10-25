@@ -1600,6 +1600,10 @@ a direct exported const binding with an unshadowed named import resolved to the 
 through the existing import resolver. Parsed declarations handle legal
 whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
 conditional execution and unresolved identity withhold this additional credit.
+The owner module contains only the direct exported function and optional
+receiver object; the test file contains only trusted imports and one direct,
+two-argument `test` registration with a literal title. Extra setup/imports,
+suites and sibling functions/tests are outside this bounded witness.
 Nonreceiver arguments must be primitive literals; owner statements cannot
 replace the receiver or invoke opaque code. This does not change generic
 call-count oracle projection (#10174).
@@ -1610,6 +1614,10 @@ call-count oracle projection (#10174).
   covers the four executable controls from #9667 comment 6371144187 and the
   passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
   covers wrong arguments, resets, conditional registration and zero counts.
+  The same module's remaining tests pin early returns/default parameters,
+  opaque reads, export aliases, mock API replacement and registration argument
+  effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
+  corpus source and test without rewriting their spy.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row

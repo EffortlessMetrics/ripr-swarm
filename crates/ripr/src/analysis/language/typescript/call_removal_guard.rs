@@ -97,9 +97,7 @@ pub(crate) fn call_count_pins_removed_call(
     if owner.arity != Some(owner.params.len()) || !straight_line_owner(owner, receiver) {
         return false;
     }
-    if !owner.params.iter().any(|param| param == receiver)
-        && !module_receiver_is_exported(owner, receiver, workspace_root)
-    {
+    if !module_bindings_are_exported(owner, receiver, workspace_root) {
         return false;
     }
     candidates
@@ -113,6 +111,7 @@ pub(crate) fn call_count_pins_removed_call(
                     .iter()
                     .any(|local| local == &owner.name)
                 || !imported(test, "mock", "node:test", "mock")
+                || !imported(test, "test", "node:test", "test")
                 || !test.imports_in_file.iter().any(|import| {
                     import.local == owner.name
                         && import.imported.as_deref() == Some(owner.name.as_str())
@@ -127,46 +126,82 @@ pub(crate) fn call_count_pins_removed_call(
             {
                 return false;
             }
+            let Some(root) = workspace_root else {
+                return false;
+            };
+            let Some(test_source) = admitted_source(root, &test.file) else {
+                return false;
+            };
             let owned_test = test.clone();
             let owned_owner = owner.clone();
             let receiver = receiver.to_string();
             let method = method.to_string();
             let alias_map = alias_map.cloned();
             let workspace_root = workspace_root.map(Path::to_path_buf);
-            super::parse::parse_on_worker(
-                &test.file,
-                &test.body_text,
-                move |_, source, allocator| {
-                    let test = &owned_test;
-                    let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
-                    if !parsed.errors.is_empty() || parsed.program.body.len() != 1 {
-                        return false;
+            super::parse::parse_on_worker(&test.file, &test_source, move |_, source, allocator| {
+                let test = &owned_test;
+                let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
+                if !parsed.errors.is_empty() {
+                    return false;
+                }
+                let mut registration = None;
+                for statement in &parsed.program.body {
+                    if let Statement::ImportDeclaration(import) = statement {
+                        let module = import.source.value.as_str();
+                        if module != "node:test"
+                            && module != "node:assert/strict"
+                            && !test.imports_in_file.iter().any(|fact| {
+                                fact.source == module
+                                    && super::related_tests::import_source_matches_owner(
+                                        fact,
+                                        &test.file,
+                                        &owned_owner,
+                                        alias_map.as_ref(),
+                                        workspace_root.as_deref(),
+                                    )
+                            })
+                        {
+                            return false;
+                        }
+                        continue;
                     }
-                    let Some(registration) = statement_call(&parsed.program.body[0]) else {
+                    let Some(call) = statement_call(statement) else {
                         return false;
                     };
-                    let Some(Argument::ArrowFunctionExpression(callback)) =
-                        registration.arguments.get(1)
-                    else {
-                        return false;
-                    };
-                    if callback.r#async
-                        || callback.expression
-                        || !callback.params.items.is_empty()
-                        || callback.params.rest.is_some()
+                    let span = call.span();
+                    if registration.is_some()
+                        || source.get(span.start as usize..span.end as usize)
+                            != Some(test.body_text.as_str())
                     {
                         return false;
                     }
-                    sequence_pins(
-                        &callback.body.statements,
-                        test,
-                        (&receiver, &method),
-                        &owned_owner,
-                        alias_map.as_ref(),
-                        workspace_root.as_deref(),
-                    )
-                },
-            )
+                    registration = Some(call);
+                }
+                let Some(registration) = registration else {
+                    return false;
+                };
+                let Some(Argument::ArrowFunctionExpression(callback)) =
+                    registration.arguments.get(1)
+                else {
+                    return false;
+                };
+                if callback.r#async
+                    || callback.expression
+                    || !callback.params.items.is_empty()
+                    || callback.params.rest.is_some()
+                {
+                    return false;
+                }
+                sequence_pins(
+                    &callback.body.statements,
+                    source,
+                    test,
+                    (&receiver, &method),
+                    &owned_owner,
+                    alias_map.as_ref(),
+                    workspace_root.as_deref(),
+                )
+            })
             .unwrap_or(false)
         })
 }
@@ -177,6 +212,7 @@ pub(crate) fn call_count_pins_removed_call(
 /// installation refusals rather than guesses about value identity.
 fn sequence_pins(
     statements: &[Statement<'_>],
+    source: &str,
     test: &TypeScriptTest,
     removed: (&str, &str),
     owner: &TypeScriptOwner,
@@ -200,7 +236,7 @@ fn sequence_pins(
                 return false;
             };
             if locals.iter().any(|name| name == local)
-                || ["mock", "assert", owner.name.as_str()].contains(&local)
+                || ["mock", "assert", "test", owner.name.as_str()].contains(&local)
             {
                 return false;
             }
@@ -209,15 +245,7 @@ fn sequence_pins(
             };
             match init {
                 Expression::ObjectExpression(object) => {
-                    if object.properties.iter().any(|property| match property {
-                        ObjectPropertyKind::ObjectProperty(property) => {
-                            property.kind != oxc_ast::ast::PropertyKind::Init
-                                || property.computed
-                                || !property.method
-                                || !matches!(property.value, Expression::FunctionExpression(_))
-                        }
-                        _ => true,
-                    }) {
+                    if !plain_object(object) {
                         return false;
                     }
                     locals.push(local.to_string());
@@ -340,7 +368,7 @@ fn sequence_pins(
             return false;
         };
         let span = observed.span();
-        let Some(observed) = test.body_text.get(span.start as usize..span.end as usize) else {
+        let Some(observed) = source.get(span.start as usize..span.end as usize) else {
             return false;
         };
         let observed: String = observed.split_whitespace().collect();
@@ -396,7 +424,7 @@ fn straight_line_owner(owner: &TypeScriptOwner, receiver: &str) -> bool {
         }),
         Statement::ExpressionStatement(statement) => matches!(&statement.expression,
             Expression::UnaryExpression(unary) if unary.operator == oxc_ast::ast::UnaryOperator::Void
-                && matches!(&unary.argument, Expression::Identifier(_))),
+                && matches!(&unary.argument, Expression::Identifier(id) if known.iter().any(|name| name == id.name.as_str()))),
         Statement::ReturnStatement(statement) => index + 1 == body.statements.len() && statement.argument.as_ref().is_none_or(|value| pure_value(value, owner, receiver, &known)),
         _ => false,
     })
@@ -441,7 +469,7 @@ fn shadowed(test: &TypeScriptTest, local: &str) -> bool {
 /// A same-module export name can alias another local. Require a direct const
 /// declaration of this binding, reading the admitted source/snapshot under the
 /// existing source caps. Re-exports and renamed exports withhold this witness.
-fn module_receiver_is_exported(
+fn module_bindings_are_exported(
     owner: &TypeScriptOwner,
     receiver: &str,
     root: Option<&Path>,
@@ -449,13 +477,7 @@ fn module_receiver_is_exported(
     let Some(root) = root else {
         return false;
     };
-    let mut read = super::bounded_read::read_workspace_sources_capped(
-        root,
-        std::slice::from_ref(&owner.file),
-        super::bounded_read::ts_file_read_limit(),
-        super::bounded_read::ts_workspace_read_budget(),
-    );
-    let Some(source) = read.sources.remove(&owner.file) else {
+    let Some(source) = admitted_source(root, &owner.file) else {
         return false;
     };
     if !owner
@@ -465,25 +487,53 @@ fn module_receiver_is_exported(
     {
         return false;
     }
+    let require_receiver = !owner.params.iter().any(|param| param == receiver);
+    let owner_name = owner.name.clone();
+    let owner_source = owner.source_text.clone().unwrap_or_default();
     let receiver = receiver.to_string();
     super::parse::parse_on_worker(&owner.file, &source, move |_, source, allocator| {
         let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
-        parsed.errors.is_empty()
-            && parsed.program.body.iter().any(|statement| {
-                let Statement::ExportNamedDeclaration(export) = statement else {
-                    return false;
-                };
-                let Some(Declaration::VariableDeclaration(declaration)) = &export.declaration
-                else {
-                    return false;
-                };
-                declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
-                    && declaration.declarations.iter().any(|declaration| {
+        if !parsed.errors.is_empty() {
+            return false;
+        }
+        let mut owner_exported = false;
+        let mut receiver_exported = !require_receiver;
+        for statement in &parsed.program.body {
+            let Statement::ExportNamedDeclaration(export) = statement else {
+                return false;
+            };
+            match &export.declaration {
+                Some(Declaration::FunctionDeclaration(function)) => {
+                    let span = function.span();
+                    if function.id.as_ref().is_none_or(|id| id.name != owner_name.as_str()) { return false; }
+                    owner_exported |= function
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| id.name == owner_name.as_str())
+                        && source.get(span.start as usize..span.end as usize)
+                            == Some(
+                                owner_source
+                                    .trim()
+                                    .strip_prefix("export ")
+                                    .unwrap_or(owner_source.trim()),
+                            );
+                }
+                Some(Declaration::VariableDeclaration(declaration))
+                    if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const =>
+                {
+                    if declaration.declarations.len() != 1 { return false; }
+                    let exported_receiver = declaration.declarations.iter().any(|declaration| {
                         super::owners::binding_identifier_name(&declaration.id)
                             == Some(receiver.as_str())
-                            && matches!(&declaration.init, Some(Expression::ObjectExpression(_)))
-                    })
-            })
+                            && matches!(&declaration.init, Some(Expression::ObjectExpression(object)) if plain_object(object))
+                    });
+                    if !exported_receiver { return false; }
+                    receiver_exported = true;
+                }
+                _ => return false,
+            }
+        }
+        owner_exported && receiver_exported
     })
     .unwrap_or(false)
 }
@@ -500,4 +550,21 @@ fn noop_replacement(argument: &Argument<'_>) -> bool {
     }
     matches!(arrow.body.statements.as_slice(), [Statement::ExpressionStatement(statement)]
         if identifier(&statement.expression) == Some("undefined"))
+}
+
+fn admitted_source(root: &Path, file: &Path) -> Option<String> {
+    super::bounded_read::read_workspace_sources_capped(
+        root,
+        &[file.to_path_buf()],
+        super::bounded_read::ts_file_read_limit(),
+        super::bounded_read::ts_workspace_read_budget(),
+    )
+    .sources
+    .remove(file)
+}
+
+fn plain_object(object: &oxc_ast::ast::ObjectExpression<'_>) -> bool {
+    object.properties.iter().all(|property| matches!(property,
+        ObjectPropertyKind::ObjectProperty(property) if property.kind == oxc_ast::ast::PropertyKind::Init
+            && !property.computed && property.method && matches!(&property.value, Expression::FunctionExpression(_))))
 }
