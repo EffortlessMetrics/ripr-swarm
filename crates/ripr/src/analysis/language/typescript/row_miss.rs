@@ -18,8 +18,7 @@
 //!
 //! `weak_assertion` is limited to weak and smoke oracles; a medium oracle keeps no miss.
 //!
-//! Shipped tokens: `weak_assertion`, `missing_input` (only from the row-owned
-//! `MissedBoundary` fact, #10040) and `observation_unconfirmed`.
+//! Shipped tokens: `weak_assertion`, `missing_input` and `observation_unconfirmed`.
 //!
 //! Deliberately not emitted:
 //!
@@ -28,11 +27,7 @@
 //!   callback or table (`const f = owner; f(1)`, `[1].map(owner)`,
 //!   `it.each([[owner, 1]])`), and even the affirmative shadow or unrelated
 //!   import rejections refute only the apparent call, not hooks, helpers,
-//!   re-exports or mocks. Those rows keep `miss: None`. A sound fact needs a
-//!   reach mode of the admission scan that treats production imports, barrel
-//!   and `export *` re-exports, side-effect imports, module mock factories,
-//!   `it.each` tables, dynamic `import()`/`require`, class and instance
-//!   owners, hooks and runner config as reaching (#10040).
+//!   re-exports or mocks. Those rows keep `miss: None`.
 //! - `assertion_not_observing`: withheld by this producer. Row eligibility is the
 //!   explicit `RelatedTest::role` (#5563), not this value, so a later
 //!   annotation cannot change decisions; rows that would have carried it
@@ -52,7 +47,7 @@
 //! and keep `miss: None`.
 
 use super::*;
-use crate::domain::RelatedTestMiss;
+use crate::domain::{RelatedTestMiss, RelatedTestMissSupport};
 
 /// The finding-level facts row assignment reads. All are already final.
 pub(crate) struct TsRowMissContext<'a> {
@@ -66,6 +61,10 @@ pub(crate) struct TsRowMissContext<'a> {
     pub(crate) alias_map: Option<&'a TsAliasMap>,
     pub(crate) workspace_root: Option<&'a Path>,
     pub(crate) credits: CreditFacts<'a>,
+    /// The finding's changed-boundary fact. A `missing_input` row carries it
+    /// as its `miss_support` only because that row's own activation proved its
+    /// input misses the boundary (RIPR-SPEC-0224, #5564).
+    pub(crate) boundary_fact: Option<&'a MissingDiscriminatorFact>,
 }
 
 /// Assign the typed miss of every row. `rows` maps one-to-one onto
@@ -84,6 +83,18 @@ pub(crate) fn assign_row_misses(
     }
     for ((row, candidate), activation) in rows.iter_mut().zip(candidates).zip(activations) {
         row.miss = ts_row_miss(context, candidate, row, *activation);
+        row.miss_support = match row.miss {
+            Some(RelatedTestMiss::MissingInput) => {
+                context.boundary_fact.map(RelatedTestMissSupport::from_fact)
+            }
+            _ => None,
+        };
+        row.miss_support = match row.miss {
+            Some(RelatedTestMiss::MissingInput) => {
+                context.boundary_fact.map(RelatedTestMissSupport::from_fact)
+            }
+            _ => None,
+        };
     }
 }
 
@@ -184,12 +195,10 @@ fn established_path_miss(
         OracleStrength::Strong => {}
     }
     // 4. Predicate activation: the row's own module-derived boundary fact
-    // says its input misses the boundary (#10040). `MissedBoundary` is the
-    // closed-body fact (trusted owner import, owner named once in its module
-    // and only in test bodies, every reference a call, literal integer
-    // arguments that all miss the pinned boundary), so it is the one state
-    // that may carry `missing_input`. The renderer words a TypeScript row as
-    // "seen", never the absolute "no test input".
+    // says every owner call it makes passes a plain integer input off the
+    // boundary. The shared renderer words a TypeScript row as "no input this
+    // test passes was seen ..." (#10040), so the claim stays at what one
+    // file's text shows.
     if activation == TypeScriptPredicateActivation::MissedBoundary {
         return Some(RelatedTestMiss::MissingInput);
     }

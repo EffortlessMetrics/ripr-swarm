@@ -339,3 +339,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_constant_resolved (29)
+
+Reason:
+RIPR-SPEC-0224: TS missing_input rows carry the finding's boundary as row-owned miss_support, so the renderer names it (#5495)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_resolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

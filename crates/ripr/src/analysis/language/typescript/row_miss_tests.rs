@@ -285,6 +285,15 @@ fn mixed_rows_keep_their_own_miss() -> Result<(), String> {
     Ok(())
 }
 
+fn support_of(finding: &Finding, test: &str) -> Option<String> {
+    finding
+        .related_tests
+        .iter()
+        .find(|row| row.name == test)
+        .and_then(|row| row.miss_support.as_ref())
+        .map(|support| support.value.clone())
+}
+
 /// A strong assertion whose own closed-body input misses the boundary the
 /// owner pins carries `missing_input` (#10040), the row-owned fact the
 /// hedged TypeScript wording stands behind.
@@ -297,6 +306,14 @@ fn strong_row_off_the_boundary_is_missing_input() -> Result<(), String> {
     assert_eq!(
         miss_of(&finding, "below")?,
         Some(RelatedTestMiss::MissingInput)
+    );
+    // The row carries the finding's boundary as its row-owned support.
+    let support = support_of(&finding, "below");
+    assert!(
+        support
+            .as_deref()
+            .is_some_and(|value| value.contains("100")),
+        "the row carries the boundary it missed, got {support:?}"
     );
     Ok(())
 }
@@ -546,6 +563,7 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
                     pin_facts: &pin_facts,
                     changed_field: None,
                 },
+                boundary_fact: None,
             },
             &candidates,
             &[TypeScriptPredicateActivation::NotApplicable],
