@@ -9,10 +9,10 @@ use crate::analysis::classify::{
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_for_owner, is_bool_chain_owner, local_flow_sinks,
-    macro_names_rebound, method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
-    parameter_rebound, propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
+    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
+    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
@@ -348,15 +348,21 @@ impl ClassifiedProbeEvidence {
                         .iter()
                         .any(|body| mentions_identifier(body, &owner.name))
                 }))
-                // RIPR-SPEC-0353 trusts the spelling of the assertion macros
-                // for its rows; a `macro_rules!` or import under one of those
-                // names may never compare them (#10386).
-                || (matches!(
-                    context.probe.family,
-                    ProbeFamily::Predicate | ProbeFamily::ReturnValue
-                ) && is_bool_chain_owner(context.probe, owner)
-                    && macro_names_rebound(context.index, &["assert", "assert_eq", "assert_ne"]))
         });
+        // The truth-table reading takes `assert_eq!(owner(..), want)` as a
+        // comparison by the macro's name; a rebound name compares nothing.
+        // Only a `&&`/`||` owner reaches that reading, so other owners skip the
+        // per-file macro scan.
+        let assertion_macros_rebound = matches!(
+            context.probe.family,
+            ProbeFamily::Predicate | ProbeFamily::ReturnValue
+        ) && context
+            .owner_fn
+            .is_some_and(|owner| owner.body.contains("&&") || owner.body.contains("||"))
+            && crate::analysis::classify::macro_names_rebound(
+                context.index,
+                &["assert", "assert_eq", "assert_ne"],
+            );
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
@@ -364,6 +370,7 @@ impl ClassifiedProbeEvidence {
             gathered.unresolved_boundary.as_deref(),
             context.owner_fn,
             owner_has_other_callers,
+            assertion_macros_rebound,
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -450,6 +457,7 @@ impl ClassifiedProbeEvidence {
                 &test_summaries,
                 owner,
                 owner_has_other_callers,
+                assertion_macros_rebound,
             )
             .map(|sink| (owner, sink))
         }) {

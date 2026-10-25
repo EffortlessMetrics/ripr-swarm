@@ -424,6 +424,41 @@ fn a_macro_that_names_the_owner_stays_unknown() -> Result<(), String> {
     Ok(())
 }
 
+/// A `macro_rules! assert_eq` that compares nothing (#10386).
+const SHADOW_ASSERT_EQ: &str = "macro_rules! assert_eq {\n    ($actual:expr, $want:expr) => {{\n        let _ = $actual;\n    }};\n}\n\n";
+
+#[test]
+fn a_shadowed_assert_eq_in_the_test_file_credits_nothing() -> Result<(), String> {
+    let shadowed = format!(
+        "use truth_table::can_ship;\n\n{SHADOW_ASSERT_EQ}#[test]\nfn ships() {{\n    assert_eq!(can_ship(true, true), true);\n    assert_eq!(can_ship(true, false), false);\n    assert_eq!(can_ship(false, true), false);\n}}\n"
+    );
+    let lib = lib_with("    in_stock && paid\n", "");
+    let predicates = predicate_findings(&lib, &shadowed)?;
+    assert!(!infection_credited(&predicates), "{predicates:?}");
+    let returned = return_value_findings(&lib, &shadowed)?;
+    assert!(
+        returned
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{returned:?}"
+    );
+    // The same rows with the std macro still credit, so the decline comes
+    // from the rebinding and not from the fixture.
+    assert!(infection_credited(&predicate_findings(
+        &lib,
+        &test(THREE_ROWS)
+    )?));
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_assert_eq_elsewhere_in_the_workspace_credits_nothing() -> Result<(), String> {
+    let lib = lib_with("    in_stock && paid\n", &format!("\n{SHADOW_ASSERT_EQ}"));
+    let predicates = predicate_findings(&lib, &test(THREE_ROWS))?;
+    assert!(!infection_credited(&predicates), "{predicates:?}");
+    Ok(())
+}
+
 /// One live strong row plus a second test that spends the other rows
 /// somewhere they do not run or cannot fail.
 fn split_rows(second: &str) -> String {

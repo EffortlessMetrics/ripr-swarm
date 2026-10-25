@@ -3383,8 +3383,9 @@ fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bo
     macro_names_rebound(index, READ_MACROS)
 }
 
-/// Whether any indexed file binds one of `names` to something other than the
-/// standard macro (see [`read_macro_name_rebound`]).
+/// [`read_macro_name_rebound`] for an arbitrary set of macro names, so a
+/// reader that trusts only the assertion macros by name asks the same
+/// parser-backed question about just those.
 pub(in crate::analysis) fn macro_names_rebound(
     index: &crate::analysis::rust_index::RustIndex,
     names: &[&str],
