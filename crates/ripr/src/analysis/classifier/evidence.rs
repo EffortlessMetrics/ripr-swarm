@@ -349,6 +349,15 @@ impl ClassifiedProbeEvidence {
                         .any(|body| mentions_identifier(body, &owner.name))
                 }))
         });
+        // The truth-table reading takes `assert_eq!(owner(..), want)` as a
+        // comparison by the macro's name; a rebound name compares nothing.
+        let assertion_macros_rebound = matches!(
+            context.probe.family,
+            ProbeFamily::Predicate | ProbeFamily::ReturnValue
+        ) && crate::analysis::classify::macro_names_rebound(
+            context.index,
+            &["assert", "assert_eq", "assert_ne"],
+        );
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
@@ -356,6 +365,7 @@ impl ClassifiedProbeEvidence {
             gathered.unresolved_boundary.as_deref(),
             context.owner_fn,
             owner_has_other_callers,
+            assertion_macros_rebound,
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -442,6 +452,7 @@ impl ClassifiedProbeEvidence {
                 &test_summaries,
                 owner,
                 owner_has_other_callers,
+                assertion_macros_rebound,
             )
             .map(|sink| (owner, sink))
         }) {
