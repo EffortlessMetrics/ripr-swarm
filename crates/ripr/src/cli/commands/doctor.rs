@@ -2765,7 +2765,27 @@ fn ripr_artifact_ignore(
     if present.is_empty() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let Some(uncovered) = uncovered_artifact_roots(root, &present) else {
+    // A Cargo project's repair preflight needs the whole build directory
+    // `target/` ignored (a child-only `/target/ripr/` rule is insufficient),
+    // so coverage of the default root is judged by `target/` itself and the
+    // advice names `/target/` (#9006).
+    let probe_roots = if root.join("Cargo.toml").is_file() {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for relative in &present {
+            let probe = if analysis::artifact_root_pathspec(relative) == "target/ripr" {
+                PathBuf::from("target")
+            } else {
+                relative.clone()
+            };
+            if !roots.contains(&probe) {
+                roots.push(probe);
+            }
+        }
+        roots
+    } else {
+        present
+    };
+    let Some(uncovered) = uncovered_artifact_roots(root, &probe_roots) else {
         return DoctorArtifactIgnore::NotChecked;
     };
     if uncovered.is_empty() {
@@ -2777,28 +2797,17 @@ fn ripr_artifact_ignore(
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
-            artifact_gitignore_entries(root, &uncovered),
+            artifact_gitignore_entries(&uncovered),
         ),
     }
 }
 
 /// The exact `.gitignore` entries for the uncovered roots, one wording on
 /// every surface that names the repair.
-fn artifact_gitignore_entries(root: &Path, uncovered: &[String]) -> String {
-    // A Cargo project's repair preflight requires the whole build directory
-    // `target/` to be Git-ignored (a child-only rule is insufficient), so
-    // advising `/target/ripr/` there would pass this check and then fail the
-    // preflight. Advise `/target/`, which covers both.
-    let cargo_project = root.join("Cargo.toml").is_file();
+fn artifact_gitignore_entries(uncovered: &[String]) -> String {
     uncovered
         .iter()
-        .map(|artifact_root| {
-            if cargo_project && artifact_root == "target/ripr" {
-                "/target/".to_string()
-            } else {
-                analysis::artifact_root_gitignore_entry(Path::new(artifact_root))
-            }
-        })
+        .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -2888,7 +2897,7 @@ fn preemptive_artifact_ignore(
              git ignore rules); `git add -A` would commit ripr's own reports \
              into your history. Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
-            artifact_gitignore_entries(root, &uncovered),
+            artifact_gitignore_entries(&uncovered),
         ),
     }
 }
@@ -5079,6 +5088,16 @@ mod tests {
             .ok_or("missing advice")?
             .1;
         assert_eq!(entry, "/target/", "{warning}");
+        // A child-only `/target/ripr/` rule (the old advice) does not satisfy
+        // the preflight, so doctor still flags it and names `/target/`.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored for a child-only rule".to_string());
+        };
+        assert!(warning.ends_with("/target/"), "{warning}");
         std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
             .map_err(|error| error.to_string())?;
         assert_eq!(

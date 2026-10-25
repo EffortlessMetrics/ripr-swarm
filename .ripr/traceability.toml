@@ -1080,6 +1080,7 @@ tests = [
   "crates/ripr/tests/chaos_interrupted_runs.rs::doctor_says_when_the_cache_cannot_be_written",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advises_the_whole_target_dir_for_a_cargo_project",
+  "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_advises_the_whole_target_dir_for_a_cargo_project",
   "crates/ripr/src/cli/commands/doctor.rs::tests::probe_creatable_dir_reports_a_directory_that_denies_creation",
   "crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories",
   "crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories",
