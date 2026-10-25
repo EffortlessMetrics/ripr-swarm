@@ -392,8 +392,15 @@ fn observed_discriminator_values(
         return element_boundary_observations(owner, &view, index);
     }
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
-    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
+    let left_parameter =
+        boundary_operand_parameter(owner, owner_source, &parameters, &left, probe.location.line);
+    let right_parameter = boundary_operand_parameter(
+        owner,
+        owner_source,
+        &parameters,
+        &right,
+        probe.location.line,
+    );
     let left_credit = credited_parameter(
         owner,
         &parameters,
@@ -1755,7 +1762,11 @@ fn parameter_rebound_before(
     if owner_declares_local(owner, name, declared_line.saturating_sub(1)) {
         return true;
     }
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    // Char literals are blanked first so `';'` / `'{'` do not end a pattern
+    // region early and `'"'` does not open a string (#10228).
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(
+        &crate::analysis::language::mask_rust_char_literals(&owner.body),
+    );
     if pattern_position_binds_before(owner, &masked, name, initializer) {
         return true;
     }
@@ -2162,8 +2173,20 @@ fn missing_boundary_discriminator(
         // Only a compared parameter is in scope; an unrelated computed
         // argument (an output buffer `&mut [0; 4]`) says nothing here.
         let compared = [
-            boundary_operand_parameter(owner, owner_source, &parameters, &left),
-            boundary_operand_parameter(owner, owner_source, &parameters, &right),
+            boundary_operand_parameter(
+                owner,
+                owner_source,
+                &parameters,
+                &left,
+                probe.location.line,
+            ),
+            boundary_operand_parameter(
+                owner,
+                owner_source,
+                &parameters,
+                &right,
+                probe.location.line,
+            ),
         ];
         *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
             .into_iter()
@@ -2178,8 +2201,14 @@ fn missing_boundary_discriminator(
                 let unknown_operands = [&left, &right]
                     .into_iter()
                     .filter(|operand| {
-                        boundary_operand_parameter(owner, owner_source, &parameters, operand)
-                            .is_none()
+                        boundary_operand_parameter(
+                            owner,
+                            owner_source,
+                            &parameters,
+                            operand,
+                            probe.location.line,
+                        )
+                        .is_none()
                             && literal_operand_value(operand).is_none()
                             && crate::analysis::value_resolution::constant_operand_name(operand)
                                 .is_none()
@@ -2208,8 +2237,15 @@ fn missing_boundary_discriminator(
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
-    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
+    let left_parameter =
+        boundary_operand_parameter(owner, owner_source, &parameters, &left, probe.location.line);
+    let right_parameter = boundary_operand_parameter(
+        owner,
+        owner_source,
+        &parameters,
+        &right,
+        probe.location.line,
+    );
     let left_credit = credited_parameter(
         owner,
         &parameters,
@@ -4949,12 +4985,35 @@ fn boundary_operand_parameter(
     owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
+    at_line: usize,
 ) -> Option<String> {
     parameters
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
+        .or_else(|| mut_boundary_parameter(function, parameters, operand, at_line))
         .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
+}
+
+/// A `mut n` parameter as the operand `n` (#10306): the signature keeps the
+/// pattern text, so the plain-name lookup misses it. It maps only while the
+/// caller's value is what the comparison at `at_line` reads (see
+/// [`crate::analysis::syntax::mut_parameter_unwritten_at`]), and it keeps
+/// its `mut` spelling so the test-call rows keyed by it still match.
+fn mut_boundary_parameter(
+    function: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    at_line: usize,
+) -> Option<String> {
+    let spelled = format!("mut {operand}");
+    let parameter = parameters.iter().find(|parameter| **parameter == spelled)?;
+    crate::analysis::syntax::mut_parameter_unwritten_at(
+        &function.body,
+        operand,
+        at_line.checked_sub(function.start_line)?,
+    )
+    .then(|| parameter.clone())
 }
 
 fn boundary_local_operand_parameter(
@@ -5344,7 +5403,7 @@ fn oriented_comparison_operands(
 ) -> Option<(String, String)> {
     let (left, right) = comparison_operands(expression)?;
     let owner_bound = |operand: &str| {
-        boundary_operand_parameter(owner, owner_source, parameters, operand).is_some()
+        boundary_operand_parameter(owner, owner_source, parameters, operand, predicate_line).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
@@ -9900,6 +9959,14 @@ assert_eq!(input.amount, 100);"#
             (
                 "match k {\n        None => { drop(1); }\n        Some(Foo { n, .. })\n            => 1,\n    };\n    ",
                 "match k {\n        None => { drop(1); }\n        Some(Foo { a, .. })\n            => 1,\n    };\n    ",
+            ),
+            (
+                "match (x, c) {\n        Some(n)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+                "match (x, c) {\n        Some(a)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+            ),
+            (
+                "if let ('=', n) = pair {\n        drop(n);\n    }\n    ",
+                "if let ('=', a) = pair {\n        drop(a);\n    }\n    ",
             ),
             (
                 "match k { Some(n) => 1, None => 2 };\n    ",

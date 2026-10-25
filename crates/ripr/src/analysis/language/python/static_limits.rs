@@ -3,9 +3,12 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::effect_alignment::ChangedEffect;
+use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
-    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    import_source_module_matches_owner, is_python_identifier_char,
+    line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
 use super::source_utils::SourceText;
@@ -37,7 +40,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, None, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -49,6 +52,7 @@ pub(super) fn static_limit_for_focused_change(
     log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
+    owner_source: &str,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
     let trimmed = line_text.trim();
@@ -170,16 +174,62 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
-    if related_candidates
+    // A mocked test keeps the limit unless its substitutions are literal
+    // zero-argument stand-ins the edit cannot hide behind (`literal_patch`).
+    let mut substituted_calls: Vec<String> = Vec::new();
+    let mut mocked = false;
+    for candidate in related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
-        .any(|candidate| test_has_mocked_module(candidate.test))
+        .filter(|candidate| test_has_mocked_module(candidate.test))
     {
+        match literal_patch_calls(
+            candidate.test,
+            owner,
+            owner_source,
+            old_line_text,
+            line_text,
+        ) {
+            Some(calls) => substituted_calls.extend(calls),
+            None => mocked = true,
+        }
+    }
+    if mocked {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MockedModule,
             evidence: "static_limit mocked_module: related test uses patch/mock/monkeypatch module syntax"
                 .to_string(),
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
+        });
+    }
+    // A test that rebinds the owner's module object (`route.response = fake`,
+    // `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
+    // object than the owner mutates. Withholding credit alone leaves a weak
+    // finding whose repair card asserts on the stale import, so the finding is
+    // withheld as a runtime-substitution limit like `patch` (#10289).
+    if let Some(ChangedEffect::ModuleField { object, .. }) =
+        ChangedEffect::of(line_text, old_line_text, owner, false)
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                let test = candidate.test;
+                // Only a test that imports the object can read a stale one.
+                test.constant_rebinding.assigns_attribute(&object)
+                    && test.imports.iter().any(|import| {
+                        import.imported == object
+                            && import_source_module_matches_owner(import, owner, &test.file)
+                    })
+            })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MockedModule,
+            evidence: format!(
+                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
+            ),
+            missing: format!(
+                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
+            ),
         });
     }
     if related_candidates_have_property_based_test_limit(related_candidates, focus) {
@@ -232,7 +282,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(trimmed, &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
