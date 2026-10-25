@@ -381,7 +381,7 @@ fn module_specifiers(source: &str) -> Option<Vec<String>> {
             let Some(arguments) = rest.strip_prefix('(') else {
                 continue;
             };
-            match quoted_literal(skip_trivia(arguments)) {
+            match closed_call_literal(skip_trivia(arguments)) {
                 Some(literal) => specifiers.push(literal),
                 // A computed `import(name)` / `require(name)` reaches anything.
                 None if matches!(call, "require" | "import") => return None,
@@ -415,6 +415,14 @@ fn skip_trivia(mut text: &str) -> &str {
 
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte == b'.'
+}
+
+/// The literal that is the whole first argument: its closing quote must be
+/// followed by `)` or `,`. `'./dir/' + name` is computed, not a fixed path.
+fn closed_call_literal(text: &str) -> Option<String> {
+    let literal = quoted_literal(text)?;
+    let tail = skip_trivia(&text[literal.len() + 2..]);
+    (tail.starts_with(')') || tail.starts_with(',')).then_some(literal)
 }
 
 fn quoted_literal(text: &str) -> Option<String> {
@@ -560,6 +568,26 @@ mod tests {
         ] {
             assert!(check(&entries, &["src/changed.ts"], &[], gap), "{gap}");
         }
+    }
+
+    #[test]
+    fn a_concatenated_specifier_is_computed_not_its_leading_literal() {
+        for source in [
+            "const m = require('../src/' + name);\n",
+            "const m = await import(\"./fixtures/\" /* c */ + n);\n",
+        ] {
+            assert_eq!(module_specifiers(source), None, "{source}");
+        }
+        assert_eq!(
+            module_specifiers("require('../src/a', opts); import('./b')\n"),
+            Some(vec!["../src/a".to_string(), "./b".to_string()]),
+        );
+        let entries = [
+            ("test/a.test.ts", "const m = require('../src/' + name);\n"),
+            ("src/index.ts", "export {};\n"),
+            ("src/changed.ts", "export default function tier() {}\n"),
+        ];
+        assert!(check(&entries, &["src/changed.ts"], &[], "test/a.test.ts"));
     }
 
     #[test]

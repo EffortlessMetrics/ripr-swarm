@@ -3377,6 +3377,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::an_owner_name_in_the_closure_reaches_without_a_resolved_import",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::unresolved_computed_and_opaque_loading_keeps_the_gap",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::spaced_and_commented_loader_calls_are_followed",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_concatenated_specifier_is_computed_not_its_leading_literal",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::esm_emitted_extensions_resolve_to_the_typescript_source",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::resolution_config_that_remaps_imports_disables_scoping",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_cross_language_consumer_disables_scoping",
