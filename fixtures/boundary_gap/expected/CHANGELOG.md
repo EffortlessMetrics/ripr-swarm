@@ -1169,7 +1169,7 @@ commitment, dependent verify commitments and receipt byte hashes only.
 
 ### Exported macro_rules! crate-path calls classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.105 to 1.106 for
+The same snapshots follow corpus cache generation 1.106 to 1.107 for
 top-level `crate::name!` calls to `#[macro_export]` test generators
 (RIPR-SPEC-0117, #10298), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
@@ -1250,4 +1250,10 @@ hashes only.
 
 The same snapshots follow corpus cache generation 1.103 to 1.104 for the
 returned loop-accumulator update (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### table-driven loop-accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.105 to 1.106 for the
+table-driven loop-accumulator pin (#6485), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A zero-initialized loop accumulator pinned through a constant-row table (`for (items, want) in [(&[3, 4], 7), ..]`) is now credited when some row walks a non-empty literal input and pins a nonzero total. A table that separates nothing or that ripr cannot read remains `static_unknown` with `rust_pinned_shape_unresolved` instead of reading `reachable_unrevealed` (RIPR-SPEC-0360, #6485).

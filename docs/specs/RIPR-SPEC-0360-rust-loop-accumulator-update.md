@@ -142,9 +142,15 @@ exact pin (a smoke call, a relational check) keeps its gap.
 
 ## Known Limits
 
-- A table-driven pin (`for (items, want) in cases { .. }`), a call in the term
-  (`count += line.split_whitespace().count()`) and a nonzero start keep their
-  `static_unknown` probe. Crediting them is future work.
+- A call in the term (`count += line.split_whitespace().count()`) and a
+  nonzero start keep their `static_unknown` probe. Crediting them is future
+  work.
+- A table-driven pin is read only through a constant-row table
+  (`for (items, want) in [(&[3, 4], 7), ..]`, inline or a typed `let`) whose
+  loop body cannot leave a row early. A table of all-empty or all-zero rows,
+  or one ripr cannot read (a computed or short row, a rebound name, a skip
+  guard), is withheld as `rust_pinned_shape_unresolved`; ripr does not claim
+  the gap through a loop.
 - A release build can wrap an unsigned `-=` back to the pinned value for a
   single large element; debug builds panic. ripr does not model overflow.
 - Only `+`/`-` updates qualify; `*=` from zero is constant zero.
@@ -177,15 +183,20 @@ exact pin (a smoke call, a relational check) keeps its gap.
 4. The same owner reached by a smoke call or a relational check
    (`>= before`) is a gap.
 5. An accumulator whose term has an operator (`w * w`, which equals `w + w`
-   at 2) or calls a function, or that is driven by a
-   table-driven loop in the test, keeps its `static_unknown` verdict.
+   at 2) or calls a function keeps its `static_unknown` verdict.
+6. The same owner pinned through a constant-row table loop is `exposed` when
+   some row pairs a non-empty literal input with a nonzero integer, even
+   beside an empty or zero row. A table whose rows are all empty or zero, or
+   that ripr cannot read, is `static_unknown` under
+   `rust_pinned_shape_unresolved`, never a gap.
 
 ## Test Mapping
 
 - `crates/ripr/tests/loop_accumulator_pin.rs`.
 - `crates/ripr/src/analysis/syntax/loop_accumulator.rs` unit tests.
 - Rust verdict corpus cases `grid-loop-*`, `loop-accumulator-*` and
-  `trap-loop-accumulator-*`.
+  `trap-loop-accumulator-*`, including the table pair
+  `loop-accumulator-table-pin` and `trap-loop-accumulator-table-zero-rows`.
 
 ## Implementation Mapping
 

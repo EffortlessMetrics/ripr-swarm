@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-loop-accumulator-table",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for #6485 (loop accumulator pinned by a table of input and total rows)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "13c618cf793e9ac6ff7c978279b4d3f724224a387ff084a1fb59a14997eea01b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "3517d42b759a1cd75d1895bd038c6ba9f548d950cc473f1c24f6c0d90467c221"
+    }
+  ]
+}
