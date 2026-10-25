@@ -30,6 +30,7 @@ struct PacketReader {
 fn finding() -> Finding {
     let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "fixture evidence");
     Finding {
+        analysis_scope: ripr::domain::AnalysisScope::Diff,
         id: "probe:src_lib_rs:9:predicate".into(),
         canonical_gap: None,
         probe: Probe {

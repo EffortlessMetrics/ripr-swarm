@@ -167,8 +167,8 @@ the public renderer. Unknown optional witness properties must not prevent
 reading known evidence, but the typed witness does not retain them for
 reserialization. Forwarders must keep the opaque JSON document to retain
 extensions. Unknown limitation kinds retain their producer-supplied kind and
-detail strings. The context packet emits an explicit `null` witness when an
-exposed finding has no unresolved discriminator.
+detail strings. The existing envelope shape is a compatibility control; its
+null-witness documentation correction remains owned separately by #5082.
 
 The server also emits the versioned `ripr/analysisStatus` notification and
 returns the same `analysis_status` object from `ripr.collectWorkspaceStatus`.
