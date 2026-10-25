@@ -458,7 +458,9 @@ test that may notice the change (#9440):
   chain that reaches an iterator source (`iter`, `into_iter`, `chars`,
   `windows`, ..., or a range) through iterator adaptors alone, so
   `xs.iter().next().map(..)` stays an `Option` combinator. The changed line
-  must overlap a closure of the tail. A spawned thread joined in the tail, a returned closure
+  must overlap a closure of the tail. A spawned thread joined in the tail (except the
+  whole-body, branch-free `std::thread::spawn(move || e).join().unwrap()` that
+  RIPR-SPEC-0265 rule 4 credits), a returned closure
   the test applies, and an adaptor chain the owner or the test collects are
   this shape. The owner has no `return`, `?`, `break` or `continue` outside
   closures.
@@ -496,13 +498,14 @@ does not answer here, so neither the gap nor credit is established. Crediting
 the shapes whose closure the call runs on every input (a spawned and joined
 closure, a returned closure the test applies, a `Result` collect) needs those
 shapes added to the pin rules with runtime controls; that is follow-up work,
-not part of this rule. The cost is that a true gap in these shapes reads
+not part of this rule. RIPR-SPEC-0265 rule 4 has since taken the spawned and
+joined closure whose body runs on every input. The cost is that a true gap in these shapes reads
 `static_unknown` too: `shape-let-else-branch-unreached` and
 `shape-windows-strict-vs-loose`, whose cases accept `limited`. The zero-input
 rule keeps the gap for `shape-closure-returned-zero-input`.
 
-Corpus effect on main: `shape-thread-join-result`,
-`shape-sort-direction-truncate` and `shape-let-else-branch-pinned` move from
+Corpus effect on main: `shape-sort-direction-truncate` and
+`shape-let-else-branch-pinned` move from
 `false_actionable` to `abstained`; `shape-let-else-branch-unreached` and
 `shape-windows-strict-vs-loose` move from `ideal` to `abstained`. The cases
 `shape-closure-returned-adder`, `shape-collect-result-short-circuit` and
