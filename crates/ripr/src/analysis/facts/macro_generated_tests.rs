@@ -24,7 +24,7 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) {
             .map(|(path, file)| (path.clone(), file.data.source.clone())),
     );
     for (path, file) in &index.files {
-        let imported = visibility.imported_definitions(path);
+        let imported = visibility.imported_macros(path);
         for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
             let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
                 continue;
