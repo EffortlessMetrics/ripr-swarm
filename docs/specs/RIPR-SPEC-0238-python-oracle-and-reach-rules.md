@@ -1355,7 +1355,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
   comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
-  (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
+  (rule 16; the `py-offsets-*` cases add a `C - 1` and a `C + 1` operand
+  hit at the boundary value credited, a parametrize row at `threshold - 1`
+  credited, and inputs that miss the boundary value scored as gaps),
+  `py-fixtures-report-file`, `py-unittest-transfer-notify` and
   `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
   (rule 18), and `py-hypothesis-passing-threshold` and
   `py-hypothesis-label-no-crash` (rule 19).
