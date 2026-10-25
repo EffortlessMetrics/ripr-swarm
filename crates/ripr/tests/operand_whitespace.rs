@@ -430,3 +430,55 @@ fn out_of_line_standard_imports_need_the_crate_root_context() -> Result<(), Stri
     }
     Ok(())
 }
+
+#[test]
+fn disjoint_block_bindings_do_not_rebind_outer_annotations_or_casts() -> Result<(), String> {
+    let primitive = include_str!("fixtures/operand_callee_identity/primitive_control.rs");
+    for binding in [
+        "{ type u64 = (); }",
+        "{ use std::string::String as u64; }",
+        "{ use std::option::*; }",
+        "let _unused = || { type u64 = (); };",
+    ] {
+        for initializer in [
+            "let shipping: u64 = shipping_cents(subtotal);",
+            "let shipping = 0 as u64;",
+        ] {
+            let source = primitive.replace(
+                "let shipping = shipping_cents(subtotal);",
+                &format!("{initializer}\n    {binding}"),
+            );
+            assert_binding_class(&source, ExposureClass::WeaklyExposed)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn actual_type_sites_keep_comment_offsets_and_item_hoisting() -> Result<(), String> {
+    let primitive = include_str!("fixtures/operand_callee_identity/primitive_control.rs");
+    for initializer in [
+        "let shipping: u64 = shipping_cents(subtotal)  ;",
+        "let shipping = 0 as u64  ;",
+    ] {
+        let source = primitive.replace(
+            "let shipping = shipping_cents(subtotal);",
+            &format!(
+                "// preceding Unicode comment: λ\n    {initializer}\n    {{ type u64 = (); }}"
+            ),
+        );
+        assert_binding_class(&source, ExposureClass::WeaklyExposed)?;
+    }
+    let custom = include_str!("fixtures/operand_whitespace/local_annotation_alias.rs");
+    let alias = custom.replace(
+        "type u64 = Shipping;\n    let shipping: u64 = flat_rate(subtotal);",
+        "let shipping: u64 = flat_rate(subtotal);\n    type u64 = Shipping;",
+    );
+    assert_ne!(
+        alias, custom,
+        "premise: move the applicable alias after its use"
+    );
+    assert_binding_class(&alias, ExposureClass::Exposed)?;
+    let import = alias.replace("type u64 = Shipping;", "use crate::Shipping as u64;");
+    assert_binding_class(&import, ExposureClass::Exposed)
+}

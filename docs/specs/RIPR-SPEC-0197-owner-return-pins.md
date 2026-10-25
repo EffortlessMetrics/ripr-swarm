@@ -893,8 +893,11 @@ wrong credits.
    type, alias or unresolved import. Value parameters, locals, functions,
    constants and statics of the same name do not rebind the type namespace.
    Nested function/module declarations do not contaminate the owner's scope.
-   Local annotations and casts conservatively include the owner's executable
-   block scopes; callee returns use the callee's declaring scope. Opaque macros
+   An annotation or cast uses only the lexical scopes enclosing its parsed
+   type occurrence. A binding inside a disjoint block or unused closure cannot
+   rebind that type; direct items in an applicable scope remain hoisted even
+   when declared after the use. Callee returns use the callee's declaring
+   signature scope. Opaque macros
    and attributes refuse this proof. A standard primitive import requires the
    existing closed manifest proof for its standard root, established target-root
    context in the declaring file, and source-scope refusal of root rebinding.

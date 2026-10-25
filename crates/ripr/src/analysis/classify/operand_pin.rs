@@ -12,6 +12,7 @@
 //! change.
 
 mod primitive_binding;
+use primitive_binding::TypeSite;
 
 use super::super::rust_index::{RustIndex, TestSummary};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary};
@@ -216,7 +217,9 @@ fn operand_established_primitive(
     let bindings = let_binding_expressions(&text);
     let primitive_params: Vec<String> = owner_param_types(&text)
         .into_iter()
-        .filter(|(_, ty)| primitive_binding::type_is_primitive(ty, owner, index, false))
+        .filter(|(_, ty)| {
+            primitive_binding::type_is_primitive(ty, owner, index, TypeSite::Signature)
+        })
         .map(|(name, _)| name)
         .collect();
     // A parameter that a `let` rebinds is not established up front: the
@@ -249,7 +252,12 @@ fn operand_established_primitive(
                 .iter()
                 .filter(|(bound, _, _, _)| bound == name)
                 .all(|(_, bound_expr, annotation, offset)| match annotation {
-                    Some(ty) => primitive_binding::type_is_primitive(ty, owner, index, true),
+                    Some(ty) => primitive_binding::type_is_primitive(
+                        ty,
+                        owner,
+                        index,
+                        TypeSite::Annotation(*offset),
+                    ),
                     None => expression_established(
                         bound_expr,
                         *offset,
@@ -290,7 +298,7 @@ fn expression_established(
     if let Some(callee) = call_callee(expr) {
         return call_established_primitive(callee, offset, owner_body, outer_imports, index);
     }
-    arithmetic_established(expr, established, owner, index)
+    arithmetic_established(expr, established, owner, index, offset)
 }
 
 struct CallCallee<'a> {
@@ -392,7 +400,7 @@ fn call_established_primitive(
         let Some(returns) = declared_return_type(function.body.as_str()) else {
             return false;
         };
-        if !primitive_binding::type_is_primitive(returns, function, index, false) {
+        if !primitive_binding::type_is_primitive(returns, function, index, TypeSite::Signature) {
             return false;
         }
         match &seen {
@@ -520,12 +528,24 @@ fn owner_param_types(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `text` without the rest of any line holding a `//` comment.
+/// Mask line comments while preserving byte offsets into the parsed owner.
 fn strip_line_comments(text: &str) -> String {
-    text.lines()
-        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut masked = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if let Some((code, _)) = line.split_once("//") {
+            masked.push_str(code);
+            for byte in line[code.len()..].bytes() {
+                masked.push(match byte {
+                    b'\r' => '\r',
+                    b'\n' => '\n',
+                    _ => ' ',
+                });
+            }
+        } else {
+            masked.push_str(line);
+        }
+    }
+    masked
 }
 
 /// Whether `expr` is an arithmetic combination of established names, numeric or
@@ -538,6 +558,7 @@ fn arithmetic_established(
     established: &[String],
     owner: &FunctionSummary,
     index: &RustIndex,
+    offset: usize,
 ) -> bool {
     let bytes = expr.as_bytes();
     if !expr.is_ascii() {
@@ -583,7 +604,12 @@ fn arithmetic_established(
                 }
                 let word = &expr[start..at];
                 if expecting_cast {
-                    if !primitive_binding::type_is_primitive(word, owner, index, true) {
+                    if !primitive_binding::type_is_primitive(
+                        word,
+                        owner,
+                        index,
+                        TypeSite::Cast(offset + start),
+                    ) {
                         return false;
                     }
                     expecting_cast = false;

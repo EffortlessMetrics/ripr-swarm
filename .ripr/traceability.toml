@@ -13525,6 +13525,8 @@ tests = [
   "crates/ripr/tests/operand_whitespace.rs::value_namespace_and_nested_test_type_bindings_keep_primitive_credit",
   "crates/ripr/tests/operand_whitespace.rs::unestablished_alias_terminals_and_standard_roots_stay_conservative",
   "crates/ripr/tests/operand_whitespace.rs::out_of_line_standard_imports_need_the_crate_root_context",
+  "crates/ripr/tests/operand_whitespace.rs::disjoint_block_bindings_do_not_rebind_outer_annotations_or_casts",
+  "crates/ripr/tests/operand_whitespace.rs::actual_type_sites_keep_comment_offsets_and_item_hoisting",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",

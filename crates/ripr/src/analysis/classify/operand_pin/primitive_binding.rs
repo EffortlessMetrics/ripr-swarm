@@ -12,6 +12,12 @@ fn same_name(left: &str, right: &str) -> bool {
     left.trim_start_matches("r#") == right.trim_start_matches("r#")
 }
 
+pub(super) enum TypeSite {
+    Signature,
+    Annotation(usize),
+    Cast(usize),
+}
+
 fn type_name(item: &ast::Item) -> Option<ast::Name> {
     match item {
         ast::Item::Struct(item) => item.name(),
@@ -52,20 +58,22 @@ fn function(owner: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
-/// Item scopes relevant to the signature, optionally including executable
-/// blocks of this function. Nested functions/modules never contaminate it.
-fn scopes(function: &ast::Fn, local: bool) -> Vec<SyntaxNode> {
-    let mut scopes = function
-        .syntax()
-        .ancestors()
+fn enclosing_scopes(site: &SyntaxNode) -> Vec<SyntaxNode> {
+    site.ancestors()
         .filter(|node| {
             matches!(
                 node.kind(),
                 SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST | SyntaxKind::STMT_LIST
             )
         })
-        .collect::<Vec<_>>();
-    if local && let Some(body) = function.body() {
+        .collect()
+}
+
+/// Preserve the separate whole-owner opaque-expansion refusal. Type binding
+/// identity below uses only ancestors of the actual annotation/cast instead.
+fn context_scopes(function: &ast::Fn) -> Vec<SyntaxNode> {
+    let mut scopes = enclosing_scopes(function.syntax());
+    if let Some(body) = function.body() {
         scopes.extend(body.syntax().descendants().filter(|node| {
             ast::StmtList::can_cast(node.kind())
                 && node.ancestors().find_map(ast::Fn::cast).as_ref() == Some(function)
@@ -76,6 +84,34 @@ fn scopes(function: &ast::Fn, local: bool) -> Vec<SyntaxNode> {
         }));
     }
     scopes
+}
+
+fn type_site(function: &ast::Fn, ty: &str, site: TypeSite) -> Option<SyntaxNode> {
+    let (offset, annotation) = match site {
+        TypeSite::Signature => return Some(function.syntax().clone()),
+        TypeSite::Annotation(offset) => (offset, true),
+        TypeSite::Cast(offset) => (offset, false),
+    };
+    let absolute = usize::from(function.fn_token()?.text_range().start()).checked_add(offset)?;
+    let node = function.syntax().descendants().find_map(|node| {
+        let actual = if annotation {
+            let binding = ast::LetStmt::cast(node)?;
+            if usize::from(binding.initializer()?.syntax().text_range().start()) != absolute {
+                return None;
+            }
+            binding.ty()?
+        } else {
+            let cast = ast::CastExpr::cast(node)?;
+            let actual = cast.ty()?;
+            if usize::from(actual.syntax().text_range().start()) != absolute {
+                return None;
+            }
+            actual
+        };
+        (actual.syntax().text().to_string().trim() == ty.trim()).then(|| actual.syntax().clone())
+    })?;
+    // A lexical let scan must not borrow a nested function's type context.
+    (node.ancestors().find_map(ast::Fn::cast).as_ref() == Some(function)).then_some(node)
 }
 
 fn items(scope: &SyntaxNode) -> Vec<ast::Item> {
@@ -110,7 +146,8 @@ fn closed_scope(scope: &SyntaxNode) -> bool {
 }
 
 pub(super) fn context_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
-    function(owner, index).is_some_and(|function| scopes(&function, true).iter().all(closed_scope))
+    function(owner, index)
+        .is_some_and(|function| context_scopes(&function).iter().all(closed_scope))
 }
 
 /// A bare primitive spelling is insufficient when a type declaration,
@@ -119,14 +156,18 @@ pub(super) fn type_is_primitive(
     ty: &str,
     owner: &FunctionSummary,
     index: &RustIndex,
-    local: bool,
+    site: TypeSite,
 ) -> bool {
     if !primitive_type_token(ty) {
         return false;
     }
+    let declared = ty;
     let ty = ty.trim().strip_prefix("&mut ").unwrap_or(ty.trim());
     let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
     let Some(function) = function(owner, index) else {
+        return false;
+    };
+    let Some(site) = type_site(&function, declared, site) else {
         return false;
     };
     // Fn/impl/trait type parameters bind the type namespace. Const generics
@@ -148,7 +189,7 @@ pub(super) fn type_is_primitive(
     }) {
         return false;
     }
-    let scopes = scopes(&function, local);
+    let scopes = enclosing_scopes(&site);
     if scopes.iter().any(|scope| !closed_scope(scope)) {
         return false;
     }
