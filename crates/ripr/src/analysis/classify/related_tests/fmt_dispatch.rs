@@ -1164,6 +1164,117 @@ mod tests {
         assert_eq!(memo.builds_for_test(), 3, "bound index still hits");
     }
 
+    /// Related tests of a helper `sanitize_label` whose one caller is the
+    /// `fmt` of `impls[0]`, reached through a one-hop helper chain (#8999).
+    fn helper_reasons(impls: &[&str], bodies: &[&str]) -> Vec<(String, RelationReason)> {
+        use crate::analysis::classify::helper_transfer::{HelperChain, HelperHop};
+        let mut files = std::collections::BTreeMap::new();
+        let source = "pub struct Merge;\npub struct Other;\n";
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        let mut helper = fmt_function("src/error.rs", "unused");
+        helper.id = SymbolId("src/error.rs::sanitize_label".to_string());
+        helper.name = "sanitize_label".to_string();
+        let fmts: Vec<FunctionSummary> = impls
+            .iter()
+            .map(|header| fmt_function("src/error.rs", header))
+            .collect();
+        let chain = HelperChain {
+            hops: vec![HelperHop {
+                caller: fmts[0].clone(),
+                call_text: "sanitize_label(l)".to_string(),
+                arguments: vec!["l".to_string()],
+                receiver: None,
+                through_macro: false,
+            }],
+            stop_above: None,
+        };
+        let mut functions = vec![helper.clone()];
+        functions.extend(fmts);
+        let tests: Vec<TestSummary> = bodies
+            .iter()
+            .enumerate()
+            .map(|(at, body)| test_with_body(&format!("t{at}"), body))
+            .collect();
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let mut probe = probe();
+        probe.owner = Some(helper.id.clone());
+        probe.expression = "s.replace('\\n', \" \")".to_string();
+        find_related_tests(&probe, Some(&helper), &index, true, Some(&chain), None)
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason))
+            .collect()
+    }
+
+    #[test]
+    fn a_helper_called_only_by_display_fmt_is_reached_by_formatting_the_type() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge"],
+            &[
+                "let merge: Merge = Merge::new(vec![]);\nassert_eq!(\n    merge.to_string(),\n    \"a\"\n);",
+                "let merge = Merge { labels: vec![] };\nassert_eq!(format!(\"{}\", merge), \"a\");",
+                // Refused: another type, the other trait's placeholder, an
+                // untyped factory, and a test that never formats the value.
+                "let other = Other;\nassert_eq!(other.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
+                "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+            ],
+        );
+        let helper_calls: Vec<&str> = reasons
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(helper_calls, ["t0", "t1"], "{reasons:?}");
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall),
+            "reaching a helper through fmt is never a direct owner call: {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_helper_chain_entry_that_is_not_a_fmt_owner_is_not_reached_by_formatting() {
+        // The chain entry is `fmt` of a trait other than Display/Debug.
+        let reasons = helper_reasons(
+            &["fmt::LowerHex for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn two_display_impls_for_the_entry_type_fail_closed() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge", "fmt::Display for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
+    }
+
     #[test]
     fn debug_format_of_constructed_value_reaches_debug_fmt() {
         let related = reasons(

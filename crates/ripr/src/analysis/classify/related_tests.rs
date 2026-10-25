@@ -431,6 +431,11 @@ impl RelatedTestCandidateIndex {
                         .get(hop.caller.name.as_str())
                         .map(Vec::as_slice),
                 );
+                // A hop whose caller is a `Display`/`Debug` `fmt` is reached
+                // through formatting that never spells `fmt` (#8999).
+                if fmt_dispatch::is_fmt_dispatch_owner(&hop.caller) {
+                    selected.extend(self.fmt_dispatch_tests.iter().copied());
+                }
             }
         }
 
@@ -733,6 +738,15 @@ pub(in crate::analysis) fn find_related_tests_with_candidate_index<'a>(
     )
 }
 
+/// A helper-chain hop whose caller is a `Display`/`Debug` `fmt` owner (#8999):
+/// the caller, the indexed functions named like it (the exactly-one-impl gate)
+/// and its memoized dispatch context.
+struct FmtEntryHop<'a> {
+    caller: &'a FunctionSummary,
+    same_name_ids: Vec<&'a str>,
+    context: std::sync::Arc<Option<fmt_dispatch::FmtContext>>,
+}
+
 fn find_related_tests_with_candidates<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -983,6 +997,31 @@ fn find_related_tests_with_candidates<'a>(
         && owner_fn.is_some_and(|owner| {
             owner.item.container == crate::analysis::facts::FunctionContainer::Free
         });
+    // #8999: a changed helper whose only chain entry is a `Display`/`Debug`
+    // `fmt` is reached by a test that formats a value of that impl's type
+    // (`merge.to_string()`) without naming `fmt` or the helper. One entry per
+    // fmt hop: the caller, the indexed functions named like it (the
+    // exactly-one-impl gate) and the memoized context.
+    let fmt_entry_hops: Vec<FmtEntryHop<'_>> = helper_chain
+        .map(|chain| {
+            chain
+                .hops
+                .iter()
+                .filter(|hop| !hop.through_macro)
+                .filter(|hop| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
+                .map(|hop| FmtEntryHop {
+                    caller: &hop.caller,
+                    same_name_ids: index
+                        .functions()
+                        .iter()
+                        .filter(|function| function.name == hop.caller.name)
+                        .map(|function| function.id.0.as_str())
+                        .collect(),
+                    context: fmt_contexts.context(index, &hop.caller),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -1272,8 +1311,25 @@ fn find_related_tests_with_candidates<'a>(
         // call relation (#6694, #6672): the typed chain is stronger
         // evidence than file proximity or a name token, and demoting it
         // let a tested wrapper's private helper read as file-level reach.
-        let helper_chain_reaches =
-            !calls_owner && !assertions_reference_owner && calls_helper_entry;
+        // #8999: a fmt entry is judged separately from `calls_helper_entry`
+        // so it never rides that signal's cross-package bypasses: only an
+        // in-package test can use it.
+        let dispatches_to_helper_fmt_entry = !calls_owner
+            && !calls_helper_entry
+            && !property_only_owner_call
+            && fmt_entry_hops.iter().any(|entry| {
+                Option::as_ref(&entry.context).is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        entry.caller,
+                        &entry.same_name_ids,
+                        context,
+                    )
+                })
+            });
+        let helper_chain_reaches = !calls_owner
+            && !assertions_reference_owner
+            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner
