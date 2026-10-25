@@ -5,6 +5,102 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "py_dunder_truthiness_cross_file_writer",
+      "language": "python",
+      "tier": "pure",
+      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-direct.report.json",
+      "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "py_dunder_truthiness_hidden_member_writer",
+      "language": "python",
+      "tier": "pure",
+      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-hidden.report.json",
+      "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "py_dunder_truthiness_normalized_member_writer",
+      "language": "python",
+      "tier": "pure",
+      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-unicode.report.json",
+      "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "py_dunder_truthiness_generated_test_writer",
+      "language": "python",
+      "tier": "pure",
+      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-generated.report.json",
+      "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "py_dunder_truthiness_replaced_test",
       "language": "python",
       "tier": "pure",
