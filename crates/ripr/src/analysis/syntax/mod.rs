@@ -3,6 +3,7 @@ pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
 mod local_test_macros;
+mod macro_scope;
 mod module_tree;
 mod name_scope;
 mod nesting;
@@ -32,9 +33,12 @@ pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
 pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
+#[cfg(test)]
+pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
-    GeneratedTestPins, expand_local_test_macros, generated_test_pins,
+    GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
+pub(crate) use macro_scope::{MacroScope, first_macro_call, macro_scope};
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
     NameScope, NameScopes, UseBinding, fn_call_has_local_binding, function_type_param_names,
