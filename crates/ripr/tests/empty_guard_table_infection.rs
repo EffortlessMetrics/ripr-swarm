@@ -25,7 +25,10 @@ impl TempRepo {
             "ripr-empty-guard-{}-{sequence}",
             std::process::id()
         ));
-        // Built before any write so `Drop` removes a partly written root.
+        // Exclusive create, so `Drop` never removes a directory this run did
+        // not make; the guard owns the root before any other write.
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("create root directory failed: {error}"))?;
         let repo = Self { root };
         let root = &repo.root;
         std::fs::create_dir_all(root.join("src"))
