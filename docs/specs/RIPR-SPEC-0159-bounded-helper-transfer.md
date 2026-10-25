@@ -437,6 +437,45 @@ helpers, let-bound or transformed projections, aliases, custom impls, generated
 code, test-helper wrappers, or general interprocedural evaluation. It does not
 change punctuation extraction. Existing direct-field observation remains valid.
 
+## A public inherent method entry and a module-qualified hop (#8999)
+
+A changed private helper (`matches_caret`) that integration tests reach only
+through a public method (`req.matches(&version)`) read "no test is seen
+calling the helper": the chain entry is a method, not a free function, and the
+hop into the helper layer is spelled `eval::matches_req(..)`, a path-qualified
+call that name identity alone does not bind (#3296 review B1). Two additions
+close that gap, both reach-only and both fail-closed:
+
+- **Module-qualified hop.** A hop whose caller spells the call
+  `<qualifier>::<callee>(..)` binds when the callee is the one function of its
+  name, a module-level `fn` with a body, caller and callee both items of the
+  root package's library (composing under `src/lib.rs`, no `#[path]` remap,
+  every module segment declared once), the caller mentions the name exactly
+  once, and the qualifier (`crate::`, `self::`, `super::` or a child module of
+  the caller's module; no import of the first named segment in the caller's
+  file) resolves to the callee's module path. Anything else keeps the
+  "not statically splittable" stop. The bound hop carries the same positional
+  arguments as a direct call.
+- **Inherent method entry.** A test relates to the helper as
+  `helper_owner_call` when it calls a hop caller that is a plain inherent
+  method taking `self` (not a `fmt` owner, which keeps its own route) on a
+  receiver the established receiver rules bind to the impl's self type (a
+  struct literal, a constructor call, a `let` annotated with the type or a
+  `Type::method(..)` path; a factory without an annotation is unbound). The
+  method's name must be defined exactly once in the index, every hop from the
+  helper up through that method must be a direct call (a macro-argument hop
+  carries reach only), the test must be in the owner's package, and the test
+  must not rebind the type (a same-named type in its module scope or an
+  out-of-line parent module, or a `use .. as Type` rename).
+
+This is reach only. The helper's result is not shown to be forwarded to the
+test's assertion, so the finding reads `infection_unknown` with
+`helper_result_not_forwarded`, never `exposed`. Named limit: the route does not
+look at how a hop uses the callee; a call inside a loop, a branch or a `match`
+arm still reads as reached because the chain records one call site and no
+control-flow condition. That is acceptable only because the route credits
+reach and nothing else.
+
 ## Relation to RIPR-SPEC-0114
 
 The 0114 transitive-reach walk is **lexical** (name-match only) and
@@ -507,8 +546,10 @@ Reach on that rewritten finding is `unknown` and the stop reason is
    through a simple binding-tail return.
 3. Reject: relating through a non-unique callee.
 4. Reject: relating through a method call site (`gauge.span_of(input)`).
-5. Reject: relating through a path-qualified call site
-   (`meter::reach_of(input)`).
+5. Reject: relating through a path-qualified call site whose qualifier
+   is not shown to name the callee's own module (`meter::reach_of(input)`
+   where `meter` is imported, or names another module). A qualifier that
+   resolves to the one callee's module binds (#8999).
 6. Reject: relating through a partial index.
 7. Reject: relating through recursion.
 8. Reject: relating through multiple callers.
@@ -545,6 +586,12 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
+`crates/ripr/tests/pub_api_method_entry_reach.rs` (#8999 public inherent
+method entry through a module-qualified hop: typed-receiver positives, and the
+untyped-factory, `str::matches`, second-method, renamed-import and
+imported-module-name refusals; the class stays below `exposed`);
+`analysis/classify/helper_transfer/qualified_hop.rs` `tests` (the qualifier
+resolution and each decline).
 
 ## Non-Goals
 
@@ -562,6 +609,9 @@ entry call, `[lib] name` and hyphen spellings, and each refusal above).
 
 - `analysis/classify/helper_transfer.rs` — the authority.
 - `analysis/classify/related_tests.rs` — the relation branch.
+- `analysis/classify/helper_transfer/qualified_hop.rs` — the module-qualified
+  hop (#8999); `analysis/classify/related_tests.rs` `method_entry_hops` and
+  `calls_helper_method_entry` — the inherent method entry (#8999).
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
 - `analysis/classifier/evidence.rs` — the hop-propagation stop

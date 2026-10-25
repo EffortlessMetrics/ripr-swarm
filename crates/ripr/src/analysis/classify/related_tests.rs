@@ -749,6 +749,15 @@ struct FmtEntryHop<'a> {
     context: std::sync::Arc<Option<fmt_dispatch::FmtContext>>,
 }
 
+/// A helper-chain hop whose caller is a plain inherent method (#8999): the
+/// public entry a test reaches as `value.method(..)` without naming the helper.
+struct MethodEntryHop<'a> {
+    caller: &'a FunctionSummary,
+    /// The caller's impl self type, for receiver binding and the
+    /// entity-identity refusals.
+    self_type: String,
+}
+
 fn find_related_tests_with_candidates<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -1027,6 +1036,43 @@ fn find_related_tests_with_candidates<'a>(
                             .map(|function| function.id.0.as_str())
                             .collect(),
                         context: fmt_contexts.context(index, &hop.caller),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // #8999: a changed helper whose chain enters a plain inherent method
+    // (`VersionReq::matches`) is reached by a test that calls that method on a
+    // receiver the test binds to the impl's self type. One entry per method
+    // hop. Every hop from the helper up through the method must be a direct
+    // call (a macro hop carries reach only), and the method's name must be
+    // defined exactly once in the index, so `.matches(` cannot name another
+    // type's method of the same name.
+    let method_entry_hops: Vec<MethodEntryHop<'_>> = helper_chain
+        .map(|chain| {
+            chain
+                .hops
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
+                .map(|(_, hop)| &hop.caller)
+                .filter(|caller| {
+                    matches!(
+                        caller.item.container,
+                        crate::analysis::facts::FunctionContainer::Inherent { .. }
+                    ) && caller.item.has_self_param
+                        && !fmt_dispatch::is_fmt_dispatch_owner(caller)
+                        && index
+                            .functions()
+                            .iter()
+                            .filter(|function| function.name == caller.name)
+                            .count()
+                            == 1
+                })
+                .filter_map(|caller| {
+                    Some(MethodEntryHop {
+                        caller,
+                        self_type: impl_self_type_name(&caller.id.0)?,
                     })
                 })
                 .collect()
@@ -1352,9 +1398,32 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
+        // #8999: a plain inherent method entry is judged separately too, on
+        // the same in-package terms. The receiver must be bound to the impl's
+        // self type by the established receiver rules, and the test must not
+        // rebind that type.
+        let calls_helper_method_entry = !calls_helper_entry
+            && !dispatches_to_helper_fmt_entry
+            && !property_only_owner_call
+            && owner_package_prefix
+                .as_ref()
+                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && method_entry_hops.iter().any(|entry| {
+                method_call_resolves_to_impl(test, &entry.caller.name, &entry.self_type, None)
+                    && !impl_identity_is_shadowed(
+                        test,
+                        entry.caller,
+                        &entry.self_type,
+                        index
+                            .files()
+                            .get(&test.file)
+                            .map(|facts| facts.data().source.as_ref()),
+                        index,
+                    )
+            });
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
-            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
+            && (calls_helper_entry || dispatches_to_helper_fmt_entry || calls_helper_method_entry);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1406,7 +1475,9 @@ fn find_related_tests_with_candidates<'a>(
             );
             // A name-only call (an unrelated same-named method) never hides
             // the formatting reach of a helper-entry `fmt` (#8999).
-            if by_name == RelationReason::WeakTokenSubstring && dispatches_to_helper_fmt_entry {
+            if by_name == RelationReason::WeakTokenSubstring
+                && (dispatches_to_helper_fmt_entry || calls_helper_method_entry)
+            {
                 RelationReason::HelperOwnerCall
             } else {
                 by_name

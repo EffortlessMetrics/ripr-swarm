@@ -29,6 +29,7 @@
 //! still has to observe the sink through the ordinary evidence stages.
 
 mod macro_argument;
+mod qualified_hop;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
 #[cfg(test)]
@@ -1087,6 +1088,11 @@ fn chain_through_caller(
         // inherent method on the caller's own typed parameter is the one
         // other shape that binds.
         if let Some(hop) = method_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
+        // #8999: a call spelled through an own-crate module path that
+        // resolves to the callee's module.
+        if let Some(hop) = qualified_hop::qualified_free_hop(caller, callee_name, index) {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
         return stopped(format!(

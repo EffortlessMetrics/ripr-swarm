@@ -11764,6 +11764,8 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/pub_api_method_entry_reach.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/qualified_hop.rs::tests",
   "crates/ripr/tests/one_hop_field_projection.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs::tests",
@@ -11898,6 +11900,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/qualified_hop.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",

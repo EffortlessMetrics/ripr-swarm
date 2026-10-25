@@ -1012,6 +1012,13 @@ fn attribute_sets_path(attribute: &str) -> bool {
 /// inline modules its parser id records. `None` when either is unknown or
 /// the id is not a parser id of a module-level item.
 pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
+    module_path_of(function, false)
+}
+
+/// Shared reader: with `through_impl`, the module path of a method is the
+/// path of the module that holds its `impl` block (the segments before the
+/// first `impl ` segment); otherwise an impl member has no module-level path.
+fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<String>> {
     let mut path = file_module_segments(&function.file)?;
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
@@ -1019,11 +1026,38 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
     if segments.pop()? != function.name {
         return None;
     }
-    if segments.iter().any(|segment| segment.starts_with("impl ")) {
-        return None;
+    if let Some(at) = segments
+        .iter()
+        .position(|segment| segment.starts_with("impl "))
+    {
+        if !through_impl {
+            return None;
+        }
+        segments.truncate(at);
     }
     path.extend(segments.into_iter().map(str::to_string));
     Some(path)
+}
+
+/// [`root_library_item_module_path`] for a function that may be an impl
+/// member: the module that holds its `impl` block (#8999). The same
+/// declared-exactly-once and no-`#[path]`-remap refusals apply.
+pub(super) fn root_library_member_module_path(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    let module = module_path_of(function, true)?;
+    if module.is_empty() {
+        return Some(module);
+    }
+    if package_remaps_module_paths(index, None)
+        || module
+            .iter()
+            .any(|segment| module_declaration_is_ambiguous(index, segment, false))
+    {
+        return None;
+    }
+    Some(module)
 }
 
 /// The module path of a root-package library item that an integration test

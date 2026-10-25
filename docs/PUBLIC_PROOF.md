@@ -107,7 +107,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): . On the authored cases, which were written to fill empty corpus cells, it did so on 3 of 322 (0.9%).
-- **Mostly unsure.** On real-repository changes it abstained on 29 of 36 cases (80.6%); on the authored cases, 212 of 632 (33.5%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 29 of 36 cases (80.6%); on the authored cases, 208 of 632 (32.9%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -166,8 +166,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 3/344 (0.9%) | 0/22 (0.0%) | 3/322 (0.9%) |
 | False exposed (of not fully discriminated) | 0/324 (0.0%) | 0/14 (0.0%) | 0/310 (0.0%) |
 | False silent (of not fully discriminated) | 0/324 (0.0%) | 0/14 (0.0%) | 0/310 (0.0%) |
-| Ideal verdict | 424/668 (63.5%) | 7/36 (19.4%) | 417/632 (66.0%) |
-| Abstained (limited or silent where acceptable) | 241/668 (36.1%) | 29/36 (80.6%) | 212/632 (33.5%) |
+| Ideal verdict | 428/668 (64.1%) | 7/36 (19.4%) | 421/632 (66.6%) |
+| Abstained (limited or silent where acceptable) | 237/668 (35.5%) | 29/36 (80.6%) | 208/632 (32.9%) |
 | Findings with a contradiction | 0/846 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -582,13 +582,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec-b-0159-method-call-site` | authored | discriminated | credited | limited | infection_unknown, weakly_exposed | abstained | none |
 | `spec-b-0159-multiple-callers` | authored | discriminated | credited | limited | infection_unknown, weakly_exposed | abstained | none |
 | `spec-b-0159-non-unique-callee` | authored | discriminated | credited | limited | infection_unknown, weakly_exposed | abstained | none |
-| `spec-b-0159-path-qualified-call-site` | authored | discriminated | credited | limited | infection_unknown, weakly_exposed | abstained | none |
+| `spec-b-0159-path-qualified-call-site` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
 | `spec-b-0159-recursive-helper` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `spec-b-0164-alternative-pattern` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
+| `spec-b-0164-alternative-pattern` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec-b-0164-bare-binding-pattern` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
-| `spec-b-0164-char-scrutinee` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
-| `spec-b-0164-computed-arm-value` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
-| `spec-b-0164-escaped-pattern` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
+| `spec-b-0164-char-scrutinee` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `spec-b-0164-computed-arm-value` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `spec-b-0164-escaped-pattern` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec-b-0164-guard-arm` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
 | `spec-b-0164-literal-arms` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec-b-0165-chain-beyond-bound` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
