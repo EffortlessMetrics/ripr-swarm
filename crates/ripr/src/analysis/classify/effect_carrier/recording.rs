@@ -4,6 +4,7 @@ use super::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::classify::{
     OwnerPinSyntax, reveal::assertion_comparison_operands, targeted_free_call_reaches_owner,
 };
+use crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{OracleKind, Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -135,8 +136,9 @@ fn setup(statement: &ast::Stmt, sink: &str, known: &mut Inputs) -> Option<()> {
     }
     if !primitive(&initializer, known) {
         let annotated = text(&binding.ty()?);
+        let initializer_text = text(&initializer);
         let bounded_sum = known.slices.iter().any(|(slice, ty)| {
-            text(&initializer) == format!("{slice}.iter().sum()")
+            initializer_text == format!("{slice}.iter().sum()")
                 && ((ty == "&[u32]" && annotated == "u32")
                     || (ty == "&[u64]" && annotated == "u64"))
         });
@@ -335,8 +337,10 @@ impl RecordingDouble {
         let tree = parse_clean_source_file(&facts.source)?.tree();
         if tree.syntax().descendants().any(|node| {
             ast::ExternCrate::cast(node.clone()).is_some()
-                || ast::Attr::cast(node.clone())
-                    .is_some_and(|a| !matches!(text(&a).as_str(), "#[cfg(test)]" | "#[test]"))
+                || ast::Attr::cast(node.clone()).is_some_and(|a| {
+                    !attribute_is_plain_test_gate(&a.syntax().text().to_string())
+                        && text(&a) != "#[test]"
+                })
                 || ast::MacroCall::cast(node.clone())
                     .is_some_and(|m| !m.syntax().ancestors().any(|n| ast::Fn::cast(n).is_some()))
                 || ast::MacroRules::cast(node.clone()).is_some()
@@ -359,8 +363,6 @@ impl RecordingDouble {
         }) {
             return None;
         }
-        let sources = [(owner.file.clone(), tree)];
-        let (_, tree) = sources.iter().find(|(path, _)| path == &owner.file)?;
         let owners: Vec<_> = index
             .functions()
             .iter()
@@ -369,21 +371,16 @@ impl RecordingDouble {
         if owners.len() != 1 {
             return None;
         }
-        let traits: Vec<_> = sources
-            .iter()
-            .flat_map(|(_, t)| t.syntax().descendants().filter_map(ast::Trait::cast))
+        let traits: Vec<_> = tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Trait::cast)
             .filter(|t| t.name().is_some_and(|n| n.text() == trait_name))
             .collect();
         let [trait_item] = traits.as_slice() else {
             return None;
         };
-        if !root(trait_item.syntax())
-            || trait_item.attrs().next().is_some()
-            || !tree
-                .syntax()
-                .descendants()
-                .any(|n| n == *trait_item.syntax())
-        {
+        if !root(trait_item.syntax()) || trait_item.attrs().next().is_some() {
             return None;
         }
         let mut doubles = BTreeMap::new();
@@ -474,9 +471,10 @@ impl RecordingDouble {
             if arguments.len() != 1 || text(arguments.first()?) != parameter {
                 continue;
             }
-            let definitions: Vec<_> = sources
-                .iter()
-                .flat_map(|(_, t)| t.syntax().descendants().filter_map(ast::Struct::cast))
+            let definitions: Vec<_> = tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Struct::cast)
                 .filter(|s| s.name().is_some_and(|n| n.text() == ty))
                 .collect();
             let [definition] = definitions.as_slice() else {
@@ -488,11 +486,10 @@ impl RecordingDouble {
                     .syntax()
                     .ancestors()
                     .filter_map(ast::Module::cast)
-                    .any(|m| m.attrs().any(|a| text(&a) != "#[cfg(test)]"))
-                || !tree
-                    .syntax()
-                    .descendants()
-                    .any(|n| n == *definition.syntax())
+                    .any(|m| {
+                        m.attrs()
+                            .any(|a| !attribute_is_plain_test_gate(&a.syntax().text().to_string()))
+                    })
             {
                 continue;
             }
@@ -506,9 +503,10 @@ impl RecordingDouble {
                 continue;
             }
             // Competing inherent/trait methods or another impl cannot supply this push.
-            let implementations = sources
-                .iter()
-                .flat_map(|(_, t)| t.syntax().descendants().filter_map(ast::Impl::cast))
+            let implementations = tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Impl::cast)
                 .filter(|i| i.self_ty().is_some_and(|t| text(&t) == ty))
                 .count();
             if implementations != 1 {

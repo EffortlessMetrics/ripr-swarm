@@ -1,24 +1,38 @@
 //! #9766 / RIPR-SPEC-0240: exact field observation must read the trait double.
 use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Subject(PathBuf);
 impl Subject {
     fn new(source: &str) -> Result<Self, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
+        let root = parent.join(format!(
             "ripr-recording-double-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
-        std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"recording-double\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
-        std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
-        std::fs::write(root.join("edit.diff"), "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -13 +13 @@\n-    sink.send(format!(\"n={}\", n));\n+    sink.send(format!(\"n={n}\"));\n").map_err(|e| e.to_string())?;
-        Ok(Self(root))
+        Self::create_with(root, |root| {
+            std::fs::create_dir(root.join("src")).map_err(|e| e.to_string())?;
+            std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"recording-double\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+            std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+            std::fs::write(root.join("edit.diff"), "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -13 +13 @@\n-    sink.send(format!(\"n={}\", n));\n+    sink.send(format!(\"n={n}\"));\n").map_err(|e| e.to_string())?;
+            Ok(())
+        })
+    }
+    fn create_with(
+        root: PathBuf,
+        setup: impl FnOnce(&Path) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        std::fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let subject = Self(root);
+        setup(&subject.0)?;
+        Ok(subject)
     }
 }
+
 impl Drop for Subject {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -288,4 +302,42 @@ fn the_changed_call_cannot_hide_execution_in_format_arguments() -> Result<(), St
         false,
         Some("sink.send(format!(\"n={}\", { std::process::exit(0); n }));"),
     )
+}
+
+#[test]
+fn fixture_setup_owns_only_exclusively_acquired_roots() -> Result<(), String> {
+    let parent = Subject::new("")?;
+    let sentinel = parent.0.join("sentinel");
+    std::fs::write(&sentinel, "preserve").map_err(|e| e.to_string())?;
+    let collision = Subject::create_with(parent.0.clone(), |_| Ok(()));
+    assert!(collision.is_err(), "an existing root must not be acquired");
+    assert_eq!(
+        std::fs::read_to_string(&sentinel).map_err(|e| e.to_string())?,
+        "preserve"
+    );
+    let child = parent.0.join("partial");
+    let failed = Subject::create_with(child.clone(), |root| {
+        std::fs::write(root.join("partial-file"), "partial").map_err(|e| e.to_string())?;
+        Err("injected setup failure".to_string())
+    });
+    assert!(failed.is_err());
+    assert!(
+        !child.exists(),
+        "failed setup must remove the acquired child"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&sentinel).map_err(|e| e.to_string())?,
+        "preserve"
+    );
+    Ok(())
+}
+#[test]
+fn plain_test_cfg_uses_the_shared_predicate_authority() -> Result<(), String> {
+    let candidate = source(
+        "self.lines.push(line);",
+        "&mut dyn Sink",
+        &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+    )
+    .replace("#[cfg(test)]", "#[cfg( /* plain test gate */ test )]");
+    assert_reading("plain test gate with trivia", &candidate, true)
 }

@@ -799,6 +799,8 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
 - `crates/ripr/src/analysis/classify/effect_carrier/recording.rs` establishes
   the bounded transfer; `classifier/evidence.rs` and `classify/reveal.rs` carry
   its assertion-local admission through the existing reveal decision.
+  Plain test-gate recognition uses `facts::cfg_predicates`, preserving the
+  shared source-role predicate authority.
 
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `AssertionRefusal::is_analyzer_limit`.
