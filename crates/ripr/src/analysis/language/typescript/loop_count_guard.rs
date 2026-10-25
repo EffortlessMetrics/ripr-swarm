@@ -167,12 +167,82 @@ fn call_arguments(after: &str) -> Vec<&str> {
     Vec::new()
 }
 
+/// Which `receiver.owner(` spellings count as the owner call.
+#[derive(Clone, Copy)]
+enum Receivers<'a> {
+    /// Only the bare name: another receiver's same-named member is another
+    /// binding (`other.withRetry(fn)`).
+    Bare,
+    /// A method owner, which is always called through some receiver.
+    AnyMember,
+    /// Namespace imports of the owner's module (`ns.withRetry(fn)`).
+    Namespaces(&'a [String]),
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '$')
+}
+
+/// Whether `text` mentions `name` as a free identifier: a whole word that no
+/// member dot precedes (`other.fn` is another value).
+fn mentions_free(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(is_word)
+            && !text[at + name.len()..].chars().next().is_some_and(is_word)
+            && !text[..at].trim_end().ends_with('.')
+    })
+}
+
+/// `mock` and every local assigned from an expression that mentions it
+/// (`const task = fn;`, `const run = () => fn();`), closed under repetition.
+fn mock_carriers<'a>(masked: &'a str, mock: &'a str) -> Vec<&'a str> {
+    let mut carriers = vec![mock];
+    loop {
+        let mut grew = false;
+        for statement in masked.split([';', '\n']) {
+            let Some(rest) = ["const ", "let ", "var "]
+                .iter()
+                .find_map(|keyword| statement.trim_start().strip_prefix(keyword))
+            else {
+                continue;
+            };
+            let Some((name, rhs)) = rest.split_once('=') else {
+                continue;
+            };
+            let name = name.trim();
+            // An object or array literal holds the mock under a key or slot
+            // (`{ fn: mock.fn() }`); reading it back is a member access.
+            if rhs.trim_start().starts_with(['{', '['])
+                || name.is_empty()
+                || !name.chars().all(is_word)
+                || carriers.contains(&name)
+                || !carriers.iter().any(|carrier| mentions_free(rhs, carrier))
+            {
+                continue;
+            }
+            carriers.push(name);
+            grew = true;
+        }
+        if !grew {
+            return carriers;
+        }
+    }
+}
+
 /// Some call of one of `call_names` in `masked` (comments and literals
-/// blanked) hands the plain identifier `mock` over as a whole argument. A
-/// member call (`other.withRetry(fn)`) is another binding, and a member
-/// argument (`other.fn`) is another value.
-fn owner_call_passes(masked: &str, call_names: &[&str], mock: &str) -> bool {
-    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+/// blanked) hands the counted mock to the owner: the mock, or a local
+/// carrying it, is mentioned as a free identifier inside an argument
+/// (`owner(fn)`, `owner((fn))`, `owner(fn as any)`, `owner(fn.bind(null))`,
+/// `owner(() => fn())`, `owner(task)` after `const task = fn`). A member
+/// argument (`other.fn`) is another value, and a member call
+/// (`other.withRetry(fn)`) is another binding unless `receivers` allows it.
+fn owner_call_passes(
+    masked: &str,
+    call_names: &[&str],
+    receivers: Receivers<'_>,
+    mock: &str,
+) -> bool {
+    let carriers = mock_carriers(masked, mock);
     call_names.iter().any(|name| {
         [format!("{name}("), format!("{name}?.(")]
             .iter()
@@ -182,24 +252,49 @@ fn owner_call_passes(masked: &str, call_names: &[&str], mock: &str) -> bool {
                     // masked comment leaves: `other. withRetry(` and
                     // `other./* c */withRetry(` are member calls too.
                     let prefix = &masked[..at];
+                    if prefix.chars().next_back().is_some_and(is_word) {
+                        return false;
+                    }
                     let before = prefix.trim_end();
-                    let immediate = prefix.chars().next_back();
-                    !immediate.is_some_and(word)
-                        && !before.ends_with('.')
-                        && call_arguments(&masked[at + needle.len()..]).contains(&mock)
+                    let callee_ok = match before.strip_suffix('.') {
+                        None => true,
+                        Some(receiver) => {
+                            let receiver =
+                                receiver.strip_suffix('?').unwrap_or(receiver).trim_end();
+                            let chain: String = receiver
+                                .chars()
+                                .rev()
+                                .take_while(|c| is_word(*c) || *c == '.')
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                                .collect();
+                            match receivers {
+                                Receivers::Bare => false,
+                                Receivers::AnyMember => !chain.is_empty(),
+                                Receivers::Namespaces(names) => names.contains(&chain),
+                            }
+                        }
+                    };
+                    callee_ok
+                        && call_arguments(&masked[at + needle.len()..])
+                            .iter()
+                            .any(|arg| carriers.iter().any(|carrier| mentions_free(arg, carrier)))
                 })
             })
     })
 }
 
-/// Some related test that calls the owner directly, by import, or through a
-/// renamed import asserts the call count of a mock it passes to that call.
+/// Some related test that calls the owner directly, by import, through a
+/// renamed or namespace import, or as a method asserts the call count of a
+/// mock it hands to that call.
 fn counts_mock_calls(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    let owner_is_method = matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
     candidates
         .iter()
         .filter(|candidate| {
@@ -208,6 +303,8 @@ fn counts_mock_calls(
                 TypeScriptRelationKind::DirectOwnerCall
                     | TypeScriptRelationKind::ImportedOwnerCall
                     | TypeScriptRelationKind::ImportAliasOwnerCall
+                    | TypeScriptRelationKind::ReceiverOwnerCall
+                    | TypeScriptRelationKind::ClassMethodCall
             )
         })
         .any(|candidate| {
@@ -228,6 +325,23 @@ fn counts_mock_calls(
                     .into_iter()
                     .filter(|name| *name != owner.name || canonical_is_the_binding)
                     .collect();
+            let namespaces = if owner_is_method {
+                Vec::new()
+            } else {
+                super::classifier::unshadowed_owner_namespace_receivers(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
+            };
+            let receivers = if owner_is_method {
+                Receivers::AnyMember
+            } else if namespaces.is_empty() {
+                Receivers::Bare
+            } else {
+                Receivers::Namespaces(&namespaces)
+            };
             let masked = ts_mask_literals_and_comments(&candidate.test.body_text);
             candidate
                 .test
@@ -235,7 +349,7 @@ fn counts_mock_calls(
                 .iter()
                 .filter_map(|assertion| assertion.observed_expression.as_deref())
                 .filter_map(counted_mock)
-                .any(|mock| owner_call_passes(&masked, &names, mock))
+                .any(|mock| owner_call_passes(&masked, &names, receivers, mock))
         })
 }
 
@@ -334,7 +448,12 @@ mod tests {
     }
 
     fn passes(body: &str, names: &[&str], mock: &str) -> bool {
-        owner_call_passes(&ts_mask_literals_and_comments(body), names, mock)
+        owner_call_passes(
+            &ts_mask_literals_and_comments(body),
+            names,
+            Receivers::Bare,
+            mock,
+        )
     }
 
     #[test]
@@ -371,6 +490,59 @@ mod tests {
         // A renamed import is the owner under its local name.
         assert!(passes("await retry(fn, 2);", &["retry"], "fn"));
         assert!(!passes("await retry(fn, 2);", &names, "fn"));
+    }
+
+    #[test]
+    fn any_way_of_handing_the_mock_over_counts() {
+        let names = ["withRetry"];
+        for call in [
+            "withRetry(() => fn(), 2);",
+            "withRetry(fn.bind(null), 2);",
+            "withRetry(fn as any, 2);",
+            "withRetry((fn), 2);",
+            "const task = fn; withRetry(task, 2);",
+            "const run = () => fn(); const again = run; withRetry(again, 2);",
+        ] {
+            assert!(passes(call, &names, "fn"), "{call}");
+        }
+        // A local that does not carry the mock, or a member value, does not.
+        assert!(!passes(
+            "const task = other; withRetry(task, 2);",
+            &names,
+            "fn"
+        ));
+        assert!(!passes(
+            "const task = other.fn; withRetry(task, 2);",
+            &names,
+            "fn"
+        ));
+        assert!(!passes("withRetry(() => other.fn(), 2);", &names, "fn"));
+    }
+
+    #[test]
+    fn member_calls_count_only_where_the_owner_is_called_through_a_receiver() {
+        let call = |receivers| {
+            owner_call_passes(
+                "svc.retry(fn, 2); ns.retry(fn, 2);",
+                &["retry"],
+                receivers,
+                "fn",
+            )
+        };
+        assert!(call(Receivers::AnyMember));
+        assert!(!call(Receivers::Bare));
+        assert!(owner_call_passes(
+            "ns.retry(fn, 2);",
+            &["retry"],
+            Receivers::Namespaces(&["ns".to_string()]),
+            "fn"
+        ));
+        assert!(!owner_call_passes(
+            "other.retry(fn, 2);",
+            &["retry"],
+            Receivers::Namespaces(&["ns".to_string()]),
+            "fn"
+        ));
     }
 
     #[test]

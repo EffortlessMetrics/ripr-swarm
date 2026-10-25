@@ -273,3 +273,47 @@ fn a_local_canonical_name_beside_a_renamed_import_is_not_the_owner_call() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), String> {
+    for (label, call) in [
+        ("loop-arrow", "withRetry(() => fn(), 2)"),
+        ("loop-bind", "withRetry(fn.bind(null), 2)"),
+        ("loop-cast", "withRetry(fn as any, 2)"),
+        ("loop-paren", "withRetry((fn), 2)"),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({call}, /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::StaticUnknown,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    let alias = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  const task = fn;\n  await assert.rejects(withRetry(task, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
+    let finding = run("loop-carrier", RETRY, OLD, NEW, &retry_test(alias))?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_method_owner_called_through_a_receiver_abstains() -> Result<(), String> {
+    let source = "export class Svc {\n  async retry<T>(fn: () => Promise<T>, attempts: number): Promise<T> {\n  for (let i = 0; i < attempts; i++) {\n    try {\n      return await fn();\n    } catch (error) {}\n  }\n  throw new Error(\"down\");\n  }\n}\n";
+    let test = "import { it, mock } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { Svc } from \"../src/retry\";\n\nit(\"x\", async () => {\n  const svc = new Svc();\n  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(svc.retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);\n});\n";
+    let finding = run("loop-method", source, OLD, NEW, test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

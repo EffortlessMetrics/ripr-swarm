@@ -324,13 +324,21 @@ unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
 both counted `for (init; test; update)` headers that differ (whitespace
 beside brackets, commas and comparison operators is ignored; literal contents
 and `+`/`-` spacing are not, and a header holding a `/` is compared as
-written), and a related test that calls the owner directly, by import, through
-a renamed import or through a default import asserts the call count of a mock
-it passes as a whole argument of that call (`m.mock.callCount()` or
-`m.mock.calls.length`, `m` a plain identifier; the call names are those of
-`ts_owner_call_names`; `owner(m)` and `owner?.(m)` count, `other.owner(m)`
-including `other. owner(m)` and `other./* c */owner(m)`, `owner(other.m)` and
-text in a comment or string do not), a ladder result of
+written), and a related test that calls the owner directly, by import, through a
+renamed, default or namespace import, or as a method through a receiver
+asserts the call count of a mock it hands to that call (`m.mock.callCount()`
+or `m.mock.calls.length`, `m` a plain identifier). Handing over means `m`, or
+a local assigned from an expression that mentions `m` (`const task = m`), is
+a free identifier somewhere inside an argument of the owner call: `owner(m)`,
+`owner((m))`, `owner(m as any)`, `owner(m.bind(null))`, `owner(() => m())`
+and `owner(task)` all count, as does `owner?.(m)`. A member value
+(`owner(other.m)`), a member call on a plain function owner
+(`other.owner(m)`, including `other. owner(m)` and `other./* c */owner(m)`),
+an object or array literal holding the mock, and text in a comment or string
+do not. A call count on a mock the owner call never mentions stays an
+actionable gap; so does a handoff the rule cannot see (the mock built inside
+a helper the call mentions), since only a mention connects the count to the
+call. The call names come from `ts_owner_call_names`, a ladder result of
 `weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
 `gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
 loop header, and the adapter does not model how many iterations the loop
