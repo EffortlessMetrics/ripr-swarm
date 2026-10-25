@@ -50,11 +50,14 @@ pub(crate) struct Ledger {
     /// (`verdict_corpus_known_false.rs`).
     #[serde(default)]
     pub(crate) known_false: Vec<super::known_false::KnownFalse>,
-    /// Most abstained rows whose tests do discriminate the change (missed
-    /// credit). A rise fails; a fall passes with a note to lower it
-    /// (`verdict_corpus_known_false.rs`).
+    /// The retired shared ceiling line. Present only so a corpus that still
+    /// carries it is refused with a pointer to `missed-credit.toml` (#10222).
     #[serde(default)]
     pub(crate) missed_credit_ceiling: Option<usize>,
+    /// Abstained rows whose tests do discriminate the change, each accepted by
+    /// an `[[entry]]` in `missed-credit.toml` (`verdict_corpus_known_false.rs`).
+    #[serde(skip)]
+    pub(crate) missed_credit: Vec<super::known_false::MissedCredit>,
     /// Coverage axes beyond spec examples: language shapes, test-library
     /// idioms and hostile inputs, each with the case count `check` protects.
     #[serde(default)]
@@ -280,7 +283,15 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
             super::known_false::KNOWN_FALSE_DIR
         ));
     }
+    if ledger.missed_credit_ceiling.is_some() {
+        return Err(format!(
+            "{} carries `missed_credit_ceiling`; sorted `[[entry]]` blocks in `{}` replace that shared line, which every ceiling-moving PR conflicted on",
+            normalize_path(&path),
+            super::known_false::MISSED_CREDIT_FILE
+        ));
+    }
     ledger.known_false = super::known_false::load_entries(corpus_dir)?;
+    ledger.missed_credit = super::known_false::load_missed_credit_entries(corpus_dir)?;
     ledger.locked = load_lock(corpus_dir)?;
     load_spec_scopes(corpus_dir, &mut ledger)?;
     Ok(ledger)
