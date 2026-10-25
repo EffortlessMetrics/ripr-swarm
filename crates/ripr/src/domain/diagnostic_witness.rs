@@ -352,6 +352,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
             RelatedTest {
                 name: "rejects_boundary_in_other_fixture".to_string(),
@@ -363,6 +365,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
         ];
 
@@ -413,6 +417,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let mut finding = sample_finding();
         finding.class = ExposureClass::WeaklyExposed;
@@ -464,6 +470,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::ExaminedOnly,
         };
         let mut finding = sample_finding();
         finding.class = ExposureClass::ReachableUnrevealed;
@@ -495,6 +503,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let mut finding = sample_finding();
         finding.class = ExposureClass::WeaklyExposed;
@@ -553,6 +563,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         })
         .collect();
         finding
@@ -641,6 +653,7 @@ mod tests {
         let mut unmatched = original.clone();
         unmatched.related_tests[1].miss =
             Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        unmatched.related_tests[1].role = crate::domain::RelatedTestRole::ExaminedOnly;
         variants.push(unmatched);
         let mut duplicate = original.clone();
         duplicate
@@ -693,6 +706,7 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:pricing:88:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

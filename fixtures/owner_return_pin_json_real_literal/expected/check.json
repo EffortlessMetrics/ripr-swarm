@@ -41,7 +41,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text uses none unknown oracle: assert_eq!(did_save_params(METHOD, &params), Ok(()));"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text uses no oracle: assert_eq!(did_save_params(METHOD, &params), Ok(()));"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
       ],
@@ -243,8 +243,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The related test `save_success_is_observed_with_absent_empty_and_nonempty_text` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
-      "suggested_next_action": "The related test `save_success_is_observed_with_absent_empty_and_nonempty_text` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "recommended_next_step": "The related test `save_success_is_observed_with_absent_empty_and_nonempty_text` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "suggested_next_action": "The related test `save_success_is_observed_with_absent_empty_and_nonempty_text` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

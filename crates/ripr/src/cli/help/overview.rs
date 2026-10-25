@@ -51,6 +51,13 @@ More:
   ripr help --all        Every command, grouped by area.
   ripr help --json       Versioned machine-readable command catalog.
 
+Exit codes: 0 completed, 2 could not complete (usage, configuration, or
+operational error), 3 blocking decision or typed refusal, 130 interrupted
+standalone check. Full contract: docs/EXIT_CODES.md.
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
+languages, mode, and probe/finding counts (any position, except on
+`ripr help --json`).
+
 ripr is static and advisory. It reads changed code, builds mutation-shaped
 probes, and estimates whether tests reach, infect, propagate, and reveal the
 changed behavior. It does not run mutants and does not report runtime mutation
@@ -85,18 +92,19 @@ Task map:
 
 Setup:
   ripr doctor
+  ripr capabilities [--language NAME] [--json | --markdown]
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
-  ripr cache status [--json]
+  ripr cache status [--root PATH] [--json]
   ripr cache export [--root PATH] --out NEW_DIRECTORY
-  ripr cache clear [--dry-run] [--force]
+  ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Analysis:
   ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000] [--format json]
   ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
   ripr diff [--root .] [--base REV] [--head HEAD] [--mode draft] [--json]
-  ripr explain [--base REV] [--worktree|--diff PATH] <finding-id|file:line>
-  ripr context [--base REV] [--worktree|--diff PATH] --at <finding-id|file:line>
+  ripr explain [--base REV] [--worktree|--committed|--diff PATH] <finding-id|file:line>
+  ripr context [--base REV] [--worktree|--committed|--diff PATH] --at <finding-id|file:line>
   ripr rerun --changed-test PATH[::TEST_NODE] [--root PATH] [--json] [--out PATH]
   ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--root PATH] [--json] [--out PATH]
   ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
@@ -148,8 +156,9 @@ PR & Review:
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
-  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--baseline PATH] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
   # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
+  # baseline-check and calibrated-gate modes require --baseline PATH (otherwise exit 2, config_error)
   ripr baseline create --from target/ripr/reports/gate-decision.json [--out .ripr/gate-baseline.json] [--dry-run] [--force]
   ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json [--out target/ripr/reports/baseline-debt-delta.json] [--out-md target/ripr/reports/baseline-debt-delta.md]
   ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved [--out .ripr/gate-baseline.json]

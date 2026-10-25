@@ -23,7 +23,8 @@ Linux and macOS (Bash or zsh):
 ```bash
 v=0.10.0; case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) t=x86_64-unknown-linux-gnu;; Linux-aarch64) t=aarch64-unknown-linux-gnu;;
-  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;; esac
+  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;;
+  *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
@@ -41,6 +42,12 @@ Invoke-WebRequest "$b/$f" -OutFile $f; Invoke-WebRequest "$b/$f.sha256" -OutFile
 if ((Get-FileHash $f -Algorithm SHA256).Hash -ne ((Get-Content "$f.sha256") -split '\s+')[0].ToUpper()) { throw 'checksum mismatch' }
 Expand-Archive $f -DestinationPath ripr-bin; $env:PATH="$PWD\ripr-bin;$env:PATH"   # ripr.exe is now first on PATH for this session
 ```
+
+The PATH change in either snippet lasts only for the current shell (PowerShell:
+the current session). To keep `ripr` available across sessions, add the
+extracted directory to your permanent PATH — for example move `ripr` to
+`~/.local/bin/` (adding it to PATH in your shell profile if needed) on Linux or
+macOS, or add the directory under Settings → Environment Variables on Windows.
 
 The macOS archives are not signed or notarized. A `curl` and `tar` download like
 the one above normally carries no quarantine attribute, so `./ripr` runs
@@ -122,7 +129,8 @@ file, first use `git add -N PATH` so it enters the tracked diff. See
 [Choose the change](#choose-the-change) for explicit diff selection.
 
 Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
-required first step. To explore a clean repository without making a change,
+required first step. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) To explore a clean repository without making a change,
 use the separate [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 
@@ -197,6 +205,52 @@ This is broader than checking one change. It writes reports under
 no repair is ready. Follow its retry guidance when analysis is partial.
 Non-Rust workspaces are routed to the appropriate diff-analysis or
 unavailable-adapter guidance, not the Rust repair sequence.
+
+### Python first hour (preview)
+
+Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
+Python project needs no `ripr.toml` — when the repository root has a Python
+project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
+`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`), the CLI
+auto-enables the preview. From a Python repository on a branch with a change
+to inspect:
+
+```bash
+ripr check
+```
+
+On a project with markers, `check` analyzes the changed Python files and
+reports the boundary gap with a pytest (or unittest) verify command; its
+top finding is labeled `State: preview language, advisory only`. For the
+repository-wide ranking and a repair recommendation, run:
+
+```bash
+ripr pilot --root .
+```
+
+When the Rust ranking is empty, pilot's top recommendation is the Python
+repair card (`language: python (preview)`) and its `Next, in order:` route;
+run the steps it prints. Both commands write under `target/ripr/`; in a
+project without a Cargo `target/` convention, add `/target/ripr/` to
+`.gitignore` (doctor and pilot say so on the first run when no ignore rule
+covers it).
+
+A repository with no marker leaves the preview disabled; `check` then skips
+Python files and prints:
+
+```text
+Note: this diff contains 1 Python file. The Python adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
+
+To enable, add to ripr.toml:
+
+[languages]
+enabled = ["python"]
+```
+
+Enable it exactly as printed when the repository has no marker. Python
+repair routes and their evidence limits are described in
+[Known Limits](#known-limits) and
+[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
 
 ## VS Code First Hour
 
@@ -351,7 +405,8 @@ unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 
-TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
+TypeScript is enabled automatically for TypeScript-shaped repositories without a
+`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs

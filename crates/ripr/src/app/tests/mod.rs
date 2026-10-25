@@ -19,12 +19,17 @@ mod python_test_note;
 mod python_family_selection_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
+#[cfg(feature = "lang-python")]
+mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
+#[cfg(feature = "lang-typescript")]
+mod typescript_repo_mode_repair_failclosed;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "probe:src_lib_rs:42:error_path".to_string(),
         canonical_gap: None,
         probe: Probe {
@@ -70,6 +75,8 @@ fn sample_finding(file: &str, line: usize) -> Finding {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: Some("add stronger assertion".to_string()),
         language: None,

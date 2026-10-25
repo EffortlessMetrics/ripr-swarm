@@ -44,8 +44,9 @@
 //! surfaces reach the same verdict for the same file and neither pays for
 //! packages the diff never touched.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use rayon::prelude::*;
 
@@ -54,6 +55,9 @@ use super::cargo_targets::{
     normalize, owning_package_dir,
 };
 use super::source_role::SourceRoleContext;
+use crate::analysis::seam_cache::{
+    MODULE_TREE_SCAN_CACHE_MAX_ENTRIES, RepoModuleTreeScanCache, module_tree_scan_key,
+};
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 
 /// Files one package walk may visit before it stops and reports itself
@@ -359,6 +363,7 @@ where
             }
         }
     }
+    scan_store(workspace_root).flush();
     external_packages
 }
 
@@ -535,7 +540,7 @@ impl EscapingReach {
             if !source.contains('!') && !source.contains("path") && !source.contains("include") {
                 continue;
             }
-            let scan = rust_module_tree_scan(&source);
+            let scan = scan_store(workspace_root).scan(&source);
             // Any unresolved construct (a dependency's item macro can expand
             // to `#[path = "../../b/src/x.rs"] mod x;` without spelling it)
             // leaves every verdict unknown.
@@ -1144,6 +1149,98 @@ fn child_bases(file: &Path, directory: &Path, anchor: ChildAnchor) -> Vec<PathBu
     }
 }
 
+/// The persisted module-tree scans of one cache directory (#9794). The walk
+/// scans every module file it reaches, which is most of a warm check's parse
+/// work; a scan is a pure function of the text, so one found under the
+/// text's content key replaces the parse. New scans are written back once
+/// per evidence pass; the bundle is capped, favoring the newest scans.
+struct ScanStore {
+    cache: RepoModuleTreeScanCache,
+    state: Mutex<ScanStoreState>,
+}
+
+#[derive(Default)]
+struct ScanStoreState {
+    loaded: BTreeMap<String, RustModuleTreeScan>,
+    used: BTreeMap<String, RustModuleTreeScan>,
+    dirty: bool,
+}
+
+fn scan_store(workspace_root: &Path) -> Arc<ScanStore> {
+    static STORES: OnceLock<Mutex<HashMap<PathBuf, Arc<ScanStore>>>> = OnceLock::new();
+    let cache = RepoModuleTreeScanCache::at(workspace_root);
+    let dir = cache.entry_dir().0;
+    let mut stores = STORES
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(stores.entry(dir).or_insert_with(|| {
+        let loaded = cache.load();
+        Arc::new(ScanStore {
+            cache,
+            state: Mutex::new(ScanStoreState {
+                loaded,
+                ..ScanStoreState::default()
+            }),
+        })
+    }))
+}
+
+impl ScanStore {
+    fn state(&self) -> std::sync::MutexGuard<'_, ScanStoreState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn scan(&self, text: &str) -> RustModuleTreeScan {
+        let key = module_tree_scan_key(text);
+        {
+            let state = self.state();
+            if let Some(found) = state.used.get(&key).or_else(|| state.loaded.get(&key)) {
+                return found.clone();
+            }
+        }
+        let scan = rust_module_tree_scan(text);
+        let mut state = self.state();
+        // A write that keeps failing must not let this run's scans grow
+        // without bound; past the cap the scan is simply not kept.
+        if state.used.len() < MODULE_TREE_SCAN_CACHE_MAX_ENTRIES {
+            state.used.insert(key, scan.clone());
+            state.dirty = true;
+        }
+        scan
+    }
+
+    /// Writes the bundle when this run scanned something it did not hold.
+    /// Best effort: a cache that cannot be written leaves the next run to
+    /// scan from source, as before.
+    fn flush(&self) {
+        let merged = {
+            let mut state = self.state();
+            if !state.dirty {
+                return;
+            }
+            state.dirty = false;
+            let mut merged = state.used.clone();
+            if merged.len() < MODULE_TREE_SCAN_CACHE_MAX_ENTRIES {
+                for (key, scan) in &state.loaded {
+                    if merged.len() >= MODULE_TREE_SCAN_CACHE_MAX_ENTRIES {
+                        break;
+                    }
+                    merged.entry(key.clone()).or_insert_with(|| scan.clone());
+                }
+            }
+            merged
+        };
+        if self.cache.store(&merged).is_ok() {
+            // Everything now lives in `loaded`; the next pass starts a fresh
+            // `used`, so a long-lived process holds each scan once.
+            let mut state = self.state();
+            state.loaded = merged;
+            state.used.clear();
+        }
+    }
+}
+
 enum SourceRead {
     Text(String),
     Absent,
@@ -1160,7 +1257,7 @@ enum ModuleRead {
 
 fn read_module(workspace_root: &Path, file: &Path) -> ModuleRead {
     match read_source(workspace_root, file) {
-        SourceRead::Text(source) => ModuleRead::Scanned(rust_module_tree_scan(&source)),
+        SourceRead::Text(source) => ModuleRead::Scanned(scan_store(workspace_root).scan(&source)),
         SourceRead::Absent => ModuleRead::Absent,
         SourceRead::Unreadable => ModuleRead::Unreadable,
     }
@@ -1195,6 +1292,15 @@ fn read_source(workspace_root: &Path, file: &Path) -> SourceRead {
             Err(_) => return SourceRead::Unreadable,
         },
     };
+    // rustc drops a leading UTF-8 byte-order mark before lexing. Left in
+    // place the stray `U+FEFF` is a parse error, the module scan came back
+    // empty, and the file's `mod`/`#[path]` edges vanished from the tree.
+    let mut bytes = bytes;
+    // `include!` fragments are lexed as Rust whatever their extension; only
+    // manifests are read as TOML.
+    if file.extension().is_none_or(|ext| ext != "toml") && bytes.starts_with(b"\xEF\xBB\xBF") {
+        bytes.drain(..3);
+    }
     match String::from_utf8(bytes) {
         Ok(text) => SourceRead::Text(text),
         Err(_) => SourceRead::Unreadable,
@@ -1326,6 +1432,70 @@ mod tests {
         assert_eq!(
             bounded.scans.keys().collect::<Vec<_>>(),
             unbounded.scans.keys().collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn walk_serves_a_stored_scan_instead_of_parsing_the_file() -> Result<(), String> {
+        // The stored scan for `mod a;` is forged to declare `forged`, which
+        // the text does not: the walk reaching `forged.rs` proves the bundle,
+        // not a parse, supplied the edges. A second workspace with the same
+        // files and no bundle is the control. The bundle is written before
+        // the first scan because a process loads each directory's bundle once.
+        let lib = "mod a;\n";
+        let files = [
+            ("Cargo.toml", MANIFEST),
+            ("src/lib.rs", lib),
+            ("src/a.rs", ""),
+            ("src/forged.rs", ""),
+        ];
+        let reaches_forged = |name: &str, seed: bool| -> Result<Option<Origin>, String> {
+            let root = fixture(name, &files)?;
+            if seed {
+                let mut forged = rust_module_tree_scan(lib);
+                forged.edges.push(RustModuleTreeEdge::Default {
+                    inline: Vec::new(),
+                    name: "forged".to_string(),
+                });
+                RepoModuleTreeScanCache::at(&root)
+                    .store(&BTreeMap::from([(module_tree_scan_key(lib), forged)]))?;
+            }
+            let package = lexical(&normalize(&root));
+            let target = lexical(&normalize(&root.join("src/forged.rs")));
+            let mut walk = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+            let origin = walk.find(&root, &[target]);
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            Ok(origin)
+        };
+        assert_ne!(
+            reaches_forged("stored-scan-control", false)?,
+            Some(Origin::Production),
+            "control: no module declares forged.rs"
+        );
+        assert_eq!(
+            reaches_forged("stored-scan-seeded", true)?,
+            Some(Origin::Production)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_pass_stores_the_scans_it_made_for_the_next_run() -> Result<(), String> {
+        let lib = "mod a;\n";
+        let root = fixture(
+            "stores-scans",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", lib),
+                ("src/a.rs", ""),
+            ],
+        )?;
+        evidence_for(&root, &["src/a.rs"]);
+        let stored = RepoModuleTreeScanCache::at(&root).load();
+        assert_eq!(
+            stored.get(&module_tree_scan_key(lib)),
+            Some(&rust_module_tree_scan(lib))
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }

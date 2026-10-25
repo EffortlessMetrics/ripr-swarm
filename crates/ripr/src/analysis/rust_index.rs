@@ -28,6 +28,7 @@ pub use super::facts::{
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
+    reuse_cached_index_with_loaded_files,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
@@ -79,6 +80,57 @@ fn escaped_path_display(path: &Path) -> String {
     crate::terminal_text::terminal_safe(displayed)
 }
 
+/// A Rust file a typed static limit declined to parse (`rust_nesting_budget`
+/// or `rust_source_not_utf8`). Lexical fallback read it instead, so it yields
+/// no probe shapes and its tests and seams are under-credited (#4511, #9308).
+/// Plain syntax errors take the same fallback but are not typed refusals and
+/// are not listed here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeclinedRustFile {
+    pub(crate) path: PathBuf,
+    pub(crate) reason: String,
+}
+
+/// Declined files among the indexed lexical-fallback files, sorted by path.
+pub(crate) fn declined_rust_files(index: &RustIndex) -> Vec<DeclinedRustFile> {
+    lexical_fallback_files(index)
+        .into_iter()
+        .filter_map(|path| {
+            if index.non_utf8_sources.contains(&path) {
+                return Some(DeclinedRustFile {
+                    path,
+                    reason: RUST_SOURCE_NOT_UTF8_REASON.to_string(),
+                });
+            }
+            let facts = index.files().values().find(|facts| facts.path == path)?;
+            let reason = super::syntax::rust_nesting_refusal(&facts.source)?;
+            Some(DeclinedRustFile { path, reason })
+        })
+        .collect()
+}
+
+/// Same declined files for a classified-seam cache hit, which stores only the
+/// fallback paths. Each file is re-read under `root` so a warm run names the
+/// same typed reasons as the cold run.
+pub(crate) fn declined_rust_files_at(root: &Path, files: &[PathBuf]) -> Vec<DeclinedRustFile> {
+    files
+        .iter()
+        .filter_map(|path| {
+            let bytes = std::fs::read(root.join(path)).ok()?;
+            let source = super::facts::rust_source_text(&bytes);
+            let reason = if source.not_utf8 {
+                RUST_SOURCE_NOT_UTF8_REASON.to_string()
+            } else {
+                super::syntax::rust_nesting_refusal(&source.text)?
+            };
+            Some(DeclinedRustFile {
+                path: path.clone(),
+                reason,
+            })
+        })
+        .collect()
+}
+
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
 /// A file the Rust nesting budget refused also gets its typed
 /// `rust_nesting_budget` reason, recomputed from the indexed source, and a
@@ -86,18 +138,9 @@ fn escaped_path_display(path: &Path) -> String {
 pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
     let files = lexical_fallback_files(index);
     let disclosure = lexical_fallback_disclosure_for_files(&files)?;
-    Some(with_nesting_budget_reasons(
+    Some(with_declined_reasons(
         disclosure,
-        files.iter().filter_map(|path| {
-            if index.non_utf8_sources.contains(path) {
-                return Some((path.as_path(), RUST_SOURCE_NOT_UTF8_REASON.to_string()));
-            }
-            let facts = index.files().values().find(|facts| &facts.path == path)?;
-            Some((
-                path.as_path(),
-                super::syntax::rust_nesting_refusal(&facts.source)?,
-            ))
-        }),
+        declined_rust_files(index),
     ))
 }
 
@@ -106,27 +149,19 @@ pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
 /// names the same typed reasons as the cold run.
 pub(crate) fn lexical_fallback_disclosure_at(root: &Path, files: &[PathBuf]) -> Option<String> {
     let disclosure = lexical_fallback_disclosure_for_files(files)?;
-    Some(with_nesting_budget_reasons(
+    Some(with_declined_reasons(
         disclosure,
-        files.iter().filter_map(|path| {
-            let bytes = std::fs::read(root.join(path)).ok()?;
-            let source = super::facts::rust_source_text(&bytes);
-            let reason = if source.not_utf8 {
-                RUST_SOURCE_NOT_UTF8_REASON.to_string()
-            } else {
-                super::syntax::rust_nesting_refusal(&source.text)?
-            };
-            Some((path.as_path(), reason))
-        }),
+        declined_rust_files_at(root, files),
     ))
 }
 
-fn with_nesting_budget_reasons<'a>(
-    mut disclosure: String,
-    reasons: impl Iterator<Item = (&'a Path, String)>,
-) -> String {
-    for (path, reason) in reasons {
-        disclosure.push_str(&format!("\nripr: {}: {reason}", escaped_path_display(path)));
+fn with_declined_reasons(mut disclosure: String, declined: Vec<DeclinedRustFile>) -> String {
+    for file in declined {
+        disclosure.push_str(&format!(
+            "\nripr: {}: {}",
+            escaped_path_display(&file.path),
+            file.reason
+        ));
     }
     disclosure
 }
@@ -160,7 +195,7 @@ pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String>
 
 /// Concrete next step appended when a file has more than one claiming parent
 /// module (`rust_module_ambiguous_parent`).
-const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "To resolve rust_module_ambiguous_parent, give each listed file one owner: declare it from a single parent `mod` item (drop duplicate `#[path]` declarations and keep only one of `<name>.rs` or `<name>/mod.rs`); a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
+const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "rust_module_ambiguous_parent means more than one parent `mod` item (or both `<name>.rs` and `<name>/mod.rs`) claims a listed file, so ripr cannot pick one module context for it. This can be a valid layout (for example one file declared from several modules of different compilation units that ripr cannot tell apart); no change is needed if it builds. Mutually exclusive `#[cfg(X)]` / `#[cfg(not(X))]` declarations of one module, and one file declared by several distinct Cargo target roots (benches, examples, bins, integration tests), are generally not reported. To give ripr one owner, declare the file from a single parent `mod` item; a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
 
 /// Closing sentence of [`module_composition_disclosure`] (#4378) and
 /// [`include_resolution_disclosure`].
@@ -211,9 +246,20 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
     } else {
         String::new()
     };
+    // Bound the listed files so a large workspace does not bury the command's
+    // own result under a wall of paths; the count keeps the total honest.
+    const MAX_LISTED_DETAILS: usize = 3;
+    let total = details.len();
+    let mut listed = details
+        .into_iter()
+        .take(MAX_LISTED_DETAILS)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if total > MAX_LISTED_DETAILS {
+        listed.push_str(&format!(", and {} more", total - MAX_LISTED_DETAILS));
+    }
     Some(format!(
-        "ripr: {count} Rust module composition limitation(s): {}; affected module contexts remain fail-closed. {ANALYSIS_LIMIT_ORIENTATION}{next_step}",
-        details.into_iter().collect::<Vec<_>>().join(", ")
+        "ripr: {count} Rust module composition limitation(s): {listed}; affected module contexts remain fail-closed. {ANALYSIS_LIMIT_ORIENTATION}{next_step}"
     ))
 }
 
@@ -1752,6 +1798,7 @@ fn feature_gated_test() {}
                     line: 4,
                     path_target: ModulePathTarget::Unknown,
                     requires_test: false,
+                    cfg_guard: None,
                 }],
                 ..FileFacts::default()
             },
@@ -1795,6 +1842,29 @@ fn feature_gated_test() {}
         // No limitations: no disclosure.
         let clean = RustIndex::default();
         assert_eq!(module_composition_disclosure(&clean), None);
+
+        // Many limited files collapse to the first three plus a remainder,
+        // while the count stays the full total.
+        let mut many = RustIndex::default();
+        for n in 0..6 {
+            many.insert_file_only(
+                PathBuf::from(format!("src/m{n}.rs")),
+                FileFacts {
+                    role_provenance: crate::analysis::facts::SourceRoleProvenance {
+                        edges: Vec::new(),
+                        earliest_unresolved_reason: Some(
+                            "rust_module_ambiguous_parent".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    ..FileFacts::default()
+                },
+            );
+        }
+        let collapsed = module_composition_disclosure(&many).ok_or_else(no_disclosure)?;
+        assert!(collapsed.contains("6 Rust module composition limitation(s)"));
+        assert!(collapsed.contains("src/m2.rs:rust_module_ambiguous_parent, and 3 more;"));
+        assert!(!collapsed.contains("src/m3.rs"));
         Ok(())
     }
 }

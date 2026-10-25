@@ -119,7 +119,10 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("{PR_EVIDENCE_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(PR_EVIDENCE_HELP, &[])
+    );
 }
 
 /// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument
@@ -397,6 +400,7 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
         suppression_policy: None,
         git_timeout: None,
         git_candidate: None,
+        scope: crate::analysis::DiffScopeFilter::default(),
     };
     let output = check_workspace(input)?;
     // #5203: the internal packet input renders unbounded. Routing counts

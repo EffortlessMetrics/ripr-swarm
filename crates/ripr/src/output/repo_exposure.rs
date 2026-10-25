@@ -91,25 +91,79 @@ impl PythonRepoExposureGuidance {
 }
 
 /// Disclosure when repo exposure skipped generated Rust that `ripr check`
-/// already leaves out of scope.
+/// already leaves out of scope, or read Rust files a parse limit declined
+/// (#9308). One carrier keeps every renderer entry point from growing a
+/// parameter; `paths` is empty when only declined files are disclosed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GeneratedRustSkip {
     pub(crate) paths: Vec<PathBuf>,
     naming_only_paths: Vec<PathBuf>,
+    pub(crate) declined: Vec<crate::analysis::DeclinedRustFile>,
 }
 
 impl GeneratedRustSkip {
     pub(crate) const CATEGORY: &'static str = "generated_rust_source_skipped";
 
+    /// `run_status` of a repo-exposure run whose Rust files were declined by a
+    /// parse limit and not otherwise cut by a seam limit (#9308).
+    pub(crate) const DECLINED_RUN_STATUS: &'static str = "limited_declined_files";
+    pub(crate) const DECLINED_CATEGORY: &'static str = "rust_files_declined";
+
+    #[cfg(test)]
     pub(crate) fn from_paths(paths: Vec<PathBuf>, naming_only_paths: Vec<PathBuf>) -> Option<Self> {
-        if paths.is_empty() {
+        Self::from_parts(paths, naming_only_paths, Vec::new())
+    }
+
+    pub(crate) fn from_parts(
+        paths: Vec<PathBuf>,
+        naming_only_paths: Vec<PathBuf>,
+        declined: Vec<crate::analysis::DeclinedRustFile>,
+    ) -> Option<Self> {
+        if paths.is_empty() && declined.is_empty() {
             None
         } else {
             Some(Self {
                 paths,
                 naming_only_paths,
+                declined,
             })
         }
+    }
+
+    fn declined_repair_route(&self) -> &'static str {
+        "Split the listed file(s) below the Rust parse budget, or save them as UTF-8, then re-run; \
+         until then their tests and seams are under-credited and this run is not a complete result."
+    }
+
+    fn declined_detail(&self) -> String {
+        let listed = self
+            .declined
+            .iter()
+            .take(3)
+            .map(|file| {
+                let token = file
+                    .reason
+                    .strip_prefix("static limit ")
+                    .and_then(|reason| reason.split(':').next())
+                    .unwrap_or("parse_declined");
+                format!(
+                    "{} ({token})",
+                    file.path.to_string_lossy().replace('\\', "/")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = self.declined.len().saturating_sub(3);
+        let more = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        format!(
+            "{} Rust file(s) were declined by a parse limit and read lexically, which emits no \
+             probe shapes: {listed}{more}",
+            self.declined.len()
+        )
     }
 
     fn listed_paths(&self) -> String {
@@ -154,7 +208,7 @@ fn bounded_generated_path_listing(paths: &[PathBuf]) -> String {
     }
 }
 
-pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.4";
+pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.5";
 pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 
 /// Cap on related-tests rendered per seam in the JSON output. The
@@ -558,15 +612,26 @@ fn write_repo_exposure_json_document<W: io::Write>(
     //     Python workspace with zero seams. It does not render Python findings.
     //   - "generated_rust_source_skipped" names generated Rust files that
     //     `ripr check` also skips. It does not change run_status.
+    //   - "rust_files_declined" names Rust files a parse limit declined
+    //     (#9308). Their seams are under-credited, so `run_status` becomes
+    //     "limited_declined_files" unless a seam cut already set it.
+    let declined = generated_skip.filter(|skip| !skip.declined.is_empty());
     let has_limitations = limit_info.is_some()
         || ts_guidance.is_some()
         || python_guidance.is_some()
         || generated_skip.is_some();
-    match limit_info {
-        None => {
+    match (limit_info, declined) {
+        (None, None) => {
             writeln!(out, "  \"run_status\": \"complete\",")?;
         }
-        Some(_) => {
+        (None, Some(_)) => {
+            writeln!(
+                out,
+                "  \"run_status\": \"{}\",",
+                GeneratedRustSkip::DECLINED_RUN_STATUS
+            )?;
+        }
+        (Some(_), _) => {
             writeln!(out, "  \"run_status\": \"seam_limit_applied\",")?;
         }
     }
@@ -695,10 +760,11 @@ fn write_repo_exposure_json_document<W: io::Write>(
             writeln!(out, "    }}")?;
             first = false;
         }
-        if let Some(skip) = generated_skip {
+        if let Some(skip) = generated_skip.filter(|skip| !skip.paths.is_empty()) {
             if !first {
                 writeln!(out, "    ,")?;
             }
+            first = false;
             writeln!(out, "    {{")?;
             writeln!(
                 out,
@@ -733,6 +799,55 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 json_escape(&skip.repair_route())
             )?;
             writeln!(out, "      \"detail\": \"{}\"", json_escape(&skip.detail()))?;
+            writeln!(out, "    }}")?;
+        }
+        if let Some(skip) = declined {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            writeln!(out, "    {{")?;
+            writeln!(
+                out,
+                "      \"category\": \"{}\",",
+                GeneratedRustSkip::DECLINED_CATEGORY
+            )?;
+            writeln!(
+                out,
+                "      \"declined_file_count\": {},",
+                skip.declined.len()
+            )?;
+            writeln!(out, "      \"declined_files\": [")?;
+            for (idx, file) in skip.declined.iter().take(3).enumerate() {
+                let trailing = if idx + 1 == skip.declined.len().min(3) {
+                    ""
+                } else {
+                    ","
+                };
+                writeln!(
+                    out,
+                    "        {{\"path\": \"{}\", \"reason\": \"{}\"}}{trailing}",
+                    json_escape(&file.path.to_string_lossy().replace('\\', "/")),
+                    json_escape(&file.reason)
+                )?;
+            }
+            writeln!(out, "      ],")?;
+            if skip.declined.len() > 3 {
+                writeln!(
+                    out,
+                    "      \"declined_files_omitted\": {},",
+                    skip.declined.len() - 3
+                )?;
+            }
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\",",
+                json_escape(skip.declined_repair_route())
+            )?;
+            writeln!(
+                out,
+                "      \"detail\": \"{}\"",
+                json_escape(&skip.declined_detail())
+            )?;
             writeln!(out, "    }}")?;
         }
         writeln!(out, "  ],")?;
@@ -994,7 +1109,12 @@ fn push_classified_json(
     let _ = write!(out, "      \"file\": \"");
     json_escape_into(out, &display_path(seam.file()));
     out.push_str("\",\n");
-    let _ = writeln!(out, "      \"line\": {},", seam.display_line());
+    let _ = writeln!(
+        out,
+        "      \"line\": {},",
+        seam.span()
+            .map_or(seam.display_line(), |span| span.start_line)
+    );
     if let Some(span) = seam.span() {
         let _ = writeln!(out, "      \"column\": {},", span.start_column);
         let _ = writeln!(out, "      \"end_line\": {},", span.end_line);
@@ -1238,7 +1358,7 @@ pub(crate) fn render_repo_exposure_md_with_limit(
                  and no gate or badge authority.\n",
             );
         }
-        if let Some(skip) = generated_skip {
+        if let Some(skip) = generated_skip.filter(|skip| !skip.paths.is_empty()) {
             out.push_str(&format!(
                 "**{}** (skipped_file_count: {})\n\n",
                 GeneratedRustSkip::CATEGORY,
@@ -1246,6 +1366,15 @@ pub(crate) fn render_repo_exposure_md_with_limit(
             ));
             out.push_str(&skip.repair_route());
             out.push('\n');
+        }
+        if let Some(skip) = generated_skip.filter(|skip| !skip.declined.is_empty()) {
+            out.push_str(&format!(
+                "**{}** (declined_file_count: {})\n\n{}.\n\n{}\n",
+                GeneratedRustSkip::DECLINED_CATEGORY,
+                skip.declined.len(),
+                skip.declined_detail(),
+                skip.declined_repair_route(),
+            ));
         }
     }
 
@@ -1670,7 +1799,7 @@ mod tests {
     fn json_carries_schema_version_scope_and_metrics() {
         let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         for needle in [
-            "\"schema_version\": \"0.4\"",
+            "\"schema_version\": \"0.5\"",
             "\"scope\": \"repo\"",
             "\"run_status\": \"complete\"",
             "\"seams_total\": 1",
@@ -1857,6 +1986,62 @@ mod tests {
                 Some(markdown_line)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn json_marks_declined_rust_files_as_a_limited_run() -> Result<(), String> {
+        // #9308: a parse-limit decline under-credits seams, so the run is not
+        // "complete"; a seam cap still keeps its own status.
+        let declined = vec![crate::analysis::DeclinedRustFile {
+            path: PathBuf::from("src/deep.rs"),
+            reason: "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget".to_string(),
+        }];
+        let skip = GeneratedRustSkip::from_parts(Vec::new(), Vec::new(), declined)
+            .ok_or_else(|| "declined files must produce a disclosure".to_string())?;
+        let json = render_repo_exposure_json_with_generated_skip(
+            &[weakly_gripped_classified()],
+            None,
+            None,
+            None,
+            Some(&skip),
+        );
+        let artifact: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse declined disclosure failed: {err}\n{json}"))?;
+        assert_eq!(artifact["run_status"], "limited_declined_files", "{json}");
+        let limitations = artifact["limitations"]
+            .as_array()
+            .ok_or_else(|| format!("limitations missing:\n{json}"))?;
+        assert_eq!(limitations.len(), 1, "no generated entry without paths");
+        assert_eq!(limitations[0]["category"], "rust_files_declined");
+        assert_eq!(limitations[0]["declined_file_count"], 1);
+        assert_eq!(limitations[0]["declined_files"][0]["path"], "src/deep.rs");
+        let md = render_repo_exposure_md_with_generated_skip(
+            &[weakly_gripped_classified()],
+            None,
+            None,
+            None,
+            Some(&skip),
+        );
+        assert!(md.contains("rust_files_declined"), "{md}");
+        assert!(!md.contains("generated_rust_source_skipped"), "{md}");
+
+        let info = SeamLimitInfo {
+            analyzed: 1,
+            total: 3,
+            source: SeamLimitSource::Default,
+        };
+        let capped = render_repo_exposure_json_with_generated_skip(
+            &[weakly_gripped_classified()],
+            Some(&info),
+            None,
+            None,
+            Some(&skip),
+        );
+        let artifact: Value = serde_json::from_str(&capped)
+            .map_err(|err| format!("parse capped disclosure failed: {err}\n{capped}"))?;
+        assert_eq!(artifact["run_status"], "seam_limit_applied");
+        assert_eq!(artifact["limitations"].as_array().map(Vec::len), Some(2));
         Ok(())
     }
 

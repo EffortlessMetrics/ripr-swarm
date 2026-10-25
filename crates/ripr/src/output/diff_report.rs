@@ -845,6 +845,7 @@ mod tests {
 
     fn sample_finding() -> crate::domain::Finding {
         crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:2:predicate".to_string(),
             canonical_gap: Some(crate::domain::FindingCanonicalGap {
                 id: "gap:src-lib-rs:predicate".to_string(),

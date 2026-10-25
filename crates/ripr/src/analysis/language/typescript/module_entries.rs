@@ -38,6 +38,11 @@ pub(crate) struct TypeScriptModuleEntry {
     /// `true` when this entry is the module's default export, so a default
     /// import under any local name binds it.
     pub(crate) exported_as_default: bool,
+    /// `Some(kind)` when the entry is a method of the owner's own class
+    /// that reaches the owner through `this.method(...)` calls
+    /// (`class_entries`), not an exported top-level name. `name` is then the
+    /// method name (`constructor` for a constructor).
+    pub(crate) class_member: Option<TypeScriptMethodKind>,
 }
 
 /// One top-level declaration of the module.
@@ -46,36 +51,42 @@ struct ModuleNode<'s> {
     /// Function texts whose bare calls count as this node's calls.
     call_texts: Vec<CallText<'s>>,
     /// Factory whose returned function this node's value is (`const p = f()`).
-    factory: Option<String>,
+    /// Borrowed from an AST atom — no per-node allocation (#10087).
+    factory: Option<&'s str>,
     /// Function texts the declaration returns directly, when it is a factory.
     returned_texts: Vec<CallText<'s>>,
 }
 
 /// Code whose bare calls count, plus the enclosing function text that decides
-/// whether a name is rebound there.
+/// whether a name is rebound there. `calls` is borrowed for a directly
+/// returned function (nothing blanked) and owned only when the node's own
+/// text had its returned functions blanked out — large modules otherwise copy
+/// every returned closure body (#10087).
 struct CallText<'s> {
     /// The calling code. For a function's own node, the directly returned
     /// functions are blanked out: they run only when the product is called.
-    calls: String,
+    calls: std::borrow::Cow<'s, str>,
     /// The whole enclosing function (the factory, for a returned closure), so
     /// its parameters and locals shadow the top-level binding too.
     scope: &'s str,
 }
 
 /// Exported entries per top-level owner name.
-pub(crate) fn module_entries_by_owner(
-    statements: &[Statement<'_>],
-    source: &str,
+pub(crate) fn module_entries_by_owner<'a>(
+    statements: &'a [Statement<'a>],
+    source: &'a str,
 ) -> BTreeMap<String, Vec<TypeScriptModuleEntry>> {
-    let mut nodes: BTreeMap<String, ModuleNode<'_>> = BTreeMap::new();
+    // Node keys and factories are AST atoms or string literals, so the graph
+    // borrows them instead of owning a String per node (#10087 follow-up).
+    let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
     for statement in statements {
         collect_statement(statement, source, &mut nodes, &mut exports);
     }
-    let names: BTreeSet<&str> = nodes.keys().map(String::as_str).collect();
-    let callees: BTreeMap<&str, BTreeSet<&str>> = nodes
+    let names: std::collections::HashSet<&'a str> = nodes.keys().copied().collect();
+    let callees: BTreeMap<&'a str, BTreeSet<&'a str>> = nodes
         .iter()
-        .map(|(name, node)| (name.as_str(), node_callees(node, &nodes, &names)))
+        .map(|(name, node)| (*name, node_callees(node, &nodes, &names)))
         .collect();
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     for (local, exported) in &exports {
@@ -97,10 +108,10 @@ pub(crate) fn module_entries_by_owner(
     entries
 }
 
-fn collect_statement<'s>(
-    statement: &Statement<'_>,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+fn collect_statement<'a>(
+    statement: &'a Statement<'a>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
 ) {
     match statement {
@@ -117,12 +128,12 @@ fn collect_statement<'s>(
             match export.declaration.as_ref() {
                 Some(Declaration::FunctionDeclaration(func)) => {
                     if let Some(name) = collect_function(func, source, nodes) {
-                        record_export(exports, &name, &name);
+                        record_export(exports, name, name);
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
                     for name in collect_variables(decl, source, nodes) {
-                        record_export(exports, &name, &name);
+                        record_export(exports, name, name);
                     }
                 }
                 Some(_) => {}
@@ -150,12 +161,9 @@ fn collect_statement<'s>(
             ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
                 // An anonymous default function is a node of its own; no
                 // declaration can be named `default`, so the key is free.
-                let name = func
-                    .id
-                    .as_ref()
-                    .map_or_else(|| "default".to_string(), |id| id.name.to_string());
-                if collect_function_as(func, &name, source, nodes) {
-                    record_export(exports, &name, "default");
+                let name = func.id.as_ref().map_or("default", |id| id.name.as_str());
+                if collect_function_as(func, name, source, nodes) {
+                    record_export(exports, name, "default");
                 }
             }
             ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => {
@@ -182,25 +190,26 @@ fn record_export(
         .insert(TypeScriptModuleEntry {
             name: exported.to_string(),
             exported_as_default: exported == "default",
+            class_member: None,
         });
 }
 
-fn collect_function<'s>(
-    func: &Function<'_>,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
-) -> Option<String> {
-    let name = func.id.as_ref()?.name.to_string();
-    collect_function_as(func, &name, source, nodes).then_some(name)
+fn collect_function<'a>(
+    func: &'a Function<'a>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+) -> Option<&'a str> {
+    let name = func.id.as_ref()?.name.as_str();
+    collect_function_as(func, name, source, nodes).then_some(name)
 }
 
 /// Record `func` as node `name`; `false` for an overload signature, which
 /// carries no body.
-fn collect_function_as<'s>(
-    func: &Function<'_>,
-    name: &str,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+fn collect_function_as<'a>(
+    func: &'a Function<'a>,
+    name: &'a str,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
 ) -> bool {
     let Some(body) = func.body.as_ref() else {
         return false;
@@ -210,11 +219,11 @@ fn collect_function_as<'s>(
     true
 }
 
-fn collect_arrow_as<'s>(
-    arrow: &ArrowFunctionExpression<'_>,
-    name: &str,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+fn collect_arrow_as<'a>(
+    arrow: &'a ArrowFunctionExpression<'a>,
+    name: &'a str,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
 ) {
     let returned = if arrow.expression {
         // `(m) => (...args) => ...`: the expression body is the returned value.
@@ -230,39 +239,73 @@ fn collect_arrow_as<'s>(
 
 /// A function node: its own calls exclude the functions it returns, which
 /// become the calls of any value it builds.
-fn add_function_node<'s>(
-    name: &str,
+fn add_function_node<'a>(
+    name: &'a str,
     span: oxc_span::Span,
     returned: &[oxc_span::Span],
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
 ) {
     let scope = span_text(source, span);
-    let mut own = scope.to_string();
-    for inner in returned {
-        let start = inner.start.saturating_sub(span.start) as usize;
-        let end = inner.end.saturating_sub(span.start) as usize;
-        if let Some(range) = own.get(start..end) {
-            let blank = " ".repeat(range.len());
-            own.replace_range(start..end, &blank);
+    // Blank the returned functions by building the owned text once from
+    // sorted span segments — clipping overlaps so the blanked region is
+    // exactly the union of the segments, matching copy-then-`replace_range`
+    // for any overlap shape — instead of copying the whole scope and
+    // allocating a throwaway blank string per returned function (#10087).
+    // Functions with no directly returned functions (the common case) borrow
+    // the scope instead of copying it at all (#10096 review).
+    let mut blanks: Vec<(usize, usize)> = returned
+        .iter()
+        .map(|inner| {
+            (
+                inner.start.saturating_sub(span.start) as usize,
+                inner.end.saturating_sub(span.start) as usize,
+            )
+        })
+        .filter(|(start, end)| {
+            *start <= *end
+                && *end <= scope.len()
+                && scope.is_char_boundary(*start)
+                && scope.is_char_boundary(*end)
+        })
+        .collect();
+    blanks.sort_unstable();
+    let calls = if blanks.is_empty() {
+        std::borrow::Cow::Borrowed(scope)
+    } else {
+        let mut own = String::with_capacity(scope.len());
+        let mut cursor = 0usize;
+        for (start, end) in blanks {
+            // Clip to the cursor: a segment overlapping the previous one only
+            // contributes its tail, so the blanked region is the union — the
+            // same result the old per-range `replace_range` produced.
+            let start = start.max(cursor);
+            if start >= end {
+                continue;
+            }
+            own.push_str(&scope[cursor..start]);
+            own.extend(std::iter::repeat_n(' ', end - start));
+            cursor = end;
         }
-    }
-    let node = nodes.entry(name.to_string()).or_default();
-    node.call_texts.push(CallText { calls: own, scope });
+        own.push_str(&scope[cursor..]);
+        std::borrow::Cow::Owned(own)
+    };
+    let node = nodes.entry(name).or_default();
+    node.call_texts.push(CallText { calls, scope });
     node.returned_texts
         .extend(returned.iter().map(|inner| CallText {
-            calls: span_text(source, *inner).to_string(),
+            calls: std::borrow::Cow::Borrowed(span_text(source, *inner)),
             scope,
         }));
 }
 
 /// Top-level `const`/`let`/`var` declarators this module can follow; returns
 /// the bound names that became graph nodes.
-fn collect_variables<'s>(
-    decl: &VariableDeclaration<'_>,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
-) -> Vec<String> {
+fn collect_variables<'a>(
+    decl: &'a VariableDeclaration<'a>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+) -> Vec<&'a str> {
     let mut names = Vec::new();
     for declarator in &decl.declarations {
         let Some(name) = binding_identifier_name(&declarator.id) else {
@@ -274,19 +317,17 @@ fn collect_variables<'s>(
         match unwrap_type_wrappers(init) {
             Expression::ArrowFunctionExpression(arrow) => {
                 collect_arrow_as(arrow, name, source, nodes);
-                names.push(name.to_string());
+                names.push(name);
             }
             Expression::FunctionExpression(func) => {
-                names.extend(
-                    collect_function_as(func, name, source, nodes).then(|| name.to_string()),
-                );
+                names.extend(collect_function_as(func, name, source, nodes).then_some(name));
             }
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
                     continue;
                 };
-                nodes.entry(name.to_string()).or_default().factory = Some(callee.name.to_string());
-                names.push(name.to_string());
+                nodes.entry(name).or_default().factory = Some(callee.name.as_str());
+                names.push(name);
             }
             _ => {}
         }
@@ -342,12 +383,12 @@ fn span_text(source: &str, span: oxc_span::Span) -> &str {
 
 /// Top-level names a node calls. A factory product calls what its factory's
 /// returned function calls.
-fn node_callees<'n>(
-    node: &ModuleNode<'_>,
-    nodes: &BTreeMap<String, ModuleNode<'_>>,
-    names: &BTreeSet<&'n str>,
-) -> BTreeSet<&'n str> {
-    let texts: Vec<&CallText<'_>> = match node.factory.as_deref() {
+fn node_callees<'a>(
+    node: &ModuleNode<'a>,
+    nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
+    names: &std::collections::HashSet<&'a str>,
+) -> BTreeSet<&'a str> {
+    let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
             .get(factory)
             .map(|factory_node| factory_node.returned_texts.iter().collect())
@@ -356,17 +397,26 @@ fn node_callees<'n>(
     };
     // Tokenize each text once and confirm only top-level names it mentions,
     // so a module with many declarations is not rescanned once per name.
+    // Only names that are actually top-level bindings are deduped per text —
+    // collecting every token (the old BTreeSet) allocated once per function
+    // on large modules (#10087).
     let mut callees = BTreeSet::new();
     for text in texts {
+        let mut checked: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for token in text
             .calls
             .split(|ch: char| !is_javascript_identifier_char(ch))
-            .filter(|token| !token.is_empty())
-            .collect::<BTreeSet<_>>()
         {
-            if let Some(&name) = names.get(token)
-                && text_calls_top_level(text, name)
-            {
+            // Membership first: `checked` then only ever holds top-level
+            // binding names, not every distinct keyword/identifier (#10096
+            // review).
+            let Some(&name) = names.get(token) else {
+                continue;
+            };
+            if !checked.insert(name) {
+                continue;
+            }
+            if text_calls_top_level(text, name) {
                 callees.insert(name);
             }
         }

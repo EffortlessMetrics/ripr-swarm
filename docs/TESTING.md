@@ -21,9 +21,19 @@ Prepare the pinned fallible owner-return fixture before offline analyzer tests
 or fixture/golden checks. Its anyhow 1.0.100 dependency is separate from the
 workspace dependency graph; a workspace build does not fetch it. Cargo performs
 this locked fetch explicitly; production analyzer metadata stays offline.
+`cargo xtask goldens prepare` runs it for this fixture, and the tests that need
+it name that command when it is missing.
 
 ```bash
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+```
+
+The literal-JSON owner-return fixture pins serde_json 1.0.151, which the audited
+expansion in `assertion_dependency.rs` requires and the workspace lock no longer
+carries. Prepare it the same way before the owner-pin JSON tests:
+
+```bash
+cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 ```
 
 Use the same Cargo home for preparation and checks. A new Cargo home or an
@@ -96,6 +106,28 @@ Inspect the selected package instead with
 `cargo tree --locked -p ripr --no-default-features --features lang-rust -e normal,build`.
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
+
+### Bounded module-motion controls
+
+The #4680 controls implement the
+[bounded module-motion contract](specs/RIPR-SPEC-0005-repo-seam-inventory.md#bounded-rust-module-motion).
+They build real disk-backed indexes for parent, inline-child and file-child
+placements, pair accessible observers with wrong-owner, changed-value and private
+child negatives, and check descendant/helper preservation. They also exercise
+default-target authority, all five compact stage states, portable snapshot
+identity, and production repair-target selection through rendered card JSON.
+
+```bash
+cargo test --locked --offline -p ripr --lib module_extraction
+cargo test --locked --offline -p ripr --lib unit_target_discovery_flags_do_not_change_shared_root_authority
+```
+
+The aggregate `module_extraction_controls` reports every control family even when
+one fails; a failure still fails the test. These tests do not close the separate
+local binding/shadowing or duplicate-import residuals on #4680. Record the exact
+head, selected features and controls actually reached when reporting a hosted
+fail-fast run. Host restrictions take precedence over these local examples;
+use the existing permitted hosted qualification route when local builds are held.
 
 ### Measured example and limits
 
@@ -325,6 +357,25 @@ When changing user-visible output, update or add golden coverage for:
 
 Golden updates must preserve the static language boundary: draft static output
 does not use mutation-runtime terms such as `killed` or `survived`.
+
+CI-summary changed-source escaping has literal render pins in
+`output::ci_summary::tests::given_changed_behavior_*`, covering both first-run
+artifact routes and the `why` fallback. The companion
+`output::json::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls`
+checks the real full-text and JSON renderers with delimiters, whitespace, C0/C1
+controls, bidi formatting, and Unicode. These tests distinguish compact Markdown
+line normalization from the exhaustive source representations (RIPR-SPEC-0051).
+
+The companion `given_ci_summary_why_markup_when_rendered_then_one_literal_span`
+test pins both literal Why rows. Comment-plan tests under RIPR-SPEC-0025 use the
+real producer for Why, Repair, and fallback reason: block boundaries must not
+hide raw HTML or mentions, while links, emphasis, valid multiline code spans,
+and fenced/indented code retain their Markdown meaning. These prose controls
+must reject a repair that escapes all intentional formatting.
+
+`context_transition_regression` also checks the rendered result after HTML
+neutralization changes block context. Its blank-line control must preserve
+indented code, and every emitted body must be idempotent under `prose`.
 
 ## CI Test Results
 

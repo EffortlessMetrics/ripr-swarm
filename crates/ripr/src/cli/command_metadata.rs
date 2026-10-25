@@ -157,16 +157,19 @@ pub(crate) enum CommandExitContract {
     /// `ripr receipt check`: `orphan_receipt` / `receipt_gap_mismatch` are
     /// could-not-complete (`2`), not a decision (`3`).
     ReceiptCheck,
+    /// `ripr doctor`: a completed diagnosis with failed checks is `3`
+    /// (#5102); usage/operational failures before a report are `2`.
+    DoctorFindings,
 }
 
 /// What stdout carries when a command exits `3`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RefusalStdout {
-    /// Artifact stream stays empty (`agent verify`, `agent card`, `agent stub`).
+    /// Artifact stream stays empty (`agent verify`).
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -197,6 +200,7 @@ const EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT: CommandExitContract =
         stdout_on_refusal: RefusalStdout::JsonOptional,
     };
 const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptCheck;
+const EXIT_DOCTOR_FINDINGS: CommandExitContract = CommandExitContract::DoctorFindings;
 
 /// Implemented mapping an orchestrator actually branches on. A metadata row
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
@@ -204,8 +208,12 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
-        "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
-            Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
+        "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // Unknown-seam and the other named refusals exit 3; under `--json`
+        // the refusal document is on stdout, prose on stderr. If that
+        // document cannot be rendered or written, the exit is 2, not 3.
+        "cmd:agent.card" | "cmd:agent.stub" | "cmd:agent.packet" => {
+            Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
         // with prose on stderr and an empty stdout, like the card family.
@@ -213,6 +221,7 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
+        "cmd:doctor" => Some(EXIT_DOCTOR_FINDINGS),
         _ => None,
     }
 }
@@ -355,6 +364,28 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "prints text and, with --json, the versioned machine command catalog; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:capabilities",
+        summary: "Show per-language, framework and mode capability status.",
+        task: "Check configuration",
+        workflows: &["setup"],
+        operation: CommandOperation::ReadOnly,
+        cost: CommandCost::Small,
+        effects: READS_ONLY,
+        primary_inputs: &[],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr capabilities --json",
+        next_routes: &["doctor", "check"],
+        stop_states: &[],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "prints the static capability registry for this build; reads no repository, runs nothing, and does not report per-repository enablement or promote a support tier.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1857,7 +1888,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent packet --root . --seam-id ID --json",
         next_routes: &["agent verify", "swarm queue"],
         stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "--json is required until a human packet surface exists.",
         not_applicable_reason: None,
     },
@@ -1879,7 +1910,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent card --root . --seam-id ID",
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
         not_applicable_reason: None,
     },
@@ -1903,7 +1934,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent stub --root . --at src/lib.rs:12",
         next_routes: &["agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the stub stops at a labelled todo!() for the expected value; --write is the only path that edits files, and only the owner file's test module or a new tests/ file.",
         not_applicable_reason: None,
     },
@@ -2175,7 +2206,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr doctor",
         next_routes: &["init", "config validate"],
         stop_states: &["missing tools print as skipped with the reason and do not fail the run"],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_DOCTOR_FINDINGS,
         limitations: "reports environment readiness; it does not run verification.",
         not_applicable_reason: None,
     },
@@ -3158,6 +3189,386 @@ mod tests {
                     entry.path, row.task
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn violations_for(rows: &[CommandMetadata]) -> Vec<String> {
+        metadata_violations(catalog(), rows)
+    }
+
+    fn first_entry_of(
+        class: CommandClass,
+        want: impl Fn(&CommandCatalogEntry) -> bool,
+    ) -> Result<&'static CommandCatalogEntry, String> {
+        catalog()
+            .iter()
+            .find(|entry| entry.class == class && want(entry))
+            .ok_or_else(|| format!("no catalog entry of class {class:?} matched"))
+    }
+
+    fn expect_some_violation(violations: &[String], needle: &str) -> Result<(), String> {
+        if violations
+            .iter()
+            .any(|violation| violation.contains(needle))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "expected a {needle:?} violation, got {violations:?}"
+        ))
+    }
+
+    fn expect_no_violation(rows: &[CommandMetadata]) -> Result<(), String> {
+        let violations = violations_for(rows);
+        if violations.is_empty() {
+            return Ok(());
+        }
+        Err(format!("unexpected violations: {violations:?}"))
+    }
+
+    #[test]
+    fn blank_not_applicable_reason_is_rejected() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:check", |row| {
+            row.not_applicable_reason = Some("   ");
+        })?;
+        expect_single_violation(&rows, "not-applicable reason is blank")
+    }
+
+    #[test]
+    fn stated_not_applicable_reason_skips_content_checks() -> Result<(), String> {
+        // A row with an explicit reason is exempt from the described-row
+        // controls: an empty summary and a mutation claim raise nothing.
+        let rows = with_mutated_row("cmd:check", |row| {
+            row.not_applicable_reason = Some("covered by the parent route");
+            row.summary = "";
+            row.effects.may_run_mutation = true;
+        })?;
+        expect_no_violation(&rows)
+    }
+
+    #[test]
+    fn duplicate_metadata_identity_is_rejected() -> Result<(), String> {
+        let mut rows = METADATA.to_vec();
+        let Some(copy) = rows.iter().find(|row| row.id == "cmd:check").copied() else {
+            return Err("cmd:check row missing".to_string());
+        };
+        rows.push(copy);
+        expect_single_violation(&rows, "duplicate metadata identity \"cmd:check\"")
+    }
+
+    #[test]
+    fn row_without_a_catalog_entry_is_rejected() -> Result<(), String> {
+        let mut rows = METADATA.to_vec();
+        let Some(mut orphan) = rows.iter().find(|row| row.id == "cmd:check").copied() else {
+            return Err("cmd:check row missing".to_string());
+        };
+        orphan.id = "cmd:not-in-the-catalog";
+        rows.push(orphan);
+        expect_single_violation(&rows, "cmd:not-in-the-catalog has no catalog entry")
+    }
+
+    #[test]
+    fn dropping_a_public_row_is_reported_as_missing_metadata() -> Result<(), String> {
+        let rows: Vec<CommandMetadata> = METADATA
+            .iter()
+            .filter(|row| row.id != "cmd:check")
+            .copied()
+            .collect();
+        expect_single_violation(&rows, "cmd:check (check) has no metadata")
+    }
+
+    #[test]
+    fn empty_and_multiline_summaries_are_rejected() -> Result<(), String> {
+        let blank = with_mutated_row("cmd:check", |row| row.summary = "  ")?;
+        expect_single_violation(&blank, "summary is empty or multi-line")?;
+        let multi = with_mutated_row("cmd:check", |row| row.summary = "first line\nsecond line")?;
+        expect_single_violation(&multi, "summary is empty or multi-line")
+    }
+
+    #[test]
+    fn empty_task_unknown_workflow_and_empty_limitations_are_rejected() -> Result<(), String> {
+        let task = with_mutated_row("cmd:check", |row| row.task = " ")?;
+        expect_single_violation(&task, "task is empty")?;
+        let tag = with_mutated_row("cmd:check", |row| row.workflows = &["not-a-workflow"])?;
+        expect_single_violation(
+            &tag,
+            "workflow tag \"not-a-workflow\" is not in WORKFLOW_TAGS",
+        )?;
+        let limits = with_mutated_row("cmd:check", |row| row.limitations = "")?;
+        expect_single_violation(&limits, "limitations are empty")
+    }
+
+    #[test]
+    fn example_must_start_with_the_catalog_path() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:check", |row| row.example = "ripr diff --base main")?;
+        expect_single_violation(&rows, "does not start with \"ripr check\"")
+    }
+
+    #[test]
+    fn every_banned_claim_token_is_rejected_in_summary_and_limitations() -> Result<(), String> {
+        for token in BANNED_CLAIM_TOKENS {
+            let in_summary = with_mutated_row("cmd:check", |row| {
+                row.summary = Box::leak(format!("reports {token} output").into_boxed_str());
+            })?;
+            expect_some_violation(
+                &violations_for(&in_summary),
+                &format!("claim token {token:?}"),
+            )?;
+            let in_limitations = with_mutated_row("cmd:check", |row| {
+                row.limitations = Box::leak(format!("never {token}").into_boxed_str());
+            })?;
+            expect_some_violation(
+                &violations_for(&in_limitations),
+                &format!("claim token {token:?}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn read_only_row_declaring_a_state_target_is_rejected() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:cache.status", |row| {
+            row.state_target = Some("target/ripr/cache");
+        })?;
+        expect_single_violation(&rows, "read-only but declares a state target")
+    }
+
+    #[test]
+    fn read_only_row_declaring_only_optional_outputs_is_rejected() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:cache.status", |row| {
+            row.outputs.optional = &["target/ripr/reports/extra.json"];
+        })?;
+        expect_single_violation(&rows, "read-only but declares product writes")
+    }
+
+    #[test]
+    fn writing_row_with_only_optional_outputs_is_accepted() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:explain", |row| {
+            row.outputs.default = None;
+            row.outputs.optional = &["--out PATH report"];
+        })?;
+        expect_no_violation(&rows)
+    }
+
+    #[test]
+    fn compile_or_test_effect_with_projection_cost_is_rejected() -> Result<(), String> {
+        let needle = "compiles or runs tests but claims projection-only cost";
+        let compile = with_mutated_row("cmd:cache.status", |row| {
+            row.cost = CommandCost::Small;
+            row.effects.may_compile = true;
+        })?;
+        expect_single_violation(&compile, needle)?;
+        let tests = with_mutated_row("cmd:cache.status", |row| {
+            row.cost = CommandCost::Small;
+            row.effects.may_compile = true;
+            row.effects.may_run_tests = true;
+        })?;
+        expect_single_violation(&tests, needle)
+    }
+
+    #[test]
+    fn exit_contract_table_names_every_orchestrator_branching_command() -> Result<(), String> {
+        let expected: &[(&str, CommandExitContract)] = &[
+            ("cmd:check", EXIT_ADVISORY_FINDINGS),
+            ("cmd:diff", EXIT_ADVISORY_FINDINGS),
+            ("cmd:gate.evaluate", EXIT_GATE_EVALUATE),
+            ("cmd:agent.verify", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:agent.card", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+            ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+            ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+            ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+            ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:continue", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            (
+                "cmd:agent.verify-execute",
+                EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT,
+            ),
+            ("cmd:receipt.check", EXIT_RECEIPT_CHECK),
+            ("cmd:doctor", EXIT_DOCTOR_FINDINGS),
+        ];
+        for (id, contract) in expected {
+            if required_exit_contract(id) != Some(*contract) {
+                return Err(format!(
+                    "{id} requires {:?}, expected {contract:?}",
+                    required_exit_contract(id)
+                ));
+            }
+        }
+        for id in ["cmd:help", "cmd:explain", "cmd:not-a-command"] {
+            if let Some(found) = required_exit_contract(id) {
+                return Err(format!("{id} must have no special contract, got {found:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn machine_tokens_are_pinned() -> Result<(), String> {
+        let pairs = [
+            (CommandOperation::ReadOnly.as_str(), "read-only"),
+            (
+                CommandOperation::WritesArtifacts.as_str(),
+                "writes-artifacts",
+            ),
+            (CommandOperation::StateChanging.as_str(), "state-changing"),
+            (CommandCost::Small.as_str(), "small"),
+            (CommandCost::Analysis.as_str(), "analysis"),
+            (CommandCost::Workspace.as_str(), "workspace"),
+            (RefusalStdout::Empty.as_str(), "empty"),
+            (RefusalStdout::Document.as_str(), "document"),
+            (RefusalStdout::JsonOptional.as_str(), "json_optional"),
+        ];
+        for (actual, expected) in pairs {
+            if actual != expected {
+                return Err(format!("token {actual:?} drifted from {expected:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_for_is_none_for_an_unmapped_entry() -> Result<(), String> {
+        let entry = CommandCatalogEntry {
+            id: "cmd:not-in-the-metadata-table",
+            ..catalog()[0]
+        };
+        if metadata_for(&entry).is_some() {
+            return Err("metadata_for matched an identity the table does not hold".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn marker_less_advanced_and_compatibility_listing_lines_are_reported() -> Result<(), String> {
+        let advanced = first_entry_of(CommandClass::Advanced, |entry| {
+            matches!(entry.relation, CommandRelation::Canonical)
+        })?;
+        let line = format!("  ripr {}  Does a thing.", advanced.path);
+        let bare = format!("Setup:\n{line}\nWhat it does:\n");
+        expect_some_violation(
+            &human_projection_violations("ripr", &bare),
+            "lacks its [advanced] marker",
+        )?;
+        let marked = format!("Setup:\n{line} [advanced]\nWhat it does:\n");
+        expect_no_marker_violation(&human_projection_violations("ripr", &marked))?;
+
+        let compat = first_entry_of(CommandClass::Compatibility, |_| true)?;
+        let line = format!("  ripr {}  Legacy spelling.", compat.path);
+        let bare = format!("Setup:\n{line}\nWhat it does:\n");
+        expect_some_violation(
+            &human_projection_violations("ripr", &bare),
+            "lacks its [compatibility] marker",
+        )
+    }
+
+    fn expect_no_marker_violation(violations: &[String]) -> Result<(), String> {
+        if violations
+            .iter()
+            .any(|violation| violation.contains(" marker"))
+        {
+            return Err(format!("marked line still flagged: {violations:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn public_listing_line_with_a_non_public_marker_is_reported() -> Result<(), String> {
+        let public = first_entry_of(CommandClass::Public, |entry| entry.path == "check")?;
+        for marker in ["[advanced]", "[compatibility]"] {
+            let help_all = format!(
+                "Setup:\n  ripr {}  Analyze. {marker}\nWhat it does:\n",
+                public.path
+            );
+            expect_some_violation(
+                &human_projection_violations("ripr", &help_all),
+                "carries a non-public class marker",
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_help_all_command_line_is_reported() -> Result<(), String> {
+        let help_all = "Quick start:\n  ripr zzz-not-a-command --flag\n";
+        expect_some_violation(
+            &human_projection_violations("ripr", help_all),
+            "help --all line routes to unknown command",
+        )
+    }
+
+    #[test]
+    fn empty_help_all_omits_every_ordinary_row_but_help() -> Result<(), String> {
+        let violations = human_projection_violations("ripr", "");
+        expect_some_violation(&violations, "help --all omits cmd:check (check)")?;
+        if violations
+            .iter()
+            .any(|violation| violation.contains("omits cmd:help"))
+        {
+            return Err("help documents itself and must never be reported omitted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn family_umbrella_is_covered_by_a_child_listing_line() -> Result<(), String> {
+        // `cache` dispatches to help and is documented through its children.
+        let help_all = "Setup:\n  ripr cache status  Show cache.\n  ripr cache clear  Clear cache.\nWhat it does:\n";
+        let violations = human_projection_violations("ripr", help_all);
+        if violations
+            .iter()
+            .any(|violation| violation.contains("omits cmd:cache ("))
+        {
+            return Err(format!(
+                "umbrella reported omitted despite children: {violations:?}"
+            ));
+        }
+        expect_some_violation(&violations, "help --all omits cmd:check (check)")
+    }
+
+    #[test]
+    fn default_help_unknown_route_is_reported_only_inside_structured_blocks() -> Result<(), String>
+    {
+        let help = "Try this first:\n  ripr zzz-not-a-command\n\nProse mentioning ripr zzz-also-not-a-command here.\nMore:\n  ripr check --base REV\n";
+        let violations = human_projection_violations(help, "");
+        let unknown: Vec<&String> = violations
+            .iter()
+            .filter(|violation| violation.contains("default help routes to unknown command"))
+            .collect();
+        if unknown.len() != 1 || !unknown[0].contains("zzz-not-a-command") {
+            return Err(format!(
+                "expected exactly the structured unknown route, got {unknown:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn concise_command_lines_stop_at_blank_lines_and_skip_prose() -> Result<(), String> {
+        let help = "ripr overview\nTry this first:\n  ripr check --base REV\n  plain prose\n\n  ripr after-blank\nWhat are you trying to do?\n  Inspect  ripr check\n\nMore:\n  ripr help --all\n";
+        let lines = concise_command_lines(help);
+        let expected = vec![
+            "  ripr check --base REV",
+            "  Inspect  ripr check",
+            "  ripr help --all",
+        ];
+        if lines != expected {
+            return Err(format!("unexpected structured lines: {lines:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn longest_catalog_prefix_prefers_the_most_specific_path() -> Result<(), String> {
+        let paths = ["cache", "cache status", "check"];
+        if longest_catalog_prefix("cache status --json", &paths) != Some("cache status") {
+            return Err("did not prefer the child path".to_string());
+        }
+        if longest_catalog_prefix("cache", &paths) != Some("cache") {
+            return Err("did not fall back to the umbrella".to_string());
+        }
+        if longest_catalog_prefix("zzz", &paths).is_some() {
+            return Err("unknown prefix resolved".to_string());
         }
         Ok(())
     }

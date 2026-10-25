@@ -4,21 +4,23 @@
 //! single place that turns it into prose, so human, JSON, LSP and agent output
 //! say the same thing about the same test.
 
-use crate::domain::{
-    MissingDiscriminatorFact, ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason,
-    exact_assertion_fact, input_boundary_fact,
-};
+use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
-pub(crate) fn related_test_miss_reason(
-    test: &RelatedTest,
-    missing_discriminators: &[MissingDiscriminatorFact],
-) -> Option<String> {
+///
+/// Row-specific detail comes only from the row's own
+/// [`RelatedTest::miss_support`] and the finding's typed `family` (#5564);
+/// this never reads the finding-wide `missing_discriminators`, so a fact the
+/// producer did not attach to this row cannot be borrowed. Absent support
+/// renders the generic wording.
+pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily) -> Option<String> {
     Some(match test.miss? {
         RelatedTestMiss::NoCallPath => match test.relation_reason.and_then(link_label) {
-            Some(link) => format!("no call to the changed code found; linked by {link} only"),
-            None => "no call to the changed code found".to_string(),
+            Some(link) => {
+                format!("no established call path to the changed code; linked by {link} only")
+            }
+            None => "no established call path to the changed code".to_string(),
         },
         RelatedTestMiss::NoAssertion => "has no assertion".to_string(),
         RelatedTestMiss::AssertionNotObserving => {
@@ -37,37 +39,34 @@ pub(crate) fn related_test_miss_reason(
         RelatedTestMiss::ObservationUnconfirmed => {
             "ripr could not confirm that this assertion observes the changed behavior".to_string()
         }
-        // The analyzer assigns `missing_input` only for a predicate probe
-        // with a boundary fact, a match-arm probe with an unselected-arm
-        // fact, or a side-effect or call-deletion probe with an unentered
-        // guard fact, and `missing_exact_assertion` only when neither exists, so
-        // reading the facts as a predicate's picks the fact each miss was
-        // assigned from.
+        // The wording of `missing_input` follows the finding's typed probe
+        // family, never the punctuation of the support value: a guard the
+        // input never enters (side-effect or call-deletion), a predicate or
+        // returned-comparison boundary the input never reaches, or an arm no
+        // input selects. A family with no input reading keeps the generic
+        // sentence even when support is present.
         RelatedTestMiss::MissingInput => {
-            // The guard fact is read first: its value (`if x == 10`) may
-            // hold the ` == ` the predicate reading looks for.
-            if let Some(fact) =
-                input_boundary_fact(missing_discriminators, &ProbeFamily::SideEffect)
-            {
-                format!("no test input enters `{}`", one_line(&fact.value))
-            } else if let Some(fact) =
-                input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
-            {
-                format!("no test input reaches `{}`", one_line(&fact.value))
-            } else if let Some(fact) =
-                input_boundary_fact(missing_discriminators, &ProbeFamily::MatchArm)
-            {
-                format!("no test input selects arm `{} =>`", one_line(&fact.value))
-            } else {
-                "no test input reaches the changed boundary".to_string()
+            let value = test
+                .miss_support
+                .as_ref()
+                .map(|support| one_line(&support.value));
+            match (family, value) {
+                (ProbeFamily::SideEffect | ProbeFamily::CallDeletion, Some(value)) => {
+                    format!("no test input enters `{value}`")
+                }
+                (ProbeFamily::Predicate | ProbeFamily::ReturnValue, Some(value)) => {
+                    format!("no test input reaches `{value}`")
+                }
+                (ProbeFamily::MatchArm, Some(value)) => {
+                    format!("no test input selects arm `{value} =>`")
+                }
+                _ => "no test input reaches the changed boundary".to_string(),
             }
         }
-        RelatedTestMiss::MissingExactAssertion => {
-            match exact_assertion_fact(missing_discriminators, &ProbeFamily::Predicate) {
-                Some(fact) => format!("no assertion pins `{}`", one_line(&fact.value)),
-                None => "no assertion pins the exact changed value".to_string(),
-            }
-        }
+        RelatedTestMiss::MissingExactAssertion => match test.miss_support.as_ref() {
+            Some(support) => format!("no assertion pins `{}`", one_line(&support.value)),
+            None => "no assertion pins the exact changed value".to_string(),
+        },
     })
 }
 
@@ -83,6 +82,7 @@ pub(crate) fn oracle_projection(
 ) -> String {
     use crate::domain::{OracleKind, OracleStrength};
     match (strength, kind) {
+        (OracleStrength::None, _) => "no oracle".to_string(),
         // A row with no selected assertion has no oracle to describe.
         (OracleStrength::Unknown, OracleKind::Unknown) if !has_assertion => "no oracle".to_string(),
         (OracleStrength::Unknown, OracleKind::Unknown) => {
@@ -93,9 +93,11 @@ pub(crate) fn oracle_projection(
             kind.as_str().replace('_', " ")
         ),
         (strength, kind) => format!(
-            "{} {} oracle",
-            strength.as_str(),
-            kind.as_str().replace('_', " ")
+            "{} oracle",
+            crate::output::oracle_phrase::oracle_phrase(
+                strength.as_str(),
+                &kind.as_str().replace('_', " ")
+            )
         ),
     }
 }
@@ -127,6 +129,18 @@ fn link_label(reason: RelationReason) -> Option<&'static str> {
     }
 }
 
+/// Human-output spelling of assertion or value text that must stay on one
+/// evidence row: text that spans lines (a snapshot body, a closure test
+/// body, a multi-line string literal) collapses its whitespace the way the
+/// `checked` row does; single-line text is returned byte-for-byte (#9165).
+pub(crate) fn single_line_evidence_text(value: &str) -> String {
+    if value.contains(['\n', '\r']) {
+        one_line(value)
+    } else {
+        value.to_string()
+    }
+}
+
 fn one_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -134,7 +148,9 @@ fn one_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength};
+    use crate::domain::{
+        MissingDiscriminatorFact, OracleKind, OracleStrength, RelatedTestMissSupport,
+    };
     use crate::output::perl_preview_card::tests::sample_perl_finding as sample_finding;
     use std::path::PathBuf;
 
@@ -150,11 +166,38 @@ mod tests {
             oracle_projection(&OracleStrength::Unknown, &OracleKind::ExactValue, true),
             "exact value oracle, not graded against this probe"
         );
+        // A row with no oracle strength reads "no oracle" whatever its kind.
+        assert_eq!(
+            oracle_projection(&OracleStrength::None, &OracleKind::ExactValue, false),
+            "no oracle"
+        );
+        // A kind that already leads with its strength word is not doubled.
+        assert_eq!(
+            oracle_projection(&OracleStrength::Smoke, &OracleKind::SmokeOnly, true),
+            "smoke only oracle"
+        );
         // A graded pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(
             oracle_projection(&OracleStrength::Strong, &OracleKind::ExactValue, true),
             "strong exact value oracle"
         );
+    }
+
+    #[test]
+    fn single_line_evidence_text_collapses_only_multi_line_text() {
+        // #9165: a closure or snapshot oracle spans lines; the row keeps one.
+        assert_eq!(
+            single_line_evidence_text("scope(|scope| {\n    scope.spawn(f);\n})\n.unwrap();"),
+            "scope(|scope| { scope.spawn(f); }) .unwrap();"
+        );
+        assert_eq!(single_line_evidence_text("a\r\nb"), "a b");
+        // Negative controls: single-line text is untouched, including its
+        // inner spacing and trailing `;`.
+        assert_eq!(
+            single_line_evidence_text("assert_eq!(a,  b);"),
+            "assert_eq!(a,  b);"
+        );
+        assert_eq!(single_line_evidence_text(""), "");
     }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {
@@ -168,39 +211,69 @@ mod tests {
             relation_reason: reason,
             relation_confidence: None,
             miss,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
+    }
+
+    fn support(value: &str) -> RelatedTestMissSupport {
+        RelatedTestMissSupport {
+            value: value.to_string(),
+            flow_sink: None,
+        }
+    }
+
+    fn row_named(
+        name: &str,
+        miss: RelatedTestMiss,
+        miss_support: Option<RelatedTestMissSupport>,
+    ) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            miss_support,
+            ..test_with(Some(miss), None)
+        }
+    }
+
+    fn reason(test: &RelatedTest, family: &ProbeFamily) -> Option<String> {
+        related_test_miss_reason(test, family)
     }
 
     #[test]
     fn a_test_without_a_recorded_miss_gets_no_reason() {
-        let finding = sample_finding();
-        assert_eq!(
-            related_test_miss_reason(
-                &test_with(None, None),
-                &finding.activation.missing_discriminators
-            ),
-            None
-        );
+        let mut test = test_with(None, None);
+        // Support without a miss is not rendered.
+        test.miss_support = Some(support("len == 0"));
+        assert_eq!(reason(&test, &ProbeFamily::Predicate), None);
+    }
+
+    #[test]
+    fn shared_wording_stays_language_neutral() -> Result<(), String> {
+        let mut test = test_with(Some(RelatedTestMiss::AssertionNotCredited), None);
+        let credited = related_test_miss_reason(&test, &ProbeFamily::ReturnValue)
+            .ok_or("assertion_not_credited rendered no reason")?;
+        assert!(!credited.contains("macro"), "{credited}");
+        test.miss = Some(RelatedTestMiss::NoCallPath);
+        test.relation_reason = None;
+        let path = related_test_miss_reason(&test, &ProbeFamily::ReturnValue)
+            .ok_or("no_call_path rendered no reason")?;
+        assert!(!path.contains("found"), "{path}");
+        assert!(path.starts_with("no established call path"), "{path}");
+        Ok(())
     }
 
     #[test]
     fn each_miss_names_a_checkable_fact() {
-        let mut finding = sample_finding();
-        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-            value: "len == 0".to_string(),
-            reason: "no related test passes an empty input".to_string(),
-            flow_sink: None,
-        }];
         let cases = [
             (
                 RelatedTestMiss::NoCallPath,
                 Some(RelationReason::SameTestFile),
-                "no call to the changed code found; linked by file location only",
+                "no established call path to the changed code; linked by file location only",
             ),
             (
                 RelatedTestMiss::NoCallPath,
                 Some(RelationReason::DirectOwnerCall),
-                "no call to the changed code found",
+                "no established call path to the changed code",
             ),
             (RelatedTestMiss::NoAssertion, None, "has no assertion"),
             (
@@ -224,37 +297,266 @@ mod tests {
                 "ripr could not confirm that this assertion observes the changed behavior",
             ),
         ];
-        for (miss, reason, expected) in cases {
+        for (miss, relation, expected) in cases {
+            let mut test = test_with(Some(miss), relation);
+            test.miss_support = Some(support("len == 0"));
             assert_eq!(
-                related_test_miss_reason(
-                    &test_with(Some(miss), reason),
-                    &finding.activation.missing_discriminators
-                )
-                .as_deref(),
+                reason(&test, &ProbeFamily::Predicate).as_deref(),
                 Some(expected),
                 "{miss:?}"
             );
         }
     }
 
+    /// Control 1: two rows, two predicate facts, each renders its own.
     #[test]
-    fn an_unentered_guard_reads_as_an_input_that_enters_it() {
-        let facts = vec![MissingDiscriminatorFact {
-            value: "if x == 10".to_string(),
-            reason: format!(
-                "{} `if x == 10`; observed `x` values: `4`",
-                crate::domain::GUARD_UNENTERED_REASON_PREFIX
-            ),
+    fn two_rows_with_different_boundaries_each_render_their_own() {
+        let a = row_named(
+            "a",
+            RelatedTestMiss::MissingInput,
+            Some(support("amount == threshold")),
+        );
+        let b = row_named(
+            "b",
+            RelatedTestMiss::MissingInput,
+            Some(support("qty == limit")),
+        );
+        assert_eq!(
+            reason(&a, &ProbeFamily::Predicate).as_deref(),
+            Some("no test input reaches `amount == threshold`")
+        );
+        assert_eq!(
+            reason(&b, &ProbeFamily::Predicate).as_deref(),
+            Some("no test input reaches `qty == limit`")
+        );
+    }
+
+    /// Controls 2, 3, 6 and 10: a row without its own support never borrows
+    /// the finding-wide fact that sits beside it.
+    #[test]
+    fn a_row_without_support_renders_generic_wording_not_a_finding_wide_fact() {
+        let mut finding = sample_finding();
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
         }];
+        let owner = row_named(
+            "misses",
+            RelatedTestMiss::MissingInput,
+            Some(support("amount == threshold")),
+        );
+        let bystander = row_named("hits", RelatedTestMiss::MissingInput, None);
+        let family = &finding.probe.family;
         assert_eq!(
-            related_test_miss_reason(
-                &test_with(Some(RelatedTestMiss::MissingInput), None),
-                &facts
-            )
-            .as_deref(),
+            reason(&owner, family).as_deref(),
+            Some("no test input reaches `amount == threshold`")
+        );
+        for family in [&ProbeFamily::Predicate, &ProbeFamily::ReturnValue] {
+            assert_eq!(
+                reason(&bystander, family).as_deref(),
+                Some("no test input reaches the changed boundary")
+            );
+        }
+        let exact = row_named("exact", RelatedTestMiss::MissingExactAssertion, None);
+        assert_eq!(
+            reason(&exact, &ProbeFamily::ErrorPath).as_deref(),
+            Some("no assertion pins the exact changed value")
+        );
+    }
+
+    /// Control 4: a wrong-owner fact in the finding-wide list is ignored; the
+    /// row renders its own support.
+    #[test]
+    fn a_wrong_owner_finding_wide_fact_is_ignored() {
+        let mut finding = sample_finding();
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "other == wrong".to_string(),
+            reason: "another row's fact".to_string(),
+            flow_sink: None,
+        }];
+        let row = row_named(
+            "mine",
+            RelatedTestMiss::MissingExactAssertion,
+            Some(support("CalcError::TooLarge")),
+        );
+        assert_eq!(
+            reason(&row, &finding.probe.family).as_deref(),
+            Some("no assertion pins `CalcError::TooLarge`")
+        );
+    }
+
+    /// Control 5: wording follows the typed family, not punctuation in the
+    /// support value.
+    #[test]
+    fn wording_follows_the_typed_family_not_equality_punctuation() {
+        let row = row_named(
+            "r",
+            RelatedTestMiss::MissingInput,
+            Some(support("if x == 10")),
+        );
+        assert_eq!(
+            reason(&row, &ProbeFamily::SideEffect).as_deref(),
             Some("no test input enters `if x == 10`")
         );
+        assert_eq!(
+            reason(&row, &ProbeFamily::CallDeletion).as_deref(),
+            Some("no test input enters `if x == 10`")
+        );
+        // A family with no input reading never treats ` == ` as a boundary.
+        for family in [
+            ProbeFamily::ErrorPath,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::StaticUnknown,
+        ] {
+            assert_eq!(
+                reason(&row, &family).as_deref(),
+                Some("no test input reaches the changed boundary"),
+                "{family:?}"
+            );
+        }
+        // An exact-assertion value containing ` == ` is still pinned, not
+        // read as an input boundary.
+        let exact = row_named(
+            "e",
+            RelatedTestMiss::MissingExactAssertion,
+            Some(support("out.total == 5")),
+        );
+        assert_eq!(
+            reason(&exact, &ProbeFamily::FieldConstruction).as_deref(),
+            Some("no assertion pins `out.total == 5`")
+        );
+    }
+
+    #[test]
+    fn an_unselected_arm_miss_names_the_arm_as_a_missing_input() {
+        let row = row_named(
+            "r",
+            RelatedTestMiss::MissingInput,
+            Some(support("Kind::Beta")),
+        );
+        assert_eq!(
+            reason(&row, &ProbeFamily::MatchArm).as_deref(),
+            Some("no test input selects arm `Kind::Beta =>`")
+        );
+    }
+
+    /// Control 7: the reason follows the row, not its position.
+    #[test]
+    fn row_order_does_not_move_support_between_tests() {
+        let mut rows = vec![
+            row_named("a", RelatedTestMiss::MissingInput, Some(support("a == 1"))),
+            row_named("b", RelatedTestMiss::MissingInput, Some(support("b == 2"))),
+            row_named("c", RelatedTestMiss::MissingInput, None),
+        ];
+        let render = |rows: &[RelatedTest]| {
+            let mut out: Vec<(String, Option<String>)> = rows
+                .iter()
+                .map(|row| (row.name.clone(), reason(row, &ProbeFamily::Predicate)))
+                .collect();
+            out.sort();
+            out
+        };
+        let forward = render(&rows);
+        rows.reverse();
+        assert_eq!(render(&rows), forward);
+        rows.swap(0, 1);
+        assert_eq!(render(&rows), forward);
+    }
+
+    /// Control 8: support ownership survives a serde round trip, and legacy
+    /// artifacts without the field deserialize to `None`.
+    #[test]
+    fn support_survives_serialization_and_legacy_artifacts_stay_absent() -> Result<(), String> {
+        let row = row_named(
+            "r",
+            RelatedTestMiss::MissingInput,
+            Some(RelatedTestMissSupport {
+                value: "amount == threshold".to_string(),
+                flow_sink: None,
+            }),
+        );
+        let json = serde_json::to_value(&row).map_err(|error| error.to_string())?;
+        assert_eq!(json["miss"], "missing_input");
+        assert_eq!(json["miss_support"]["value"], "amount == threshold");
+        assert!(json["miss_support"].get("flow_sink").is_none());
+        let back: RelatedTest =
+            serde_json::from_value(json.clone()).map_err(|error| error.to_string())?;
+        assert_eq!(back, row);
+        let mut legacy = json;
+        legacy
+            .as_object_mut()
+            .ok_or("row is an object")?
+            .remove("miss_support");
+        let legacy: RelatedTest =
+            serde_json::from_value(legacy).map_err(|error| error.to_string())?;
+        assert_eq!(legacy.miss_support, None);
+        assert_eq!(
+            reason(&legacy, &ProbeFamily::Predicate).as_deref(),
+            Some("no test input reaches the changed boundary")
+        );
+        // A row with no support omits the field entirely.
+        let bare = serde_json::to_value(row_named("b", RelatedTestMiss::MissingInput, None))
+            .map_err(|error| error.to_string())?;
+        assert!(bare.get("miss_support").is_none());
+        Ok(())
+    }
+
+    /// #5564: `from_fact` copies the fact's own sink; two rows keep their
+    /// own sinks (no donation) and the sink survives serde.
+    #[test]
+    fn support_carries_its_own_sink_per_row_and_round_trips() -> Result<(), String> {
+        use crate::domain::{FlowSinkFact, FlowSinkKind};
+        let fact = |value: &str, text: &str, line: usize| MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: "r".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: text.to_string(),
+                line,
+                owner: None,
+            }),
+        };
+        let fact_a = fact("a == 1", "return a", 3);
+        let fact_b = fact("b == 2", "return b", 9);
+        let a = row_named(
+            "a",
+            RelatedTestMiss::MissingInput,
+            Some(RelatedTestMissSupport::from_fact(&fact_a)),
+        );
+        let b = row_named(
+            "b",
+            RelatedTestMiss::MissingInput,
+            Some(RelatedTestMissSupport::from_fact(&fact_b)),
+        );
+        let sink = |row: &RelatedTest| row.miss_support.as_ref().and_then(|s| s.flow_sink.clone());
+        assert_eq!(sink(&a), fact_a.flow_sink);
+        assert_eq!(sink(&b), fact_b.flow_sink);
+        assert_ne!(sink(&a), sink(&b));
+        for row in [&a, &b] {
+            let json = serde_json::to_value(row).map_err(|e| e.to_string())?;
+            assert!(json["miss_support"]["flow_sink"].is_object());
+            let back: RelatedTest = serde_json::from_value(json).map_err(|e| e.to_string())?;
+            assert_eq!(&back, row);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn probe_family_wire_tokens_round_trip() {
+        for family in [
+            ProbeFamily::Predicate,
+            ProbeFamily::ReturnValue,
+            ProbeFamily::ErrorPath,
+            ProbeFamily::CallDeletion,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::SideEffect,
+            ProbeFamily::MatchArm,
+            ProbeFamily::StaticUnknown,
+        ] {
+            assert_eq!(ProbeFamily::from_wire(family.as_str()), Some(family));
+        }
+        assert_eq!(ProbeFamily::from_wire("nope"), None);
     }
 
     #[test]
@@ -281,36 +583,6 @@ mod tests {
                 None
             )),
             "unconfirmed"
-        );
-    }
-
-    #[test]
-    fn an_exact_assertion_miss_names_the_variant_not_an_input() {
-        let mut finding = sample_finding();
-        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-            value: "CalcError::TooLarge".to_string(),
-            reason: "No exact error variant assertion for CalcError::TooLarge".to_string(),
-            flow_sink: None,
-        }];
-        let test = test_with(Some(RelatedTestMiss::MissingExactAssertion), None);
-        assert_eq!(
-            related_test_miss_reason(&test, &finding.activation.missing_discriminators).as_deref(),
-            Some("no assertion pins `CalcError::TooLarge`")
-        );
-    }
-
-    #[test]
-    fn an_unselected_arm_miss_names_the_arm_as_a_missing_input() {
-        let facts = vec![MissingDiscriminatorFact {
-            value: "Kind::Beta".to_string(),
-            reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
-                .to_string(),
-            flow_sink: None,
-        }];
-        let test = test_with(Some(RelatedTestMiss::MissingInput), None);
-        assert_eq!(
-            related_test_miss_reason(&test, &facts).as_deref(),
-            Some("no test input selects arm `Kind::Beta =>`")
         );
     }
 
@@ -385,10 +657,10 @@ mod tests {
             };
             assert_eq!(direct.miss, Some(RelatedTestMiss::ObservationUnconfirmed));
             assert_eq!(advisory.miss, None);
-            let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+            let why = related_test_miss_reason(direct, &finding.probe.family)
                 .ok_or("the direct row should have a reason")?;
             assert_eq!(
-                related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+                related_test_miss_reason(advisory, &finding.probe.family),
                 None
             );
             let label = related_test_miss_label(direct);
@@ -552,9 +824,7 @@ mod tests {
 
                 let mut full = crate::output::human::render_finding(&finding);
                 for row in &finding.related_tests {
-                    if let Some(why) =
-                        related_test_miss_reason(row, &finding.activation.missing_discriminators)
-                    {
+                    if let Some(why) = related_test_miss_reason(row, &finding.probe.family) {
                         explained_rows += 1;
                         full =
                             full.replace(&format!("; {}: {why}", related_test_miss_label(row)), "");

@@ -5,7 +5,10 @@ Spec: RIPR-SPEC-0089
 ## Given
 
 A workspace that contains only TypeScript source files (`src/discount.ts`,
-`src/utils.ts`) and a `package.json` — no Rust crate whatsoever.
+`src/utils.ts`) and a `package.json` — no Rust crate whatsoever. A `ripr.toml` pins
+`[languages] enabled = ["rust"]`: without it, TypeScript project detection
+would enable the preview adapter and this fixture would no longer exercise
+the preview-disabled guidance.
 
 ## When
 

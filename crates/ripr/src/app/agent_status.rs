@@ -14,10 +14,11 @@ use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, CanonicalAdmission, DivergedHeadRecovery,
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
     RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
-    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair, diverged_head_recovery,
-    inventory_repair_attempts_from, load_attempt_terminal_receipt,
-    load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
-    repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
+    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair,
+    diverged_head_recovery_for_subject, inventory_repair_attempts_from,
+    load_attempt_terminal_receipt, load_repair_attempt_manifest_from, quoted_store_flag,
+    repair_attempt_head_reading, repair_attempt_state_label, resolve_store,
+    validate_issued_receipt_evidence,
 };
 use crate::app::task_first::{RepairStartGate, RepairStartRefusal, repair_start_withheld_note};
 use crate::domain::{
@@ -164,6 +165,13 @@ pub(crate) struct AgentStatusReport {
 pub(crate) struct AgentStatusRepairAttempt {
     pub(crate) attempt_id: String,
     pub(crate) seam_id: String,
+    /// The recorded diff base of a gap-bound attempt (#9103); `seam_id` then
+    /// holds its canonical gap id. `None` for a seam-bound attempt.
+    pub(crate) gap_base: Option<String>,
+    /// A gap-bound attempt from the C2a build that never recorded the
+    /// immutable base commit: its after phase refuses and the next action is a
+    /// fresh start (#9103).
+    pub(crate) legacy_gap_binding: bool,
     pub(crate) state: &'static str,
     pub(crate) head_current: Option<bool>,
     pub(crate) disposition: &'static str,
@@ -339,7 +347,19 @@ pub(crate) fn build_agent_status_report_from(
     let mut warnings = Vec::new();
     let seam = recover_seam_id(root, &artifacts, &mut warnings);
     warnings.extend(stale_warnings(&artifacts));
-    let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
+    // #9103: the legacy seam workflow (`agent packet`/`brief`/`receipt`
+    // `--seam-id`) cannot run for a gap-bound subject, whose verify document
+    // names a canonical gap id; offering those commands would send a reader
+    // to a start the Rust seam inventory refuses. The attempt rows below own
+    // the gap-bound next step.
+    let gap_bound_seam = seam
+        .as_ref()
+        .is_some_and(|seam| crate::app::gap_bound_repair::is_gap_bound_subject(&seam.seam_id));
+    let missing_commands = if gap_bound_seam {
+        Vec::new()
+    } else {
+        missing_commands(root_argument, seam.as_ref(), &artifacts)
+    };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
     let gate = RepairStartGate::new(root);
@@ -513,6 +533,13 @@ fn attempt_receipt(
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
         }
+        // #9103: a gap-bound attempt's receipt is issued with retained
+        // terminal evidence (above). One finished without it (by the C2b build,
+        // which issued none) never consults the one-slot compatibility file,
+        // which another attempt's receipt may occupy.
+        AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
+            AgentStatusAttemptReceipt::NotIssued
+        }
         AttemptTerminalReceipt::NotRetained => {
             legacy_workflow_attempt_receipt(root, manifest, after, receipt)
         }
@@ -612,13 +639,25 @@ fn status_repair_attempt(
     gate: &RepairStartGate,
 ) -> AgentStatusRepairAttempt {
     let root = gate.root();
-    let restart_command = new_repair_attempt_command(root_display, &manifest.seam_id, store_flag);
+    let gap_base = gap_base_of(manifest);
+    let restart_command =
+        new_repair_attempt_command(root_display, &manifest.seam_id, gap_base, store_flag);
     let restart = Some(restart_command.clone());
     let receipt = attempt_receipt(root, manifest, receipt);
     let head_reading = repair_attempt_head_reading(root, manifest, current_head);
     let evidence_head = head_reading.evidence_head;
     let mut diverged_recovery = None;
+    let legacy_gap_binding = manifest
+        .gap_binding
+        .as_ref()
+        .is_some_and(crate::app::repair_attempt::RepairAttemptGapBinding::is_legacy);
     let (head_current, (state, disposition, command)) = match manifest.state {
+        // A legacy (C2a) gap marker has no immutable base commit: its after
+        // phase refuses, so the only next action is a fresh start.
+        RepairAttemptState::AwaitingEdit if legacy_gap_binding => (
+            head_reading.head_current,
+            ("awaiting_edit", "prepared_at_other_head", restart),
+        ),
         RepairAttemptState::AwaitingEdit => {
             match head_reading.after_admission {
                 // #8726: a spent after-phase retry budget makes the recorded
@@ -634,8 +673,9 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(crate::agent::human_after_phase_follow_up(
+                        Some(crate::agent::human_after_phase_follow_up_for_display(
                             &manifest.next_command,
+                            root_display,
                         )),
                     ),
                 ),
@@ -655,13 +695,14 @@ fn status_repair_attempt(
                     ("awaiting_edit", "prepared_at_other_head", restart),
                 ),
                 Some(AfterPhaseHeadAdmission::RefusedDiverged { current_head }) => {
-                    diverged_recovery = Some(diverged_head_recovery(
+                    diverged_recovery = Some(diverged_head_recovery_for_subject(
                         root_display,
                         manifest.repair_attempt_id.as_str(),
                         &manifest.seam_id,
                         &manifest.repository_head,
                         &current_head,
                         store_flag,
+                        gap_base,
                     ));
                     (
                         Some(false),
@@ -717,6 +758,8 @@ fn status_repair_attempt(
     AgentStatusRepairAttempt {
         attempt_id: manifest.repair_attempt_id.as_str().to_string(),
         seam_id: manifest.seam_id.clone(),
+        gap_base: gap_base.map(str::to_string),
+        legacy_gap_binding,
         state,
         head_current,
         disposition,
@@ -977,6 +1020,7 @@ fn finished_attempt_warnings(
                                     new_repair_attempt_command(
                                         root_display,
                                         &attempt.seam_id,
+                                        attempt.gap_base.as_deref(),
                                         store_flag
                                     )
                                 ),
@@ -1034,6 +1078,13 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
                 "{reason}; status does not reconstruct the outcome from another attempt's compatibility receipt"
             )
         }
+        // #9103: a gap-bound attempt finished without retained terminal
+        // evidence (the C2b build issued no receipt) reports its closure only
+        // in the after-phase verify document, which status does not retain per
+        // attempt, so it stays unconfirmed here.
+        AgentStatusAttemptReceipt::NotIssued if attempt.gap_base.is_some() => format!(
+            "this gap-bound attempt finished without a retained receipt (retention did not complete, or an earlier build issued none); its closure is the `bound_gap` of that run's verify document (`{WORKFLOW_AGENT_VERIFY_ARTIFACT}`), which status does not retain per attempt"
+        ),
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
         ),
@@ -1056,12 +1107,24 @@ fn repair_start_withheld_warning(
 
 /// The documented start of the repair transaction. It creates every artifact
 /// it needs, so it never depends on a workflow directory already existing.
-fn new_repair_attempt_command(root_display: &str, seam_id: &str, store_flag: &str) -> String {
-    format!(
-        "ripr agent repair --root {}{store_flag} --seam-id {} --phase before",
-        shell_arg(root_display),
-        shell_arg(seam_id)
-    )
+///
+/// `gap_base` is the recorded diff base of a gap-bound attempt (#9103): its
+/// start names `--gap-id`/`--base` instead of `--seam-id`.
+fn new_repair_attempt_command(
+    root_display: &str,
+    seam_id: &str,
+    gap_base: Option<&str>,
+    store_flag: &str,
+) -> String {
+    crate::app::gap_bound_repair::repair_start_command(root_display, store_flag, seam_id, gap_base)
+}
+
+/// The recorded diff base of a gap-bound attempt, `None` for a seam-bound one.
+fn gap_base_of(manifest: &RepairAttemptManifest) -> Option<&str> {
+    manifest
+        .gap_binding
+        .as_ref()
+        .map(|binding| binding.base.as_str())
 }
 
 struct StoreFollowUp<'a> {
@@ -1343,7 +1406,7 @@ fn select_next_command(
                     seams.len(),
                     seams
                         .iter()
-                        .map(|(seam_id, _)| format!("`{}`", new_repair_attempt_command(root_display, seam_id, store.flag)))
+                        .map(|(seam_id, ended)| format!("`{}`", new_repair_attempt_command(root_display, seam_id, ended.first().and_then(|attempt| attempt.gap_base.as_deref()), store.flag)))
                         .collect::<Vec<_>>()
                         .join("; ")
                 ),
@@ -1569,6 +1632,85 @@ fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
     (complete && no_seams && no_repair_start).then_some(withheld)
 }
 
+/// Rust files a complete `ripr pilot` run declined with a parse limit when it
+/// ranked no seam, withheld none and recorded no repair start (#9371). A
+/// rerun declines the same files again, so status must name them instead.
+struct PilotDeclinedOnly {
+    file_count: u64,
+    files: Vec<String>,
+    /// A seam limit also cut the run, so seams past the cut were never
+    /// classified and splitting the files alone leaves the scan incomplete.
+    seam_limit_applied: bool,
+}
+
+fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    let file_count = summary
+        .pointer("/declined_rust_files/file_count")
+        .and_then(Value::as_u64)
+        .filter(|count| *count > 0)?;
+    let files = summary
+        .pointer("/declined_rust_files/files")
+        .and_then(Value::as_array)
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|file| file.pointer("/path").and_then(Value::as_str))
+                .map(|path| crate::terminal_text::terminal_safe(path.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let seam_limit_applied = summary
+        .pointer("/seam_limit")
+        .is_some_and(|limit| !limit.is_null());
+    Some(PilotDeclinedOnly {
+        file_count,
+        files,
+        seam_limit_applied,
+    })
+}
+
+fn pilot_declined_only_message(declined: &PilotDeclinedOnly, root_display: &str) -> String {
+    let named = declined
+        .files
+        .iter()
+        .map(|path| format!("`{path}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = declined
+        .file_count
+        .saturating_sub(declined.files.len() as u64);
+    let files = match (declined.file_count, named.is_empty()) {
+        (1, false) => format!("1 Rust file ({named})"),
+        (count, false) if more > 0 => format!("{count} Rust files ({named} and {more} more)"),
+        (count, false) => format!("{count} Rust files ({named})"),
+        (1, true) => "1 Rust file".to_string(),
+        (count, true) => format!("{count} Rust files"),
+    };
+    // The rerun follows the repair: rerunning unchanged declines them again.
+    let seam_limit = if declined.seam_limit_applied {
+        " A seam limit also cut the seams it analyzed, so raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT before the rerun."
+    } else {
+        ""
+    };
+    format!(
+        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
+        pilot_select_command(root_display)
+    )
+}
+
 /// Whether the pilot run's repo exposure report says a seam limit cut the
 /// classified seams, so seams past the cut were never classified. `None`
 /// when the report is missing or unreadable: status cannot tell.
@@ -1579,7 +1721,27 @@ fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
     Some(run_status == "seam_limit_applied")
 }
 
-fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> String {
+/// Whether the pilot run's repo exposure report says a parse limit declined
+/// Rust files (#9308). Their seams were never analyzed, and raising a seam
+/// limit cannot restore them.
+fn pilot_declined_files(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|report| {
+            report
+                .pointer("/run_status")
+                .and_then(Value::as_str)
+                .map(|status| status == "limited_declined_files")
+        })
+        .unwrap_or(false)
+}
+
+fn pilot_withheld_message(
+    withheld: u64,
+    seam_limit_applied: Option<bool>,
+    declined_files: bool,
+) -> String {
     let seams = if withheld == 1 {
         "1 seam".to_string()
     } else {
@@ -1597,6 +1759,13 @@ fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> St
         // absence the run did not establish; raising the limit is the step.
         return format!(
             "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+        );
+    }
+    if declined_files {
+        // Seams in the declined files were never analyzed, so "no repair
+        // applies" would claim an absence the run did not establish.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. It also declined Rust files with a parse limit (named in `target/ripr/pilot/pilot-summary.json` as `declined_rust_files`), so seams in them were never analyzed: split those files below the Rust parse budget, then rerun pilot. {inspect}"
         );
     }
     format!(
@@ -1708,7 +1877,43 @@ fn routed_code_phrase(languages: &[String]) -> String {
     }
 }
 
-fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) -> String {
+/// The gap-bound `ripr agent repair` start the next routed `ripr check` would
+/// print, or `None` (#10001). Status consults the same admission check uses
+/// ([`default_check_gap_start`], which ends in the shared agent-packet
+/// validator) rather than assuming the route offers no start; only a
+/// TypeScript-family route can be admitted, and anything undecidable keeps
+/// the "offers no start" wording (fail-closed).
+///
+/// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
+fn pilot_routed_gap_start(
+    root: &Path,
+    root_display: &str,
+    routes: &PilotCheckRoutes,
+) -> Option<String> {
+    // No enabled route command means the warning never names `ripr check`
+    // as a route, so no start claim is made and no analysis is run.
+    if routes.commands.is_empty()
+        || !routes
+            .enabled_languages
+            .iter()
+            .any(|language| language == "typescript" || language == "javascript")
+    {
+        return None;
+    }
+    let route = crate::app::gap_bound_repair::default_check_gap_start(root)?;
+    Some(crate::app::gap_bound_repair::gap_bound_start_command(
+        root_display,
+        "",
+        &route.gap_id,
+        &route.base,
+    ))
+}
+
+fn pilot_routed_to_check_message(
+    routes: &PilotCheckRoutes,
+    root_display: &str,
+    gap_start: Option<&str>,
+) -> String {
     let mut message =
         "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
     if !routes.commands.is_empty() {
@@ -1718,10 +1923,17 @@ fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) 
             .map(|command| format!("`{command}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        message.push_str(&format!(
-            ": it routed {} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
-            routed_code_phrase(&routes.enabled_languages)
-        ));
+        let code = routed_code_phrase(&routes.enabled_languages);
+        match gap_start {
+            // `ripr check` admits a gap-bound start for its selected finding,
+            // so the warning must not say it offers none (#10001).
+            Some(start) => message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start `{start}` for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+            )),
+            None => message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
+            )),
+        }
     }
     if !routes.disabled_config_languages.is_empty() {
         let entries = routes
@@ -1794,7 +2006,11 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_routed_to_check_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_routed_to_check_message(&routes, root_display),
+                message: pilot_routed_to_check_message(
+                    &routes,
+                    root_display,
+                    pilot_routed_gap_start(root, root_display, &routes).as_deref(),
+                ),
             });
             // #5205/#5248 review: a packet can route preview files to check
             // AND exclude Rust (Rust disabled while preview files are
@@ -1834,7 +2050,21 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_withheld_static_limitations_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_withheld_message(withheld, pilot_seam_limit_applied(root)),
+                message: pilot_withheld_message(
+                    withheld,
+                    pilot_seam_limit_applied(root),
+                    pilot_declined_files(root),
+                ),
+            });
+            return None;
+        }
+        // #9371: a complete run that ranked and withheld nothing because a
+        // parse limit declined Rust files; a rerun declines them again.
+        if let Some(declined) = pilot_declined_only(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_declined_rust_files_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_declined_only_message(&declined, root_display),
             });
             return None;
         }
@@ -1879,7 +2109,7 @@ fn legacy_next_command(
                 "{}; start a repair attempt for seam `{}`, which writes the workflow artifacts itself",
                 first.reason, seam.seam_id
             ),
-            command: new_repair_attempt_command(root_display, &seam.seam_id, store.flag),
+            command: new_repair_attempt_command(root_display, &seam.seam_id, None, store.flag),
         });
     }
     Some(first.clone())
@@ -1945,12 +2175,22 @@ fn open_seam_restart_command(
                 format!(". {refusal_note}")
             }
         ),
-        command: new_repair_attempt_command(root_display, seam_id, store.flag),
+        command: new_repair_attempt_command(
+            root_display,
+            seam_id,
+            ended
+                .first()
+                .and_then(|attempt| attempt.gap_base.as_deref()),
+            store.flag,
+        ),
     }
 }
 
 fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
     match attempt.disposition {
+        "prepared_at_other_head" if attempt.legacy_gap_binding => {
+            "awaiting an edit, but it was started by an earlier ripr build that did not record the immutable base commit, so its after phase refuses; start a fresh attempt".to_string()
+        }
         "prepared_at_other_head" => match &attempt.diverged_recovery {
             Some(recovery) => format!(
                 "awaiting an edit, but its after phase would refuse: {} {}",
@@ -2435,19 +2675,24 @@ pub(crate) struct SelectedAttemptStatusReading {
 /// status and durable MCP reads. HEAD applicability, retained receipt state
 /// and the exact next/recovery action are composed here; adapters never use
 /// the stored after command as a substitute for this decision.
+/// `command_root` is the rendered `--root` spelling for every next-action,
+/// recovery, and withheld-restart string this reading produces. The CLI
+/// passes the bound host root ([`bound_root`] of the user's argument) so its
+/// paste-and-run display names the selected repository; bounded projections
+/// (MCP, ADR 0022) pass the portable root `.` because they never execute the
+/// display and must not leak the host-local checkout path.
 pub(crate) fn selected_attempt_status_reading(
     root: &Path,
-    root_argument: &Path,
+    command_root: &str,
     store_locator: &str,
     store_flag: &str,
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
-    let command_root = bound_root(&root_path_display(root_argument));
     let workflow_receipt = read_workflow_receipt(root);
     let gate = RepairStartGate::new(root);
     let view = status_repair_attempt(
-        &command_root,
+        command_root,
         store_locator,
         store_flag,
         manifest,
@@ -2465,7 +2710,7 @@ pub(crate) fn selected_attempt_status_reading(
     // admits the seam; otherwise status names the by-hand work instead.
     let restart_withheld = if restart_recommended_for(status_class, &view) {
         gate.check(&manifest.seam_id)
-            .map(|refusal| repair_start_withheld_note(&command_root, &manifest.seam_id, &refusal))
+            .map(|refusal| repair_start_withheld_note(command_root, &manifest.seam_id, &refusal))
     } else {
         None
     };
@@ -2475,7 +2720,7 @@ pub(crate) fn selected_attempt_status_reading(
         // reset-and-rerun-after recovery route.
         view.diverged_recovery.as_ref().map(|recovery| {
             diverged_recovery_command(
-                &command_root,
+                command_root,
                 store_flag,
                 manifest.repair_attempt_id.as_str(),
                 &manifest_label,
@@ -2487,7 +2732,7 @@ pub(crate) fn selected_attempt_status_reading(
             manifest,
             &view,
             status_class,
-            &command_root,
+            command_root,
             &manifest_label,
             store_flag,
         )
@@ -2496,7 +2741,7 @@ pub(crate) fn selected_attempt_status_reading(
         manifest,
         &view,
         status_class,
-        &command_root,
+        command_root,
         &manifest_label,
         store_flag,
         withheld,
@@ -2557,6 +2802,7 @@ pub(crate) fn build_agent_attempt_status(
     // the invocation spelling, so a command pasted from any working directory
     // resumes this attempt. The report's `root` field keeps the user's
     // spelling.
+    let command_root = bound_root(&root_path_display(root_argument));
     let SelectedAttemptStatusReading {
         view,
         status_class,
@@ -2566,7 +2812,7 @@ pub(crate) fn build_agent_attempt_status(
         restart_withheld,
     } = selected_attempt_status_reading(
         root,
-        root_argument,
+        &command_root,
         resolved.locator(),
         &store_flag,
         &manifest,
@@ -2770,7 +3016,7 @@ fn canonical_next_action_for_attempt(
     // The before-phase start is handed to the selector only when it is
     // recommended, so a withheld start cannot reach the canonical decision.
     let restart_route = if restart_recommended {
-        new_repair_attempt_command(root_display, seam, store_flag)
+        new_repair_attempt_command(root_display, seam, gap_base_of(manifest), store_flag)
     } else {
         String::new()
     };
@@ -2957,7 +3203,12 @@ fn restart_attempt_command(
             step: "repair_attempt_before".to_string(),
             artifact: manifest_label.to_string(),
             reason: with_recorded_refusal(reason),
-            command: new_repair_attempt_command(root_display, seam, store_flag),
+            command: new_repair_attempt_command(
+                root_display,
+                seam,
+                gap_base_of(manifest),
+                store_flag,
+            ),
         })
     };
     match status_class {
@@ -2965,7 +3216,15 @@ fn restart_attempt_command(
             "repair attempt `{id}` for seam `{seam}` was prepared but never published as awaiting its edit; start a new attempt while the gap is still open"
         )),
         "stale" => {
-            let reason = if manifest.state == RepairAttemptState::AwaitingEdit {
+            let legacy_gap = manifest
+                .gap_binding
+                .as_ref()
+                .is_some_and(crate::app::repair_attempt::RepairAttemptGapBinding::is_legacy);
+            let reason = if manifest.state == RepairAttemptState::AwaitingEdit && legacy_gap {
+                format!(
+                    "repair attempt `{id}` for seam `{seam}` was started by an earlier ripr build that did not record the immutable base commit, so its after phase refuses; start a new attempt while the gap is still open"
+                )
+            } else if manifest.state == RepairAttemptState::AwaitingEdit {
                 match &view.diverged_recovery {
                     Some(recovery) => format!(
                         "repair attempt `{id}` for seam `{seam}` was prepared at another HEAD; its after phase would refuse it. Restore the prepared head with `{}` or start a new attempt while the gap is still open",
@@ -3454,7 +3713,20 @@ fn modified_unix_ms(time: Option<SystemTime>) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pilot_withheld_message_separates_declined_files_from_a_seam_cut() {
+        // #9308: raising a seam limit cannot restore a declined file's seams.
+        let declined = pilot_withheld_message(2, Some(false), true);
+        assert!(declined.contains("declined_rust_files"), "{declined}");
+        assert!(!declined.contains("RIPR_PILOT_SEAM_BUDGET"), "{declined}");
+        let cut = pilot_withheld_message(2, Some(true), false);
+        assert!(cut.contains("RIPR_PILOT_SEAM_BUDGET"), "{cut}");
+        let plain = pilot_withheld_message(2, Some(false), false);
+        assert!(plain.contains("no repair attempt applies"), "{plain}");
+    }
+
     use super::*;
+    use crate::app::repair_attempt::diverged_head_recovery;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -3922,6 +4194,338 @@ mod tests {
         result
     }
 
+    /// #9103 (RIPR-SPEC-0311): a gap-bound attempt's recovery and restart text
+    /// names `--gap-id`/`--base`, never a `--seam-id`, and the Rust seam gate
+    /// does not withhold it.
+    #[test]
+    fn gap_bound_attempt_status_recovers_with_a_gap_start_not_a_seam_id() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeforeRepairAttemptIdentity, BeginRepairAttemptOptions,
+            RepairAttemptGapBinding, begin_gap_bound_repair_attempt_with_identity,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        const GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+        let root = unique_agent_status_test_dir("gap-bound-status");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let result = (|| {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            write_file(&root.join("README.md"), "# test\n")?;
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+            let before = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            write_file(&before, "{}\n")?;
+            let packet_text = serde_json::json!({
+                "packets": [{
+                    "seam_id": GAP,
+                    "allowed_edit_surface": ["test/pricing.test.ts"],
+                    "forbidden_files": ["src/pricing.ts"]
+                }]
+            })
+            .to_string();
+            write_file(&packet, &packet_text)?;
+            let policy = edit_cage_policy_from_packet(&packet_text, GAP)?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            let identity = BeforeRepairAttemptIdentity::prepare(&root, GAP)?;
+            begin_gap_bound_repair_attempt_with_identity(
+                BeginRepairAttemptOptions {
+                    root: &root,
+                    root_argument: &root,
+                    seam_id: GAP,
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_check_findings",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                },
+                &identity,
+                RepairAttemptGapBinding {
+                    base: "HEAD~1".to_string(),
+                    base_commit: Some("b".repeat(40)),
+                },
+            )?;
+            let attempt_id = only_attempt_id(&root, None)?;
+            run_git(
+                &root,
+                &[
+                    "commit",
+                    "--amend",
+                    "--allow-empty",
+                    "--no-gpg-sign",
+                    "-m",
+                    "rewritten history",
+                ],
+            )?;
+
+            let report = build_agent_attempt_status(&root, &root, None, &attempt_id)?;
+            let next = report
+                .next_action
+                .as_ref()
+                .ok_or_else(|| "a stale gap-bound attempt must name a recovery".to_string())?;
+            if next.step != "repair_attempt_before"
+                || !next
+                    .command
+                    .contains(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1")))
+                || !next.command.ends_with("--phase before")
+                || next.command.contains("--seam-id")
+            {
+                return Err(format!("gap-bound recovery is not a gap start: {next:?}"));
+            }
+            let inventory = render_agent_status_json(&build_agent_status_report(&root, &root))?;
+            // The attempt's own routes (next command, per-attempt command and
+            // the reasons) never name `--seam-id`; the legacy-artifact loop's
+            // missing-artifact placeholders are a separate projection.
+            let document: serde_json::Value =
+                serde_json::from_str(&inventory).map_err(|error| error.to_string())?;
+            let attempt_routes = [
+                document["next_command"].to_string(),
+                document["repair_attempts"].to_string(),
+                document["seam"].to_string(),
+            ]
+            .join("\n");
+            if attempt_routes.contains("--seam-id") {
+                return Err(format!("attempt routes leak --seam-id:\n{attempt_routes}"));
+            }
+            if !inventory.contains(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1"))) {
+                return Err(format!("inventory status names no gap start:\n{inventory}"));
+            }
+            // The seam-inventory gate has no verdict on a gap subject, while
+            // it still refuses a seam it cannot find.
+            let gate = RepairStartGate::preloaded(&root, Vec::new());
+            if gate.check(GAP).is_some() || gate.check("seam:missing").is_none() {
+                return Err(
+                    "the seam gate must pass a gap subject and refuse a missing seam".to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #9103: a gap-bound attempt at its current head and still awaiting the
+    /// edit names the executable gap-bound `--phase after` continuation
+    /// (C2b), never a seam-bound command.
+    #[test]
+    fn current_gap_bound_attempt_status_offers_the_executable_continuation() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeforeRepairAttemptIdentity, BeginRepairAttemptOptions,
+            RepairAttemptGapBinding, begin_gap_bound_repair_attempt_with_identity,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        const GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+        let root = unique_agent_status_test_dir("gap-bound-current-status");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let result = (|| {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            write_file(&root.join("README.md"), "# test\n")?;
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+            let before = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            write_file(&before, "{}\n")?;
+            let packet_text = serde_json::json!({
+                "packets": [{
+                    "seam_id": GAP,
+                    "allowed_edit_surface": ["test/pricing.test.ts"],
+                    "forbidden_files": ["src/pricing.ts"]
+                }]
+            })
+            .to_string();
+            write_file(&packet, &packet_text)?;
+            let policy = edit_cage_policy_from_packet(&packet_text, GAP)?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            let identity = BeforeRepairAttemptIdentity::prepare(&root, GAP)?;
+            begin_gap_bound_repair_attempt_with_identity(
+                BeginRepairAttemptOptions {
+                    root: &root,
+                    root_argument: &root,
+                    seam_id: GAP,
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_check_findings",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                },
+                &identity,
+                RepairAttemptGapBinding {
+                    base: "HEAD~1".to_string(),
+                    base_commit: Some("b".repeat(40)),
+                },
+            )?;
+            let attempt_id = only_attempt_id(&root, None)?;
+            let attempt_report = build_agent_attempt_status(&root, &root, None, &attempt_id)?;
+            let attempt_command = attempt_report
+                .next_action
+                .as_ref()
+                .map(|next| next.command.clone())
+                .unwrap_or_default();
+            // The gap-bound after phase is executable, so the ordinary
+            // continuation is offered; no seam-bound start is.
+            if !attempt_command.contains("--attempt") || attempt_command.contains("--seam-id") {
+                return Err(format!(
+                    "attempt status offers no gap-bound continuation: {attempt_command}"
+                ));
+            }
+            let rendered = render_agent_status_json(&build_agent_status_report(&root, &root))?;
+            if !rendered.contains("\"resumable\"") {
+                return Err(format!("the attempt must be resumable:\n{rendered}"));
+            }
+            if rendered.contains(&format!("--seam-id {GAP}")) {
+                return Err(format!("status names a seam start for a gap:\n{rendered}"));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #9103: a C2a-era gap marker (no recorded base commit) is readable, and
+    /// status names a fresh gap-bound start, never an `--phase after` its
+    /// run would refuse and never a re-resolution of the symbolic base.
+    #[test]
+    fn legacy_gap_bound_attempt_status_names_a_fresh_start_not_an_after_phase() -> Result<(), String>
+    {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeforeRepairAttemptIdentity, BeginRepairAttemptOptions,
+            RepairAttemptGapBinding, begin_gap_bound_repair_attempt_with_identity,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        const GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+        let root = unique_agent_status_test_dir("gap-bound-legacy-status");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let result = (|| {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            write_file(&root.join("README.md"), "# test\n")?;
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+            let before = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            write_file(&before, "{}\n")?;
+            let packet_text = serde_json::json!({
+                "packets": [{
+                    "seam_id": GAP,
+                    "allowed_edit_surface": ["test/pricing.test.ts"],
+                    "forbidden_files": ["src/pricing.ts"]
+                }]
+            })
+            .to_string();
+            write_file(&packet, &packet_text)?;
+            let policy = edit_cage_policy_from_packet(&packet_text, GAP)?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            let identity = BeforeRepairAttemptIdentity::prepare(&root, GAP)?;
+            begin_gap_bound_repair_attempt_with_identity(
+                BeginRepairAttemptOptions {
+                    root: &root,
+                    root_argument: &root,
+                    seam_id: GAP,
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_check_findings",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                },
+                &identity,
+                RepairAttemptGapBinding {
+                    base: "HEAD~1".to_string(),
+                    base_commit: None,
+                },
+            )?;
+            let attempt_id = only_attempt_id(&root, None)?;
+            let attempt_report = build_agent_attempt_status(&root, &root, None, &attempt_id)?;
+            let attempt_command = attempt_report
+                .next_action
+                .as_ref()
+                .map(|next| next.command.clone())
+                .unwrap_or_default();
+            let report = build_agent_status_report(&root, &root);
+            let rendered = render_agent_status_json(&report)?;
+            if attempt_command.contains("--phase after")
+                || attempt_command.contains("--seam-id")
+                || !attempt_command.contains(&format!("--gap-id {GAP} --base"))
+                || !attempt_command.ends_with("--phase before")
+            {
+                return Err(format!(
+                    "legacy attempt status is not a fresh gap start: {attempt_command}\n{rendered}"
+                ));
+            }
+            if rendered.contains("corrupt_or_unavailable") || rendered.contains("\"resumable\"") {
+                return Err(format!(
+                    "legacy attempt must be readable and not resumable:\n{rendered}"
+                ));
+            }
+            if !rendered.contains("did not record the immutable base commit") {
+                return Err(format!("status omits the legacy explanation:\n{rendered}"));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
     /// Normalized JSON is byte-stable: rendering the same report twice, and
     /// the inventory discovery document across repeated reads of the same
     /// store, produces identical bytes (the inventory is ordered by attempt
@@ -4255,6 +4859,58 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn gap_bound_attempt_without_retained_receipt_never_reads_the_shared_receipt()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-gap-receipt-{}", std::process::id()));
+        let mut manifest = ready_to_finish_manifest()?;
+        manifest.gap_binding = Some(crate::app::repair_attempt::RepairAttemptGapBinding {
+            base: "HEAD~1".to_string(),
+            base_commit: Some("a".repeat(40)),
+        });
+        // Unreadable and other-attempt shared receipts would surface as
+        // `Unreadable` / `Superseded` through the legacy path; a gap-bound
+        // attempt must ignore both and stay `NotIssued`.
+        let other_attempt = WorkflowReceiptRead::Parsed(serde_json::json!({
+            "repair_attempt": {"attempt_id": "repair-attempt-ffffffffffffffffffffffff"}
+        }));
+        for (label, shared) in [
+            ("unreadable", WorkflowReceiptRead::Unreadable),
+            ("other_attempt", other_attempt),
+        ] {
+            match attempt_receipt(&root, &manifest, &shared) {
+                AgentStatusAttemptReceipt::NotIssued => {}
+                other => {
+                    return Err(format!(
+                        "{label}: a gap-bound attempt must be NotIssued, got {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_gap_attempt_restart_names_the_missing_base_commit() -> Result<(), String> {
+        let mut manifest = canonical_test_manifest(RepairAttemptState::AwaitingEdit)?;
+        manifest.gap_binding = Some(crate::app::repair_attempt::RepairAttemptGapBinding {
+            base: "HEAD~1".to_string(),
+            base_commit: None,
+        });
+        let view = synthetic_attempt("a", "seam", "prepared_at_other_head", None);
+        let command =
+            restart_attempt_command(&manifest, &view, "stale", "root", "manifest", "--store x")
+                .ok_or("no restart command")?;
+        if !command
+            .reason
+            .contains("did not record the immutable base commit")
+            || command.reason.contains("another HEAD")
+        {
+            return Err(format!("unexpected reason: {}", command.reason));
+        }
+        Ok(())
+    }
+
     fn ready_to_finish_manifest() -> Result<RepairAttemptManifest, String> {
         use crate::app::repair_attempt::{RepairAttemptAfter, RepairAttemptId};
         use crate::edit_cage::{EditCageVerdict, EditCageVerdictStatus};
@@ -4271,6 +4927,7 @@ mod tests {
             repository_head: head.clone(),
             producer_version: "test".to_string(),
             seam_id: "seam-a".to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),
@@ -4745,6 +5402,8 @@ mod tests {
         AgentStatusRepairAttempt {
             attempt_id: id.to_string(),
             seam_id: seam.to_string(),
+            gap_base: None,
+            legacy_gap_binding: false,
             state: "failed",
             head_current: Some(true),
             disposition,
@@ -5693,6 +6352,134 @@ mod tests {
         Ok(())
     }
 
+    /// #9371: a complete pilot run that ranked and withheld nothing because a
+    /// parse limit declined Rust files must name them, not rerun pilot.
+    #[test]
+    fn agent_status_names_declined_files_when_pilot_ranks_and_withholds_nothing()
+    -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-declined-only");
+        let summary = |status: &str, seams: &str, repair: &str, declined: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "withheld_static_limitations_total": 0, "next": {{"repair_command": {repair}}}{declined}}}"#
+            )
+        };
+        let declined = r#", "declined_rust_files": {"file_count": 3, "files": [{"path": "src/deep.rs", "reason": "rust_nesting_budget"}, {"path": "src/b.rs", "reason": "x"}], "files_omitted": 1, "guidance": "g"}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "declined-only pilot must stop, not loop: {:?}",
+            report.next_command
+        );
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "3 Rust files (`src/deep.rs`, `src/b.rs` and 1 more)",
+            "Split the file(s) below the Rust parse budget",
+            "declines them again",
+            "then rerun `ripr pilot --root ",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        assert!(
+            !warning.message.contains("RIPR_PILOT_SEAM_BUDGET"),
+            "{}",
+            warning.message
+        );
+
+        // A seam limit that also cut the run keeps its remedy.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary(
+                "complete",
+                "[]",
+                "null",
+                &declined.replacen(
+                    "\"declined_rust_files\"",
+                    "\"seam_limit\": {\"analyzed\": 1, \"total\": 2, \"source\": \"s\"}, \"declined_rust_files\"",
+                    1,
+                ),
+            ),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
+        for expected in [
+            "Split the file(s) below the Rust parse budget",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        // Controls: each keeps its previous routing.
+        for control in [
+            // Nothing declined, and a zero count.
+            summary("complete", "[]", "null", ""),
+            summary(
+                "complete",
+                "[]",
+                "null",
+                r#", "declined_rust_files": {"file_count": 0, "files": []}"#,
+            ),
+            // Non-complete, ranked, or repairing packets divert elsewhere.
+            summary("timed_out", "[]", "null", declined),
+            summary("complete", r#"[{"seam_id": "s"}]"#, "null", declined),
+            summary("complete", "[]", r#""ripr check --root .""#, declined),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target"),
+                "control must not raise the declined warning: {control}"
+            );
+        }
+
+        // Withheld seams keep the withheld warning, which already names the
+        // declined files.
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "limited_declined_files"}"#,
+        )?;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined).replace(
+                "\"withheld_static_limitations_total\": 0",
+                "\"withheld_static_limitations_total\": 4",
+            ),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.warnings.iter().any(|warning| warning.kind
+                == "pilot_withheld_static_limitations_no_repair_target"
+                && warning
+                    .message
+                    .contains("declined Rust files with a parse limit"))
+                && !report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target"),
+            "{:?}",
+            report.warnings
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     /// #5205/#5248 review: a packet that routes preview files to check AND
     /// excludes Rust keeps both warnings — the route hand-off and the
     /// exclusion's config remedy — instead of dropping the remedy.
@@ -5950,6 +6737,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             producer_version: "test".to_string(),
             seam_id: "seam:demo".to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --phase after".to_string(),
@@ -5968,6 +6756,8 @@ mod tests {
         AgentStatusRepairAttempt {
             attempt_id: "repair-attempt-0123456789abcdef01234567".to_string(),
             seam_id: "seam:demo".to_string(),
+            gap_base: None,
+            legacy_gap_binding: false,
             state: "awaiting_edit",
             head_current: Some(true),
             disposition: "resumable",

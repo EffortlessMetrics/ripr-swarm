@@ -154,21 +154,138 @@ pub(crate) fn table_code_span(text: &str) -> String {
 }
 
 /// Untrusted prose for a Markdown block (a comment section or a paragraph):
-/// neutralises `@mention` and raw HTML outside code spans. See [`neutralize`].
+/// neutralises `@mention` and raw HTML outside real code spans/blocks while
+/// preserving other Markdown formatting. Source offsets avoid AST reformatting.
 pub(crate) fn prose(text: &str) -> String {
-    neutralize(text, false)
+    let mut current = text.to_string();
+    loop {
+        let rendered = prose_once(&current);
+        if rendered == current {
+            return rendered;
+        }
+        // Escaping an HTML block can turn following indented code into prose.
+        // Reparse until code protection is valid in the emitted context too.
+        // Each changed pass consumes an unescaped backtick, HTML opener or
+        // mention prefix; escapes are never reversed, so this terminates.
+        current = rendered;
+    }
+}
+
+fn prose_once(text: &str) -> String {
+    use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+
+    let parser = Parser::new_ext(text, Options::ENABLE_TABLES);
+    let mut protected = Vec::new();
+    // Reference definitions do not emit events. Preserve their destination and
+    // title, but still neutralize the label just like its visible reference.
+    for (_, definition) in parser.reference_definitions().iter() {
+        let source = &text[definition.span.clone()];
+        let mut chars = source.char_indices();
+        while let Some((offset, ch)) = chars.next() {
+            if ch == '\\' {
+                chars.next();
+            } else if ch == ']' && source[offset..].starts_with("]:") {
+                protected.extend(reference_label_code_ranges(
+                    &source[..offset + 1],
+                    definition.span.start,
+                ));
+                protected.push(definition.span.start + offset + 2..definition.span.end);
+                break;
+            }
+        }
+    }
+
+    let mut labels: Vec<(usize, Option<LinkType>)> = Vec::new();
+    // Inline spans cannot cross CommonMark block boundaries or GFM table cells.
+    // The parser's ranges are UTF-8 byte boundaries in this exact source.
+    for (event, range) in parser.into_offset_iter() {
+        match event {
+            Event::Start(tag @ (Tag::Link { .. } | Tag::Image { .. })) => {
+                if let Some((end, _)) = labels.last_mut() {
+                    *end = (*end).max(range.end);
+                }
+                let (prefix_len, protected_type) = match tag {
+                    Tag::Link { link_type, .. }
+                        if matches!(link_type, LinkType::Inline | LinkType::Reference) =>
+                    {
+                        (1, Some(link_type))
+                    }
+                    Tag::Image {
+                        link_type: LinkType::Reference,
+                        ..
+                    } => (2, Some(LinkType::Reference)),
+                    Tag::Image { .. } => (2, None),
+                    _ => (1, None),
+                };
+                labels.push((range.start + prefix_len, protected_type));
+            }
+            Event::End(TagEnd::Link | TagEnd::Image) => {
+                if let Some((end, Some(link_type))) = labels.pop() {
+                    // Child events cover the visible label, including markup.
+                    // Protect inline destination/title syntax or code within a
+                    // reference identifier. Copying the whole link would leave
+                    // visible label HTML/mentions live.
+                    if link_type == LinkType::Inline {
+                        protected.push(end..range.end);
+                    } else {
+                        protected.extend(reference_label_code_ranges(&text[end..range.end], end));
+                    }
+                }
+            }
+            _ => {
+                if let Some((end, _)) = labels.last_mut() {
+                    *end = (*end).max(range.end);
+                }
+                if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
+                    protected.push(range);
+                }
+            }
+        }
+    }
+    protected.sort_unstable_by_key(|range| range.start);
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    for range in protected {
+        if range.end <= copied {
+            continue;
+        }
+        if range.start > copied {
+            out.push_str(&neutralize(&text[copied..range.start], false, false));
+        }
+        out.push_str(&text[range.start.max(copied)..range.end]);
+        copied = range.end;
+    }
+    out.push_str(&neutralize(&text[copied..], false, false));
+    out
+}
+
+// Reference identifiers are not emitted as inline events. Match the visible
+// label's code-sensitive neutralization in both definitions and explicit uses;
+// otherwise a shortcut like [`code`] no longer resolves after escaping. Parse
+// the bracketed spelling so indentation cannot turn a label into a code block.
+fn reference_label_code_ranges(
+    label: &str,
+    offset: usize,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    Parser::new_ext(label, Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter_map(move |(event, range)| {
+            matches!(event, Event::Code(_)).then_some(offset + range.start..offset + range.end)
+        })
 }
 
 /// Untrusted prose on one line (a list item or a heading): line endings
 /// become spaces so the text cannot start a new block, then [`prose`].
 pub(crate) fn inline_prose(text: &str) -> String {
-    neutralize(&one_line(text), false)
+    neutralize(&one_line(text), false, true)
 }
 
 /// [`inline_prose`] that also renders `*`, `_`, `[` and `]` literally outside
 /// code spans, for free text that must not turn into emphasis or a link.
 pub(crate) fn inline_prose_literal(text: &str) -> String {
-    neutralize(&one_line(text), true)
+    neutralize(&one_line(text), true, true)
 }
 
 /// [`inline_prose`] for a GFM table cell: `|` also becomes `\|`.
@@ -184,13 +301,14 @@ fn one_line(text: &str) -> String {
 ///
 /// `@` followed by a username character gains a word joiner (U+2060), so
 /// GitHub renders the text but does not notify the named user or team, and
-/// `<` becomes `&lt;`, so no raw HTML or autolink renders. A code span, as
-/// CommonMark reads it, is copied unchanged: its content is already literal,
-/// and ripr renders its own spans through [`code_span`]. A backslash escape
+/// `<` becomes `&lt;`, so no raw HTML or autolink renders. Only the single-line
+/// callers allow lexical code spans here; [`prose`] copies parsed code ranges
+/// first. Other backticks are escaped so neutralizing an HTML block cannot
+/// create a new span across what used to be a block boundary. A backslash escape
 /// is copied as a pair, so an escaped backtick opens no span; `\@` is not a
 /// pair, since the escaped `@` still renders as a mention. The result is
 /// idempotent, so text read back from a posted body can be rendered again.
-fn neutralize(text: &str, literal_markup: bool) -> String {
+fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
     let chars = text.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(text.len());
     let mut index = 0usize;
@@ -207,11 +325,15 @@ fn neutralize(text: &str, literal_markup: bool) -> String {
                     index += 1;
                 }
             },
-            '`' => {
+            '`' if inline_spans => {
                 let run = backtick_run(&chars, index);
                 let end = closing_backtick_run(&chars, index + run, run).unwrap_or(index + run);
                 out.extend(chars.get(index..end).unwrap_or_default());
                 index = end;
+            }
+            '`' => {
+                out.push_str("\\`");
+                index += 1;
             }
             '<' => {
                 out.push_str("&lt;");
@@ -1284,16 +1406,195 @@ mod tests {
         );
         // An unclosed backtick run is literal text, so what follows it is not
         // protected by it.
-        assert_eq!(prose("a ` @octocat"), "a ` @\u{2060}octocat");
-        assert_eq!(prose("``x` @octocat"), "``x` @\u{2060}octocat");
+        assert_eq!(prose("a ` @octocat"), "a \\` @\u{2060}octocat");
+        assert_eq!(prose("``x` @octocat"), "\\`\\`x\\` @\u{2060}octocat");
         // An escaped backtick opens no span.
-        assert_eq!(prose("\\`@octocat`"), "\\`@\u{2060}octocat`");
+        assert_eq!(prose("\\`@octocat`"), "\\`@\u{2060}octocat\\`");
     }
 
     #[test]
     fn prose_is_idempotent() {
         let once = prose("@octocat <img> `@x` \\@y");
         assert_eq!(prose(&once), once);
+        for source in [
+            "prefix `left\n\n@octocat <img>` tail",
+            "prefix `left\n<div> @octocat ` tail",
+            "prefix `left\n# @octocat <img>` tail",
+            "prefix `left\n@octocat <img>` tail",
+            "lead\n\n```text\n@octocat <img>\n```",
+        ] {
+            let once = prose(source);
+            assert_eq!(prose(&once), once, "{source:?}");
+        }
+    }
+
+    /// RIPR-SPEC-0025: link destinations and titles are syntax, not prose.
+    #[test]
+    fn given_link_destinations_when_prose_is_neutralized_then_values_are_preserved() {
+        for source in [
+            "[link](<https://example.test>)",
+            "[**link**](<https://example.test/@owner>)",
+            "[link](https://example.test/@owner)",
+            "[a\\]](<https://example.test/a`b> \"title <x> @owner\")",
+            "[](<https://example.test>)",
+            "[link][ref]\n\n[ref]: <https://example.test/@owner> \"title <x>\"",
+            "[link][r\\]ef]\n\n[r\\]ef]: <https://example.test>",
+        ] {
+            assert_eq!(prose(source), source, "{source:?}");
+        }
+    }
+
+    /// RIPR-SPEC-0025: preserving destinations must not protect visible labels.
+    #[test]
+    fn given_link_labels_when_prose_is_neutralized_then_only_visible_text_is_escaped() {
+        for (source, expected) in [
+            (
+                "[**@octocat** <img src=x>](<https://example.test/@owner>)",
+                "[**@\u{2060}octocat** &lt;img src=x>](<https://example.test/@owner>)",
+            ),
+            (
+                "[`@octocat <img src=x>`](<https://example.test>)",
+                "[`@octocat <img src=x>`](<https://example.test>)",
+            ),
+            (
+                "[@octocat]\n\n[@octocat]: <https://example.test/@owner>",
+                "[@\u{2060}octocat]\n\n[@\u{2060}octocat]: <https://example.test/@owner>",
+            ),
+            (
+                "<https://example.test/@octocat>",
+                "&lt;https://example.test/@\u{2060}octocat>",
+            ),
+            (
+                "[broken](<@octocat <img src=x>>)",
+                "[broken](&lt;@\u{2060}octocat &lt;img src=x>>)",
+            ),
+            // The outer spelling is not a link when the image text already
+            // contains a link; the trailing HTML must remain ordinary prose.
+            (
+                "[outer ![[inner](<inside>)](image)](<outside>)",
+                "[outer ![[inner](<inside>)](image)](&lt;outside>)",
+            ),
+        ] {
+            let rendered = prose(source);
+            assert_eq!(rendered, expected, "{source:?}");
+            assert_eq!(prose(&rendered), rendered);
+        }
+    }
+
+    /// RIPR-SPEC-0025: hidden reference labels must match visible code labels.
+    #[test]
+    fn given_reference_code_labels_when_neutralized_then_links_still_resolve() {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for label in ["`code`", "`@octocat`", "`<img src=x>`", "``a`b``"] {
+            for usage in [
+                format!("[{label}]"),
+                format!("[{label}][]"),
+                format!("[**shown**][{label}]"),
+            ] {
+                let source =
+                    format!("{usage}\n\n[{label}]: <https://example.test/@owner> \"title <x>\"");
+                let rendered = prose(&source);
+                assert_eq!(rendered, source);
+                assert_eq!(prose(&rendered), rendered);
+                let links = Parser::new_ext(&rendered, Options::ENABLE_TABLES)
+                    .filter_map(|event| match event {
+                        Event::Start(Tag::Link {
+                            dest_url, title, ..
+                        }) => Some((dest_url.to_string(), title.to_string())),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    links,
+                    vec![(
+                        "https://example.test/@owner".to_string(),
+                        "title <x>".to_string()
+                    )]
+                );
+            }
+        }
+    }
+
+    /// RIPR-SPEC-0025: code in reference identifiers must not shelter prose.
+    #[test]
+    fn given_reference_label_prose_when_neutralized_then_matching_and_safety_hold() {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for label in [
+            "**@octocat**",
+            "\\`@octocat\\`",
+            "`code` @octocat <img>",
+            "`unclosed @octocat",
+        ] {
+            for usage in [
+                format!("[{label}]"),
+                format!("[{label}][]"),
+                format!("[**@octocat**][{label}]"),
+            ] {
+                let source = format!("{usage}\n\n[{label}]: <https://example.test>");
+                let rendered = prose(&source);
+                assert_eq!(prose(&rendered), rendered);
+                let mut links = 0;
+                for event in Parser::new_ext(&rendered, Options::ENABLE_TABLES) {
+                    match event {
+                        Event::Start(Tag::Link { dest_url, .. }) => {
+                            assert_eq!(dest_url.as_ref(), "https://example.test");
+                            links += 1;
+                        }
+                        Event::Html(html) | Event::InlineHtml(html) => {
+                            assert!(html.is_empty(), "raw HTML: {rendered}")
+                        }
+                        Event::Text(text) => {
+                            assert!(!text.contains("@octocat"), "live mention: {rendered}")
+                        }
+                        _ => {}
+                    }
+                }
+                assert_eq!(links, 1, "{source:?} -> {rendered:?}");
+            }
+        }
+        for source in [
+            "[@octocat <img>]",
+            "[label]\n\n[label]: <bad <img>> @octocat",
+        ] {
+            let rendered = prose(source);
+            assert_eq!(prose(&rendered), rendered);
+            assert!(!rendered.contains("@octocat"));
+            assert!(
+                !Parser::new_ext(&rendered, Options::ENABLE_TABLES).any(|event| matches!(
+                    event,
+                    Event::Start(Tag::Link { .. }) | Event::Html(_) | Event::InlineHtml(_)
+                ))
+            );
+        }
+    }
+
+    /// RIPR-SPEC-0025: definitions shared by links and images must stay usable.
+    #[test]
+    fn given_reference_images_when_code_labels_are_preserved_then_existing_images_still_resolve() {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for usage in [
+            "![shown][`code`]",
+            "[![shown][`code`]](https://outer.test)",
+            "[![shown][`code`]][`code`]",
+            "![![shown][`code`]][`code`]",
+            "![][`code`]",
+        ] {
+            let source = format!("{usage}\n\n[`code`]: <https://example.test>");
+            let rendered = prose(&source);
+            assert_eq!(rendered, source, "{usage}");
+            assert_eq!(prose(&rendered), rendered);
+            let images = Parser::new_ext(&rendered, Options::ENABLE_TABLES)
+                .filter_map(|event| match event {
+                    Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(!images.is_empty());
+            assert!(images.iter().all(|url| url == "https://example.test"));
+        }
     }
 
     #[test]
@@ -2388,7 +2689,7 @@ fn main() -> ExitCode {
     /// runs a command when pasted untranslated.
     #[test]
     fn powershell_translation_binds_hostile_paths_as_one_argument() -> Result<(), String> {
-        use crate::agent::loop_commands::shell_arg;
+        use crate::agent::loop_commands::{shell_arg, shell_arg_for};
 
         let root = native_proof_root("quotes")?;
         let _cleanup = RemoveOnDrop(root.clone());
@@ -2425,9 +2726,27 @@ fn main() -> ExitCode {
             return Err("the translated injection payload ran a command".to_string());
         }
 
+        // The Windows console form is what Windows users paste unchanged, so
+        // it must bind the payload as one literal argument with no command run.
+        let console = format!("ripr --root {}", shell_arg_for(injection, true));
+        if let Some((count, args)) = pwsh_recorded_argv(&console, &root)?
+            && (count != 2 || args != ["--root", injection])
+        {
+            return Err(format!(
+                "the Windows console form bound {count} arguments {args:?} (line {console:?})"
+            ));
+        }
+        if root.join("injected-marker").exists() {
+            return Err("the Windows console form of the payload ran a command".to_string());
+        }
+
         // Negative control: the untranslated bash form of the same payload does
         // run the command, which proves this instrument can observe the break.
-        let raw = format!("ripr --root {}", shell_arg(injection));
+        // The control pins the bash (single-quote) form on every host: the
+        // Windows console form `shell_arg` prints there double-quotes the
+        // payload, which PowerShell already binds literally (#9272), so it
+        // cannot exercise the break this control exists to observe.
+        let raw = format!("ripr --root {}", shell_arg_for(injection, false));
         let Some(_) = pwsh_recorded_argv(&raw, &root)? else {
             return Ok(());
         };

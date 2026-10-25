@@ -3,24 +3,26 @@
 //! CLI adapter only. Selection, the guarded write, and the run command live
 //! in `crate::app::test_stub`; the stub itself is produced by
 //! `crate::analysis::test_stub`. A refusal or an unknown selector is a
-//! decision (exit 3) with empty stdout, like `agent card`.
+//! decision (exit 3); under `--json` the refusal document is on stdout, like `agent card`.
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    TargetLookup, TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
-    package_manifest_for, resolve_test_stub, run_command, write_test_stub,
+    AlreadyPresentRevalidation, StubNextRepair, StubPlacementDivergence, TargetLookup,
+    TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
+    package_manifest_for, resolve_test_stub, revalidate_already_present_stub, run_command,
+    write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
-use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
+use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
 use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
+const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.3";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
@@ -31,7 +33,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     }
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
-    let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
+    let mut resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
         Ok(resolution) => resolution,
         Err(error) => {
             let (refusal_kind, message) = match error {
@@ -46,13 +48,17 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                 // agent-stub refusal, explicitly including "the selector
                 // names no reported gap" (#7390). The document keeps the
                 // post-resolution refusal's field set, with `null` where
-                // seam resolution would have supplied a value; stdout stays
-                // empty and the prose still reaches stderr via
+                // seam resolution would have supplied a value; the document
+                // goes to stdout and the prose still reaches stderr via
                 // `CommandError` after the envelope.
                 match render_selector_refusal_document(&options.selector, refusal_kind, &message) {
                     // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => write_stderr_refusal_json(rendered),
-                    Err(render_error) => eprintln!("ripr: {render_error}"),
+                    Ok(rendered) => {
+                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
+                    }
+                    // No envelope could be produced, so no machine answer
+                    // exists: the typed render failure is exit 2, not decision 3.
+                    Err(render_error) => return Err(render_error),
                 }
             }
             return Err(CommandError::Decision(format!(
@@ -60,6 +66,26 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
+    // #8990 review X3: `already_present` was read from the placement file
+    // before this moment; a concurrent edit can add or remove the stub in
+    // between. Re-resolve from current bytes before the write gate trusts
+    // the skip: a stub that vanished falls through to the normal guarded
+    // write, and a workspace that no longer resolves the seam refuses with
+    // the rerun message instead of reporting success from stale bytes.
+    if options.write
+        && resolution
+            .outcome
+            .as_ref()
+            .is_ok_and(|stub| stub.already_present)
+    {
+        match revalidate_already_present_stub(&options.root, &config, &options.selector) {
+            Ok(AlreadyPresentRevalidation::Current(fresh))
+            | Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
+                resolution = *fresh;
+            }
+            Err(message) => return Err(CommandError::Failure(message)),
+        }
+    }
     let mut disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
     if let Some(note) = &resolution.at_note {
         disclosure.warnings.insert(0, note.clone());
@@ -80,7 +106,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                     "warnings": disclosure.warnings,
                 });
                 // A JSON document, not report text: keep it parseable (#6309).
-                write_stderr_refusal_json(render(&document)?);
+                write_stdout_refusal_json(render(&document)?).map_err(CommandError::Failure)?;
             }
             return Err(CommandError::Decision(refusal_message(
                 &resolution.seam_id,
@@ -90,7 +116,26 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
-    let written = if options.write {
+    // #8727: a divergent placement and `--write` cannot combine honestly.
+    // Writing the stub would dirty a file outside the repair packet's
+    // admitted edit surface, and the before phase's dirty-premise gate would
+    // refuse the very start command named below. Committing the stub does
+    // not repair the journey either: the packet's edit cage admits only its
+    // own surface, so the written test would still sit where the repair
+    // cannot use it. Refuse before the write, naming both files and the
+    // supported route (EXIT_CODES.md: a refused `--write` stays exit 2).
+    if options.write
+        && let Some(message) = resolution
+            .next_repair
+            .as_ref()
+            .and_then(|next| divergent_write_refusal(&resolution.seam_id, next))
+    {
+        return Err(CommandError::Failure(message));
+    }
+    // #8891: when the placement already holds the identical stub, the second
+    // `--write` reports "already written" instead of suffixing a `_2`
+    // duplicate into the file.
+    let written = if options.write && !stub.already_present {
         Some(write_test_stub(&options.root, &resolution, stub).map_err(CommandError::Failure)?)
     } else {
         None
@@ -124,7 +169,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     });
 
     if options.json {
-        let document = serde_json::json!({
+        let mut document = serde_json::json!({
             "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
             "kind": "rust_test_stub",
             "seam_id": resolution.seam_id,
@@ -141,11 +186,18 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             "fill_ins": stub.fill_ins,
             "derived_inputs": stub.derived_inputs,
             "written": written.is_some(),
+            "already_present": stub.already_present,
             "run_command": run,
             "grip_class": disclosure.grip_class,
             "classification": disclosure.classification,
             "warnings": disclosure.warnings,
         });
+        // #8727: the repair journey this stub feeds. The block is present
+        // only when the classified seam also establishes the repair route;
+        // otherwise the key stays absent rather than inventing a route.
+        if let Some(next_repair) = &resolution.next_repair {
+            document["next_repair"] = next_repair_json(next_repair);
+        }
         println!("{}", render(&document)?);
         return Ok(());
     }
@@ -167,7 +219,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     for warning in &disclosure.warnings {
         println!("{warning}");
     }
-    if written.is_some() {
+    if stub.already_present {
+        println!("Stub already written at {place}.");
+    } else if written.is_some() {
         println!("Wrote test stub `{}` to {place}.", stub.test_name);
     } else {
         println!("Test stub `{}` for {place}:", stub.test_name);
@@ -184,7 +238,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     for fill_in in &stub.fill_ins {
         println!("Fill in: {fill_in}");
     }
-    if written.is_none() {
+    if written.is_none() && !stub.already_present {
         println!("Write it: {}", write_command(&options));
     }
     println!(
@@ -196,6 +250,16 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             &file
         )
     );
+    // #8727: the stub feeds a repair journey; name its start, and when the
+    // stub's placement and the repair packet's admitted surface disagree,
+    // name both files here instead of letting the before phase refuse the
+    // edit later at the dirty-premise gate.
+    if let Some(next_repair) = &resolution.next_repair {
+        println!("Next repair: {}", next_repair.start_command);
+        if let Some(divergence) = &next_repair.placement_divergence {
+            println!("{}", divergence_warning_line(divergence));
+        }
+    }
     Ok(())
 }
 
@@ -218,6 +282,50 @@ fn run_line(
         ),
         None => format!("Run it: no Cargo package owns {file}; add it to one, then run its tests."),
     }
+}
+
+/// The `next_repair` block of the ready `rust_test_stub` document (#8727).
+/// `placement_divergence` is inserted only when the placements disagree:
+/// absence, not a JSON null — consumers branch on field presence, and an
+/// agreeing stub must not read as divergent.
+fn next_repair_json(next_repair: &StubNextRepair) -> serde_json::Value {
+    let mut block = serde_json::json!({
+        "start_command": next_repair.start_command,
+        "allowed_edit_surface": next_repair.allowed_edit_surface,
+    });
+    if let Some(divergence) = &next_repair.placement_divergence {
+        block["placement_divergence"] = serde_json::json!({
+            "stub_file": divergence.stub_file,
+            "packet_file": divergence.packet_file,
+        });
+    }
+    block
+}
+
+/// The plain-language divergence warning: both files named, and the
+/// consequence stated, so the user can place the test where the repair
+/// admits it before writing anything.
+fn divergence_warning_line(divergence: &StubPlacementDivergence) -> String {
+    format!(
+        "Warning: this stub lands in {}, but the repair packet admits only {} as its edit surface. Write the test in {} instead, then run the repair; writing the stub to {} makes the repair's before phase refuse the edit.",
+        divergence.stub_file, divergence.packet_file, divergence.packet_file, divergence.stub_file,
+    )
+}
+
+/// Why a `--write` is refused when the stub's placement diverges from the
+/// packet's admitted edit surface (#8727 review): the write would dirty a
+/// file the repair's before phase refuses, so the command stops before
+/// touching anything and names the supported route. `None` when the
+/// placement agrees (or no repair route was projected), where the write is
+/// safe to apply.
+fn divergent_write_refusal(seam_id: &str, next_repair: &StubNextRepair) -> Option<String> {
+    let divergence = next_repair.placement_divergence.as_ref()?;
+    Some(format!(
+        "agent stub: the stub for seam {seam_id} lands in {stub_file}, but the repair packet admits only {packet_file} as its edit surface; --write would leave {stub_file} dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in {packet_file} instead, then start the repair: {start_command}. No file was written.",
+        stub_file = divergence.stub_file,
+        packet_file = divergence.packet_file,
+        start_command = next_repair.start_command,
+    ))
 }
 
 #[cfg(test)]
@@ -320,8 +428,7 @@ fn stub_grip_disclosure(
     config: &RiprConfig,
 ) -> StubGripDisclosure {
     let warnings = grip_class
-        .and_then(|class| AgentBriefPolicy::from_config(config).omission_reason_for_class(class))
-        .map(|reason| format!("seam {seam_id} {reason}"))
+        .and_then(|class| stub_grip_omission_reason(seam_id, class, config))
         .into_iter()
         .collect();
     let grip_class = grip_class.map(|class| class.as_str());
@@ -330,6 +437,28 @@ fn stub_grip_disclosure(
         grip_class,
         warnings,
     }
+}
+
+/// The stub path's omission wording names the real reason. For
+/// `strongly_gripped` the default `Off` seam severity is the agent-brief
+/// rendering policy, not something the user configured, so the packet/brief
+/// "configured off" wording is false here (#8891): the seam is exposed
+/// because its tests already discriminate it, which is also why a second
+/// `--write` has nothing to add. A class a user severity actually disables
+/// keeps the packet wording.
+fn stub_grip_omission_reason(
+    seam_id: &str,
+    class: SeamGripClass,
+    config: &RiprConfig,
+) -> Option<String> {
+    if class == SeamGripClass::StronglyGripped {
+        return Some(format!(
+            "seam {seam_id} is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
+        ));
+    }
+    AgentBriefPolicy::from_config(config)
+        .omission_reason_for_class(class)
+        .map(|reason| format!("seam {seam_id} {reason}"))
 }
 
 #[cfg(test)]
@@ -370,7 +499,7 @@ mod tests {
         .map_err(|error| format!("envelope render refused: {error:?}"))?;
         let document: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
-        assert_eq!(document["schema_version"], "0.2");
+        assert_eq!(document["schema_version"], "0.3");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["seam_id"], "no-such-seam");
         assert_eq!(document["state"], "refused");
@@ -380,6 +509,110 @@ mod tests {
             "seam_id no-such-seam was not found"
         );
         assert_eq!(document["warnings"], serde_json::json!([]));
+        Ok(())
+    }
+
+    /// The ready document's `next_repair` block (#8727): the repair start
+    /// command, the packet's admitted edit surface, and — when the two
+    /// independent placements disagree — both files named.
+    #[test]
+    fn next_repair_block_carries_the_start_command_and_surface() -> Result<(), String> {
+        let agreement = StubNextRepair {
+            start_command: "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
+                .to_string(),
+            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
+            placement_divergence: None,
+        };
+        let value = next_repair_json(&agreement);
+        assert_eq!(
+            value["start_command"],
+            "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
+        );
+        assert_eq!(value["allowed_edit_surface"], "tests/clamp_tests.rs");
+        assert!(
+            value.get("placement_divergence").is_none(),
+            "agreeing placements must omit the divergence key entirely: {value}"
+        );
+
+        let divergent = StubNextRepair {
+            placement_divergence: Some(StubPlacementDivergence {
+                stub_file: "src/clamp.rs".to_string(),
+                packet_file: "tests/clamp_tests.rs".to_string(),
+            }),
+            ..agreement
+        };
+        let value = next_repair_json(&divergent);
+        assert_eq!(value["placement_divergence"]["stub_file"], "src/clamp.rs");
+        assert_eq!(
+            value["placement_divergence"]["packet_file"],
+            "tests/clamp_tests.rs"
+        );
+        Ok(())
+    }
+
+    /// The divergence warning names both files and states the consequence:
+    /// writing the stub where the stub says refuses the repair's before
+    /// phase, so the user can place the test in the admitted surface first.
+    #[test]
+    fn divergence_warning_names_both_files_and_the_consequence() {
+        let divergence = StubPlacementDivergence {
+            stub_file: "src/clamp.rs".to_string(),
+            packet_file: "tests/clamp_tests.rs".to_string(),
+        };
+        let line = divergence_warning_line(&divergence);
+        assert!(line.contains("src/clamp.rs"), "{line}");
+        assert!(line.contains("tests/clamp_tests.rs"), "{line}");
+        assert!(
+            line.contains("before phase refuse"),
+            "the warning must state the refusal consequence: {line}"
+        );
+    }
+
+    /// #8727 review: `--write` with divergent placements is refused before
+    /// any file changes — the write would dirty a file outside the packet's
+    /// admitted surface and the advertised start command would meet the
+    /// before phase's dirty-premise refusal. The message names both files,
+    /// the consequence, and the supported route; an agreeing placement (or
+    /// no projected route) refuses nothing.
+    #[test]
+    fn divergent_write_refuses_before_writing_with_actionable_guidance() -> Result<(), String> {
+        let agreeing = StubNextRepair {
+            start_command: "ripr agent repair --root . --seam-id abc --phase before".to_string(),
+            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
+            placement_divergence: None,
+        };
+        if divergent_write_refusal("abc", &agreeing).is_some() {
+            return Err("an agreeing placement must not refuse the write".to_string());
+        }
+
+        let divergent = StubNextRepair {
+            placement_divergence: Some(StubPlacementDivergence {
+                stub_file: "src/clamp.rs".to_string(),
+                packet_file: "tests/clamp_tests.rs".to_string(),
+            }),
+            ..agreeing
+        };
+        let message = divergent_write_refusal("abc", &divergent)
+            .ok_or_else(|| "a divergent placement must refuse the write".to_string())?;
+        if !message.contains("src/clamp.rs") {
+            return Err(format!("refusal must name the stub file: {message}"));
+        }
+        if !message.contains("tests/clamp_tests.rs") {
+            return Err(format!("refusal must name the packet surface: {message}"));
+        }
+        if !message.contains("before phase would refuse") {
+            return Err(format!(
+                "refusal must state the dirty-premise consequence: {message}"
+            ));
+        }
+        if !message.contains("No file was written") {
+            return Err(format!("refusal must state nothing was written: {message}"));
+        }
+        if !message.contains("ripr agent repair --root . --seam-id abc --phase before") {
+            return Err(format!(
+                "refusal must name the supported repair start: {message}"
+            ));
+        }
         Ok(())
     }
 
@@ -410,8 +643,13 @@ mod tests {
         Ok(())
     }
 
+    /// #8891: on the stub path a strongly_gripped seam is exposed because its
+    /// tests already discriminate it. The default `Off` severity for the
+    /// class is the agent-brief rendering policy, not user configuration, so
+    /// the disclosure names the real reason instead of reusing the
+    /// packet/brief "configured off" wording.
     #[test]
-    fn strongly_gripped_stub_reuses_the_packet_omission_reason() {
+    fn strongly_gripped_stub_names_the_real_reason() {
         let disclosure = stub_grip_disclosure(
             "clamp-seam",
             Some(SeamGripClass::StronglyGripped),
@@ -422,10 +660,39 @@ mod tests {
         assert_eq!(
             disclosure.warnings,
             vec![
-                "seam clamp-seam is configured off for strongly_gripped seams and is not included in agent results"
+                "seam clamp-seam is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
                     .to_string()
             ]
         );
+        for warning in &disclosure.warnings {
+            assert!(
+                !warning.contains("configured off"),
+                "nothing was configured off: {warning}"
+            );
+        }
+    }
+
+    /// A class a user severity actually disables keeps the packet
+    /// "configured off" wording on the stub path: there the config is the
+    /// real reason.
+    #[test]
+    fn config_disabled_class_stub_keeps_the_configured_off_wording() -> Result<(), String> {
+        let config = crate::config::tests_only_parse(
+            r#"
+[severity.seams]
+weakly_gripped = "off"
+"#,
+        )?;
+        let disclosure =
+            stub_grip_disclosure("clamp-seam", Some(SeamGripClass::WeaklyGripped), &config);
+        assert_eq!(
+            disclosure.warnings,
+            vec![
+                "seam clamp-seam is configured off for weakly_gripped seams and is not included in agent results"
+                    .to_string()
+            ]
+        );
+        Ok(())
     }
 
     #[test]
@@ -482,6 +749,154 @@ mod tests {
             write: false,
             json: false,
         })
+    }
+
+    fn stub_write_at(root: &std::path::Path, at: &str, kind: &str) -> Result<(), CommandError> {
+        let selector = TestStubSelector::parse_at(at)
+            .and_then(|selector| selector.with_kind(kind))
+            .map_err(CommandError::Failure)?;
+        run_agent_stub(AgentStubOptions {
+            root: root.to_path_buf(),
+            root_explicit: true,
+            selector,
+            write: true,
+            json: false,
+        })
+    }
+
+    /// #8891: the second `--write` for the same seam recomputes the identical
+    /// test function. The command must leave the file alone (no `_2`
+    /// duplicate appended) and the resolution must flag the stub as already
+    /// present so the CLI reports "already written".
+    #[test]
+    fn second_write_for_the_same_seam_reports_already_written() -> Result<(), String> {
+        const OPEN_GAP: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let root = scratch_crate("rewrite-clarity", OPEN_GAP)?;
+        stub_write_at(&root, "src/lib.rs:2", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let written =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        if written
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "first write must add exactly one base-named stub:\n{written}"
+            ));
+        }
+
+        // The recomputed stub for the same seam is byte-identical to the one
+        // on disk, so the name collision is ripr's own earlier write, not a
+        // genuinely different test: it must be flagged already present.
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")
+            .and_then(|selector| selector.with_kind("predicate"))
+            .map_err(|error| error.to_string())?;
+        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        let already_present = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("the second lookup must stay ready: {refusal:?}"))?
+            .already_present;
+
+        // The CLI's second `--write` must stay a ready exit 0 and leave the
+        // single base-named stub in place instead of suffixing a `_2`.
+        let second = stub_write_at(&root, "src/lib.rs:2", "predicate");
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        second.map_err(|error| format!("second write must stay ready: {error:?}"))?;
+        assert!(
+            already_present,
+            "the byte-identical recompute must be detected as already present"
+        );
+        if rewritten
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+            || rewritten.contains("_2(")
+        {
+            return Err(format!(
+                "second write must not append a `_2` duplicate:\n{rewritten}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8990 review X3: `already_present` is read before the CLI reports the
+    /// idempotent write. When the placement file changes after resolution so
+    /// the stub is gone, the revalidation hands back a fresh not-present
+    /// stub and the write proceeds; when nothing changed, the write stays a
+    /// no-op.
+    #[test]
+    fn already_present_write_revalidates_the_placement_file() -> Result<(), String> {
+        const OPEN_GAP: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let root = scratch_crate("rewrite-stale", OPEN_GAP)?;
+        stub_write_at(&root, "src/lib.rs:2", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("predicate")?;
+        // Resolve while the stub is on disk: already_present.
+        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        let present = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("the stub on disk must resolve as ready: {refusal:?}"))?;
+        if !present.already_present {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture: the stub on disk must resolve as already present".to_string());
+        }
+        // Unchanged bytes: the skip survives the re-read.
+        match revalidate_already_present_stub(&root, &RiprConfig::default(), &selector) {
+            Ok(AlreadyPresentRevalidation::Current(_)) => {}
+            other => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(format!(
+                    "an unchanged placement file must revalidate as current: {other:?}"
+                ));
+            }
+        }
+        // A concurrent edit removes the stub after resolution: the
+        // revalidation must not report success from the stale read; it
+        // returns a fresh resolution whose stub writes through the guarded
+        // path.
+        std::fs::write(root.join("src/lib.rs"), OPEN_GAP).map_err(|error| error.to_string())?;
+        let outcome = revalidate_already_present_stub(&root, &RiprConfig::default(), &selector);
+        let AlreadyPresentRevalidation::Rewrite(fresh) = outcome.inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&root);
+        })?
+        else {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("a removed stub must not revalidate as current".to_string());
+        };
+        let stub = fresh.outcome.as_ref().map_err(|refusal| {
+            let _ = std::fs::remove_dir_all(&root);
+            format!("the fresh resolution must stay ready: {refusal:?}")
+        })?;
+        if stub.already_present {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("the fresh stub after removal must not flag already_present".to_string());
+        }
+        write_test_stub(&root, &fresh, stub).inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&root);
+        })?;
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        if rewritten
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "the rewritten stub must be back in the file:\n{rewritten}"
+            ));
+        }
+        Ok(())
     }
 
     /// Same fixture as `at_kind_stub_discloses_a_strongly_gripped_inventory_class`

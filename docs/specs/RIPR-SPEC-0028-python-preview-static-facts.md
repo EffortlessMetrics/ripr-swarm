@@ -91,8 +91,11 @@ placements retain a related pointer but cannot contribute an oracle or boundary
 input. Function-level unittest skip wraps the function under either runner;
 unittest class skip flags and expected-failure metadata qualify only TestCase
 tests. Those flags do not suppress ordinary pytest assertions. The relation is
-`test_activation_unestablished`. Conditions are not evaluated: even a visible
-false conditional skip remains uncertain within this bounded static contract.
+`test_activation_unestablished`. Conditions are not evaluated: a visible false
+conditional skip on a name or comparison remains uncertain within this bounded
+static contract. The exception is a condition that is the boolean literal that
+never triggers the mark (`skipif(False)`), which leaves the test active
+(RIPR-SPEC-0238 rule 24).
 Imported decorator aliases use the last explicit binding in the declaration-time
 module/class scope, before test-body imports or later imports can shadow them.
 A canonical-looking name explicitly imported from another module is not a
@@ -191,6 +194,10 @@ status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
 - bare `assert expr` â†’ smoke oracle
+  - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
+    single resolved workspace function owner provably returns `bool` is an
+    exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
+    or non-literal argument stays smoke
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
@@ -241,6 +248,18 @@ directory named `src` (the PyPA src layout, including monorepo
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
 while the repository-relative `src.pricing.discounts` form still matches. Bare
 file stems and arbitrary path suffixes never count as module identity.
+A test that imports a free-function owner's name from a workspace module that
+defines its own function of that name, when no import reaches the owner's module,
+is not related to the owner even if its call text matches the name (#8759). The
+evidence must be affirmative: the import's source module is exactly the module
+path of another workspace source file defining the same free function. A facade
+or package re-export, an unresolved or third-party source, a source the owner's
+path could also be spelled as under an import root the adapter cannot see, an
+ambiguous src-layout name, a test with no import of the name, a star import, and
+a test in the owner's own file keep the name-based relation.
+Only top-level free functions are gated, and only top-level imports are read: a
+same-named wrapper that delegates to the owner, or an import under `try`/`if`,
+is not modeled, so such a test can read as unrelated.
 
 A package whose `__init__.py` re-exports a top-level function or class under
 its own name is also an import path of that owner: `from .time import
@@ -340,7 +359,23 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. A dunder
+  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  exception is a builtin protocol entry applied to a sole argument bound to the
+  owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
+  `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
+  an oracle-eligible relation, and only when an assertion takes the entry as an
+  asserted operand (an unasserted entry elsewhere in the body does not relate).
+  The entry, the `list`/`tuple` wrapper and the receiver must keep their
+  bindings: a builtin shadowed by an import, a module or test-local binding
+  (including tuple and annotated targets), or a receiver rebound by a chained,
+  bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
+  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target, or
+  not the whole bound value, is not credited. A `:` ends a target position only
+  when it closes a compound-statement header whose brackets balance outside
+  string literals and comments (`if ")": ( r), x = ...` rebinds, a dict value
+  `{"k": (r), 1}` does not); a header split across lines is a known limit: a
+  one-line-suite rebind after it is not seen and the receiver stays credited. Extra, keyword, starred or trailing-comma
+  arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
   with the `dynamic_dispatch` limit instead of `no_static_path`: the adapter
@@ -421,7 +456,9 @@ values defined in RIPR-SPEC-0026:
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
   owner only through an `assert_*(...)` helper body the adapter does not
-  inspect)
+  inspect; a same-file helper that is only `assert` statements, called with
+  literal arguments from a plain test, is not this limit: see the helper
+  inlining amendment below)
 - `property_based_test` (e.g., a related test uses Hypothesis `@given(...)`
   generated inputs whose concrete discriminator coverage is not statically
   known)
@@ -589,6 +626,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_owner_protocol_entry` (`direct`) credits a dunder
+  method owner whose strong oracle takes the builtin protocol entry on a
+  receiver bound to its class as an asserted operand
+  (`list(reversed(Range(0))) == []`), directly or under `list`/`tuple` only.
+  `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
+  are not transparent here; any other wrapper may ignore the entry
+  (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
@@ -698,98 +742,126 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```python
-def apply_discount(amount: float, threshold: float) -> float:
-    if amount >= threshold:
-        return amount * 0.9
-    return amount
-```
+   ```python
+   def apply_discount(amount: float, threshold: float) -> float:
+       if amount >= threshold:
+           return amount * 0.9
+       return amount
+   ```
 
-Existing tests:
+   Existing tests:
 
-```python
-def test_discount_applies_above_threshold():
-    assert apply_discount(100, 50) == 90
+   ```python
+   def test_discount_applies_above_threshold():
+       assert apply_discount(100, 50) == 90
 
-def test_no_discount_below_threshold():
-    assert apply_discount(10, 50) == 10
-```
+   def test_no_discount_below_threshold():
+       assert apply_discount(10, 50) == 10
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `apply_discount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
-- missing discriminator: `amount == threshold`
-- finding emits `language = "python"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `apply_discount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
+   - missing discriminator: `amount == threshold`
+   - finding emits `language = "python"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Error path with `pytest.raises`:
+2. Error path with `pytest.raises`:
 
-```python
-def test_rejects_negative_amount():
-    with pytest.raises(ValueError):
-        apply_discount(-1, 50)
-```
+   ```python
+   def test_rejects_negative_amount():
+       with pytest.raises(ValueError):
+           apply_discount(-1, 50)
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `error-path`
-- the `pytest.raises` context manager is recorded as the discriminator
-  surface
+   - oracle: `error-path`
+   - the `pytest.raises` context manager is recorded as the discriminator
+     surface
 
-Decorator indirection limit:
+3. Decorator indirection limit:
 
-```python
-@retry(times=3)
-def fetch_total(client):
-    return client.get_total()
-```
+   ```python
+   @retry(times=3)
+   def fetch_total(client):
+       return client.get_total()
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "decorator_indirection"`; finding
-  stays conservative.
+   - probe emits `static_limit_kind = "decorator_indirection"`; finding
+     stays conservative.
 
-Functools memoization is not decorator indirection:
+4. Functools memoization is not decorator indirection:
 
-```python
-from functools import lru_cache
+   ```python
+   from functools import lru_cache
 
-@lru_cache
-def format_year(year):
-    return "%03d" % (year % 100)
+   @lru_cache
+   def format_year(year):
+       return "%03d" % (year % 100)
 
-@lru_cache(maxsize=None)
-def century_index(year):
-    return year % 1000
-```
+   @lru_cache(maxsize=None)
+   def century_index(year):
+       return year % 1000
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- neither owner emits `decorator_indirection`;
-- a direct exact-value test on `format_year` can credit the owner;
-- a related test that reaches `century_index` without observing the
-  changed return remains a gap.
+   - neither owner emits `decorator_indirection`;
+   - a direct exact-value test on `format_year` can credit the owner;
+   - a related test that reaches `century_index` without observing the
+     changed return remains a gap.
 
-Simple route decorator repair:
+5. Typing markers are not decorator indirection:
 
-```python
-@api.post("/checkout")
-def checkout(coupon_expired):
-    response.status_code = 422
-```
+   ```python
+   from typing import final, override
 
-Expected static evidence:
+   class Child(Base):
+       @override
+       def rate(self, n):
+           return n + 1
+   ```
 
-- route decorator is preserved as owner context rather than treated as
-  arbitrary decorator indirection;
-- probe can emit a field/object repair card with missing discriminator
-  `response.status_code == 422`;
-- finding remains `preview` / advisory and does not execute route
-  registration.
+   Expected static evidence:
+
+   - `@final`, `@override` and `@no_type_check` written as plain names (and
+     `typing.` / `typing_extensions.` qualified or aliased spellings; the
+     `typing_extensions` spelling covers `final` and `override` only) return the
+     function unchanged, so the owner emits no `decorator_indirection`;
+   - a rebound receiver, a competing alias, a local same-named decorator, a
+     marker written as a call (`@final(wrapper)`), a file where the marker name
+     appears anywhere other than a `@name` decorator line or a `typing` /
+     `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+     target, nested or class-scope rebind, `try`/`except` import fallback), a
+     star import from another module, or any decorator in the file that is not
+     a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+     `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+     analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
+     `contextlib.contextmanager` and `property` also stay limited.
+
+6. Simple route decorator repair:
+
+   ```python
+   @api.post("/checkout")
+   def checkout(coupon_expired):
+       response.status_code = 422
+   ```
+
+   Expected static evidence:
+
+   - route decorator is preserved as owner context rather than treated as
+     arbitrary decorator indirection;
+   - probe can emit a field/object repair card with missing discriminator
+     `response.status_code == 422`;
+   - finding remains `preview` / advisory and does not execute route
+     registration.
 
 ## Test Mapping
 
@@ -802,7 +874,9 @@ framework-specific selectors and relate only to the referenced owner.
 Functools memoization transparency (`lru_cache` / `cache` /
 `cached_property`) is covered by
 `crates/ripr/src/analysis/language/python/static_limits.rs` tests and
-`fixtures/python_functools_memoization_not_indirection`. Arbitrary
+`fixtures/python_functools_memoization_not_indirection`. Typing-marker
+transparency (`final` / `override` / `no_type_check`) is covered by the
+`typing_marker_*` tests in the same file. Arbitrary
 decorators such as `@retry` remain limited via
 `fixtures/python_decorator_indirection_limit`.
 
@@ -839,6 +913,15 @@ suggested test file when the repair route carries a bare test name.
 The single-literal expected-value rule (including one triple-quoted string,
 and excluding compounds and adjacent-string concatenation) is covered by
 `crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
+
+The pre-parse nesting budget (`parse_budget.rs`, #4109) counts brackets inside
+an open string literal so a deeply bracketed literal still declines, but a
+closed literal cannot leave a bracket open for the code after it. Unbalanced
+brackets in separate literals such as `"\x1b[31m"` therefore do not accumulate
+into file nesting (#8561): covered by
+`crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate`
+(including real nesting after the table still declining) and the CLI test
+`crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget`.
 
 Package re-export reach is covered end to end, in diff and repo mode, by
 `crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls
@@ -878,6 +961,44 @@ precedence. It corrects three oracle lines in place above: `!=`,
 `isinstance` and `assertNotEqual` were listed as broad, broad-type and
 exact-value oracles, but the code records all three as
 `relational_check` / weak, and no broad-type kind exists.
+
+## Helper Inlining Amendment (2026-10-22, #9636)
+
+A plain test that calls a same-file assertion helper with literal arguments
+(`check_pass(50, True)` over `def check_pass(score, want): assert passes(score) == want`)
+reads as the helper's `assert` statements with each parameter replaced by its
+literal argument, on the call's own line (every line number is unchanged). The
+rewrite is credit or unknown only: the substituted asserts pass through the
+ordinary oracle admission, so a weak or unrecognised assert is no stronger than
+when written inline; no new finding kind or repair rule is added and the
+ordinary classifier applies. It applies only to
+test files, and only when all of these hold; otherwise the call reads as before:
+
+- the helper is a module-level, undecorated, synchronous `def`, spelled
+  `def NAME` exactly once in the file (and never also a `class NAME`), with plain positional parameters (no
+  default, `*args`, keyword-only or `**kwargs`), whose body is only `assert`
+  statements (and an optional leading docstring), one per line; every mention
+  of its name is its definition or a direct call;
+- the file does not use `globals(`, `setattr(`, `exec(`, `eval(`, a star import
+  or `__getattr__`;
+- the call is a top-level expression statement, alone on its line, of a
+  module-level `test*` function with no parameters and no decorators, whose
+  body holds only expression and `assert` statements and no walrus, with
+  exactly one argument per parameter, each a string, number, boolean or `None`
+  literal (a signed number is parenthesised);
+- a parameter is used in the asserts only as a plain value: not as an
+  attribute name, keyword, inside a string, or as the object of a member access
+  or call when the argument is a number, or directly followed by a quote
+  (a string prefix); the asserts hold no `lambda`, comprehension, walrus,
+  `await`, `yield`, backslash, or any `[` or `{` (every one is refused). A
+  rewrite that does not parse is discarded and the original source is read.
+
+A helper in another file (#9419), a call under `if`/loop/`with`, a computed
+argument or a helper with control flow stays `no_static_path`.
+
+This differs from `helper_assertions` (#9419, #9711): it is a same-file,
+literal-argument, multi-assert source rewrite that runs first, so
+`helper_assertions` then sees no call to resolve.
 
 ## Metrics
 

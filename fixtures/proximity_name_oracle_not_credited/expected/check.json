@@ -35,17 +35,17 @@
         "expression": "return Err(ParseError::MalformedSource)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse: rejects_at_sign"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(ParseError::MalformedSource) (line 9)", "related test tests/parse.rs:4 rejects_at_sign uses weak broad error oracle: assert!(try_parse(\"@bad\").is_err());", "related test tests/owner_named.rs:4 try_parse_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "related test tests/variants.rs:4 malformedsource_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "source function argument value raw = \"@bad\" at line 5", "source enum variant value ParseError::MalformedSource at line 6", "source enum variant value ParseError::MalformedSource at line 6", "missing discriminator ParseError::MalformedSource: No exact error variant assertion for ParseError::MalformedSource"],
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse: rejects_at_sign", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(ParseError::MalformedSource) (line 9)", "related test tests/parse.rs:4 rejects_at_sign uses weak broad error oracle: assert!(try_parse(\"@bad\").is_err());", "related test tests/owner_named.rs:4 try_parse_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "related test tests/variants.rs:4 malformedsource_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "source function argument value raw = \"@bad\" at line 5", "source enum variant value ParseError::MalformedSource at line 6", "missing discriminator ParseError::MalformedSource: No exact error variant assertion for ParseError::MalformedSource"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::MalformedSource)","line":9}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse: rejects_at_sign"],
       "missing": ["Missing discriminator value: ParseError::MalformedSource", "No exact error variant discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(try_parse(\"@bad\").is_err());",
@@ -57,11 +57,6 @@
             "line": 5,
             "value": "raw = \"@bad\"",
             "context": "function_argument"
-          },
-          {
-            "line": 6,
-            "value": "ParseError::MalformedSource",
-            "context": "enum_variant"
           },
           {
             "line": 6,
@@ -82,11 +77,6 @@
           "line": 5,
           "value": "raw = \"@bad\"",
           "context": "function_argument"
-        },
-        {
-          "line": 6,
-          "value": "ParseError::MalformedSource",
-          "context": "enum_variant"
         },
         {
           "line": 6,
@@ -125,7 +115,7 @@
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "malformedsource_variant_is_distinct",
@@ -137,7 +127,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],
@@ -174,17 +164,17 @@
         "expression": "return Err(ParseError::MalformedSource)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse: rejects_at_sign"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(ParseError::MalformedSource) (line 9)", "related test tests/parse.rs:4 rejects_at_sign uses weak broad error oracle: assert!(try_parse(\"@bad\").is_err());", "related test tests/owner_named.rs:4 try_parse_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "related test tests/variants.rs:4 malformedsource_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "source function argument value raw = \"@bad\" at line 5", "source enum variant value ParseError::MalformedSource at line 6", "source enum variant value ParseError::MalformedSource at line 6", "missing discriminator ParseError::MalformedSource: No exact error variant assertion for ParseError::MalformedSource"],
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse: rejects_at_sign", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(ParseError::MalformedSource) (line 9)", "related test tests/parse.rs:4 rejects_at_sign uses weak broad error oracle: assert!(try_parse(\"@bad\").is_err());", "related test tests/owner_named.rs:4 try_parse_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "related test tests/variants.rs:4 malformedsource_variant_is_distinct uses strong exact value oracle: assert_eq!(variant, ParseError::MalformedSource);", "source function argument value raw = \"@bad\" at line 5", "source enum variant value ParseError::MalformedSource at line 6", "missing discriminator ParseError::MalformedSource: No exact error variant assertion for ParseError::MalformedSource"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::MalformedSource)","line":9}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse: rejects_at_sign"],
       "missing": ["Missing discriminator value: ParseError::MalformedSource", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(try_parse(\"@bad\").is_err());",
@@ -196,11 +186,6 @@
             "line": 5,
             "value": "raw = \"@bad\"",
             "context": "function_argument"
-          },
-          {
-            "line": 6,
-            "value": "ParseError::MalformedSource",
-            "context": "enum_variant"
           },
           {
             "line": 6,
@@ -221,11 +206,6 @@
           "line": 5,
           "value": "raw = \"@bad\"",
           "context": "function_argument"
-        },
-        {
-          "line": 6,
-          "value": "ParseError::MalformedSource",
-          "context": "enum_variant"
         },
         {
           "line": 6,
@@ -264,7 +244,7 @@
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "malformedsource_variant_is_distinct",
@@ -276,7 +256,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],

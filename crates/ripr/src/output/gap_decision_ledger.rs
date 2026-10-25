@@ -72,7 +72,7 @@ pub(crate) struct GapDecisionLedgerReport {
     /// Why the writer could not derive a stamp (for example the input carried
     /// none). Editor consumers then report `unverifiable_subject`.
     source_subject_unavailable: Option<&'static str>,
-    records: Vec<GapRecord>,
+    pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
 }
@@ -454,7 +454,7 @@ pub(crate) fn build_gap_decision_ledger_report(
             // #5203: propagate the producer's run-state disclosure (for
             // example `limited_findings_bound`) so a ledger built from a
             // bounded check document stays visibly bounded. Without this the
-            // gate would evaluate the rendered prefix as a complete
+            // gate would evaluate the rendered subset as a complete
             // denominator. Any source kind may carry the entry; only
             // presence propagates.
             run_limitations = source_value
@@ -507,6 +507,24 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
 
     let summary = summarize_records(&records);
+    // #9500 (a): an unenveloped repo-exposure document carries no producer
+    // identity, canonicalization or currentness, and this route does not
+    // run the artifact envelope validation `agent verify` applies. Reading
+    // it silently as a clean advisory ledger overstated what was checked.
+    if parsed_cleanly
+        && input.source_kind == GapDecisionLedgerSourceKind::RepoExposure
+        && !source_value_snapshot
+            .as_ref()
+            .is_some_and(|value| value.get("artifact").is_some_and(Value::is_object))
+    {
+        warnings.push(
+            "repo exposure input has no artifact envelope (an unversioned or legacy document): \
+             its producer identity and currentness are not established and were not validated. \
+             Regenerate it with `ripr check --format repo-exposure-json` before relying on \
+             this ledger"
+                .to_string(),
+        );
+    }
     // #5264: name the route's language coverage when a valid check output
     // carried findings but none projected. Without this, a machine consumer
     // keying on `status` reads a healthy Rust run exactly like corrupted
@@ -762,6 +780,12 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
             md_inline(&complete),
             md_inline(kind)
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n\n",
+            );
+        }
     }
     // #5203: a ledger derived from a bounded run says so in the human
     // surface too, naming each propagated run state.
@@ -2243,7 +2267,18 @@ fn gap_record_from_python_no_repair_card_finding(
         return None;
     }
     let static_limit_kind = PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND;
-    let reason = if first_missing_discriminator_value(finding).is_none() {
+    // #5531: the finding JSON serializes the typed scope only for repo
+    // (`"analysis_scope": "repo"`); that, not placement, is why no card exists.
+    let repo_reason = (string_at(finding, &["analysis_scope"]) == Some("repo"))
+        .then(|| {
+            crate::domain::language_capability::repo_mode_no_repair_routing_reason(
+                crate::domain::LanguageId::Python,
+            )
+        })
+        .flatten();
+    let reason = if let Some(repo_reason) = repo_reason.as_deref() {
+        repo_reason
+    } else if first_missing_discriminator_value(finding).is_none() {
         "static evidence names no concrete missing discriminator"
     } else {
         "its test placement or related-test evidence is incomplete"
@@ -3642,6 +3677,30 @@ mod tests {
     }
 
     #[test]
+    fn records_source_renders_document_complete_line_only_when_bounded() {
+        // #9010: the bounded check document says so beside the verdict; the
+        // unbounded control carries no such line.
+        let render = |outcome: serde_json::Value| {
+            render_gap_decision_ledger_markdown(&report_from_json(serde_json::json!({
+                "analysis_outcome": outcome,
+                "records": []
+            })))
+        };
+        let bounded = render(serde_json::json!({
+            "analysis_complete": true,
+            "document_complete": false,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control = render(serde_json::json!({
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(!control.contains("Document complete"), "{control}");
+    }
+
+    #[test]
     fn records_source_preserves_incomplete_outcome_in_json_and_markdown() -> Result<(), String> {
         let report = report_from_json(serde_json::json!({
             "analysis_outcome": {
@@ -4828,7 +4887,28 @@ mod tests {
         // `python_wrong_receiver_assertion` each withhold owner credit from an
         // assertion on a different object and add one orthogonal card; the
         // two controls stay exposed and carry no card.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 16, 1) {
+        // #9002: `python_fallthrough_return_early_exit` downgrades a changed
+        // fallthrough return to `weakly_exposed` because every strong call
+        // takes the preceding early exit (RIPR-SPEC-0260); the card names the
+        // missing `not (total > 1000)` discriminator and stays direct-aligned
+        // and packet-eligible.
+        // #8759: a test importing the name from another defining module is no
+        // longer related, so `python_adversarial_free_function_module_collision`
+        // and the `legacy.py` finding of `python_src_layout_package_import`
+        // read `no_static_path` and drop their two orthogonal cards.
+        // #9424: the `python_pytest_oracle_shapes` caplog finding now abstains
+        // (`static_unknown`), so it no longer carries a no-strong-oracle card.
+        // #9429: `python_unreached_match_arm` and `python_unreached_get_default`
+        // downgrade a changed arm or `.get` default no observed input reaches
+        // to `weakly_exposed` (RIPR-SPEC-0260); each card names the missing
+        // discriminator and stays direct-aligned. Their `_control` twins reach
+        // the edit, stay exposed and carry no card.
+        // #9184: `python_else_arm_no_exposed_credit` downgrades a changed else-arm
+        // return to `weakly_exposed` (RIPR-SPEC-0260); the card is direct-aligned.
+        // #9185: `python_message_pin_no_exposed_credit` downgrades a message-only
+        // `raise` edit under a pattern that fits both messages to `weakly_exposed`
+        // (RIPR-SPEC-0238); the card is direct-aligned.
+        if (direct, no_strong, orthogonal, family_selection) != (10, 26, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -5378,6 +5458,44 @@ mod tests {
             )
         );
         assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
+    // #5531: a repo-scoped finding (typed `analysis_scope: "repo"` in the check
+    // JSON) is held by the missing repo-mode repair_routing cell, so the record
+    // names the scope instead of placement. The same finding without the typed
+    // scope (diff mode) keeps the placement reason.
+    #[test]
+    fn check_output_python_no_repair_card_repo_scope_names_scope_not_placement()
+    -> Result<(), String> {
+        for with_discriminator in [false, true] {
+            let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+                .map_err(|error| format!("parse fixture check output: {error}"))?;
+            let findings = payload["findings"]
+                .as_array_mut()
+                .ok_or_else(|| "findings missing".to_string())?;
+            for finding in findings
+                .iter_mut()
+                .filter(|finding| finding["classification"] == "weakly_exposed")
+            {
+                assert!(finding.get("analysis_scope").is_none(), "diff control");
+                if with_discriminator {
+                    finding["missing_discriminators"] =
+                        serde_json::json!([{"value": "amount == discount_threshold"}]);
+                }
+                finding["analysis_scope"] = Value::from("repo");
+            }
+            let report = check_output_ledger(payload.to_string());
+            let records = python_no_repair_card_records(&report);
+            assert_eq!(records.len(), 1, "{:?}", report.records);
+            assert_eq!(
+                records[0].static_limit_detail.as_deref(),
+                Some(
+                    "this Python preview finding has no repair card (repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+                )
+            );
+            assert!(records[0].repair_route.is_none());
+        }
         Ok(())
     }
 
@@ -6702,6 +6820,41 @@ mod tests {
         assert_eq!(report.summary.records_total, 1);
         assert_eq!(report.records[0].kind, "MissingErrorDiscriminator");
         Ok(())
+    }
+
+    #[test]
+    fn unenveloped_repo_exposure_input_warns_and_enveloped_does_not() {
+        let build = |payload: serde_json::Value| {
+            build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+                records_path: "exposure.json".to_string(),
+                records_json: Ok(payload.to_string()),
+            })
+        };
+        let seam = make_repo_exposure_seam("actionable", "add_focused_test", "error_variant");
+        let bare = build(serde_json::json!({ "seams": [seam.clone()] }));
+        assert_eq!(bare.summary.records_total, 1);
+        assert!(
+            bare.warnings
+                .iter()
+                .any(|w| w.contains("no artifact envelope")),
+            "warnings: {:?}",
+            bare.warnings
+        );
+        let enveloped = build(serde_json::json!({
+            "artifact": { "kind": "repo_exposure" },
+            "seams": [seam]
+        }));
+        assert!(
+            !enveloped
+                .warnings
+                .iter()
+                .any(|w| w.contains("no artifact envelope")),
+            "warnings: {:?}",
+            enveloped.warnings
+        );
     }
 
     #[test]

@@ -1333,3 +1333,358 @@ fn resource_id_document_resolves_raw_decoded_and_ambiguous_spellings() -> Result
     }
     Ok(())
 }
+
+fn argument_map(value: Value) -> Option<serde_json::Map<String, Value>> {
+    value.as_object().cloned()
+}
+
+#[test]
+fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
+    let none: Option<serde_json::Map<String, Value>> = None;
+    assert_eq!(optional_nonnegative_argument(&none, "offset"), Ok(None));
+    assert_eq!(optional_positive_argument(&none, "limit"), Ok(None));
+    let empty = argument_map(serde_json::json!({}));
+    assert_eq!(optional_nonnegative_argument(&empty, "offset"), Ok(None));
+
+    // Zero is a valid offset but never a valid limit.
+    let zero = argument_map(serde_json::json!({"offset": 0, "limit": 0}));
+    assert_eq!(optional_nonnegative_argument(&zero, "offset"), Ok(Some(0)));
+    let refused = optional_positive_argument(&zero, "limit")
+        .err()
+        .ok_or("limit 0 must be refused")?;
+    assert_eq!(refused.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(refused.message, "limit must be at least 1");
+    let one = argument_map(serde_json::json!({"limit": 1}));
+    assert_eq!(optional_positive_argument(&one, "limit"), Ok(Some(1)));
+
+    // Negatives, floats, strings, booleans and null never coerce.
+    for bad in [
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+        serde_json::json!("2"),
+        serde_json::json!(true),
+        Value::Null,
+    ] {
+        let arguments = argument_map(serde_json::json!({"offset": bad}));
+        let error = optional_nonnegative_argument(&arguments, "offset")
+            .err()
+            .ok_or_else(|| format!("offset {bad} must be refused"))?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(
+            error.message.starts_with(&format!(
+                "offset must be a whole JSON integer from 0 to {}",
+                usize::MAX
+            )) || error.message == "offset must be at least 0; -1 is negative",
+            "{}",
+            error.message
+        );
+    }
+    // The cap and the u64 bound are named for what they are (#9895).
+    let huge = argument_map(serde_json::json!({"limit": 1e30}));
+    let error = optional_positive_argument(&huge, "limit")
+        .err()
+        .ok_or("limit 1e30 must be refused")?;
+    assert!(
+        error.message.contains(&format!(
+            "larger than the largest accepted integer {}",
+            usize::MAX
+        )),
+        "{}",
+        error.message
+    );
+    let capped = optional_capped_page_limit(&huge, "limit", 256)
+        .err()
+        .ok_or("capped limit 1e30 must be refused")?;
+    assert!(
+        capped
+            .message
+            .contains("larger than the largest accepted integer 256"),
+        "{}",
+        capped.message
+    );
+    Ok(())
+}
+
+/// #9895 review: the declared maximum is capped at the platform's `usize`
+/// width, and `data.maximum`, the message and the recovery all name that one
+/// effective bound. Driven with a 32-bit `platform_max` so a 64-bit host
+/// proves the 32-bit behavior.
+#[test]
+fn integer_argument_effective_bound_is_the_platform_cap_everywhere() -> Result<(), String> {
+    const PLATFORM_MAX_32: u64 = u32::MAX as u64; // widening, never lossy
+    assert_eq!(
+        effective_integer_maximum(u64::MAX, PLATFORM_MAX_32),
+        PLATFORM_MAX_32
+    );
+    assert_eq!(effective_integer_maximum(256, PLATFORM_MAX_32), 256);
+    assert_eq!(effective_integer_maximum(u64::MAX, u64::MAX), u64::MAX);
+
+    let at_bound = argument_map(serde_json::json!({"limit": PLATFORM_MAX_32}));
+    assert_eq!(
+        optional_integer_argument_for_platform(&at_bound, "limit", 1, u64::MAX, PLATFORM_MAX_32),
+        Ok(Some(u32::MAX as usize))
+    );
+    for over in [
+        serde_json::json!(PLATFORM_MAX_32 + 1),
+        serde_json::json!(u64::MAX),
+        serde_json::json!(1e30),
+    ] {
+        let arguments = argument_map(serde_json::json!({"limit": over}));
+        let error = optional_integer_argument_for_platform(
+            &arguments,
+            "limit",
+            1,
+            u64::MAX,
+            PLATFORM_MAX_32,
+        )
+        .err()
+        .ok_or_else(|| format!("limit {over} must be refused"))?;
+        let data = error.data.clone().ok_or("refusal lost structured data")?;
+        let bound = PLATFORM_MAX_32.to_string();
+        assert_eq!(data["maximum"], serde_json::json!(PLATFORM_MAX_32));
+        assert!(error.message.contains(&bound), "{}", error.message);
+        assert!(
+            !error.message.contains("18446744073709551615"),
+            "{}",
+            error.message
+        );
+        let recovery = data["recovery"].as_str().ok_or("recovery missing")?;
+        assert!(
+            recovery.contains(&format!("from 1 to {bound}")),
+            "{recovery}"
+        );
+        assert_eq!(
+            data["expected"],
+            serde_json::json!(format!("integer at most {bound}"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_arguments_are_refused_by_name_and_allowed_ones_pass() -> Result<(), String> {
+    let allowed = ["inventory_id", "offset", "limit"];
+    assert_eq!(reject_unknown_arguments(&None, &allowed), Ok(()));
+    let known = argument_map(serde_json::json!({"offset": 1, "limit": 2}));
+    assert_eq!(reject_unknown_arguments(&known, &allowed), Ok(()));
+    let unknown = argument_map(serde_json::json!({"offset": 1, "verbose": true}));
+    let error = reject_unknown_arguments(&unknown, &allowed)
+        .err()
+        .ok_or("unknown argument must be refused")?;
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert!(error.message.contains("\"verbose\""), "{}", error.message);
+    // #9853: the refusal carries the offending name and the allowed list as
+    // structured data, not only as message text.
+    let data = error
+        .data
+        .clone()
+        .ok_or_else(|| format!("unknown-argument refusal lost structured data: {error:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("verbose"));
+    assert_eq!(data["allowed"], serde_json::json!(allowed));
+    Ok(())
+}
+
+#[tokio::test]
+async fn argument_validation_errors_carry_structured_recovery_data() -> Result<(), String> {
+    // #9853: the dispatch-edge -32602 sites carry machine-readable recovery
+    // data (`argument`/`expected`, `argument`/`allowed`) so a client can
+    // branch on the payload instead of parsing message prose.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+
+    // A required argument is missing: `argument` names it, `expected` names
+    // the shape that would pass.
+    let missing = server
+        .get_gap_tool(
+            argument_map(serde_json::json!({})),
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .err()
+        .ok_or("missing canonical_id must be refused")?;
+    assert_eq!(missing.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    let data = missing
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("missing-argument refusal lost structured data: {missing:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("canonical_id"));
+    assert_eq!(data["expected"], serde_json::json!("non-empty string"));
+
+    // An argument has the wrong JSON type: the typed validator echoes the
+    // same `argument`/`expected` shape.
+    let wrong_type = server
+        .list_repair_attempts_tool(
+            argument_map(serde_json::json!({"offset": "1"})),
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .err()
+        .ok_or("a string offset must be refused")?;
+    assert_eq!(wrong_type.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    let data = wrong_type
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("wrong-type refusal lost structured data: {wrong_type:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("offset"));
+    assert_eq!(data["expected"], serde_json::json!("non-negative integer"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_repair_attempts_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    for arguments in [
+        serde_json::json!({"offset": -1}),
+        serde_json::json!({"offset": "1"}),
+        serde_json::json!({"limit": 0}),
+        serde_json::json!({"limit": 1.5}),
+        serde_json::json!({"inventory_id": 7}),
+        serde_json::json!({"inventory_id": null}),
+        serde_json::json!({"cursor": "x"}),
+    ] {
+        match server
+            .list_repair_attempts_tool(
+                argument_map(arguments.clone()),
+                super::super::MAX_RESPONSE_BYTES,
+            )
+            .await
+        {
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+            other => {
+                return Err(format!(
+                    "list_repair_attempts must refuse {arguments} as invalid params: {other:?}"
+                ));
+            }
+        }
+    }
+    // Valid arguments with an unavailable root are a typed failure, not a protocol error.
+    let response = server
+        .list_repair_attempts_tool(
+            argument_map(serde_json::json!({"offset": 0, "limit": 1})),
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .map_err(|error| format!("unavailable root must be a typed result: {error:?}"))?;
+    let result = match response {
+        rmcp::model::CallToolResponse::Complete(result) => result,
+        other => return Err(format!("expected a complete typed failure, got {other:?}")),
+    };
+    let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+    assert_eq!(value["isError"], serde_json::json!(true));
+    assert_eq!(
+        value["structuredContent"]["failure"]["code"],
+        serde_json::json!("workspace_unavailable")
+    );
+    Ok(())
+}
+
+#[test]
+fn resource_failures_carry_the_typed_code_as_data_and_the_current_snapshot() -> Result<(), String> {
+    let failure = workspace::AttemptFailure::new("item_not_found", "no such gap", "refresh");
+    let error = resource_failure("gap", &failure, Some("snapshot:abc"));
+    assert_eq!(error.code, rmcp::model::ErrorCode::RESOURCE_NOT_FOUND);
+    assert_eq!(error.message, "unavailable gap resource: item_not_found");
+    let data = error.data.ok_or("typed failure data")?;
+    assert_eq!(data["code"], serde_json::json!("item_not_found"));
+    assert_eq!(data["recovery"], serde_json::json!("refresh"));
+    assert_eq!(
+        data["current_snapshot_id"],
+        serde_json::json!("snapshot:abc")
+    );
+    assert_eq!(data["failure"]["detail"], serde_json::json!("no such gap"));
+
+    // Without a current snapshot the key is absent rather than null.
+    let bare = resource_failure("gap", &failure, None)
+        .data
+        .ok_or("typed failure data")?;
+    assert!(bare.get("current_snapshot_id").is_none(), "{bare}");
+    Ok(())
+}
+
+/// #9854: every resource-read failure kind answers its own protocol-honest
+/// JSON-RPC code instead of the blanket ResourceNotFound. Identity misses
+/// keep `-32002`; session-state and bound kinds answer InternalError
+/// (`-32603`). The human sentence and `data.code` stay stable for existing
+/// clients on both paths, and the snapshot route keeps disclosing
+/// `current_snapshot_id`.
+#[test]
+fn resource_failure_maps_each_kind_to_a_protocol_honest_code() -> Result<(), String> {
+    let not_found = ErrorCode::RESOURCE_NOT_FOUND;
+    let internal = ErrorCode::INTERNAL_ERROR;
+    for (code, expected) in [
+        ("no_snapshot", internal),
+        ("stale_snapshot", internal),
+        ("analysis_in_flight", internal),
+        ("workspace_unavailable", internal),
+        (workspace::CODE_RESULT_TOO_LARGE, internal),
+        ("attempt_invalid", internal),
+        ("superseded", internal),
+        ("seam_not_found", internal),
+        (workspace::CODE_ITEM_NOT_FOUND, not_found),
+        (repair::CODE_ATTEMPT_NOT_FOUND, not_found),
+    ] {
+        let failure = workspace::AttemptFailure::new(code, "typed detail", "typed recovery");
+        let error = resource_failure("snapshot", &failure, Some("snapshot:current"));
+        if error.code != expected {
+            return Err(format!(
+                "resource failure kind {code} must answer {expected:?}, got {:?}",
+                error.code
+            ));
+        }
+        if error.message != format!("unavailable snapshot resource: {code}") {
+            return Err(format!("human sentence drifted for {code}: {error:?}"));
+        }
+        let data = error
+            .data
+            .ok_or_else(|| format!("{code} lost typed data"))?;
+        if data["code"] != serde_json::json!(code)
+            || data["recovery"] != serde_json::json!("typed recovery")
+            || data["failure"]["detail"] != serde_json::json!("typed detail")
+            || data["current_snapshot_id"] != serde_json::json!("snapshot:current")
+        {
+            return Err(format!("typed data payload drifted for {code}: {data}"));
+        }
+    }
+    // The snapshot route's not-found disclosure stays on the identity path:
+    // a stale-snapshot miss still names the current snapshot in data.
+    let stale = workspace::AttemptFailure::new("stale_snapshot", "stale", "refresh");
+    let error = resource_failure("snapshot", &stale, Some("snapshot:now"));
+    if error.code != internal {
+        return Err(format!(
+            "stale_snapshot must not read as a resource miss: {error:?}"
+        ));
+    }
+    let data = error.data.ok_or("stale_snapshot lost typed data")?;
+    if data["current_snapshot_id"] != serde_json::json!("snapshot:now") {
+        return Err(format!("stale_snapshot lost current identity: {data}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn resource_budget_failure_reports_bytes_budget_and_recovery() -> Result<(), String> {
+    let error = resource_budget_failure(9_001, 4_000, "narrow the read");
+    assert_eq!(
+        error.message,
+        format!(
+            "unavailable bounded resource: {}",
+            workspace::CODE_RESULT_TOO_LARGE
+        )
+    );
+    let data = error.data.ok_or("typed failure data")?;
+    assert_eq!(data["recovery"], serde_json::json!("narrow the read"));
+    let detail = data["detail"].as_str().ok_or("detail")?;
+    assert!(detail.contains("9001 bytes"), "{detail}");
+    assert!(detail.contains("budget is 4000"), "{detail}");
+    let envelope = json_envelope("ripr://x", "{}".to_string());
+    assert_eq!(
+        envelope["contents"][0]["uri"],
+        serde_json::json!("ripr://x")
+    );
+    assert_eq!(
+        envelope["contents"][0]["mimeType"],
+        serde_json::json!("application/json")
+    );
+    Ok(())
+}

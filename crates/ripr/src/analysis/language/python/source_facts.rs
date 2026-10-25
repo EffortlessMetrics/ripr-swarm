@@ -1,5 +1,7 @@
 use super::admission::PythonAdmissionContext;
-use super::module_constants::{module_literal_constants, with_module_rebinding};
+use super::module_constants::{
+    module_literal_constants, module_object_bindings, with_module_rebinding,
+};
 use super::owners_tests::{
     TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
     collect_tests_from_statements, module_owner,
@@ -7,8 +9,8 @@ use super::owners_tests::{
 use super::source_utils::{
     SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
 };
-use super::{PythonOwner, PythonTest, expr_full_name};
-use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
+use super::{PythonFramework, PythonOwner, PythonTest, expr_full_name};
+use crate::domain::{LanguageId as DomainLanguageId, OwnerKind, StaticLimitKind};
 use rustpython_parser::{
     Mode,
     ast::{self, Expr, Mod, Ranged, Stmt},
@@ -29,6 +31,16 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// Single-assert helper defs of the module (#9419).
+    pub(super) helper_module: super::helper_assertions::PythonHelperModule,
+    /// The file is a `conftest.py` that installs implicit setup around the
+    /// tests in its scope (#6657). A conftest that failed to parse is not
+    /// flagged here; the workspace pass treats any limitation as unreadable.
+    pub(super) conftest_implicit_setup: bool,
+    /// The file is a `conftest.py` declaring any fixture or `pytest_*` hook
+    /// (or installing implicit setup): a test below it may reach project code
+    /// through it (#5491 `missing_input` fails closed on its existence).
+    pub(super) conftest_declares_fixture_or_hook: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -135,7 +147,7 @@ pub(super) struct PythonSourceLimitation {
 /// first when both are present so primary-of-set consumers stay pytest-first.
 /// Fail-closed: empty when no marker matches — callers must report
 /// "not detected", never guess.
-pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<PythonFramework> {
     let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
@@ -206,10 +218,10 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     }
     let mut frameworks = Vec::new();
     if saw_pytest {
-        frameworks.push("pytest");
+        frameworks.push(PythonFramework::Pytest);
     }
     if saw_unittest {
-        frameworks.push("unittest");
+        frameworks.push(PythonFramework::Unittest);
     }
     frameworks
 }
@@ -251,7 +263,7 @@ fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
 /// Primary detected Python test framework: the first entry of
 /// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
 /// repo-input still stores a single `Option`; doctor prints the full set.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<PythonFramework> {
     detect_python_test_frameworks(root).into_iter().next()
 }
 
@@ -614,6 +626,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        helper_module: super::helper_assertions::PythonHelperModule::default(),
+        conftest_implicit_setup: false,
+        conftest_declares_fixture_or_hook: false,
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -639,6 +654,17 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    // A plain test's calls to a same-file assertion helper read as the
+    // helper's asserts (#9636); extract from the rewritten source, which keeps
+    // every line number.
+    if is_test_file(file)
+        && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
+        // Defence in depth: a rewrite that fails to parse degrades to the
+        // original source (unknown), never to a file with no tests.
+        && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
+    {
+        return extract_source_facts(file, &inlined);
+    }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
     let source = &SourceText::new(source);
@@ -667,6 +693,13 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
+    let module_objects = module_object_bindings(source, &module.body);
+    for owner in snapshot.owners.iter_mut().filter(|owner| {
+        owner.class_path.is_empty() && matches!(owner.owner_kind, Some(OwnerKind::Function))
+    }) {
+        owner.class_facts.module_objects = module_objects.clone();
+    }
+    mark_rebound_decorators(source, &mut snapshot.owners);
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
@@ -680,6 +713,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             body: &imports,
             definition: &[],
             standard_unittest_list: false,
+            subclassed: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,
@@ -689,7 +723,29 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.helper_module =
+        super::helper_assertions::collect_helper_module(file, source, &module.body);
+    snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
+        == Some("conftest.py")
+        && super::admission::conftest_installs_implicit_setup(&module.body);
+    snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
+        || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+            && (!snapshot.fixtures.is_empty()
+                || declares_renamed_or_any_fixture(&module.body)
+                || super::admission::module_level_effects(source, &module.body)
+                || module.body.iter().any(|statement| match statement {
+                    Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+                    Stmt::AsyncFunctionDef(function) => {
+                        function.name.as_str().starts_with("pytest_")
+                    }
+                    _ => false,
+                })));
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
+    let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
+    for test in &mut snapshot.tests {
+        test.constant_rebinding.implicit_reach |= implicit_reach;
+    }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,
@@ -1807,4 +1863,190 @@ fn dotted_dir(file: &Path) -> String {
                 .join(".")
         })
         .unwrap_or_default()
+}
+
+/// Records, per owner, the decorators whose first name segment the file binds
+/// anywhere other than the one typing import, so an import match is not
+/// trusted for them (`def final`, `final = ...`, a nested or class-scope
+/// rebind, a tuple or loop target, a `try`/`except` import fallback).
+///
+/// This is deliberately a lexical, fail-closed screen rather than a scope
+/// analysis: the name must occur only on `@name...` decorator lines and on
+/// `typing`/`typing_extensions` import statements. A star import from another
+/// module, or any decorator the screen cannot read as a plain dotted name
+/// (`@registry["x"]`, `@(lambda f: g)`), withholds trust for the whole file.
+fn mark_rebound_decorators(source: &str, owners: &mut [PythonOwner]) {
+    let distrust_all = typing_markers_distrusted(source);
+    for owner in owners {
+        let rebound: Vec<String> = owner
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                let first = decorator.split('.').next().unwrap_or_default();
+                distrust_all || name_bound_outside_typing_import(source, first)
+            })
+            .cloned()
+            .collect();
+        owner.unplain_decorators.extend(rebound);
+    }
+}
+
+/// Whether a decorator line or star import makes any marker unprovable.
+fn typing_markers_distrusted(source: &str) -> bool {
+    // A lone carriage return is a Python line break `str::lines` does not see.
+    if source
+        .match_indices('\r')
+        .any(|(at, _)| source.as_bytes().get(at + 1) != Some(&b'\n'))
+    {
+        return true;
+    }
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        if let Some(rest) = line.strip_prefix('@') {
+            return !is_plain_decorator(rest.split('#').next().unwrap_or_default().trim());
+        }
+        // A star import anywhere on the line (`import os; from m import *`,
+        // `if x: from m import *`) may shadow a marker; so may one split by a
+        // backslash continuation.
+        (contains_word(line, "import")
+            && (line.contains('*') || line.trim_end().ends_with('\\'))
+            && !is_typing_import_line(line))
+            || line.starts_with('*')
+    })
+}
+
+/// A decorator that is a dotted name, optionally followed by one call whose
+/// parentheses close at the end of the line (`name`, `a.b`, `name(...)`).
+/// Anything else (`name(x)[0]`, `name(x) if c else y`, a multi-line call, a
+/// subscript, a lambda) cannot be read, so the file is not trusted.
+fn is_plain_decorator(text: &str) -> bool {
+    let head_end = text.find('(').unwrap_or(text.len());
+    let head = &text[..head_end];
+    let plain_head = !head.is_empty()
+        && !head.starts_with('.')
+        && !head.ends_with('.')
+        && head
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+    if !plain_head {
+        return false;
+    }
+    let call = &text[head_end..];
+    if call.is_empty() {
+        return true;
+    }
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<(usize, char)> = call.char_indices().collect();
+    for (at, &(index, c)) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            // Triple-quoted strings are not parsed: the line is unreadable.
+            '\'' | '"' => {
+                if chars.get(at + 1).is_some_and(|&(_, next)| next == c)
+                    && chars.get(at + 2).is_some_and(|&(_, next)| next == c)
+                {
+                    return false;
+                }
+                quote = Some(c);
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth = match depth.checked_sub(1) {
+                    Some(depth) => depth,
+                    None => return false,
+                };
+                if depth == 0 && index + 1 != call.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0 && quote.is_none()
+}
+
+fn is_typing_import_line(line: &str) -> bool {
+    let module_import = ["import typing", "import typing_extensions"]
+        .iter()
+        .any(|prefix| {
+            line.strip_prefix(prefix)
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        });
+    (line.starts_with("from typing import")
+        || line.starts_with("from typing_extensions import")
+        || module_import)
+        && !line.contains(';')
+}
+
+fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
+    let mut in_typing_block = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        // Parentheses in a trailing comment must not open or close the block.
+        let code = trimmed.split('#').next().unwrap_or_default();
+        let mut scanned = line;
+        let allowed = if in_typing_block {
+            if let Some(close) = code.find(')') {
+                // Only text before the closing parenthesis belongs to the import.
+                in_typing_block = false;
+                scanned = &code[close + 1..];
+                false
+            } else {
+                true
+            }
+        } else if is_typing_import_line(trimmed) {
+            if code.contains('(') && !code.contains(')') {
+                in_typing_block = true;
+            }
+            true
+        } else if let Some(rest) = trimmed.strip_prefix('@') {
+            let head = rest.split('(').next().unwrap_or_default();
+            // The call arguments are scanned too: `@final(final := wrapper)`
+            // rebinds the name on its own decorator line.
+            head.split('.').next() == Some(name) && !contains_word(&rest[head.len()..], name)
+        } else {
+            false
+        };
+        if !allowed && contains_word(scanned, name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    line.match_indices(word).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + word.len()..].chars().next();
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
+/// A top-level def decorated as a fixture of any shape. `collect_fixture_defs`
+/// records only plain fixtures, so a renamed one
+/// (`@pytest.fixture(name="tmp_path")`) would otherwise leave a conftest
+/// looking fixture-free while it overrides a built-in fixture.
+fn declares_renamed_or_any_fixture(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| {
+        let decorators = match statement {
+            Stmt::FunctionDef(function) => &function.decorator_list,
+            Stmt::AsyncFunctionDef(function) => &function.decorator_list,
+            _ => return false,
+        };
+        super::owners_tests::decorator_names(decorators)
+            .iter()
+            .any(|name| name.ends_with("fixture"))
+    })
 }

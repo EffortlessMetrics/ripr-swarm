@@ -20,13 +20,20 @@ Start here:
   Canonical gap: gap:python:src/promotions.py:trial_extension:predicate_boundary:predicate:days>=minimum_days
   Changed behavior: if days >= minimum_days:
   Missing discriminator (1 of 2): Related Python test reaches `trial_extension` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_promotions.py:4 test_trial_extension_long_smoke
+  Related test: tests/test_promotions.py:4 test_trial_extension_long_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_promotions.py
   Suggested test: test_trial_extension_long_smoke
   Test node: tests/test_promotions.py::test_trial_extension_long_smoke
   Verify command: python -m pytest tests/test_promotions.py::test_trial_extension_long_smoke (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `days == minimum_days`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `trial_extension`
     - infection yes: Changed Python predicate can alter branch selection: `if days >= minimum_days:`
     - 5 more detail line(s) in --format human-full
@@ -34,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_no_config_repair_gap/input --diff <cwd>/fixtures/python_no_config_repair_gap/diff.patch --mode fast probe:src_promotions.py:python_preview:32b0094f
   ripr context --root <cwd>/fixtures/python_no_config_repair_gap/input --diff <cwd>/fixtures/python_no_config_repair_gap/diff.patch --mode fast --at probe:src_promotions.py:python_preview:32b0094f
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_promotions.py:python_preview:32b0094f --root <cwd>/fixtures/python_no_config_repair_gap/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/promotions.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

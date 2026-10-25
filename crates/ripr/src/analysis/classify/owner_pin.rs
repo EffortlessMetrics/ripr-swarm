@@ -65,7 +65,8 @@ use crate::analysis::extract::{
 use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{
-    DOCTEST_FUNCTION_NAME, FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind,
+    DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
+    SourceRoleProvenanceEdgeKind,
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
@@ -75,7 +76,8 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -94,6 +96,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     name: String,
     call: PinCall,
     path: ReturnPathGate,
+    /// Argument positions of slice-like parameters the changed expression
+    /// walks; a pinned call passing only an empty literal there never
+    /// reaches the change (#9444).
+    walked_positions: Vec<usize>,
     /// Where the owner `fn` starts. It serves the #6957 exemption, where a
     /// same-name type declaration in the owner's own enclosing module is the
     /// production declaration, not a test-local shadow. It also places the
@@ -113,6 +119,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
     /// meaning on it (trap-ceiling-wide-min-control).
     returns_integer: bool,
+    /// A masked integer tail needs an individually discriminating literal
+    /// pointer input; the direct-call mask guard reads original owner names.
+    pointer_mask_gate: super::mask_pin::PointerMaskGate,
+    /// A typed pointer must observe a value that differs from the baseline.
+    pointer_return_change: Option<crate::analysis::test_grip_evidence::PointerReturnChange>,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -138,11 +149,17 @@ struct StdRootedCalls {
     unrebound: BTreeSet<String>,
 }
 
-const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
+/// The rooted spellings of `assert_eq!` and, for the boolean owner pins and
+/// effect probes, `assert!` (#8927): each needs the same root proof.
+const STD_ROOTED_ASSERT_EQ: [&str; 8] = [
     "std::assert_eq",
     "core::assert_eq",
     "::std::assert_eq",
     "::core::assert_eq",
+    "std::assert",
+    "core::assert",
+    "::std::assert",
+    "::core::assert",
 ];
 
 impl StdRootedCalls {
@@ -171,7 +188,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
-    std_rooted: SyncMemo<BTreeMap<PathBuf, StdRootedCalls>>,
+    std_rooted: SyncMemo<BTreeMap<PathBuf, Arc<StdRootedCalls>>>,
+    /// #8051: per test file, its bare `debug_assert_eq!` calls, parsed once
+    /// per file rather than once per (probe, related test).
+    debug_assert_eq_calls: SyncMemo<BTreeMap<PathBuf, Arc<Vec<DebugAssertEqCall>>>>,
     fallible_dependencies:
         SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
@@ -193,7 +213,14 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// once per (probe, test, assertion) made a diff with many related tests
     /// run for an hour.
     test_file_macro_sites: SyncMemo<TestFileMacroSites>,
-    by_file: SyncMemo<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    /// Per test file, read with the assertion-context macro list. A file that
+    /// is also a module parent has a second, separate entry in
+    /// `module_parents`: the two lists differ (`json`), and one shared key
+    /// made the entry depend on which probe reached the file first, which
+    /// with workers is scheduling (#8797).
+    by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// Per module-parent file, read with the plain trusted-macro list.
+    module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
     /// assertion admission read from its synthetic source, parsed once per
     /// run. A doctest is its own crate, so the file holding the comment
@@ -202,13 +229,20 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
-    empty_macro_ambiguities: SyncMemo<BTreeMap<PathBuf, BTreeSet<String>>>,
+    empty_macro_ambiguities: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<String>>>>,
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
     generated: SyncMemo<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
     resolved_modules: OnceLock<BTreeSet<(PathBuf, usize, String)>>,
+    execution_contexts: SyncMemo<BTreeMap<PathBuf, Arc<Option<ExecutionContext>>>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceLock<TargetRoots>,
+    /// Names of the workspace's `macro_rules!` macros, scanned once per run
+    /// (RIPR-SPEC-0351 out-parameter owner scan).
+    workspace_macro_names: OnceLock<Vec<String>>,
+    /// Whether a workspace trait could answer `write_str`-style calls on the
+    /// std buffers, scanned once per run.
+    user_buffer_traits: OnceLock<bool>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
@@ -241,6 +275,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// #8051: one bare `debug_assert_eq!` call: its line and source text.
+type DebugAssertEqCall = (usize, String);
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
@@ -361,6 +398,25 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// #8051: the bare `debug_assert_eq!` calls of `file` from `start_line`
+    /// to `end_line`, from a per-file parse kept for the run.
+    pub(in crate::analysis) fn debug_assert_eq_calls(
+        &self,
+        file: &PathBuf,
+        source: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Vec<(usize, String)> {
+        self.debug_assert_eq_calls
+            .get_or_build(file, || {
+                crate::analysis::syntax::debug_assert_eq_calls(source)
+            })
+            .iter()
+            .filter(|(line, _)| (start_line..=end_line).contains(line))
+            .cloned()
+            .collect()
+    }
+
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
@@ -482,15 +538,13 @@ impl OwnerPinSyntax {
                     .is_none_or(|parse| has_cfg_that_may_drop(&parse.tree()))
             })
         };
+        let context = self.execution_context(&file.to_path_buf(), index);
         let gated = inner_gated(file)
-            || index.files().get(file).is_none_or(|facts| {
-                let provenance = &facts.role_provenance;
-                (provenance.edges.is_empty()
+            || context.as_ref().as_ref().is_none_or(|context| {
+                (context.edges.is_empty()
                     && target_root(file, index, &roots.src_dirs).as_deref() != Some(file))
-                    || provenance.earliest_unresolved_reason.is_some()
-                    || provenance.edges.iter().any(|edge| {
-                        edge.kind != SourceRoleProvenanceEdgeKind::Module
-                            || inner_gated(&edge.parent)
+                    || context.edges.iter().any(|edge| {
+                        inner_gated(&edge.parent)
                             || module_declaration_cfg_gated(
                                 index,
                                 &edge.parent,
@@ -525,7 +579,7 @@ impl OwnerPinSyntax {
         let hidden = workspace_mentions_raw(index, name)
             || index.files().iter().any(|(path, facts)| {
                 facts.source.contains(name)
-                    && roots.root(path, index).as_deref() == Some(owner_root)
+                    && roots.may_belong(path, owner_root, index)
                     && bound_by_macro(&mask_comments_and_strings(&facts.source), name)
             });
         self.path_memo.borrow_mut().hidden.insert(key, hidden);
@@ -539,7 +593,7 @@ impl OwnerPinSyntax {
     }
 
     /// Shared assertion admission for the bounded supported families.
-    /// Execution provenance is independent of the error/boundary/value matcher.
+    /// Execution provenance is independent of the error/boundary/value/effect matcher.
     /// Applicability is the invocation
     /// identity, not the more restrictive owner-pin operand shape, so token
     /// matches and nested diagnostic syntax cannot bypass the same refusal.
@@ -550,16 +604,87 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        let gated = (matches!(
-            probe.family,
-            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
-        ) && is_admission_gated_assert_eq(&assertion.text))
-            || (probe.family == ProbeFamily::MatchArm
-                && outer_macro_path(&assertion.text).is_some_and(|path| {
-                    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-                    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert"
-                }));
-        !gated || self.admits(test, assertion, index)
+        self.admits_assertion_family(probe.family.clone(), test, assertion, index)
+    }
+
+    /// Collection seam consumers share the effect admission, including the
+    /// effect-only live duplicate exception, without inventing a Probe seam.
+    pub(in crate::analysis) fn admits_effect_assertion(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        self.admits_assertion_family(ProbeFamily::SideEffect, test, assertion, index)
+    }
+
+    fn admits_assertion_family(
+        &self,
+        family: ProbeFamily,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        let outer = Self::assertion_macro_name(&assertion.text);
+        // An oracle whose text is a compound statement (`loop { break;
+        // assert_eq!(..); }`, `'a: { .. }`, a `macro_rules!` body, a
+        // cfg-dropped `let`) names no invocation the admission can identify:
+        // its "macro path" is statement text, so it would skip the gate. An
+        // effect oracle that merely contains an assertion macro takes the same
+        // admission and is refused unless that exact invocation is
+        // established (#8927).
+        // Fail-closed root rule: the oracle is ungated only when its text
+        // STARTS with a recognized assertion invocation (leaf `assert_eq` or
+        // `assert`). Any other leading shape (a different macro, an empty or
+        // non-identifier path, a prefix keyword or expression) is compound and
+        // takes the context gate whenever an assertion macro sits in its tail.
+        let compound = outer
+            .as_deref()
+            .is_none_or(|name| !matches!(name, "assert_eq" | "assert"));
+        let gated = match outer.as_deref() {
+            _ if compound => {
+                let masked = mask_comments_and_strings(&assertion.text);
+                matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
+                    && ["assert_eq", "assert"].iter().any(|name| {
+                        whole_word_offsets(&masked, name)
+                            .into_iter()
+                            .any(|at| masked[at + name.len()..].trim_start().starts_with('!'))
+                    })
+            }
+            Some("assert_eq") => matches!(
+                family,
+                ProbeFamily::ReturnValue
+                    | ProbeFamily::ErrorPath
+                    | ProbeFamily::Predicate
+                    | ProbeFamily::SideEffect
+                    | ProbeFamily::CallDeletion
+            ),
+            Some("assert") => matches!(
+                family,
+                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+            ),
+            _ => false,
+        };
+        if !gated {
+            return true;
+        }
+        match self.refusal(test, assertion, index) {
+            None => true,
+            // Identical spellings on one line, one of which provably runs
+            // (`A; return; A;`): the effect oracle is that same check, so it
+            // keeps its credit. The return family keeps refusing (#8927).
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
+                matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
+            }
+            Some(_) => false,
+        }
+    }
+
+    /// The outer assertion's identity, shared by admission and its refusal note.
+    pub(in crate::analysis) fn assertion_macro_name(text: &str) -> Option<String> {
+        let path = outer_macro_path(text)?;
+        let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+        Some(leaf.strip_prefix("r#").unwrap_or(leaf).to_string())
     }
 
     /// Why [`Self::admits_equality_assertion`] refused this assertion, for
@@ -586,13 +711,13 @@ impl OwnerPinSyntax {
                 let resolved = |path: &Path, line: usize, declaration: &str| {
                     resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
                 };
-                let test_root = self.target_roots(index).root(&test.file, index);
+                let test_roots = self.target_roots(index).roots(&test.file, index);
                 // #8255: the single ambiguity pass retained the earliest
                 // sites; a lookup completes that pass once when it stopped
                 // early, instead of rescanning the workspace per
                 // (name, test root).
                 let workspace = self
-                    .workspace_macro_site(&name, test_root.as_deref(), index)
+                    .workspace_macro_site_in(&name, test_roots.as_ref(), index)
                     .or_else(|| self.withheld.sites.get(&name).cloned())
                     .or_else(|| {
                         self.withheld
@@ -600,7 +725,7 @@ impl OwnerPinSyntax {
                             .iter()
                             .find_map(|((site_name, root), site)| {
                                 (*site_name == name
-                                    && test_root.as_ref().is_none_or(|test_root| test_root == root))
+                                    && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
                                 .then(|| site.clone())
                             })
                     });
@@ -614,6 +739,7 @@ impl OwnerPinSyntax {
                     assertion.line,
                     index,
                     &self.test_file_macro_sites,
+                    self.target_roots(index),
                     &resolved,
                 );
                 let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
@@ -627,6 +753,15 @@ impl OwnerPinSyntax {
         })
     }
 
+    fn execution_context(
+        &self,
+        file: &PathBuf,
+        index: &RustIndex,
+    ) -> Arc<Option<ExecutionContext>> {
+        self.execution_contexts
+            .get_or_build(file, || index.execution_context(file))
+    }
+
     /// Every out-of-line `mod name;` the module composition resolved to an
     /// indexed file, keyed by declaring file, line and declaration text.
     fn resolved_module_declarations(
@@ -635,17 +770,12 @@ impl OwnerPinSyntax {
     ) -> &BTreeSet<(PathBuf, usize, String)> {
         self.resolved_modules.get_or_init(|| {
             index
-                .files()
-                .values()
-                .flat_map(|facts| {
-                    facts
-                        .role_provenance
-                        .edges
-                        .iter()
-                        .filter(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
-                        .map(|edge| (edge.parent.clone(), edge.line, edge.declaration.clone()))
-                        .collect::<Vec<_>>()
-                })
+                .execution_module_parents
+                .as_ref()
+                .into_iter()
+                .flat_map(|parents| parents.values())
+                .flatten()
+                .map(|edge| (edge.parent.clone(), edge.line, edge.declaration.clone()))
                 .collect()
         })
     }
@@ -701,9 +831,8 @@ impl OwnerPinSyntax {
                 )
                 .cloned();
         }
-        self.by_file
-            .borrow()
-            .get(&test.file)?
+        let assertions = self.by_file.borrow().get(&test.file).cloned()?;
+        assertions
             .helper_loan(
                 (test.start_line, test.end_line, &test.name),
                 (assertion.line, &assertion.text),
@@ -722,17 +851,18 @@ impl OwnerPinSyntax {
         if self.source_provenance_refusal(test, index).is_some() {
             return false;
         }
-        let Some(facts) = index.files().get(&test.file) else {
+        let Some(_facts) = index.files().get(&test.file) else {
             return false;
         };
-        let mut by_file = self.by_file.borrow_mut();
-        facts.role_provenance.edges.iter().all(|edge| {
+        let context = self.execution_context(&test.file, index);
+        let Some(context) = context.as_ref() else {
+            return false;
+        };
+        context.edges.iter().all(|edge| {
             let Some(parent) = index.files().get(&edge.parent) else {
                 return false;
             };
-            by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+            self.module_parent_assertions(&edge.parent, &parent.source)
                 .admits_targeted_module_declaration(edge.line, &edge.declaration)
         })
     }
@@ -750,39 +880,45 @@ impl OwnerPinSyntax {
             let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
                 return false;
             };
-            let verified = if matches!(root, "std" | "core") {
-                matches!(leaf, "assert" | "assert_eq" | "assert_ne")
-                    && index
-                        .drop_in_manifests
-                        .unbound_standard_root(&test.file, root)
-            } else {
-                matches!(leaf, "assert_eq" | "assert_ne")
-                    && index.drop_in_manifests.verified(&test.file, root)
+            let context = self.execution_context(&test.file, index);
+            let Some(context) = context.as_ref() else {
+                return false;
             };
+            let Some(placement) = self.target_roots(index).roots(&test.file, index) else {
+                return false;
+            };
+            let verified = std::iter::once(&test.file)
+                .chain(placement.iter())
+                .all(|file| {
+                    if matches!(root, "std" | "core") {
+                        matches!(leaf, "assert" | "assert_eq" | "assert_ne")
+                            && index.drop_in_manifests.unbound_standard_root(file, root)
+                    } else {
+                        matches!(leaf, "assert_eq" | "assert_ne")
+                            && index.drop_in_manifests.verified(file, root)
+                    }
+                });
             if !verified {
                 return false;
             }
-            // A qualified root does not borrow a custom bare leaf's
-            // ambiguity. Source availability and all binding-capable
-            // statement macros are checked separately by the collector.
-            let Some(facts) = index.files().get(&test.file) else {
-                return false;
-            };
+            // A qualified root does not borrow a custom bare leaf's ambiguity.
             return self.targeted_source_provenance_is_admitted(test, index)
                 && std::iter::once(&test.file)
-                    .chain(facts.role_provenance.edges.iter().map(|e| &e.parent))
+                    .chain(context.edges.iter().map(|e| &e.parent))
                     .all(|path| {
                         index.files().get(path).is_some_and(|facts| {
                             crate::analysis::syntax::parse_clean_source_file(&facts.source)
                                 .is_some_and(|file| {
-                                    crate::analysis::syntax::ra::assertion_root_is_available(
-                                        name,
-                                        file.tree().syntax(),
-                                    )
+                                    crate::analysis::syntax::ra::assertion_root_is_available(name, file.tree().syntax())
+                                        && if matches!(root, "std" | "core") {
+                                            crate::analysis::syntax::ra::std_macro_root_is_unrebound(name, file.tree().syntax())
+                                        } else {
+                                            crate::analysis::syntax::ra::assertion_root_binding_is_unrebound(name, file.tree().syntax())
+                                        }
                                 })
                         })
                     })
-                && facts.role_provenance.edges.iter().all(|edge| {
+                && context.edges.iter().all(|edge| {
                     parse_clean_source_file(&edge.declaration).is_some_and(|file| {
                         file.tree()
                             .syntax()
@@ -852,10 +988,21 @@ impl OwnerPinSyntax {
     /// that reach the test — the same selection the replaced per-(name,
     /// test root) scan made, served from the single ambiguity pass (#8255).
     /// `None` when no retained site reaches the test.
+    #[cfg(test)]
     fn workspace_macro_site(
         &self,
         name: &str,
         test_root: Option<&Path>,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let roots = test_root.map(|root| BTreeSet::from([root.to_path_buf()]));
+        self.workspace_macro_site_in(name, roots.as_ref(), index)
+    }
+
+    fn workspace_macro_site_in(
+        &self,
+        name: &str,
+        test_roots: Option<&BTreeSet<PathBuf>>,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
         if !assertion_context_macros().contains(&name) {
@@ -864,28 +1011,21 @@ impl OwnerPinSyntax {
         self.complete_workspace_site_scan(index);
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
-        let mut rebinding: Option<&(PathBuf, MacroBindingSite)> = None;
-        let mut may_rebind: Option<&(PathBuf, MacroBindingSite)> = None;
+        let mut rebinding: Option<&OrderedMacroSite> = None;
+        let mut may_rebind: Option<&OrderedMacroSite> = None;
         if let Some(rank) = retained.global.get(name) {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
         }
-        match test_root {
-            Some(root) => {
-                if let Some(rank) = retained.by_root.get(root).and_then(|names| names.get(name)) {
-                    merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
-                }
-            }
-            // A test with no recognized root is reached by every
-            // crate-local site, exactly as the reach rule read it.
-            None => {
-                for names in retained.by_root.values() {
-                    if let Some(rank) = names.get(name) {
-                        merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
-                    }
-                }
+        for (root, names) in &retained.by_root {
+            if test_roots.is_none_or(|roots| roots.contains(root))
+                && let Some(rank) = names.get(name)
+            {
+                merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
             }
         }
-        rebinding.cloned().or_else(|| may_rebind.cloned())
+        rebinding
+            .or(may_rebind)
+            .map(|site| (site.path.clone(), site.site.clone()))
     }
 
     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
@@ -916,7 +1056,7 @@ impl OwnerPinSyntax {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
         let (_, rest) = partition_macro_scan_files(index);
-        let sites = scan_macro_sites(&rest, index, &module_resolved);
+        let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
         // Resolved before the map borrow: target roots never re-enter the
         // site scan, and the mutable borrow must not outlive its purpose.
         let roots = self.target_roots(index);
@@ -927,33 +1067,25 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        for (path, name, site) in sites {
-            match site.crate_local.then(|| roots.root(&path, index)).flatten() {
-                Some(root) => {
-                    retained
-                        .by_root
-                        .entry(root)
-                        .or_default()
-                        .entry(name)
-                        .or_default()
-                        .absorb(&path, &site);
-                }
-                // A site whose file has no recognized root reaches tests of
-                // every root, exactly as the reach rule reads it.
-                None => {
-                    retained
-                        .global
-                        .entry(name)
-                        .or_default()
-                        .absorb(&path, &site);
-                }
-            }
-        }
+        retain_macro_sites(sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         {
             *self.workspace_scan_passes.borrow_mut() += 1;
         }
+    }
+
+    /// #9211: pay the whole workspace macro-site scan once, before the
+    /// classify workers start. The first consumer otherwise runs it in line on
+    /// one worker while holding the memo lock, and every sibling worker sleeps
+    /// on that lock until the whole corpus is parsed. Called on a thread of
+    /// the classify pool before any probe is queued, so the scan fans out over
+    /// that pool (the large-stack workers the parse needs) and the probes only
+    /// read the filled memos. The memo content is what the first consumer
+    /// would have produced, so no output changes.
+    pub(in crate::analysis) fn prime_workspace_macro_scan(&self, index: &RustIndex) {
+        let _fan_out = PrimedScanFanOut::enter();
+        self.complete_workspace_site_scan(index);
     }
 
     /// #8255 test witness: how many full-index macro-site passes this run
@@ -982,8 +1114,12 @@ impl OwnerPinSyntax {
         if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
             return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
         }
-        let mut by_file = self.by_file.borrow_mut();
-        for edge in &facts.role_provenance.edges {
+        let context = self.execution_context(&test.file, index);
+        let edges = context
+            .as_ref()
+            .as_ref()
+            .map_or(&facts.role_provenance.edges, |context| &context.edges);
+        for edge in edges {
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
             if edge.kind != SourceRoleProvenanceEdgeKind::Module {
@@ -999,9 +1135,8 @@ impl OwnerPinSyntax {
             else {
                 return Some(AssertionRefusal::LexicalFallback);
             };
-            if !by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+            if !self
+                .module_parent_assertions(&edge.parent, &parent.source)
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
                 return Some(AssertionRefusal::ModuleDeclaration {
@@ -1011,7 +1146,19 @@ impl OwnerPinSyntax {
                 });
             }
         }
+        if context.as_ref().is_none() {
+            return Some(AssertionRefusal::UnresolvedModule(
+                "rust_module_context_unavailable".into(),
+            ));
+        }
         None
+    }
+
+    /// A module-parent file's declaration admissions, read once per run with
+    /// the plain trusted-macro list (see `module_parents`).
+    fn module_parent_assertions(&self, file: &PathBuf, source: &str) -> Arc<OwnerPinAssertions> {
+        self.module_parents
+            .get_or_build(file, || owner_pin_assertions(source, NON_RETURNING_MACROS))
     }
 
     /// The gates every assertion of `test` shares, whatever its macro: a
@@ -1039,8 +1186,7 @@ impl OwnerPinSyntax {
         else {
             return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
-        let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
-        let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
+        let empty_ambiguities = self.empty_macro_ambiguities.get_or_build(&test.file, || {
             let names = local_empty_macro_names(&facts.source);
             if names.is_empty() {
                 return BTreeSet::new();
@@ -1065,10 +1211,15 @@ impl OwnerPinSyntax {
                 )
                 .collect()
         });
-        let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        let mut ambiguous: BTreeSet<_> = ambiguous.union(&empty_ambiguities).cloned().collect();
         // Recheck provenance for every admission even when syntax is memoized.
         if facts.source.contains("json")
-            && !index.drop_in_manifests.verified_literal_json(&test.file)
+            && !macro_root_verified_in_contexts(
+                &test.file,
+                "serde_json",
+                index,
+                self.target_roots(index),
+            )
         {
             ambiguous.insert("json".to_string());
         }
@@ -1160,13 +1311,11 @@ impl OwnerPinSyntax {
         // `std::assert_eq!` may expand to an early return that skips it.
         let rooted = self
             .std_rooted
-            .borrow_mut()
-            .entry(test.file.clone())
-            .or_insert_with(|| StdRootedCalls::of(&facts.source))
-            .clone();
+            .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
-            .chain(rooted.calls)
+            .chain(std_rooted_macro_path(&assertion.text, "assert"))
+            .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
             !(rooted.unrebound.contains(path)
@@ -1176,14 +1325,15 @@ impl OwnerPinSyntax {
                 AssertionContextRefusal::OpaqueMacro(path),
             ));
         }
-        let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
         let guard_key = err_return_guard_twin(&assertion.text)
             .map(|(condition, _)| err_return_guard_key(condition));
-        let file_refusal = by_file
-            .entry(test.file.clone())
-            .or_insert_with(|| owner_pin_assertions(&facts.source, &assertion_context_macros()))
+        let file_refusal = self
+            .by_file
+            .get_or_build(&test.file, || {
+                owner_pin_assertions(&facts.source, &assertion_context_macros())
+            })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
@@ -1240,9 +1390,11 @@ impl OwnerPinSyntax {
         if !generated_verdicts.is_empty() {
             // #6749: a generated test's module is not in the file's text, so
             // its expansion cannot show a rebound `test`; the file answers.
-            if by_file
+            if self
+                .by_file
+                .borrow()
                 .get(&test.file)
-                .is_some_and(OwnerPinAssertions::file_binds_test)
+                .is_some_and(|assertions| assertions.file_binds_test())
             {
                 return Some(AssertionRefusal::Syntax(
                     AssertionContextRefusal::TestAttribute(
@@ -1291,6 +1443,7 @@ impl OwnerPinSyntax {
             .map(|(name, _)| name),
         );
         if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -1348,43 +1501,56 @@ struct WorkspaceMacroSiteIndex {
 /// site.
 #[derive(Clone, Debug, Default)]
 struct MacroSiteRank {
-    rebinding: Option<(PathBuf, MacroBindingSite)>,
-    may_rebind: Option<(PathBuf, MacroBindingSite)>,
+    rebinding: Option<OrderedMacroSite>,
+    may_rebind: Option<OrderedMacroSite>,
 }
 
+/// Producer position, rather than line number, preserves same-line order
+/// when global and crate-local buckets are merged.
+#[derive(Clone, Debug)]
+struct OrderedMacroSite {
+    path: PathBuf,
+    position: usize,
+    site: MacroBindingSite,
+}
+
+impl OrderedMacroSite {
+    fn precedes(&self, other: &Self) -> bool {
+        (&self.path, self.position) < (&other.path, other.position)
+    }
+}
 impl MacroSiteRank {
-    /// Keep the earlier of the retained and a fresh site. Sites arrive in
-    /// path order within one scan pass, so equal paths keep the
-    /// first-in-source-order site.
-    fn absorb(&mut self, path: &Path, site: &MacroBindingSite) {
+    fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
         let slot = if rebinds(site) {
             &mut self.rebinding
         } else {
             &mut self.may_rebind
         };
-        if slot.as_ref().is_none_or(|(kept, _)| path < kept) {
-            *slot = Some((path.to_path_buf(), site.clone()));
+        if slot
+            .as_ref()
+            .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
+        {
+            *slot = Some(OrderedMacroSite {
+                path: path.to_path_buf(),
+                position,
+                site: site.clone(),
+            });
         }
     }
 }
-
-/// Keep the earlier of a retained site reference and a candidate, by path.
 fn keep_earliest_site<'a>(
-    slot: &mut Option<&'a (PathBuf, MacroBindingSite)>,
-    candidate: Option<&'a (PathBuf, MacroBindingSite)>,
+    slot: &mut Option<&'a OrderedMacroSite>,
+    candidate: Option<&'a OrderedMacroSite>,
 ) {
     if let Some(candidate) = candidate
-        && slot.as_ref().is_none_or(|(kept, _)| candidate.0 < *kept)
+        && slot.as_ref().is_none_or(|kept| candidate.precedes(kept))
     {
         *slot = Some(candidate);
     }
 }
-
-/// Fold one name's retained sites into the running earliest rebinding and
-/// may-rebind candidates of a lookup.
 fn merge_macro_site_rank<'a>(
-    rebinding: &mut Option<&'a (PathBuf, MacroBindingSite)>,
-    may_rebind: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+    rebinding: &mut Option<&'a OrderedMacroSite>,
+    may_rebind: &mut Option<&'a OrderedMacroSite>,
     rank: &'a MacroSiteRank,
 ) {
     keep_earliest_site(rebinding, rank.rebinding.as_ref());
@@ -1414,7 +1580,7 @@ struct TargetRoots {
     /// `examples/` and `build.rs` roots beside one.
     src_dirs: BTreeSet<PathBuf>,
     /// Per-file answers, so repeated admissions do not recompute them.
-    memo: SyncMemo<BTreeMap<PathBuf, Option<PathBuf>>>,
+    memo: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
 impl TargetRoots {
@@ -1443,18 +1609,30 @@ impl TargetRoots {
         }
     }
 
-    fn root(&self, file: &Path, index: &RustIndex) -> Option<PathBuf> {
+    fn roots(&self, file: &Path, index: &RustIndex) -> Option<BTreeSet<PathBuf>> {
         if self.disabled {
             return None;
         }
-        if let Some(root) = self.memo.borrow().get(file) {
-            return root.clone();
+        if let Some(roots) = self.memo.borrow().get(file) {
+            return roots.clone();
         }
-        let root = target_root(file, index, &self.src_dirs);
+        let roots = target_context_roots(file, index, &self.src_dirs);
         self.memo
             .borrow_mut()
-            .insert(file.to_path_buf(), root.clone());
-        root
+            .insert(file.to_path_buf(), roots.clone());
+        roots
+    }
+
+    fn root(&self, file: &Path, index: &RustIndex) -> Option<PathBuf> {
+        let roots = self.roots(file, index)?;
+        (roots.len() == 1)
+            .then(|| roots.into_iter().next())
+            .flatten()
+    }
+
+    fn may_belong(&self, file: &Path, root: &Path, index: &RustIndex) -> bool {
+        self.roots(file, index)
+            .is_none_or(|roots| roots.contains(root))
     }
 }
 
@@ -1467,31 +1645,36 @@ pub(super) fn target_root(
     index: &RustIndex,
     src_dirs: &BTreeSet<PathBuf>,
 ) -> Option<PathBuf> {
-    let facts = index.files().get(file)?;
-    let provenance = &facts.role_provenance;
-    if provenance.earliest_unresolved_reason.is_some()
-        || index.include_targets.contains(file)
-        || provenance.edges.iter().any(|edge| {
-            edge.kind == SourceRoleProvenanceEdgeKind::Include
-                || index.include_targets.contains(&edge.parent)
+    let roots = target_context_roots(file, index, src_dirs)?;
+    (roots.len() == 1)
+        .then(|| roots.into_iter().next())
+        .flatten()
+}
+
+fn target_context_roots(
+    file: &Path,
+    index: &RustIndex,
+    src_dirs: &BTreeSet<PathBuf>,
+) -> Option<BTreeSet<PathBuf>> {
+    let context = index.execution_context(file)?;
+    if context.roots.is_empty()
+        || context.roots.iter().any(|root| {
+            // Preserve the existing conservative integration-helper boundary.
+            (root != file
+                && root
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|p| p == "tests"))
+                || !(recognized_target_root(root, src_dirs)
+                    || index.member_crates.is_custom_lib_path_root(root))
         })
     {
         return None;
     }
-    let root = provenance
-        .edges
-        .first()
-        .map_or_else(|| file.to_path_buf(), |edge| edge.parent.clone());
-    // `tests/common/mod.rs` (or `tests/common.rs`) declared by several
-    // integration-test roots composes under the first owner only.
-    if root != file
-        && root
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|directory| directory == "tests")
-    {
-        return None;
-    }
+    Some(context.roots)
+}
+
+fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
     let names: Vec<&str> = root
         .iter()
         .map(|part| part.to_str().unwrap_or_default())
@@ -1506,10 +1689,24 @@ pub(super) fn target_root(
         [package @ .., "build.rs"] => package_has_src(package),
         _ => false,
     };
-    (recognized && root.extension().is_some_and(|extension| extension == "rs")).then_some(root)
+    recognized && root.extension().is_some_and(|extension| extension == "rs")
 }
 
 impl OwnerPinSyntax {
+    /// Whether a workspace trait could answer `write_str`-style calls on
+    /// `String`/`Vec`/`VecDeque`, scanned once per run.
+    pub(in crate::analysis) fn user_buffer_traits(&self, index: &RustIndex) -> bool {
+        *self
+            .user_buffer_traits
+            .get_or_init(|| super::out_parameter::workspace_has_user_buffer_traits(index))
+    }
+
+    /// The workspace's `macro_rules!` macro names, scanned once per run.
+    pub(in crate::analysis) fn workspace_macro_names(&self, index: &RustIndex) -> &[String] {
+        self.workspace_macro_names
+            .get_or_init(|| super::out_parameter::workspace_macro_names(index))
+    }
+
     /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))
@@ -1523,8 +1720,12 @@ impl OwnerPinSyntax {
         let Some(by_root) = by_root.as_ref().filter(|by_root| !by_root.is_empty()) else {
             return Vec::new();
         };
-        match self.target_roots(index).root(&test.file, index) {
-            Some(root) => by_root.get(&root).into_iter().flatten().cloned().collect(),
+        match self.target_roots(index).roots(&test.file, index) {
+            Some(roots) => roots
+                .iter()
+                .flat_map(|root| by_root.get(root).into_iter().flatten())
+                .cloned()
+                .collect(),
             None => by_root.values().flatten().cloned().collect(),
         }
     }
@@ -1630,6 +1831,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::UnidentifiedTest
                 | AssertionContextRefusal::AsyncTest
                 | AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns
                 | AssertionContextRefusal::StaleSource => true,
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     !attribute_settles_test_outcome(attribute)
@@ -1710,7 +1912,8 @@ impl AssertionRefusal {
                 AssertionContextRefusal::ClosureExit => {
                     "a closure in the test can return early, or the test yields".into()
                 }
-                AssertionContextRefusal::DuplicateSpelling => {
+                AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns => {
                     "the same assertion text appears twice on one line".into()
                 }
                 AssertionContextRefusal::ConditionalPath(construct) => {
@@ -1808,19 +2011,19 @@ fn workspace_macro_binding_site(
         .files()
         .iter()
         .map(|(path, facts)| {
-            let root = test_root.and_then(|_| roots.root(path, index));
+            let root = test_root.and_then(|_| roots.roots(path, index));
             (path, facts, root)
         })
         .collect();
-    let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<PathBuf>)| {
+    let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<BTreeSet<PathBuf>>)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
         let reaches = |site: &MacroBindingSite| {
             !site.crate_local
                 || test_root.is_none()
-                || root
-                    .as_ref()
-                    .is_none_or(|site_root| Some(site_root.as_path()) == test_root)
+                || root.as_ref().is_none_or(|site_roots| {
+                    test_root.is_some_and(|root| site_roots.contains(root))
+                })
         };
         let mut first = None;
         for (_, site) in macro_binding_sites(
@@ -1829,6 +2032,7 @@ fn workspace_macro_binding_site(
             &facts.source,
             facts.macro_candidates.as_deref(),
             index,
+            roots,
             module_resolved,
         ) {
             if site.scope.is_some() || !reaches(&site) {
@@ -1878,6 +2082,7 @@ fn test_macro_binding_site(
     assertion_line: usize,
     index: &RustIndex,
     memo: &SyncMemo<TestFileMacroSites>,
+    roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
@@ -1893,6 +2098,7 @@ fn test_macro_binding_site(
                 &facts.source,
                 facts.macro_candidates.as_deref(),
                 index,
+                roots,
                 module_resolved,
             )
         })
@@ -1909,6 +2115,7 @@ fn macro_binding_sites(
     source: &str,
     candidates: Option<&MacroBindingCandidates>,
     index: &RustIndex,
+    roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
     if candidates.is_some_and(|candidates| !candidates.may_bind(name)) {
@@ -1919,14 +2126,37 @@ fn macro_binding_sites(
         index.macro_scope_crates(),
         &[name],
         &|line, declaration| module_resolved(path, line, declaration),
-        &|krate| {
-            if krate == "serde_json" {
-                index.drop_in_manifests.verified_literal_json(path)
-            } else {
-                index.drop_in_manifests.verified_root(path, krate)
-            }
-        },
+        &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
     )
+}
+
+/// A closed placement set is required to certify a trusted import. The
+/// recorded DAG is still useful for local availability when unrelated
+/// unresolved syntax disables placement; it cannot certify a partial set.
+fn macro_root_verified_in_contexts(
+    path: &Path,
+    krate: &str,
+    index: &RustIndex,
+    roots: &TargetRoots,
+) -> bool {
+    if roots.disabled {
+        return false;
+    }
+    let Some(context) = index.execution_context(path) else {
+        return false;
+    };
+    // Import authority needs every approved placement, not a uniquely
+    // recognized Cargo target. Unlinked source stems retain their physical
+    // manifest check; they still cannot establish positive owner identity.
+    std::iter::once(path)
+        .chain(context.roots.iter().map(PathBuf::as_path))
+        .all(|file| {
+            if krate == "serde_json" {
+                index.drop_in_manifests.verified_literal_json(file)
+            } else {
+                index.drop_in_manifests.verified_root(file, krate)
+            }
+        })
 }
 
 /// Trusted macro names some workspace file may rebind for every test, and
@@ -1965,7 +2195,7 @@ fn trusted_macro_sites_in(
     // retained scan once instead (#8255).
     let (likely, rest) = partition_macro_scan_files(index);
     absorb_macro_sites(
-        scan_macro_sites(&likely, index, module_resolved),
+        scan_macro_sites(&likely, index, roots, module_resolved),
         &mut global,
         &mut scoped,
         &mut by_root,
@@ -1975,7 +2205,7 @@ fn trusted_macro_sites_in(
     );
     if global.len() < assertion_context_macros().len() {
         absorb_macro_sites(
-            scan_macro_sites(&rest, index, module_resolved),
+            scan_macro_sites(&rest, index, roots, module_resolved),
             &mut global,
             &mut scoped,
             &mut by_root,
@@ -2010,43 +2240,166 @@ fn partition_macro_scan_files(
         .partition(|(_, source, _)| may_saturate_macro_ambiguity(source))
 }
 
-/// Every trusted name's sites in `files`, in path then source order. Files
-/// whose stored candidates rule out every trusted name are not parsed.
+#[derive(Default)]
+struct ScannedMacroSites {
+    ambiguities: Vec<(PathBuf, String, MacroBindingSite)>,
+    retained: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+}
+
+/// One parse per candidate file in the bounded pass. Singleton queries share
+/// that tree/index, and stored candidates prune impossible names.
 fn scan_macro_sites(
     files: &[MacroScanFile<'_>],
     index: &RustIndex,
+    roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> Vec<(PathBuf, String, MacroBindingSite)> {
-    let context_macros = assertion_context_macros();
+) -> ScannedMacroSites {
+    #[cfg(test)]
+    {
+        use std::hash::{Hash, Hasher};
+        let fanned_out = scan_fans_out();
+        if let Ok(mut log) = SCAN_LOG.lock() {
+            for (_, source, _) in files {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                source.hash(&mut hasher);
+                log.push((hasher.finish(), fanned_out));
+            }
+        }
+    }
+    let names = assertion_context_macros();
     let scan_file = |(path, source, candidates): &MacroScanFile<'_>| {
         // A file whose stored candidates rule out every trusted name
         // reports no site, so it is not parsed.
         if !candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted) {
-            return Vec::new();
+            return None;
         }
-        trusted_macro_binding_sites(
-            source,
-            index.macro_scope_crates(),
-            &context_macros,
-            &|line, declaration| module_resolved(path, line, declaration),
-            &|krate| {
-                if krate == "serde_json" {
-                    index.drop_in_manifests.verified_literal_json(path)
-                } else {
-                    index.drop_in_manifests.verified_root(path, krate)
-                }
-            },
-        )
-        .into_iter()
-        .map(|(name, site)| ((*path).clone(), name, site))
-        .collect::<Vec<_>>()
+        Some({
+            let singleton_names: Vec<_> = names
+                .iter()
+                .copied()
+                .filter(|name| candidates.is_none_or(|c| c.may_bind(name)))
+                .collect();
+            let (union, singleton) = trusted_macro_binding_site_sets(
+                source,
+                index.macro_scope_crates(),
+                &names,
+                &singleton_names,
+                &|line, declaration| module_resolved(path, line, declaration),
+                &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
+            );
+            ((*path).clone(), union, singleton)
+        })
     };
-    if nested_parallelism_allowed() {
-        files.par_iter().flat_map_iter(scan_file).collect()
-    } else {
-        files.iter().flat_map(scan_file).collect()
+    let per_file: Vec<_> = map_scans(files, scan_file).into_iter().flatten().collect();
+    let mut scanned = ScannedMacroSites::default();
+    for (path, union, singleton) in per_file {
+        scanned.ambiguities.extend(
+            union
+                .into_iter()
+                .map(|(name, site)| (path.clone(), name, site)),
+        );
+        scanned.retained.extend(
+            singleton
+                .into_iter()
+                .enumerate()
+                .map(|(position, (name, site))| (path.clone(), name, position, site)),
+        );
+    }
+    scanned
+}
+
+/// Both initial absorption and deferred completion exclude every scoped site.
+fn retain_macro_sites(
+    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    retained: &mut WorkspaceMacroSiteIndex,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) {
+    for (path, name, position, site) in sites {
+        if site.scope.is_some() {
+            continue;
+        }
+        if let Some(contexts) = site
+            .crate_local
+            .then(|| roots.roots(&path, index))
+            .flatten()
+        {
+            for root in contexts {
+                retained
+                    .by_root
+                    .entry(root)
+                    .or_default()
+                    .entry(name.clone())
+                    .or_default()
+                    .absorb(&path, position, &site);
+            }
+        } else {
+            retained
+                .global
+                .entry(name)
+                .or_default()
+                .absorb(&path, position, &site);
+        }
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    /// What the last [`map_scans`] on this thread decided: `Some(true)` when
+    /// it took the rayon branch, `Some(false)` when it took the in-line branch.
+    static LAST_SCAN_FAN_OUT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Maps `scan` over `items` in order, on the rayon pool only where
+/// [`nested_parallelism_allowed`]. Every production scan that can be reached
+/// from classification goes through here, so that guard has one seam (the
+/// `#[cfg(test)]` oracle `workspace_macro_binding_site` keeps its own copy).
+fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
+    if scan_fans_out() {
+        #[cfg(test)]
+        LAST_SCAN_FAN_OUT.with(|last| last.set(Some(true)));
+        items.par_iter().map(scan).collect()
+    } else {
+        #[cfg(test)]
+        LAST_SCAN_FAN_OUT.with(|last| last.set(Some(false)));
+        items.iter().map(scan).collect()
+    }
+}
+
+thread_local! {
+    /// Set while [`OwnerPinSyntax::prime_workspace_macro_scan`] runs on a
+    /// classify-pool thread before any probe is queued (#9211).
+    static PRIMED_SCAN_FAN_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Lets the priming scan fan out over the pool it runs on. Safe where
+/// [`nested_parallelism_allowed`] refuses: no sibling probe is queued yet, so
+/// the blocked thread has nothing to steal that could need the memo lock it
+/// holds (#8756).
+struct PrimedScanFanOut(bool);
+
+impl PrimedScanFanOut {
+    fn enter() -> Self {
+        Self(PRIMED_SCAN_FAN_OUT.with(|flag| flag.replace(true)))
+    }
+}
+
+impl Drop for PrimedScanFanOut {
+    fn drop(&mut self) {
+        PRIMED_SCAN_FAN_OUT.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Whether a production macro-site scan on this thread maps over the pool.
+fn scan_fans_out() -> bool {
+    nested_parallelism_allowed() || PRIMED_SCAN_FAN_OUT.with(std::cell::Cell::get)
+}
+
+/// Test witness (#9211): the `(source hash, fanned out)` of every file a
+/// [`scan_macro_sites`] call mapped, from any thread.
+#[cfg(test)]
+pub(in crate::analysis) static SCAN_LOG: std::sync::Mutex<Vec<(u64, bool)>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// Whether a scan may fan out on the rayon pool. A probe classified on a pool
 /// worker already runs beside its siblings, and a worker blocked in a nested
@@ -2066,7 +2419,7 @@ pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: Vec<(PathBuf, String, MacroBindingSite)>,
+    sites: ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -2074,30 +2427,22 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    for (path, name, site) in sites {
+    retain_macro_sites(sites.retained, retained, roots, index);
+    for (path, name, site) in sites.ambiguities {
         if site.scope.is_some() {
             scoped.entry(path).or_default().push((name, site));
             continue;
         }
-        match site.crate_local.then(|| roots.root(&path, index)).flatten() {
-            Some(root) => {
-                retained
-                    .by_root
-                    .entry(root.clone())
-                    .or_default()
-                    .entry(name.clone())
-                    .or_default()
-                    .absorb(&path, &site);
-                by_root.entry(root).or_default().insert(name);
+        if let Some(contexts) = site
+            .crate_local
+            .then(|| roots.roots(&path, index))
+            .flatten()
+        {
+            for root in contexts {
+                by_root.entry(root).or_default().insert(name.clone());
             }
-            None => {
-                retained
-                    .global
-                    .entry(name.clone())
-                    .or_default()
-                    .absorb(&path, &site);
-                global.insert(name);
-            }
+        } else {
+            global.insert(name);
         }
     }
 }
@@ -2213,8 +2558,11 @@ enum ReturnPathGate {
     /// `P.iter().A(|x| E)[.T()]`, whose closure runs once per element of
     /// the parameter at `position`. The pinned call must pass that
     /// parameter a non-empty literal sequence, so the closure runs at least
-    /// once on the pinned input.
-    Adaptor { position: usize },
+    /// once on the pinned input. A `Result<Vec<..>, ..>` collect stops at the
+    /// first `Err` and discards the earlier `Ok` values, so it also needs the
+    /// pinned value to be an `Ok(..)` that every element reached
+    /// (`requires_ok`, #9490).
+    Adaptor { position: usize, requires_ok: bool },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -2533,6 +2881,7 @@ impl OwnerReturnPin {
                     .filter(|tail| tail.tail_is(&probe.expression))
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
+                        requires_ok: tail.collects_result(),
                     })?
             }
             None => return None,
@@ -2591,15 +2940,29 @@ impl OwnerReturnPin {
         if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
             return None;
         }
+        let walked_positions =
+            closure_adaptor::iterated_slice_positions(&owner.body, &probe.expression);
         Some(Self {
             name: name.to_string(),
             call,
             path,
+            walked_positions,
             returns_bool,
             returns_scalar: returns_primitive_scalar(owner, index),
             returns_integer: returns_primitive_scalar(owner, index)
                 && declared_return_type(&owner.body)
                     .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::for_owner(
+                &probe.expression,
+                name,
+                &owner.body,
+                index,
+            ),
+            pointer_return_change: crate::analysis::test_grip_evidence::PointerReturnChange::new(
+                owner,
+                probe.before.as_deref(),
+                &probe.expression,
+            ),
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -2722,9 +3085,12 @@ impl OwnerReturnPin {
                 trait_scope: None,
             },
             path: ReturnPathGate::CloneReceiver,
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -2823,9 +3189,12 @@ impl OwnerReturnPin {
                 constructor_names: declared_constructor_names(index),
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -2916,9 +3285,12 @@ impl OwnerReturnPin {
             name: owner.name.clone(),
             call,
             path,
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3010,11 +3382,49 @@ impl OwnerReturnPin {
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
     ) -> bool {
+        self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
+    }
+
+    /// #8051: whether a bare `debug_assert_eq!` would pin the owner under
+    /// every gate [`Self::admits`] applies to `assert_eq!`. It runs only
+    /// where debug assertions are on, so this is never credit: the
+    /// gap-admission post-pass reads it as a profile limit.
+    pub(in crate::analysis) fn admits_debug_assert_eq(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.admits_spelled(
+            test,
+            assertion,
+            index,
+            imports_foreign,
+            syntax,
+            "debug_assert_eq",
+        )
+    }
+
+    fn admits_spelled(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        spelling: &'static str,
+    ) -> bool {
         // A selected check-helper argument pin that a later gate refuses
         // (another owner of the same name, a scope or identity gate) leaves
         // the helper's later eager calls to try: an unrelated earlier call
         // must not hide the genuine pin.
-        let mut probe = HelperCallProbe::default();
+        let mut probe = HelperCallProbe {
+            spelling,
+            skip: 0,
+            selected: Cell::new(false),
+        };
         loop {
             if self.admits_candidate(test, assertion, index, imports_foreign, syntax, &probe) {
                 return true;
@@ -3036,6 +3446,7 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
         probe: &HelperCallProbe,
     ) -> bool {
+        let spelling = probe.spelling;
         // A `#[should_panic]` test passes when the values differ.
         if test
             .attrs
@@ -3057,6 +3468,7 @@ impl OwnerReturnPin {
         let condition;
         let matches_operands: [String; 2];
         let expect_operands: [String; 2];
+        let pointer_call;
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -3064,11 +3476,16 @@ impl OwnerReturnPin {
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
         // A nested `format!` is read only as a rendered scalar pin, and a
         // nested `vec!` only as a single-element index.
-        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
-        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
         let reads_assert_eq = renders
             || indexes
-            || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
+            || (!is_guard
+                && if spelling == "assert_eq" {
+                    is_plain_or_std_macro(&assertion.text, spelling)
+                } else {
+                    is_plain_macro(&assertion.text, spelling)
+                });
         let equality = if reads_assert_eq {
             None
         } else {
@@ -3125,6 +3542,45 @@ impl OwnerReturnPin {
         } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
+            };
+            // #9478: a typed immutable function pointer lends its exact call,
+            // not an arbitrary use of the owner as a value. Keep this bounded
+            // to a sync scalar free-function tail compared with a literal;
+            // every identity, expected-value and execution gate below remains.
+            pointer_call = (!self.awaited
+                && self.returns_scalar
+                && matches!(self.call, PinCall::Bare)
+                && matches!(self.path, ReturnPathGate::Any)
+                && (test.start_line..=test.end_line).contains(&assertion.line))
+            .then(|| {
+                [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                    if self.awaited_call_shape(operands[at], &self.name).is_some() {
+                        return None;
+                    }
+                    helper_arguments::expected_literal(operands[other], index)?;
+                    let call = crate::analysis::extract::local_fn_pointer_call(
+                        &test.body,
+                        operands[at],
+                        &assertion.text,
+                        assertion.line.checked_sub(test.start_line)?,
+                    )?;
+                    self.awaited_call_shape(&call, &self.name)?;
+                    self.pointer_mask_gate.admits(&call).then_some(())?;
+                    if self
+                        .pointer_return_change
+                        .as_ref()
+                        .is_some_and(|change| change.is_invisible_at_call(&call))
+                    {
+                        return None;
+                    }
+                    Some((at, call))
+                })
+            })
+            .flatten();
+            let operands = match &pointer_call {
+                Some((0, call)) => [call.as_str(), operands[1]],
+                Some((1, call)) => [operands[0], call.as_str()],
+                _ => operands,
             };
             // trap-shine-debug-exact-control: the std rendering of a
             // primitive scalar names its value, so an exact string pins it.
@@ -3211,6 +3667,7 @@ impl OwnerReturnPin {
                             operands[at],
                             &self.name,
                             self.returns_scalar,
+                            false,
                         )
                         .and_then(|text| {
                             self.awaited_call_shape(text, &self.name)
@@ -3340,10 +3797,28 @@ impl OwnerReturnPin {
                 Some(negated) => (negated.trim_start(), "false"),
                 None => (operand, "true"),
             };
-            let Some(call) = self.awaited_call_shape(operand, &self.name) else {
+            if let Some(call) = self.awaited_call_shape(operand, &self.name) {
+                (call, expected, Some(operand))
+            } else if (test.start_line..=test.end_line).contains(&assertion.line)
+                && owner_named_outside(test, &assertion.text, &self.name)
+                // `let hit = owner(..); assert!(hit);` reads like
+                // `assert_eq!(hit, true)`: the same binding rules as the
+                // `assert_eq!` reading (an immutable once-bound scalar
+                // used only in assertions) decide whether `hit` is the call.
+                && let Some(text) = let_bound_owner_call(
+                    test,
+                    assertion,
+                    operand,
+                    &self.name,
+                    self.returns_scalar,
+                    true,
+                )
+                && let Some(call) = self.awaited_call_shape(text, &self.name)
+            {
+                (call, expected, Some(text))
+            } else {
                 return false;
-            };
-            (call, expected, Some(operand))
+            }
         } else {
             return false;
         };
@@ -3474,7 +3949,7 @@ impl OwnerReturnPin {
                 }
                 // RIPR-SPEC-0265 rule 2: the pinned call must run the
                 // closure at least once.
-                if let ReturnPathGate::Adaptor { position } = path
+                if let ReturnPathGate::Adaptor { position, .. } = path
                     && !call_text.is_some_and(|text| {
                         closure_adaptor::pinned_call_runs_closure(
                             test,
@@ -3485,6 +3960,22 @@ impl OwnerReturnPin {
                         )
                     })
                 {
+                    return false;
+                }
+                // #9444: a walk over an empty literal visits nothing.
+                // A rendered or indexed comparison (`format!("{}", call)`,
+                // `vec![call][0]`) carries no call text, so the assertion's
+                // own text is read for the first call of the owner.
+                let walk_site = call_text.unwrap_or(assertion.text.as_str());
+                if self.walked_positions.iter().any(|position| {
+                    closure_adaptor::pinned_call_passes_only_empty(
+                        test,
+                        loan.as_ref(),
+                        walk_site,
+                        &self.name,
+                        *position,
+                    )
+                }) {
                     return false;
                 }
                 // RIPR-SPEC-0197 rule 3: a short-circuit tail pins only on a
@@ -4447,13 +4938,19 @@ impl ReturnPathGate {
         match self {
             Self::EarlyHead("Some") => &["Some", "None"],
             Self::EarlyHead(_) | Self::Head("Err") | Self::ErrVariant { .. } => &["Ok", "Err"],
+            Self::Adaptor {
+                requires_ok: true, ..
+            } => &["Ok", "Err"],
             _ => &[],
         }
     }
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::Adaptor { .. } | Self::ShortCircuit(_) => true,
+            Self::Any | Self::ShortCircuit(_) => true,
+            Self::Adaptor { requires_ok, .. } => {
+                !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
+            }
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }
@@ -4758,7 +5255,21 @@ fn test_crate_may_bind(
     roots: &TargetRoots,
 ) -> bool {
     index.files().iter().any(|(path, facts)| {
-        roots.root(path, index).as_deref() == Some(test_root)
+        // An established out-of-line integration helper's private imports cannot
+        // bind its crate root. A root glob is already checked at that root.
+        // Missing ancestry/placement keeps possible shadows, rather than
+        // borrowing this namespace exclusion from a representative chain.
+        let private_helper = !roots.disabled
+            && index.execution_context(path).is_some_and(|context| {
+                !context.edges.is_empty()
+                    && context.roots.iter().all(|root| {
+                        root.parent()
+                            .and_then(Path::file_name)
+                            .is_some_and(|name| name == "tests")
+                    })
+            });
+        !private_helper
+            && roots.may_belong(path, test_root, index)
             && source_may_bind_root(&facts.source, root)
     })
 }
@@ -4859,7 +5370,7 @@ fn item_nesting_with_impl(
 }
 
 /// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+pub(super) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
     // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
     node.attrs().any(|attr| {
         matches!(
@@ -7351,7 +7862,7 @@ fn has_non_bitwise_pipe(masked: &str) -> bool {
 
 /// `Option`/`Result`/`bool` methods that evaluate or apply an argument only
 /// on some inputs.
-const CONDITIONAL_COMBINATORS: &[&str] = &[
+pub(super) const CONDITIONAL_COMBINATORS: &[&str] = &[
     "and",
     "and_then",
     "filter",
@@ -7376,20 +7887,6 @@ const CONDITIONAL_COMBINATORS: &[&str] = &[
     "zip",
 ];
 
-/// Whether `text` is one outer `assert_eq!` invocation that must pass the
-/// owner-return execution admission: bare `assert_eq!`, or the same macro
-/// called through a drop-in assertion crate (`std::assert_eq!`,
-/// `pretty_assertions::assert_eq!`). A qualified drop-in reads as an
-/// assertion, so letting it skip this gate would credit an `assert_eq!` that
-/// the bare spelling refuses (for example one under `if false`).
-fn is_admission_gated_assert_eq(text: &str) -> bool {
-    let Some(path) = outer_macro_path(text) else {
-        return false;
-    };
-    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
-}
-
 /// The outer invocation's path, without interpreting nested operand macros.
 fn outer_macro_path(text: &str) -> Option<String> {
     let masked = mask_comments_and_strings(text);
@@ -7403,7 +7900,37 @@ fn outer_macro_path(text: &str) -> Option<String> {
         invocation = attribute[close + 1..].trim_start();
     }
     let (path, _) = invocation.split_once('!')?;
-    Some(path.chars().filter(|c| !c.is_whitespace()).collect())
+    let path = path.trim();
+    // The oracle must BEGIN with the invocation path. Whitespace is legal only
+    // beside a `::` separator (`similar_asserts :: assert_eq !(..)`); any other
+    // whitespace means a prefix token precedes the macro (`if matches!(..) {
+    // assert_eq!(..); }`, `if !cfg!(test) { .. }`), so stripping it would fuse
+    // the prefix into a plain-looking identifier and skip the context gate.
+    let chars: Vec<char> = path.chars().collect();
+    for (at, ch) in chars.iter().enumerate() {
+        if !ch.is_whitespace() {
+            continue;
+        }
+        let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+        let after = chars[at..].iter().find(|c| !c.is_whitespace());
+        if before != Some(&':') && after != Some(&':') {
+            return None;
+        }
+    }
+    let path: String = chars.into_iter().filter(|c| !c.is_whitespace()).collect();
+    const PREFIX_KEYWORDS: &[&str] = &[
+        "if", "while", "match", "loop", "for", "unsafe", "async", "move", "else", "return",
+        "break", "continue", "let", "in",
+    ];
+    // A keyword as any segment (`if ::core::matches!(..)` collapses to
+    // `if::core::matches`) is a prefix token, not part of a macro path.
+    if path
+        .split("::")
+        .any(|segment| PREFIX_KEYWORDS.contains(&segment))
+    {
+        return None;
+    }
+    Some(path)
 }
 
 /// #6578: the actual operand and the expected literal of an inline
@@ -7888,20 +8415,20 @@ fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
         .then(|| format!("{root}{macro_name}"))
 }
 
-/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
+/// `spelling` (`assert_eq` or `debug_assert_eq`) whose only nested macros are `expansion` (`format!`, which
 /// [`helper_arguments::rendered_template_call`] reads, or `vec!`, which
 /// [`single_element_index`] reads).
-fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
+fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
         return false;
     };
-    *first == "assert_eq"
+    *first == spelling
         && !nested.is_empty()
         && nested.iter().all(|(name, _)| *name == expansion)
         && masked
-            .find("assert_eq")
+            .find(spelling)
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
@@ -8152,16 +8679,14 @@ impl OwnerPinSyntax {
     fn mod_children(&self, index: &RustIndex) -> &BTreeMap<(PathBuf, String), Option<PathBuf>> {
         self.mod_children.get_or_init(|| {
             let mut children: BTreeMap<(PathBuf, String), Option<PathBuf>> = BTreeMap::new();
-            for (child, facts) in index.files().iter() {
-                // Only the innermost edge names the direct parent: earlier
-                // edges are the ancestor chain, which every descendant
-                // repeats.
-                let Some(edge) = facts.role_provenance.edges.last() else {
+            for (child, _) in index.files().iter() {
+                let Some(context) = index.execution_context(child) else {
                     continue;
                 };
-                if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                let mut direct = context.edges.iter().filter(|edge| &edge.child == child);
+                let (Some(edge), None) = (direct.next(), direct.next()) else {
                     continue;
-                }
+                };
                 let Some(name) = module_declaration_name(&edge.declaration) else {
                     continue;
                 };
@@ -8653,11 +9178,11 @@ fn climb_one_level(
     if stack.pop().is_some() {
         return Some(());
     }
-    let facts = index.files().get(file.as_path())?;
-    let edge = facts.role_provenance.edges.last()?;
-    if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+    let context = index.execution_context(file)?;
+    let mut direct = context.edges.iter().filter(|edge| edge.child == *file);
+    let (Some(edge), None) = (direct.next(), direct.next()) else {
         return None;
-    }
+    };
     let parent = index.files().get(&edge.parent)?;
     let scopes = syntax.file_scopes(index, &edge.parent)?;
     *stack = scopes
@@ -9283,6 +9808,9 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
 ///
+/// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
+/// / `assert!(!operand)`, whose condition is the operand itself.
+///
 /// `scalar` (cell-0094): the owner returns a primitive scalar, so the
 /// binding is `Copy` with no interior mutability and nothing can change
 /// it. Its other uses may then also sit in any other std assertion macro
@@ -9295,6 +9823,7 @@ fn let_bound_owner_call<'a>(
     operand: &str,
     name: &str,
     scalar: bool,
+    bare_condition: bool,
 ) -> Option<&'a str> {
     let operand = operand.trim();
     if !is_plain_identifier(operand) || operand == name || operand == "self" {
@@ -9339,6 +9868,10 @@ fn let_bound_owner_call<'a>(
         // The reviewed assertion itself is always a whole operand, and
         // only once: `assert_eq!(b, b)` compares the result with itself.
         let reviewed = other.line == assertion.line && other.text == assertion.text;
+        // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
+        // as the whole condition, which is the `assert_eq!(operand, bool)`
+        // operand once; the scalar check below bounds it to one mention.
+        let whole_operand = whole_operand || (reviewed && bare_condition);
         let read_only = scalar
             && !reviewed
             && READ_ONLY_ASSERTION_MACROS
@@ -11794,7 +12327,13 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
 /// nested `fn`'s parameters. Lexical and conservative: a `|` operator or an unrelated
 /// match arm that mentions the name also counts.
 fn binds_outside_let(masked: &str, name: &str) -> bool {
-    let fns = whole_word_offsets(masked, "fn");
+    // A function-pointer type has no item name: its `fn` is followed by
+    // `(`. Its parameter labels bind no values in the surrounding test.
+    // Keep the existing conservative refusal for actual nested fn items.
+    let fns: Vec<_> = whole_word_offsets(masked, "fn")
+        .into_iter()
+        .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
+        .collect();
     if fns.len() > 1 {
         return true;
     }
@@ -13315,8 +13854,10 @@ mod tests;
 
 /// Which eligible eager call of a borrowed check helper one admission attempt
 /// reads, and whether the attempt selected one (RIPR-SPEC-0197).
-#[derive(Default)]
 struct HelperCallProbe {
+    /// The assertion macro the admission reads: `assert_eq` or (#8051, never
+    /// credit) `debug_assert_eq`.
+    spelling: &'static str,
     skip: usize,
     selected: Cell<bool>,
 }

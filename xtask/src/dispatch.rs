@@ -45,6 +45,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryRun(args) => super::windows_advisory_run::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
@@ -134,6 +135,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::BumpVersion(args) => super::version::bump_version(&args),
         XtaskCommand::ReleaseControl(args) => super::reports::release_control(&args),
         XtaskCommand::ReleaseDenominator(args) => super::reports::release_denominator(&args),
+        XtaskCommand::ReleaseLedger(args) => super::reports::release_ledger(&args),
         XtaskCommand::SourcePromotion(args) => super::reports::source_promotion(&args),
         XtaskCommand::BackSync(args) => super::reports::back_sync(&args),
         XtaskCommand::ReleaseScope(args) => super::reports::release_scope(&args),
@@ -142,6 +144,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::ReleaseServerManifest(args) => {
             super::reports::release_server::release_server_manifest(&args)
+        }
+        XtaskCommand::ReleaseBindServerDescriptor(args) => {
+            super::reports::release_server::release_bind_server_descriptor(&args)
         }
         XtaskCommand::ReleaseUploadAssets(args) => {
             super::reports::release_server::release_upload_assets(&args)
@@ -213,13 +218,17 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
+        XtaskCommand::CheckCapabilityProducers(args) => {
+            super::policy::check_capability_producers(&args)
+        }
+        XtaskCommand::CapabilityDocs(args) => super::policy::capability_docs(&args),
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)
         }
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
-        XtaskCommand::CheckPrShape => super::check_pr_shape(),
+        XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),
         XtaskCommand::CheckGenerated => super::check_generated(),
         XtaskCommand::CheckCommandCatalog => super::check_command_catalog(),
         XtaskCommand::CheckBadgeDiffPolicy => super::check_badge_diff_policy(),
@@ -243,6 +252,12 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
+        XtaskCommand::TerminationQualification(args) => {
+            super::termination_qualification::run(&args)
+        }
+        XtaskCommand::TerminationRemovalBuilds(args) => {
+            super::termination_qualification::run_removal_builds(&args)
+        }
         XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
         XtaskCommand::VscodePackage => super::vscode_package(),

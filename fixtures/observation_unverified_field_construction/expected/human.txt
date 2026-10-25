@@ -23,6 +23,13 @@ Start here:
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach default_config: config_exists
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -30,9 +37,9 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/observation_unverified_field_construction/input --diff <cwd>/fixtures/observation_unverified_field_construction/diff.patch --mode fast probe:src_lib.rs:return_value:8ed284d1
   ripr context --root <cwd>/fixtures/observation_unverified_field_construction/input --diff <cwd>/fixtures/observation_unverified_field_construction/diff.patch --mode fast --at probe:src_lib.rs:return_value:8ed284d1
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:8ed284d1 --root <cwd>/fixtures/observation_unverified_field_construction/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value); run `ripr repair probe:src_lib.rs:return_value:8ed284d1 --root <cwd>/fixtures/observation_unverified_field_construction/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/observation_unverified_field_construction/input --at src/lib.rs:9 --kind return_value
+  ripr agent stub --root <cwd>/fixtures/observation_unverified_field_construction/input --at src/lib.rs:8 --kind return_value
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

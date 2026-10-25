@@ -811,6 +811,15 @@ pub(in crate::analysis) fn withhold_call_budget_gap(
                 )
             )
         {
+            // Legacy decision-set preservation (#5563): before the explicit
+            // role, rewriting an examined `assertion_not_observing` miss to
+            // `observation_unconfirmed` is what made the row eligible for
+            // the decision set, so the saturated examined-only row keeps
+            // joining it. The role changes here by that existing rule, not
+            // because of the miss value read.
+            if related.is_examined_only() {
+                related.role = crate::domain::RelatedTestRole::Contributing;
+            }
             related.miss = Some(RelatedTestMiss::ObservationUnconfirmed);
         }
     }
@@ -975,6 +984,68 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     true
 }
 
+const DEBUG_ASSERTION_LIMIT: StaticLimitKind = StaticLimitKind::RustDebugAssertionProfileUnresolved;
+const DEBUG_ASSERTION_FIRST_UNRESOLVED_EDGE: &str =
+    "whether the tests run with debug assertions, which the `debug_assert_eq!` check needs";
+/// Evidence marker carrying one `debug_assert_eq!` pin from the classifier
+/// (`ClassifiedProbeEvidence::debug_assert_eq_pins`) to this post-pass.
+pub(in crate::analysis) const DEBUG_ASSERT_EQ_PIN_PREFIX: &str =
+    "gap_admission: debug_assert_eq! pin by ";
+
+/// #8051: a related direct-call test whose bare `debug_assert_eq!` the
+/// owner-return pin admits under every gate it applies to `assert_eq!`
+/// (`OwnerReturnPin::admits_debug_assert_eq`) discriminates under the
+/// default `cargo test` profile, where debug assertions run, and never under
+/// `--release`, where they are compiled out. ripr does not resolve which
+/// profile runs the tests, so neither the gap nor credit is established: the
+/// gap is withheld under its own limit. The decision is the owner pin's;
+/// this post-pass only consumes its marker, after every producer-named
+/// limit. Returns `true` when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_debug_assertion_gap(finding: &mut Finding) -> bool {
+    let mut checking = Vec::new();
+    finding
+        .evidence
+        .retain(|line| match line.strip_prefix(DEBUG_ASSERT_EQ_PIN_PREFIX) {
+            Some(label) => {
+                checking.push(label.to_string());
+                false
+            }
+            None => true,
+        });
+    if checking.is_empty()
+        || finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+    {
+        return false;
+    }
+    // The `assert_eq!` twin of this check is credited only when the changed
+    // behavior is also reached, activated and propagated; an off-boundary
+    // input leaves its own missing discriminator, which the twin keeps as a
+    // gap. Withholding here would hide that gap behind the profile limit.
+    let ripr = &finding.ripr;
+    if [&ripr.reach, &ripr.infect, &ripr.propagate]
+        .iter()
+        .any(|stage| stage.state != StageState::Yes)
+    {
+        return false;
+    }
+    let next_step = format!(
+        "{} pins this code's result with `debug_assert_eq!`, which runs under the default test profile and is compiled out with `--release`, so ripr does not report a gap. If the tests may run with `--release`, use `assert_eq!` instead.",
+        checking.join(", ")
+    );
+    withhold_gap(
+        finding,
+        DEBUG_ASSERTION_LIMIT,
+        DEBUG_ASSERTION_FIRST_UNRESOLVED_EDGE,
+        next_step,
+        &checking,
+    );
+    true
+}
+
 /// The byte ranges of the bracketed arguments of every panicking macro
 /// invoked at or after byte `from` of the masked body: `name!(..)`,
 /// `name![..]` or `name!{..}` (`std::panic!` and `core::panic!` included;
@@ -1016,7 +1087,7 @@ fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize
 }
 
 /// Whether `test` carries `#[ignore]`, so a default run never executes it.
-pub(super) fn is_ignored(test: &TestFact) -> bool {
+pub(in crate::analysis) fn is_ignored(test: &TestFact) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
         compact == "#[ignore]" || compact.starts_with("#[ignore=")
@@ -1128,6 +1199,8 @@ mod tests {
             relation_reason: Some(RelationReason::DirectOwnerCall),
             relation_confidence: Some(RelationConfidence::High),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -1144,6 +1217,7 @@ mod tests {
                 flow_sink: None,
             });
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:gap-admission".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2153,6 +2227,27 @@ fn plain() { row(100); }
                         "{call_derived:?}"
                     );
                 }
+                // #5563: an examined-only row on the saturated test joins the
+                // decision set exactly as the old miss rewrite made it
+                // eligible, and a contributing row's membership is unchanged.
+                let mut examined = finding_for(class.clone(), &related);
+                examined.related_tests[0].miss = Some(RelatedTestMiss::AssertionNotObserving);
+                examined.related_tests[0].role = crate::domain::RelatedTestRole::ExaminedOnly;
+                assert_eq!(examined.oracle_related_tests().count(), 0);
+                assert!(withhold_call_budget_gap(&mut examined, &index));
+                assert_eq!(examined.oracle_related_tests().count(), 1);
+                assert_eq!(
+                    examined.related_tests[0].miss,
+                    Some(RelatedTestMiss::ObservationUnconfirmed)
+                );
+                let witness = crate::domain::DiagnosticWitness::from_finding(&examined);
+                let mut as_before = examined.clone();
+                as_before.related_tests[0].role = crate::domain::RelatedTestRole::Contributing;
+                assert_eq!(
+                    witness.map(|w| w.fix_site.map(|site| site.test_name)),
+                    crate::domain::DiagnosticWitness::from_finding(&as_before)
+                        .map(|w| w.fix_site.map(|site| site.test_name))
+                );
                 // An assertion ripr read keeps its strength miss.
                 let mut weak = finding_for(class.clone(), &related);
                 weak.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);

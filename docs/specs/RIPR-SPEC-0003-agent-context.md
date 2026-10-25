@@ -19,8 +19,19 @@ sibling. A missing location-shaped selector such as `src/lib.rs:abc` or
 Syntax guidance follows unsuccessful selection; it must preserve exact-ID
 matching and location matching. A well-formed missing ID or
 location remains a lookup miss. Fresh-analysis recovery must list findings
-with the requested root and diff scope so a corrected selector can be retried
-from another working directory. Misses remain exit 2 with no machine stdout.
+with the requested root and explicit diff scope so a corrected selector can
+be retried from another working directory. After an implicit dirty-worktree
+analysis misses, the first listing intentionally selects committed history,
+with the analyzed worktree listing second (RIPR-SPEC-0116). This recovery-only
+exception does not change analysis or explicit worktree/diff/artifact choices.
+Committed-history recovery explicitly selects
+`--committed` on check, explain and context, including when tracked worktree
+edits would change the default. A committed check's printed drill-ins and
+context's reciprocal explain command retain that choice. Without an explicit
+source, the CLI siblings follow check's dirty-worktree default. Explicit
+`--worktree`, supplied `--diff`, and verified `--from` replay retain their own
+input sources. `--committed` conflicts with those three explicit sources and
+refuses before input or root reads. Misses remain exit 2 with no machine stdout.
 A selector naming several findings (for example two findings at one
 `file:line`, or a canonical gap identity shared by grouped findings) refuses
 as ambiguous with the bounded candidate finding IDs instead of silently

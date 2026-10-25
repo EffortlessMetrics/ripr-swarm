@@ -1,4 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
 use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
@@ -9,7 +10,9 @@ use crate::domain::{
     select_canonical_next_action,
 };
 use crate::output::path::display_path;
-use crate::output::preview_actionability::preview_actionability_for;
+use crate::output::preview_actionability::{
+    preview_actionability_for, repo_scope_no_repair_reason,
+};
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
@@ -61,8 +64,9 @@ impl HumanTriageState {
 
 pub(crate) fn select_human_triage<'a>(
     output: &'a CheckOutput,
-    _config: &RiprConfig,
+    config: &RiprConfig,
 ) -> HumanTriage<'a> {
+    let role_context = triage_role_context(config);
     let suppressed_ids: BTreeSet<&str> = output
         .suppression
         .iter()
@@ -72,6 +76,25 @@ pub(crate) fn select_human_triage<'a>(
                 .iter()
                 .map(|entry| entry.finding_id.as_str())
         })
+        .collect();
+    // #9346 (same-owner): decisive production verdicts. An unknown
+    // production probe is shadowed only by a decisive verdict that covers
+    // the same changed behavior, or when the unknown carries no distinct
+    // changed behavior of its own (see `decisive_shadows_unknown`);
+    // a lone production unknown, or one describing a distinct edit on a
+    // different owner or changed line, is not.
+    let decisive_findings: Vec<&Finding> = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .filter(|finding| finding.is_candidate_actionable())
+        .filter(|finding| {
+            matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            )
+        })
+        .filter(|finding| file_role_rank(finding, &output.root, &role_context) == 0)
         .collect();
     let mut selected = None;
     let mut considered: Vec<&'a Finding> = Vec::new();
@@ -89,7 +112,10 @@ pub(crate) fn select_human_triage<'a>(
             continue;
         }
         visible_findings += 1;
-        if selected.is_none_or(|current| triage_rank(finding) < triage_rank(current)) {
+        if selected.is_none_or(|current| {
+            triage_rank(finding, &output.root, &role_context, &decisive_findings)
+                < triage_rank(current, &output.root, &role_context, &decisive_findings)
+        }) {
             selected = Some(finding);
         }
     }
@@ -257,6 +283,12 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
+                && head_is_on_branch(&output.root, base)
+            {
+                out.push_str(&format!(
+                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
+                ));
+            } else if let Some(base) = output.base.as_deref()
                 && let Some(candidate) = empty_diff_base_candidate(output, base)
             {
                 // The analyzed base resolved to HEAD itself, so committing
@@ -332,33 +364,46 @@ pub(crate) fn render_human_triage(
             // The refusal advisory is not gated on the static-limited state:
             // a static-limited finding whose seam the gate concretely
             // refused must name that refusal, not merge into the limitation.
-            match navigation.repair_route_for(&finding.id) {
-                Some(route) => {
-                    if !is_static_limited(finding) {
-                        let command = navigation.repair_command(&route.seam_id);
-                        if let Some(file) = route.uncommitted_target.as_deref() {
-                            // `ripr repair` would refuse this start: its
-                            // inline test module target begins from the
-                            // committed file. State the requirement instead
-                            // of a command that exits 2.
-                            let alternative = if stub_rendered {
-                                ", or use the test route below"
-                            } else {
-                                ""
-                            };
-                            out.push_str(&format!(
+            // #9103: a TypeScript finding with a validated repair packet gets
+            // a gap-bound start in place of the seam-bound line. Computed by
+            // the same pipeline step; static-limited findings never get one.
+            let gap_route = navigation.gap_repair_route_for(&finding.id);
+            if let Some(route) = gap_route {
+                if !is_static_limited(finding) {
+                    let command = navigation.gap_repair_command(route);
+                    out.push_str(&format!("  {command}\n"));
+                    super::push_powershell_variant(out, "  ", &command);
+                }
+            } else {
+                match navigation.repair_route_for(&finding.id) {
+                    Some(route) => {
+                        if !is_static_limited(finding) {
+                            let command = navigation.repair_command(&route.seam_id);
+                            if let Some(file) = route.uncommitted_target.as_deref() {
+                                // `ripr repair` would refuse this start: its
+                                // inline test module target begins from the
+                                // committed file. State the requirement instead
+                                // of a command that exits 2.
+                                let alternative = if stub_rendered {
+                                    ", or use the test route below"
+                                } else {
+                                    ""
+                                };
+                                out.push_str(&format!(
                                 "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
                             ));
-                        } else {
-                            out.push_str(&format!("  {command}\n"));
-                            super::push_powershell_variant(out, "  ", &command);
+                            } else {
+                                out.push_str(&format!("  {command}\n"));
+                                super::push_powershell_variant(out, "  ", &command);
+                            }
                         }
                     }
-                }
-                None => {
-                    if let Some(refusal) = navigation.repair_route_refusal() {
-                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
-                        out.push_str(&format!("  {advisory}\n"));
+                    None => {
+                        if let Some(refusal) = navigation.repair_route_refusal() {
+                            let advisory =
+                                refusal.advisory(&navigation.repair_command(&finding.id));
+                            out.push_str(&format!("  {advisory}\n"));
+                        }
                     }
                 }
             }
@@ -602,6 +647,20 @@ pub(crate) fn canonical_next_action_for_triage(
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// True when `HEAD` is the symbolic ref of local branch `base` (a detached
+/// HEAD or any other branch is not), so the empty comparison is the base
+/// compared with itself.
+fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
 }
 
 /// The probed `--base` candidate for an empty result whose analyzed base
@@ -973,17 +1032,20 @@ fn python_preview_safe_action(finding: &Finding) -> String {
     }
     let (reason, manual_step) = if finding.class == ExposureClass::NoStaticPath {
         (
-            "no Python test reaches this code",
+            "no Python test reaches this code".to_string(),
             "add a test that calls it by hand",
         )
+    } else if let Some(scope_reason) = repo_scope_no_repair_reason(finding) {
+        // #5531: the typed repo scope, not placement, is why no card exists.
+        (scope_reason, "add or strengthen a test by hand")
     } else if finding.activation.missing_discriminators.is_empty() {
         (
-            "static evidence names no concrete missing discriminator",
+            "static evidence names no concrete missing discriminator".to_string(),
             "add or strengthen a test by hand",
         )
     } else {
         (
-            "its test placement or related-test evidence is incomplete",
+            "its test placement or related-test evidence is incomplete".to_string(),
             "add or strengthen a test by hand",
         )
     };
@@ -992,7 +1054,134 @@ fn python_preview_safe_action(finding: &Finding) -> String {
     )
 }
 
-fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path, usize) {
+/// The source-role context triage can honestly build at this surface:
+/// layout plus the repository's configured `[analysis]
+/// production_like_targets` opt-in (#9346 review). Triage holds no Cargo
+/// target metadata, so declared targets, build scripts and declared
+/// crate roots stay unrecorded here; the opt-in is the one configured
+/// authority the producer and this surface share, and it must win over
+/// the `tests/` layout exactly as `classify_with` orders it.
+fn triage_role_context(config: &RiprConfig) -> SourceRoleContext {
+    let mut context = SourceRoleContext::empty();
+    context.production_like_targets = config.analysis().production_like_targets().clone();
+    context
+}
+
+/// #9346: the changed file's role from the producer-owned source-role
+/// model (`analysis::workspace::source_role`). Three tiers, in the order
+/// the role model dictates:
+///
+/// 0. files that seed production findings — production subjects and
+///    opted-in production-like targets (`production_like_targets`);
+/// 1. diff-only seeders (`seeds_diff_probes`): reviewed behavior Cargo
+///    compiles when changed but repo mode keeps out of the production
+///    seam inventory — repository automation under root `xtask/src/` is
+///    the shape derivable from layout and the configured opt-in alone;
+/// 2. evidence-role files (integration tests, benches, examples,
+///    fixtures), so an unknown probe seeded by a test-file edit cannot
+///    lead Start here over the production change it accompanies.
+fn file_role_rank(finding: &Finding, root: &std::path::Path, context: &SourceRoleContext) -> u8 {
+    let file = &finding.probe.location.file;
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    if classify_with(relative, context).seeds_production_findings() {
+        0
+    } else if seeds_diff_probes(relative, context) {
+        1
+    } else {
+        2
+    }
+}
+
+/// #9346 (same-owner): the changed owner/function a probe covers. The
+/// producer-owned `probe.owner` (`<file>::<owner>`) is authoritative; the
+/// canonical gap's `file`/`owner` pair is the same identity in the same
+/// `<file>::<owner>` shape for findings that carry only the gap.
+fn triage_owner_key(finding: &Finding) -> Option<String> {
+    if let Some(owner) = &finding.probe.owner {
+        return Some(owner.0.clone());
+    }
+    finding
+        .canonical_gap
+        .as_ref()
+        .map(|gap| format!("{}::{}", gap.file, gap.owner))
+}
+
+/// #9346 (same-behavior): the changed behavior a probe names, in the
+/// identity dimensions the codebase already mints: the canonical gap's
+/// subject (`file`/`owner`/`normalized_discriminator`) when the finding
+/// carries a gap, otherwise the probe's own changed expression at its
+/// changed line. Two probes on one owner with different subjects name
+/// different edits (a signature type bound versus a predicate boundary),
+/// however close they sit in the function.
+fn changed_behavior_subject(finding: &Finding) -> String {
+    if let Some(gap) = &finding.canonical_gap {
+        return format!(
+            "{}::{}::{}",
+            gap.file, gap.owner, gap.normalized_discriminator
+        );
+    }
+    format!(
+        "{}:{}:{}",
+        finding.probe.location.file.display(),
+        finding.probe.location.line,
+        finding.probe.expression.trim()
+    )
+}
+
+/// Whether two probes cover the same changed behavior: same changed
+/// file and line (the changed-line span the diff producer seeds from)
+/// and the same behavior subject above.
+fn covers_same_changed_behavior(decisive: &Finding, unknown: &Finding) -> bool {
+    decisive.probe.location.file == unknown.probe.location.file
+        && decisive.probe.location.line == unknown.probe.location.line
+        && changed_behavior_subject(decisive) == changed_behavior_subject(unknown)
+}
+
+/// Comment-and-whitespace-insensitive text of one side of a probe delta,
+/// so a comment-only re-add of a line reads as the same text it replaced.
+fn behavior_neutral_text(text: &str) -> String {
+    let code = text.split("//").next().unwrap_or_default();
+    code.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Whether an unknown probe carries no distinct changed behavior of its
+/// own: its before/after delta is absent (producers that record no
+/// delta) or behavior-neutral (the whole-function `static_unknown` the
+/// #9346 witness seeds by re-adding the signature line unchanged or
+/// comment-only, while the function's real edit is the decisive line
+/// below it). A substantive before/after — a changed type bound, a
+/// changed predicate on another line — is a distinct edit and stays.
+fn has_no_distinct_change(unknown: &Finding) -> bool {
+    match (&unknown.probe.before, &unknown.probe.after) {
+        (None, None) => true,
+        (Some(before), Some(after)) => {
+            behavior_neutral_text(before) == behavior_neutral_text(after)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a decisive production verdict shadows an unknown probe:
+/// same changed owner, and either the same changed behavior or an
+/// unknown with no distinct change of its own to lose. Owner identity
+/// alone never shadows — two independent edits in one function keep
+/// the unknown's limitation headline.
+fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
+    let (Some(decisive_owner), Some(unknown_owner)) =
+        (triage_owner_key(decisive), triage_owner_key(unknown))
+    else {
+        return false;
+    };
+    decisive_owner == unknown_owner
+        && (covers_same_changed_behavior(decisive, unknown) || has_no_distinct_change(unknown))
+}
+
+fn triage_rank<'a>(
+    finding: &'a Finding,
+    root: &std::path::Path,
+    context: &SourceRoleContext,
+    decisive_findings: &[&Finding],
+) -> (u8, u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -1009,7 +1198,33 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
     } else {
         class_rank
     };
+    let role_rank = file_role_rank(finding, root, context);
+    // #9346 (same-behavior): an unknown production probe shadowed by a
+    // decisive production verdict covering the same changed behavior
+    // ranks behind that verdict. Verdicts themselves are unchanged; a
+    // lone production unknown, or one naming a distinct edit, keeps
+    // its lead below.
+    let shadowed_rank = u8::from(
+        role_rank == 0
+            && matches!(
+                finding.class,
+                ExposureClass::StaticUnknown
+                    | ExposureClass::InfectionUnknown
+                    | ExposureClass::PropagationUnknown
+            )
+            && decisive_findings
+                .iter()
+                .any(|decisive| decisive_shadows_unknown(decisive, finding)),
+    );
     (
+        // #9346: changed-file role leads the ranking. The pair (file
+        // role, verdict decisiveness) defines the demotion this fixes —
+        // an unknown verdict on an evidence-role file — while verdict
+        // order within one role keeps its existing keys below, so a
+        // production unknown still leads a production exposed finding
+        // and `no_actionable_gap` keeps meaning only-exposed-selected.
+        role_rank,
+        shadowed_rank,
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
@@ -1066,14 +1281,15 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeFamily, ProbeId,
-        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
-        Summary,
+        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, NextActionClass, Probe,
+        ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
+        StageEvidence, StageState, Summary, SymbolId,
     };
     use std::path::PathBuf;
 
     fn test_finding(id: &str) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1416,12 +1632,18 @@ mod tests {
             ));
         }
 
-        // Verbatim Windows prefix: separators unify to the #5996 `//?/`
-        // shape instead of leaking `\\?\` into JSON identity.
+        // Verbatim Windows prefix: never `\\?\` in JSON identity (#5996). On
+        // Windows it folds to the plain drive spelling, as every printed path
+        // does (#9660); on Unix `\` is a filename byte, so the text only
+        // slash-unifies.
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
-        let verbatim_expected = ["//?", "C:", "tmp", "probe"].join("/");
+        let verbatim_expected = if cfg!(windows) {
+            ["C:", "tmp", "probe"].join("/")
+        } else {
+            ["//?", "C:", "tmp", "probe"].join("/")
+        };
         if verbatim_raw == verbatim_expected {
             return Err(format!(
                 "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches {verbatim_expected:?}"
@@ -1502,6 +1724,7 @@ mod tests {
             git(&["add", "."])?;
             git(&["commit", "-m", "init"])?;
             git(&["branch", "base-candidate"])?;
+            git(&["checkout", "-q", "--detach"])?;
             std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
             git(&["add", "."])?;
             git(&["commit", "-m", "second"])?;
@@ -1548,6 +1771,48 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn head_is_on_branch_matches_only_the_checked_out_branch() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-triage-on-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output = crate::git::run_git_output_with_deadline_and_env(
+                &dir,
+                args,
+                &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?} failed"))
+            }
+        };
+        let result = (|| -> Result<(), String> {
+            git(&["init", "-b", "master"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "init"])?;
+            if !head_is_on_branch(&dir, "master") {
+                return Err("HEAD on master must match base master".to_string());
+            }
+            if head_is_on_branch(&dir, "main") {
+                return Err("HEAD on master must not match base main".to_string());
+            }
+            git(&["checkout", "-q", "--detach"])?;
+            if head_is_on_branch(&dir, "master") {
+                return Err("a detached HEAD is not on the base branch".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
     }
 
     #[test]
@@ -1780,6 +2045,516 @@ mod tests {
             rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
             "{rendered}"
         );
+    }
+
+    fn finding_at(id: &str, file: &str, class: ExposureClass) -> Finding {
+        let mut finding = test_finding(id);
+        finding.probe.location = SourceLocation::new(file, 1, 1);
+        finding.class = class;
+        finding
+    }
+
+    /// #9346 (same-owner): a production finding on a named owner/function,
+    /// in the producer's `<file>::<owner>` identity shape.
+    fn finding_for_owner(
+        id: &str,
+        file: &str,
+        line: usize,
+        class: ExposureClass,
+        owner: &str,
+    ) -> Finding {
+        let mut finding = finding_at(id, file, class);
+        finding.probe.location = SourceLocation::new(file, line, 1);
+        finding.probe.owner = Some(SymbolId(format!("{file}::{owner}")));
+        finding
+    }
+
+    /// #9346: a decisive production verdict must lead Start here ahead of
+    /// an unknown probe seeded by a test-file edit. The unknown is listed
+    /// first so insertion order cannot masquerade as ranking.
+    #[test]
+    fn start_here_prefers_exposed_production_over_unknown_test_file() {
+        let test_unknown = finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production = finding_at("finding:production", "src/lib.rs", ExposureClass::Exposed);
+        let output = test_output(vec![test_unknown, production]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    /// #9346: the same preference covers a weak production gap.
+    #[test]
+    fn start_here_prefers_weak_production_over_unknown_test_file() {
+        let test_unknown = finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production = finding_at(
+            "finding:production",
+            "src/lib.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        let output = test_output(vec![test_unknown, production]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production")
+        );
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+    }
+
+    /// #9346: with no decisive production verdict the limitation headline
+    /// stays: a production unknown is selected over a test-file unknown,
+    /// and a lone test-file unknown still leads.
+    #[test]
+    fn start_here_keeps_static_limited_when_all_probes_are_unknown() {
+        let test_unknown = finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production_unknown = finding_at(
+            "finding:production-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let output = test_output(vec![test_unknown, production_unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+
+        let output = test_output(vec![finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        )]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346: file role leads the ranking, so a production unknown is
+    /// never demoted below a decisive test-file finding.
+    #[test]
+    fn start_here_does_not_demote_production_unknown_below_test_decisive() {
+        let test_decisive = finding_at(
+            "finding:test-decisive",
+            "tests/pricing.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        let production_unknown = finding_at(
+            "finding:production-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let output = test_output(vec![test_decisive, production_unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346 (same-owner): the live witness shape — a whole-function
+    /// `static_unknown` at the signature line and a decisive predicate
+    /// probe on the next line, both for the same production function.
+    /// The decisive probe leads; the unknown is listed first so insertion
+    /// order cannot masquerade as ranking.
+    #[test]
+    fn start_here_prefers_same_owner_exposed_over_production_static_unknown() {
+        let unknown = finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        );
+        let decisive = finding_for_owner(
+            "finding:line-decisive",
+            "src/lib.rs",
+            2,
+            ExposureClass::Exposed,
+            "discount_cents",
+        );
+        let output = test_output(vec![unknown, decisive]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:line-decisive")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    /// #9346 (same-owner): every unknown class is shadowed by a weak
+    /// decisive sibling on the same owner.
+    #[test]
+    fn start_here_prefers_same_owner_weak_over_production_unknowns() {
+        for unknown_class in [
+            ExposureClass::StaticUnknown,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+        ] {
+            let unknown = finding_for_owner(
+                "finding:fn-unknown",
+                "src/lib.rs",
+                1,
+                unknown_class.clone(),
+                "discount_cents",
+            );
+            let decisive = finding_for_owner(
+                "finding:line-decisive",
+                "src/lib.rs",
+                2,
+                ExposureClass::WeaklyExposed,
+                "discount_cents",
+            );
+            let output = test_output(vec![unknown, decisive]);
+            let triage = select_human_triage(&output, &RiprConfig::default());
+            assert_eq!(
+                triage.selected.map(|finding| finding.id.as_str()),
+                Some("finding:line-decisive"),
+                "{unknown_class:?} must be shadowed by its same-owner weak sibling"
+            );
+            assert_eq!(triage.state, HumanTriageState::TopGap);
+        }
+    }
+
+    /// #9346 (same-owner): shadowing is scoped to the owner — a decisive
+    /// verdict on a different function does not demote this function's
+    /// production unknown.
+    #[test]
+    fn start_here_keeps_production_unknown_when_decisive_is_different_owner() {
+        let unknown = finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        );
+        let other = finding_for_owner(
+            "finding:other-decisive",
+            "src/lib.rs",
+            9,
+            ExposureClass::Exposed,
+            "tax_cents",
+        );
+        let output = test_output(vec![other, unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:fn-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346 (same-owner): a lone production unknown keeps leading with
+    /// the limitation state.
+    #[test]
+    fn start_here_keeps_static_limited_for_lone_production_unknown() {
+        let output = test_output(vec![finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        )]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:fn-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346 (same-owner): an unknown that names its owner only through
+    /// the canonical gap is still shadowed by a decisive sibling whose
+    /// identity comes from `probe.owner`.
+    #[test]
+    fn start_here_shadows_unknown_named_only_by_canonical_gap() {
+        let mut unknown = finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        );
+        unknown.probe.owner = None;
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/lib.rs:discount_cents:static_unknown".to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "discount_cents".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "static_unknown".to_string(),
+            normalized_discriminator: "pub_fn_discount_cents".to_string(),
+        });
+        let decisive = finding_for_owner(
+            "finding:line-decisive",
+            "src/lib.rs",
+            2,
+            ExposureClass::Exposed,
+            "discount_cents",
+        );
+        let output = test_output(vec![unknown, decisive]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:line-decisive")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
+    }
+
+    /// #9346 review (same-behavior): a production finding whose probe
+    /// carries its changed behavior (family, changed line, and the
+    /// before/after delta the diff producer recorded), so an independent
+    /// edit can name its own changed behavior, unlike the whole-function
+    /// fallback unknown whose delta is absent or behavior-neutral.
+    fn finding_with_change(
+        id: &str,
+        line: usize,
+        class: ExposureClass,
+        family: ProbeFamily,
+        before: &str,
+        after: &str,
+        discriminator: &str,
+    ) -> Finding {
+        let mut finding = finding_for_owner(id, "src/lib.rs", line, class, "price");
+        finding.probe.family = family;
+        finding.probe.expression = after.to_string();
+        finding.probe.before = Some(before.to_string());
+        finding.probe.after = Some(after.to_string());
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: format!("gap:rust:src/lib.rs:price:{discriminator}"),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "price".to_string(),
+            behavior_kind: discriminator.to_string(),
+            probe_kind: finding.probe.family.as_str().to_string(),
+            normalized_discriminator: discriminator.to_string(),
+        });
+        finding
+    }
+
+    /// #9346 review: two independent edits in one function — a changed
+    /// signature type bound (its own unknown probe, on the signature
+    /// line, with a substantive before/after) and an observed predicate
+    /// change (decisive probe, body line, different discriminator).
+    /// Owner identity alone must not shadow the bound's unknown: it
+    /// still leads, with its limitation state, because the decisive
+    /// verdict never examined the bound change.
+    #[test]
+    fn start_here_keeps_unknown_for_independent_edit_in_same_function() {
+        let bound_unknown = finding_with_change(
+            "finding:bound-unknown",
+            1,
+            ExposureClass::StaticUnknown,
+            ProbeFamily::StaticUnknown,
+            "pub fn price<T: Copy>(amount: i32) -> i32 {",
+            "pub fn price<T: Clone>(amount: i32) -> i32 {",
+            "pub_fn_price<t_clone>amount_i32",
+        );
+        let decisive = finding_with_change(
+            "finding:predicate-decisive",
+            2,
+            ExposureClass::Exposed,
+            ProbeFamily::Predicate,
+            "amount >= threshold",
+            "amount > threshold",
+            "amount==threshold",
+        );
+        let output = test_output(vec![decisive, bound_unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:bound-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(out.contains("limited by static analysis"), "{out}");
+    }
+
+    /// #9346 review: the witnessed whole-function shape with an explicit
+    /// recorded delta — the signature line is re-added unchanged
+    /// (before == after), so the unknown names no distinct change and
+    /// the decisive predicate verdict on the line below still leads.
+    #[test]
+    fn start_here_shadows_whole_function_unknown_with_unchanged_signature_delta() {
+        let signature = "pub fn price(amount: i32) -> i32 {";
+        let whole_fn_unknown = finding_with_change(
+            "finding:fn-unknown",
+            1,
+            ExposureClass::StaticUnknown,
+            ProbeFamily::StaticUnknown,
+            signature,
+            signature,
+            "pub_fn_price_amount_i32",
+        );
+        let decisive = finding_with_change(
+            "finding:predicate-decisive",
+            2,
+            ExposureClass::Exposed,
+            ProbeFamily::Predicate,
+            "amount >= threshold",
+            "amount > threshold",
+            "amount==threshold",
+        );
+        let output = test_output(vec![whole_fn_unknown, decisive]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:predicate-decisive")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
+    }
+
+    /// #9346 review: a decisive verdict on the very changed line and
+    /// behavior subject an unknown probe names shadows that unknown,
+    /// even though the unknown carries a substantive delta.
+    #[test]
+    fn start_here_shadows_unknown_when_decisive_covers_same_changed_line() {
+        let unknown = finding_with_change(
+            "finding:line-unknown",
+            2,
+            ExposureClass::InfectionUnknown,
+            ProbeFamily::Predicate,
+            "amount >= threshold",
+            "amount > threshold",
+            "amount==threshold",
+        );
+        let decisive = finding_with_change(
+            "finding:line-decisive",
+            2,
+            ExposureClass::WeaklyExposed,
+            ProbeFamily::Predicate,
+            "amount >= threshold",
+            "amount > threshold",
+            "amount==threshold",
+        );
+        let output = test_output(vec![unknown, decisive]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:line-decisive")
+        );
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+    }
+
+    /// #9346 review: `[analysis] production_like_targets` opts a file
+    /// under `tests/` into production-like treatment, so its findings
+    /// rank as production here exactly as the producer seeded them —
+    /// a lone opted-in unknown leads, where the same file un-opted
+    /// would rank as test evidence behind the production verdict.
+    #[test]
+    fn start_here_ranks_production_like_opted_in_test_file_as_production() {
+        let opted_in_unknown = finding_at(
+            "finding:opted-in-unknown",
+            "tests/harness.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production = finding_at("finding:production", "src/lib.rs", ExposureClass::Exposed);
+        let output = test_output(vec![production, opted_in_unknown]);
+
+        let mut config = RiprConfig::default();
+        config
+            .analysis
+            .production_like_targets
+            .insert(PathBuf::from("tests/harness.rs"));
+        let triage = select_human_triage(&output, &config);
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:opted-in-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+
+        // Control: without the opt-in the same pair keeps the existing
+        // production-over-test-evidence order.
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production")
+        );
+    }
+
+    /// #9346 review: repository automation (`xtask/src/**`) seeds diff
+    /// probes as reviewed behavior (`seeds_diff_probes`), so it ranks
+    /// in its own tier — ahead of test evidence, behind ordinary
+    /// production — instead of as ordinary test evidence.
+    #[test]
+    fn start_here_ranks_repo_automation_between_production_and_test_evidence() {
+        let test_decisive = finding_at(
+            "finding:test-decisive",
+            "tests/pricing.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        let automation_unknown = finding_at(
+            "finding:automation-unknown",
+            "xtask/src/main.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let output = test_output(vec![test_decisive, automation_unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:automation-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+
+        // The tier is not ordinary production: a production verdict
+        // still leads over the automation unknown.
+        let production = finding_at("finding:production", "src/lib.rs", ExposureClass::Exposed);
+        let automation_unknown = finding_at(
+            "finding:automation-unknown",
+            "xtask/src/main.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let output = test_output(vec![automation_unknown, production]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
     }
 
     #[test]

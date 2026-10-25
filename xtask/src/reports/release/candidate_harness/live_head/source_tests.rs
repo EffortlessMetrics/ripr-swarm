@@ -100,7 +100,9 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
             "-w",
             "-t",
             "commit",
-            boundary_path.to_str().ok_or("boundary path UTF-8")?,
+            // Relative to git's cwd: the canonical fixture root is verbatim
+            // (`\\?\`) on Windows, which Git for Windows cannot open (#9660).
+            ".git/last-integrated.commit",
         ],
     )?;
     if boundary.trim() != LAST_INTEGRATED {
@@ -358,18 +360,30 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
             "https://github.com/EffortlessMetrics/ripr-swarm.git",
         ],
     )?;
-    git(
-        &source.0,
-        &[
-            "config",
-            "--local",
-            "--add",
-            "remote.origin.url",
-            "https://example.invalid/second.git",
-        ],
-    )?;
-    if admitted.revalidate().is_ok() {
-        return Err("multi-valued source origin admitted".to_string());
+    // Count-before-trim: an empty extra value must not hide behind trimming.
+    let approved = "https://github.com/EffortlessMetrics/ripr-swarm.git";
+    for (first, second) in [
+        (approved, "https://example.invalid/second.git"),
+        (approved, ""),
+        ("", approved),
+    ] {
+        git(
+            &source.0,
+            &["config", "--local", "--unset-all", "remote.origin.url"],
+        )?;
+        git(
+            &source.0,
+            &["config", "--local", "remote.origin.url", first],
+        )?;
+        git(
+            &source.0,
+            &["config", "--local", "--add", "remote.origin.url", second],
+        )?;
+        if admitted.revalidate().is_ok() {
+            return Err(format!(
+                "multi-valued source origin admitted: {first:?} + {second:?}"
+            ));
+        }
     }
     git(
         &source.0,

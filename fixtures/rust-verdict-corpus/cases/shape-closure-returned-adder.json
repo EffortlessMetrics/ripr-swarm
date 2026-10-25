@@ -1,0 +1,62 @@
+{
+  "case_id": "shape-closure-returned-adder",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-closure-returned-adder.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 87
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "returned_closure_called_inline",
+  "hard_case": "The edited code is the body of a closure returned from the owner and called as `make_adder(2)(3)`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "move |x| x - n",
+        "mutated_line": "move |x| x - n",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::adder_adds",
+        "equivalence_review": "not equivalent: `move |x| n + x` becomes `move |x| x - n`"
+      },
+      {
+        "replacement": "move |x| x * n",
+        "mutated_line": "move |x| x * n",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::adder_adds",
+        "equivalence_review": "not equivalent: `move |x| n + x` becomes `move |x| x * n`"
+      },
+      {
+        "replacement": "move |x| x + 1",
+        "mutated_line": "move |x| x + 1",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::adder_adds",
+        "equivalence_review": "not equivalent: `move |x| n + x` becomes `move |x| x + 1`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "adder_adds pins make_adder(2)(3) to 5; subtracting (1), multiplying (6) and adding 1 (4) all differ. Shape: returned closure.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -85,9 +85,46 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             "budget 1 must render exactly the first finding, got {}",
             bounded_findings.len()
         );
+        // #10093: the budget keeps the highest-priority finding, which is an
+        // analyzed finding and is stable across runs (not necessarily the
+        // sort-order first).
+        let kept_id = bounded_findings[0]["id"]
+            .as_str()
+            .ok_or("bounded finding must carry an id")?
+            .to_string();
+        assert!(
+            baseline_findings
+                .iter()
+                .any(|row| row["id"] == kept_id.as_str()),
+            "bounded finding {kept_id} must be an analyzed finding (first was {first_id})"
+        );
+        // The retained finding must be a top-priority one: no analyzed finding
+        // may have a stronger (lower) gap-class rank than the kept finding.
+        let class_rank = |class: &str| match class {
+            "reachable_unrevealed" => 0,
+            "weakly_exposed" => 1,
+            "no_static_path" => 2,
+            "exposed" => 4,
+            _ => 3,
+        };
+        let kept_class = bounded_findings[0]["classification"]
+            .as_str()
+            .ok_or("bounded finding must carry a classification")?;
+        let best_rank = baseline_findings
+            .iter()
+            .filter_map(|row| row["classification"].as_str())
+            .map(class_rank)
+            .min()
+            .ok_or("baseline must carry classifications")?;
         assert_eq!(
-            bounded_findings[0]["id"], first_id,
-            "bounded prefix must be the deterministic first finding"
+            class_rank(kept_class),
+            best_rank,
+            "budget 1 must keep a strongest-class finding, kept {kept_class}"
+        );
+        let again = run_ripr_with_env(&args, &[("RIPR_CHECK_FINDINGS_BYTES", "1")]);
+        assert_eq!(
+            again.stdout, bounded.stdout,
+            "the budgeted document must be deterministic"
         );
         assert_eq!(
             bounded_report["summary"]["findings"], total,
@@ -110,7 +147,30 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             message.contains("RIPR_CHECK_FINDINGS_BYTES"),
             "message must name the applied limit: {message}"
         );
+        assert!(
+            message.contains("omitted") && message.contains("by class"),
+            "message must name what was dropped: {message}"
+        );
         assert_eq!(entry["repair_route"], "output/check-findings-budget");
+        // #9010: the analysis outcome discloses the bounded document too,
+        // keeping `analysis_complete` as the analysis verdict.
+        assert_eq!(
+            bounded_report["analysis_outcome"]["analysis_complete"],
+            baseline["analysis_outcome"]["analysis_complete"],
+            "analysis_complete stays the analysis verdict"
+        );
+        assert_eq!(
+            bounded_report["analysis_outcome"]["document_complete"],
+            false
+        );
+        assert_eq!(bounded_report["analysis_outcome"]["findings_rendered"], 1);
+        assert_eq!(bounded_report["analysis_outcome"]["findings_total"], total);
+        assert!(
+            baseline["analysis_outcome"]
+                .get("document_complete")
+                .is_none(),
+            "unbounded outcome carries no document_complete member"
+        );
         assert_eq!(
             bounded_report["canonical_next_action"], baseline["canonical_next_action"],
             "findings-array omission must not change the primary canonical action"

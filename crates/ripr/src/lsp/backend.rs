@@ -22,8 +22,8 @@ use super::diagnostics::{
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_analysis_health,
-    is_gap_diagnostic, markdown_hover,
+    diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
+    hover_with_analysis_health, is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
@@ -57,8 +57,11 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    is_detectable_python_source_name, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
+    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
+    is_typescript_excluded_dir_everywhere, python_project_marker_name,
+    python_source_dir_marker_name, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -152,7 +155,12 @@ pub(super) struct Backend {
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
     documents: Mutex<DocumentStore>,
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, String>>,
+    /// Per-document save digest plus the workspace revision that save
+    /// produced; the revision lets a failed refresh drop only the digests no
+    /// successful snapshot has covered yet.
+    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, (String, u64)>>,
+    /// Highest workspace revision a published snapshot analyzed.
+    last_published_workspace_revision: AtomicU64,
     analysis_config: Mutex<LspAnalysisConfig>,
     configuration_failure: Mutex<Option<AnalysisFailure>>,
     /// Negotiated session-configuration transport (#2031, RIPR-SPEC-0136).
@@ -212,6 +220,12 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// The snapshot input identity whose pull-side partial-delivery
+    /// disclosures have already been logged (#9604 finding 35). Compared per
+    /// document pull: repeated pulls of the same committed selection warn
+    /// once, like the workspace report dedups, and a new snapshot identity
+    /// logs again.
+    pull_delivery_disclosure_logged_for: Mutex<Option<String>>,
     /// The failure signature covered by the last generic-client
     /// `window/showMessage` analysis-failure disclosure (#8583). Compared
     /// per status publication: a byte-identical repeated failure shows
@@ -219,6 +233,11 @@ pub(super) struct Backend {
     /// clears it so a later recurrence shows again. Mirrors
     /// `last_component_degradation`.
     last_analysis_failure_shown: Mutex<Option<String>>,
+    /// Languages whose "adapter not enabled" notice a generic client has
+    /// already been shown (#8585). A language is shown once while it stays
+    /// unavailable; leaving the set (adapter enabled, or its files no longer
+    /// changed) lets a later recurrence show again.
+    unavailable_language_notices_shown: Mutex<BTreeSet<String>>,
     /// Set when the bounded disclosure window after an initialize-time
     /// failure commit expired without completing client delivery (#3802).
     /// The owning session failure stays committed; this records the delivery
@@ -337,6 +356,7 @@ impl Backend {
             workspace_folders: Mutex::new(WorkspaceFolderSet::default()),
             documents: Mutex::new(DocumentStore::default()),
             saved_content_digests: Mutex::new(BTreeMap::new()),
+            last_published_workspace_revision: AtomicU64::new(0),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
             configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
@@ -360,7 +380,9 @@ impl Backend {
             watched_files_relative_pattern_support: AtomicBool::new(false),
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
+            pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
+            unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
@@ -513,7 +535,8 @@ impl Backend {
             scope,
             reason,
         );
-        self.emit_progress_for_decision(&decision).await;
+        // Dropping the handle detaches announcement from refresh completion.
+        drop(self.emit_progress_for_decision(&decision).await);
         let mut request = match decision {
             RefreshDecision::Start(request) => {
                 let request = *request;
@@ -679,9 +702,9 @@ impl Backend {
                 if self.refresh_request_is_current(request) && !cancelled {
                     self.report_refresh_failure_after(
                         request,
-                        err,
+                        err.message,
                         started.elapsed(),
-                        AnalysisFailureKind::AnalysisError,
+                        err.kind,
                     )
                     .await;
                     return RefreshAttemptOutcome::Failed;
@@ -1077,6 +1100,8 @@ impl Backend {
         self.request_code_lens_refresh_if_view_changed(lens_view)
             .await;
         self.log_component_degradations(&component_outcomes).await;
+        self.disclose_unavailable_languages_to_generic_client()
+            .await;
         self.log_refresh_completed(
             summary,
             published_uri_count,
@@ -1108,13 +1133,17 @@ impl Backend {
         duration: Duration,
         kind: AnalysisFailureKind,
     ) {
+        // Record the failure (and drop uncovered save digests) before the
+        // client can observe the failure log: a client that re-saves
+        // identical bytes in response to that log must not race the
+        // invalidation and be deduplicated (#10033).
+        self.mark_attempt_failed(request, kind, &message);
         self.client
             .log_message(
                 MessageType::WARNING,
                 refresh_failed_log_message(&message, duration),
             )
             .await;
-        self.mark_attempt_failed(request, kind, &message);
         self.publish_analysis_status().await;
     }
 
@@ -1702,6 +1731,15 @@ impl Backend {
             .unwrap_or(false)
     }
 
+    /// A copy of the negotiated client profile; a poisoned store fails
+    /// closed to the unsupported (generic-client) profile.
+    fn client_feature_profile(&self) -> ClientFeatureProfile {
+        self.client_features
+            .lock()
+            .map(|features| features.clone())
+            .unwrap_or_else(|_| ClientFeatureProfile::unsupported())
+    }
+
     /// Whether the client negotiated `publishDiagnostics` version support
     /// (#1747). Unnegotiated or poisoned stores fail closed to `None`
     /// versions — the previous wire shape.
@@ -1916,13 +1954,14 @@ impl Backend {
     /// `analyzing`, `Queued` begins as `queued` (and first terminates the
     /// token of the pending generation it replaced, which will never run).
     /// `Deduplicated` and `Stopped` are not accepted work and emit nothing.
-    pub(super) async fn emit_progress_for_decision(&self, decision: &RefreshDecision) {
+    pub(super) async fn emit_progress_for_decision(
+        &self,
+        decision: &RefreshDecision,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         match decision {
-            RefreshDecision::Start(request) => {
-                self.progress
-                    .begin(request, AnalysisProgressPhase::Analyzing)
-                    .await;
-            }
+            RefreshDecision::Start(request) => self
+                .progress
+                .begin_detached(request, AnalysisProgressPhase::Analyzing),
             RefreshDecision::Queued {
                 generation,
                 superseded_pending,
@@ -1934,12 +1973,28 @@ impl Backend {
                 }
                 if let Some(request) = self.refresh_scheduler.pending_request(*generation) {
                     self.progress
-                        .begin(&request, AnalysisProgressPhase::Queued)
-                        .await;
+                        .begin_detached(&request, AnalysisProgressPhase::Queued)
+                } else {
+                    None
                 }
             }
-            RefreshDecision::Deduplicated | RefreshDecision::Stopped => {}
+            RefreshDecision::Deduplicated | RefreshDecision::Stopped => None,
         }
+    }
+
+    /// Lifecycle tests deliberately wait for the detached task before
+    /// exercising later transitions of an already-started token.
+    #[cfg(test)]
+    pub(super) async fn emit_recorded_progress_for_decision(
+        &self,
+        decision: &RefreshDecision,
+    ) -> Result<(), String> {
+        if let Some(announcement) = self.emit_progress_for_decision(decision).await {
+            announcement
+                .await
+                .map_err(|error| format!("progress announcement failed: {error}"))?;
+        }
+        Ok(())
     }
 
     /// Terminal end for one attempt, derived from the same outcome and
@@ -2037,6 +2092,7 @@ impl Backend {
         kind: AnalysisFailureKind,
         message: &str,
     ) {
+        self.invalidate_uncovered_save_digests();
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };
@@ -2051,6 +2107,9 @@ impl Backend {
     }
 
     fn mark_attempt_cancelled(&self, request: &RefreshRequest) {
+        // An aborted refresh future never reaches the outcome handler, so
+        // drop its uncovered save digests here (#9366).
+        self.invalidate_uncovered_save_digests();
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };
@@ -2076,6 +2135,8 @@ impl Backend {
         health.requested_scope = Some(request.scope.as_str().to_string());
         match outcome {
             RefreshAttemptOutcome::Published => {
+                self.last_published_workspace_revision
+                    .fetch_max(request.workspace_revision, Ordering::AcqRel);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
                 let snapshot_id = snapshot_id_for_generation(request.generation);
@@ -2107,13 +2168,17 @@ impl Backend {
                 // `mark_attempt_failed` records the bounded error and preserves
                 // the completed snapshot. Keep that richer state here.
             }
-            RefreshAttemptOutcome::Cancelled => health.state = AnalysisAttemptState::Cancelled,
+            RefreshAttemptOutcome::Cancelled => {
+                self.invalidate_uncovered_save_digests();
+                health.state = AnalysisAttemptState::Cancelled;
+            }
             // A deadline-expired attempt is a fail-closed dropped refresh
             // (#1972, #5093). Keep `state` on the existing `cancelled`
             // allowlist so fail-closed clients (including VS Code) still parse
             // the payload, and distinguish it from a user or superseded cancel
             // with `failure.kind = deadline_exceeded`.
             RefreshAttemptOutcome::DeadlineExceeded => {
+                self.invalidate_uncovered_save_digests();
                 health.state = AnalysisAttemptState::Cancelled;
                 health.failure = Some(AnalysisFailure {
                     kind: AnalysisFailureKind::DeadlineExceeded,
@@ -2123,7 +2188,10 @@ impl Backend {
                 });
             }
             RefreshAttemptOutcome::Superseded => health.state = AnalysisAttemptState::Superseded,
-            RefreshAttemptOutcome::NotStarted => health.state = AnalysisAttemptState::Stopped,
+            RefreshAttemptOutcome::NotStarted => {
+                self.invalidate_uncovered_save_digests();
+                health.state = AnalysisAttemptState::Stopped;
+            }
         }
     }
 
@@ -2223,6 +2291,72 @@ impl Backend {
                 message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
             })
             .await;
+    }
+
+    /// The committed snapshot's typed unavailable-language rows (#8585):
+    /// `(wire language, skipped changed-file count)` in producer order.
+    fn unavailable_language_rows(&self) -> Vec<(String, usize)> {
+        self.latest_analysis
+            .lock()
+            .ok()
+            .and_then(|snapshot| {
+                snapshot.as_ref().map(|value| {
+                    value
+                        .unavailable_adapter
+                        .languages
+                        .iter()
+                        .map(|row| (row.language.clone(), row.file_count))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Tell a client without the `riprEditor` integration, once per
+    /// language, that changed files of a language whose adapter is not
+    /// enabled were not analyzed (#8585). Generic editors do not render
+    /// `ripr/analysisStatus`, so without this the per-document
+    /// `language_adapter_unavailable` limitation never reaches the user and
+    /// the save looks like a clean run. The VS Code extension renders the
+    /// same typed `unavailable_languages` rows in its status bar instead.
+    /// A language stays quiet while it remains unavailable and shows again
+    /// after it has left the set.
+    async fn disclose_unavailable_languages_to_generic_client(&self) {
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        let rows = self.unavailable_language_rows();
+        let fresh = {
+            let Ok(mut shown) = self.unavailable_language_notices_shown.lock() else {
+                return;
+            };
+            let current = rows
+                .iter()
+                .map(|(language, _)| language.clone())
+                .collect::<BTreeSet<_>>();
+            let fresh = rows
+                .iter()
+                .filter(|(language, _)| !shown.contains(language))
+                .cloned()
+                .collect::<Vec<_>>();
+            *shown = current;
+            fresh
+        };
+        for (language, file_count) in fresh {
+            self.client
+                .send_notification::<ShowMessage>(ShowMessageParams {
+                    typ: MessageType::WARNING,
+                    message: bounded_failure_message(&unavailable_language_notice(
+                        &language, file_count,
+                    )),
+                })
+                .await;
+        }
     }
 
     /// Record the current health failure as already disclosed on screen,
@@ -2352,9 +2486,9 @@ impl Backend {
     /// [`INITIALIZE_FAILURE_DISCLOSURE_BUDGET`] (#3802). The owning failure
     /// is already committed when this runs, so a wedged or undriven peer can
     /// never delay the state transition through these awaits: an expired
-    /// window is recorded on the backend instead of being dropped silently,
-    /// and the committed failure is re-disclosed by the next status
-    /// publication.
+    /// window sets a flag that only tests read, so the committed failure
+    /// itself, re-disclosed by the next status publication, is what keeps
+    /// the outcome from being silent (#9324).
     ///
     /// `shown` is the `window/showMessage` warning for clients without the
     /// `riprEditor` integration (#4532): they render neither the log nor
@@ -2392,6 +2526,7 @@ impl Backend {
         let root = self.workspace_root_authority();
         let config = self.analysis_config();
         let configuration_failure = self.configuration_failure();
+        let client_profile = self.client_feature_profile();
         let snapshot_state = self.latest_analysis.lock().ok().and_then(|snapshot| {
             snapshot.as_ref().map(|value| {
                 (
@@ -2399,7 +2534,12 @@ impl Backend {
                     value
                         .component_outcomes
                         .iter()
-                        .map(|outcome| outcome.status_payload(value.input_identity_id().as_deref()))
+                        .map(|outcome| {
+                            outcome.status_payload(
+                                value.input_identity_id().as_deref(),
+                                &client_profile,
+                            )
+                        })
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
                     withheld_unknown_summary(value),
@@ -2526,6 +2666,18 @@ impl Backend {
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
             "analysis_outcome": analysis_outcome,
+            // Typed changed-file languages skipped because their adapter was
+            // not enabled or compiled in (#8585). Clients render this field,
+            // not the limitation's detail text.
+            "unavailable_languages": self
+                .unavailable_language_rows()
+                .into_iter()
+                .map(|(language, file_count)| serde_json::json!({
+                    "language": language,
+                    "file_count": file_count,
+                    "recovery": unavailable_language_recovery(&language),
+                }))
+                .collect::<Vec<_>>(),
             // Profile-withholding disclosure (#5276): when the actionable
             // profile withholds live `*_unknown` findings from every
             // diagnostic/listing surface, this names the count, the classes,
@@ -3318,6 +3470,15 @@ impl Backend {
             };
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
+            // Source presence only matters when a file appears or disappears;
+            // an ordinary save of an existing TypeScript file is not an input.
+            kinds.typescript_input_changed |= match kind {
+                WorkspaceInputKind::TypescriptProjectMarker => true,
+                WorkspaceInputKind::TypescriptSourcePresence => {
+                    event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
+                }
+                _ => false,
+            };
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
         kinds
@@ -3510,7 +3671,43 @@ impl Backend {
                 reason.description()
             ));
         }
-        hover_response()
+        // #9604 finding 32: the generic fallback is state- and
+        // language-aware — before the first analysis the recovery is the
+        // `ripr.refresh` editor command, and the language list comes from
+        // the session configuration instead of a hardcoded `Rust`.
+        hover_response_without_evidence(
+            self.has_committed_analysis(),
+            &self.configured_language_labels(),
+        )
+    }
+
+    /// Whether any analysis snapshot has committed in this session.
+    fn has_committed_analysis(&self) -> bool {
+        self.latest_analysis
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+            .is_some()
+    }
+
+    /// The enabled language labels from the session configuration, for
+    /// language-aware no-evidence hover text. Falls back to Rust when the
+    /// session configuration is unavailable so the generic wording survives.
+    fn configured_language_labels(&self) -> Vec<String> {
+        let labels = self.analysis_config().map_or_else(Vec::new, |config| {
+            config
+                .repo_config
+                .languages()
+                .enabled()
+                .iter()
+                .map(|language| language.display_name().to_string())
+                .collect()
+        });
+        if labels.is_empty() {
+            vec!["Rust".to_string()]
+        } else {
+            labels
+        }
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -3545,6 +3742,22 @@ impl Backend {
         }
         quarantine.withdrawal_disclosed = true;
         Some((state.path.clone(), quarantine.reason))
+    }
+
+    /// Mark the pull-side partial-delivery disclosures for one snapshot input
+    /// identity as logged. Returns `true` only on the first call for that
+    /// identity (#9604 finding 35) so repeated document pulls of the same
+    /// committed selection disclose once, matching the workspace report's
+    /// per-report dedup. A poisoned lock discloses rather than suppresses.
+    fn mark_pull_delivery_disclosed(&self, identity: &str) -> bool {
+        let Ok(mut logged) = self.pull_delivery_disclosure_logged_for.lock() else {
+            return true;
+        };
+        if logged.as_deref() == Some(identity) {
+            return false;
+        }
+        *logged = Some(identity.to_string());
+        true
     }
 
     async fn disclose_withdrawal_once(&self, uri: &Uri) {
@@ -3783,13 +3996,41 @@ impl Backend {
         self.saved_content_digests
             .lock()
             .ok()
-            .and_then(|digests| digests.get(uri).cloned())
+            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
             .is_some_and(|recorded| recorded == digest)
     }
 
-    fn record_saved_content_digest(&self, uri: &tower_lsp_server::ls_types::Uri, digest: String) {
+    /// Record a save digest and advance the workspace revision as one step,
+    /// stamping the digest with the exact revision this advance produces. The
+    /// record lands before any refresh for the revision can be scheduled, so a
+    /// fast failure cannot precede it, and a concurrent advance cannot make
+    /// the stamp an under-estimate.
+    fn record_saved_content_digest_and_advance(
+        &self,
+        uri: &tower_lsp_server::ls_types::Uri,
+        digest: String,
+    ) {
+        let Ok(mut revision) = self.workspace_revision.lock() else {
+            return;
+        };
+        let next = revision.saturating_add(1);
         if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), digest);
+            digests.insert(uri.clone(), (digest, next));
+        }
+        *revision = next;
+    }
+
+    /// Drop the save digests no published snapshot has covered. Called when a
+    /// refresh ends without publishing and without a successor (failed,
+    /// cancelled, deadline-exceeded, never started): nothing analyzed those
+    /// bytes, so an identical re-save must retry (#9366). Digests a published
+    /// snapshot covered stay, so unrelated unchanged saves still dedup.
+    fn invalidate_uncovered_save_digests(&self) {
+        let covered = self
+            .last_published_workspace_revision
+            .load(Ordering::Acquire);
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.retain(|_, (_, revision)| *revision <= covered);
         }
     }
 
@@ -3918,6 +4159,12 @@ impl Backend {
 pub(super) struct WatchedFileChanges {
     pub(super) config_changed: bool,
     pub(super) workspace_graph_changed: bool,
+    /// A TypeScript detection input (root `tsconfig.json`/`jsconfig.json` or
+    /// detectable TypeScript source) changed. The adapter reads `tsconfig`
+    /// path aliases and indexes sources even when it is already enabled, so
+    /// the analysis input is invalidated and refreshed even if the reloaded
+    /// configuration is unchanged.
+    pub(super) typescript_input_changed: bool,
     /// A non-buffer diagnostics input changed without changing configuration
     /// or the Cargo graph: only a diagnostics refresh is needed (#4896).
     pub(super) diagnostics_input_changed: bool,
@@ -3944,6 +4191,11 @@ enum WorkspaceInputKind {
     /// detectable-file events because watched-file globs cannot express
     /// directory presence.
     PythonSourcePresence,
+    /// Canonical root `tsconfig.json`/`jsconfig.json`: the TypeScript
+    /// no-config detection marker class.
+    TypescriptProjectMarker,
+    /// Detectable TypeScript source below a root `src`/`tests` directory.
+    TypescriptSourcePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -3952,7 +4204,13 @@ enum WorkspaceInputKind {
 
 impl WorkspaceInputKind {
     fn reloads_repository_config(self) -> bool {
-        matches!(self, Self::PythonProjectMarker | Self::PythonSourcePresence)
+        matches!(
+            self,
+            Self::PythonProjectMarker
+                | Self::PythonSourcePresence
+                | Self::TypescriptProjectMarker
+                | Self::TypescriptSourcePresence
+        )
     }
 
     fn invalidates_workspace_graph(self) -> bool {
@@ -3997,8 +4255,38 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     {
         return Some(WorkspaceInputKind::PythonProjectMarker);
     }
-    path_is_detectable_source_dir_python(root, path)
-        .then_some(WorkspaceInputKind::PythonSourcePresence)
+    if let Some(marker) = typescript_project_marker_name(name)
+        && path_matches_root_file(root, path, marker)
+    {
+        return Some(WorkspaceInputKind::TypescriptProjectMarker);
+    }
+    if path_is_detectable_source_dir_python(root, path) {
+        return Some(WorkspaceInputKind::PythonSourcePresence);
+    }
+    path_is_detectable_source_dir_typescript(root, path)
+        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+}
+
+/// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
+/// TypeScript source file below a root `src`/`tests` directory, outside the
+/// excluded directories. Presence-only; the file is never read.
+fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((marker, below)) = relative.split_first() else {
+        return false;
+    };
+    if typescript_source_dir_marker_name(marker).is_none() {
+        return false;
+    }
+    let Some((file_name, directories)) = below.split_last() else {
+        return false;
+    };
+    directories
+        .iter()
+        .all(|dir| !is_typescript_excluded_dir_everywhere(dir))
+        && is_detectable_typescript_source_name(file_name)
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python
@@ -4068,11 +4356,10 @@ fn root_relative_components_on(
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if case_insensitive {
-            expected.eq_ignore_ascii_case(actual)
-        } else {
-            expected == actual
+        let key = |name: &str| {
+            crate::output::path::path_identity_key_on(Path::new(name), false, case_insensitive)
         };
+        let matched = key(expected) == key(actual);
         if !matched {
             return None;
         }
@@ -4111,6 +4398,7 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+        .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
         .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
         .chain(PYTHON_SOURCE_DIR_MARKERS.iter().map(|dir| {
             // Root-scoped relative glob: relative patterns resolve against
@@ -4120,6 +4408,10 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // detectable-file events are the transport hint, and the reload
             // path's config comparison stays the semantic authority.
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
+        }))
+        .chain(TYPESCRIPT_SOURCE_DIR_MARKERS.iter().map(|dir| {
+            // Same root-scoped shape for the TypeScript detection extensions.
+            serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
         .collect()
 }
@@ -4146,7 +4438,9 @@ fn diagnostics_input_watchers(
             })
             .collect());
     }
-    let absolute = root.to_string_lossy().replace('\\', "/");
+    // Display/glob text, not an identity key: lossy for non-UTF-8, `\`
+    // rewritten only on Windows (a Unix `\` is a filename byte).
+    let absolute = crate::output::path::path_display_lossy(root);
     // Glob syntax has no portable escape, so a root containing
     // metacharacters would match other paths or none at all.
     if absolute.contains(['*', '?', '[', ']', '{', '}']) {
@@ -4232,6 +4526,55 @@ mod workspace_input_tests {
             ));
         }
         Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_detection_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for marker in ["tsconfig.json", "jsconfig.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(marker)),
+                Some(WorkspaceInputKind::TypescriptProjectMarker),
+                "root marker {marker}"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &root.join("pkg").join(marker)),
+                None
+            );
+            assert_eq!(workspace_input_kind(&root, &outside.join(marker)), None);
+        }
+        for source in [
+            "src/app.ts",
+            "src/deep/view.tsx",
+            "tests/a.mts",
+            "tests/a.cts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::TypescriptSourcePresence),
+                "{source}"
+            );
+        }
+        for non_input in [
+            "src/app.js",
+            "src/api.generated.ts",
+            "src/types.d.ts",
+            "src/node_modules/p/i.ts",
+            "src/vendor/lib.ts",
+            "lib/app.ts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
+        assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
     }
 
     #[test]
@@ -4357,7 +4700,7 @@ mod workspace_input_tests {
     }
 
     #[test]
-    fn dynamic_watchers_cover_the_canonical_python_input_set() {
+    fn dynamic_watchers_cover_the_canonical_detection_input_set() {
         let actual = workspace_input_watchers()
             .into_iter()
             .filter_map(|watcher| {
@@ -4370,11 +4713,17 @@ mod workspace_input_tests {
         let expected = std::iter::once(CONFIG_FILE_NAME)
             .chain(["Cargo.toml", "Cargo.lock"])
             .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+            .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
             .map(|name| format!("**/{name}"))
             .chain(
                 PYTHON_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.py")),
+            )
+            .chain(
+                TYPESCRIPT_SOURCE_DIR_MARKERS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
             )
             .collect::<BTreeSet<_>>();
 
@@ -4407,7 +4756,7 @@ mod workspace_input_tests {
         // Without it: absolute string globs, because VS Code matches a
         // string glob against the absolute path and a bare relative string
         // never fires.
-        let absolute = root.to_string_lossy().replace('\\', "/");
+        let absolute = crate::output::path::path_display_lossy(&root);
         let expected_absolute = expected
             .iter()
             .map(|relative| serde_json::json!(format!("{absolute}/{relative}")))
@@ -4761,7 +5110,10 @@ impl Backend {
         if previous == signature {
             return;
         }
-        if let Some(message) = super::component_outcome::degradation_log_message(outcomes) {
+        if let Some(message) = super::component_outcome::degradation_log_message(
+            outcomes,
+            &self.client_feature_profile(),
+        ) {
             self.client.log_message(MessageType::WARNING, message).await;
         } else if previous.is_some() {
             self.client
@@ -4852,6 +5204,23 @@ fn config_failure_notice(error: &str) -> String {
         "ripr config load failed; analysis is paused: {}",
         crate::config::config_error_summary(error)
     )
+}
+
+/// On-screen notice for changed files of a language whose adapter is not
+/// enabled (#8585): the count, the fact that they were not analyzed, and the
+/// shared recovery route.
+fn unavailable_language_notice(language: &str, file_count: usize) -> String {
+    format!(
+        "ripr did not analyze {file_count} changed {language} file(s): the {language} adapter is not enabled; {}",
+        unavailable_language_recovery(language)
+    )
+}
+
+fn unavailable_language_recovery(language: &str) -> String {
+    match crate::domain::LanguageId::from_wire(language) {
+        Some(id) => language_adapter_not_enabled_recovery(id),
+        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
+    }
 }
 
 fn bounded_failure_message(message: &str) -> String {
@@ -5517,6 +5886,26 @@ impl LanguageServer for Backend {
         // from it, and downstream surfaces consume session state or the
         // profile — never raw `InitializeParams` capability trees.
         let profile = ClientFeatureProfile::from_initialize_params(&params);
+        // #9604 batch G finding 30: an advertised-but-rejected riprAgent block
+        // gets exactly one typed warning at initialize (the rejection itself
+        // is durable session state and rides every status projection); an
+        // absent block stays silent, so the warning never nags unenhanced
+        // clients.
+        if let Some(rejection) = &profile.ripr_agent_rejection {
+            let kind = serde_json::to_value(rejection.kind)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| "unsupported_protocol_version".to_string());
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!(
+                        "ripr agent protocol rejected at initialize: {kind} — {}; ripr_agent surfaces as null",
+                        rejection.detail
+                    ),
+                )
+                .await;
+        }
         let supports_pull_diagnostics = profile.pull_diagnostics;
         let supports_diagnostic_refresh = profile.diagnostic_refresh;
         if let Ok(mut supported) = self.pull_diagnostics.lock() {
@@ -5661,11 +6050,14 @@ impl LanguageServer for Backend {
         if changes.config_changed {
             self.reload_repository_config().await;
         }
-        if changes.workspace_graph_changed {
-            self.invalidate_analysis_input_and_end_queued_progress(
-                "workspace_manifest_or_lockfile_changed",
-            )
-            .await;
+        if changes.workspace_graph_changed || changes.typescript_input_changed {
+            let reason = if changes.workspace_graph_changed {
+                "workspace_manifest_or_lockfile_changed"
+            } else {
+                "typescript_project_input_changed"
+            };
+            self.invalidate_analysis_input_and_end_queued_progress(reason)
+                .await;
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
                 .await;
@@ -6074,12 +6466,12 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
-        if let Some(digest) = digest {
-            self.record_saved_content_digest(&uri, digest);
+        match digest {
+            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
+            None => self.advance_workspace_revision(),
         }
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
-        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
@@ -6427,15 +6819,26 @@ impl Backend {
         // (#1973): the same membership push publishes, never a re-evaluated
         // budget. A partial delivery state is disclosed, not hidden behind an
         // empty report.
-        if let Some(disclosure) = pull_delivery_disclosure(&snapshot) {
-            self.client
-                .log_message(MessageType::WARNING, disclosure)
-                .await;
-        }
-        if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
-            self.client
-                .log_message(MessageType::WARNING, disclosure)
-                .await;
+        // #9604 finding 35: disclose once per committed selection identity,
+        // like the workspace report dedups — a client that pulls every open
+        // document otherwise logs the same warning once per file per cycle.
+        // An identity-less snapshot (unit fixture) cannot dedup safely and
+        // keeps the per-pull disclosure.
+        let disclose = match snapshot.input_identity_id() {
+            Some(identity) => self.mark_pull_delivery_disclosed(&identity),
+            None => true,
+        };
+        if disclose {
+            if let Some(disclosure) = pull_delivery_disclosure(&snapshot) {
+                self.client
+                    .log_message(MessageType::WARNING, disclosure)
+                    .await;
+            }
+            if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
+                self.client
+                    .log_message(MessageType::WARNING, disclosure)
+                    .await;
+            }
         }
         let diagnostics = result_ids.delivered_diagnostics_for_uri(&snapshot, &uri);
         Ok(
@@ -6952,7 +7355,7 @@ impl Backend {
                         snapshot.and_then(|snapshot| {
                             snapshot
                                 .unavailable_adapter
-                                .not_enabled_language(relative, snapshot.analysis_outcome.as_ref())
+                                .not_enabled_language(relative, snapshot.language_view.as_ref())
                         })
                     });
                 let not_analyzed = outside_partition || adapter_language.is_some();
@@ -8669,6 +9072,7 @@ mod top_limitation_selection_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -10867,8 +11271,15 @@ mod gap_record_context_tests {
 
     #[test]
     fn display_path_normalizes_backslashes_to_forward_slashes() {
+        // Display-only: `\` is rewritten on Windows hosts; a Unix `\` is a
+        // filename byte and stays visible.
         let path = std::path::PathBuf::from(r"a\b\c.rs");
-        assert_eq!(display_path(&path), "a/b/c.rs");
+        let expected = if cfg!(windows) {
+            "a/b/c.rs"
+        } else {
+            r"a\b\c.rs"
+        };
+        assert_eq!(display_path(&path), expected);
     }
 
     #[test]
@@ -11490,6 +11901,7 @@ mod delivery_selection_parity_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -12135,6 +12547,141 @@ mod work_done_progress_guard_tests {
     use crate::lsp::progress::ProgressEvent;
     use tower_lsp_server::LspService;
 
+    /// Wrong-order control for #10033: the failure must be recorded (uncovered
+    /// save digests dropped) before the failure log is sent. The client
+    /// channel is bounded, so with an undrained socket the log send stays
+    /// pending; the digest must already be gone while it is pending. Under
+    /// the old order (log first) the digest would still match here.
+    #[test]
+    fn refresh_failure_drops_uncovered_save_digest_before_failure_log_is_sent() -> Result<(), String>
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to start test runtime: {err}"))?;
+        runtime.block_on(async {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let uri = "file:///workspace/src/lib.rs"
+                .parse::<Uri>()
+                .map_err(|err| format!("uri: {err}"))?;
+            backend.record_saved_content_digest_and_advance(&uri, "d".to_string());
+            if !backend.saved_content_digest_matches(&uri, "d") {
+                return Err("precondition: digest recorded".to_string());
+            }
+            let decision = backend.refresh_scheduler.request(
+                PathBuf::from("/workspace"),
+                LspAnalysisConfig::default(),
+                backend.workspace_revision(),
+                0,
+                RefreshScope::Interactive,
+                RefreshReason::DidSave,
+            );
+            let RefreshDecision::Start(request) = &decision else {
+                return Err(format!("expected Start decision, got {decision:?}"));
+            };
+            let request = request.as_ref().clone();
+
+            // Saturate the bounded client channel without draining it, until
+            // a send stays pending.
+            let pending = Duration::from_millis(50);
+            let mut saturated = false;
+            for _ in 0..64 {
+                let send = backend
+                    .client
+                    .log_message(tower_lsp_server::ls_types::MessageType::INFO, "fill");
+                if tokio::time::timeout(pending, send).await.is_err() {
+                    saturated = true;
+                    break;
+                }
+            }
+            if !saturated {
+                return Err("precondition: client channel never backed up".to_string());
+            }
+
+            // The failure log now cannot complete. The report must have
+            // dropped the digest before reaching it.
+            let report = backend.report_refresh_failure_after(
+                &request,
+                "forced failure".to_string(),
+                Duration::from_millis(1),
+                AnalysisFailureKind::AnalysisError,
+            );
+            if tokio::time::timeout(pending, report).await.is_ok() {
+                return Err("expected the failure log send to stay pending".to_string());
+            }
+            if backend.saved_content_digest_matches(&uri, "d") {
+                return Err(
+                    "uncovered save digest remained while the failure log was pending".to_string(),
+                );
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn dropped_refresh_guard_invalidates_only_uncovered_save_digests() -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to start test runtime: {err}"))?;
+        runtime.block_on(async {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let uri_of = |name: &str| {
+                format!("file:///workspace/src/{name}.rs")
+                    .parse::<Uri>()
+                    .map_err(|err| format!("uri: {err}"))
+            };
+            let (covered_uri, uncovered_uri) = (uri_of("covered")?, uri_of("uncovered")?);
+
+            // `covered` is saved and then covered by a published snapshot.
+            backend.record_saved_content_digest_and_advance(&covered_uri, "c".to_string());
+            let first = backend.refresh_scheduler.request(
+                PathBuf::from("/workspace"),
+                LspAnalysisConfig::default(),
+                backend.workspace_revision(),
+                0,
+                RefreshScope::Interactive,
+                RefreshReason::DidSave,
+            );
+            let RefreshDecision::Start(first) = &first else {
+                return Err(format!("expected Start decision, got {first:?}"));
+            };
+            let first = first.as_ref().clone();
+            backend.record_health_outcome(&first, RefreshAttemptOutcome::Published);
+            // `uncovered` is saved afterwards; the still-active refresh is aborted.
+            backend.record_saved_content_digest_and_advance(&uncovered_uri, "u".to_string());
+            let held = |backend: &Backend| -> Vec<Uri> {
+                backend
+                    .saved_content_digests
+                    .lock()
+                    .map(|digests| digests.keys().cloned().collect())
+                    .unwrap_or_default()
+            };
+            if held(backend).len() != 2 {
+                return Err("precondition: both digests recorded".to_string());
+            }
+            {
+                let _guard = RefreshCancellationGuard::new(
+                    backend,
+                    &backend.refresh_scheduler,
+                    &backend.refresh_idle,
+                    first,
+                );
+            }
+            let remaining = held(backend);
+            if remaining != vec![covered_uri] {
+                return Err(format!(
+                    "aborted refresh must drop only the uncovered digest: {remaining:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn dropped_refresh_guard_ends_active_and_queued_progress_exactly_once() -> Result<(), String> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -12160,8 +12707,10 @@ mod work_done_progress_guard_tests {
             };
             let first = first.as_ref().clone();
             backend
-                .emit_progress_for_decision(&RefreshDecision::Start(Box::new(first.clone())))
-                .await;
+                .emit_recorded_progress_for_decision(&RefreshDecision::Start(Box::new(
+                    first.clone(),
+                )))
+                .await?;
             let second = backend.refresh_scheduler.request(
                 PathBuf::from("/workspace"),
                 LspAnalysisConfig::default(),
@@ -12173,7 +12722,7 @@ mod work_done_progress_guard_tests {
             if !matches!(second, RefreshDecision::Queued { .. }) {
                 return Err(format!("expected Queued decision, got {second:?}"));
             }
-            backend.emit_progress_for_decision(&second).await;
+            backend.emit_recorded_progress_for_decision(&second).await?;
 
             // Dropping the armed guard simulates the refresh future being
             // cancelled mid-flight: it cancels the active and queued work and
@@ -12269,7 +12818,9 @@ mod work_done_progress_guard_tests {
                 return Err(format!("expected Start decision, got {decision:?}"));
             };
             let request = request.as_ref().clone();
-            backend.emit_progress_for_decision(&decision).await;
+            backend
+                .emit_recorded_progress_for_decision(&decision)
+                .await?;
 
             // The deadline timer fired: the attempt token carries the named
             // DeadlineExceeded kind.
@@ -12512,6 +13063,7 @@ mod list_actionable_items_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -13044,5 +13596,133 @@ mod analysis_error_cancellation_tests {
                 "{kind:?} observed at a checkpoint must classify as cancellation"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod pull_disclosure_dedup_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tower_lsp_server::LspService;
+
+    #[test]
+    fn pull_delivery_disclosure_logs_once_per_snapshot_identity() {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        assert!(
+            backend.mark_pull_delivery_disclosed("identity-a"),
+            "first pull of a selection discloses"
+        );
+        assert!(
+            !backend.mark_pull_delivery_disclosed("identity-a"),
+            "repeated pulls of the same committed selection stay silent (#9604 finding 35)"
+        );
+        assert!(
+            backend.mark_pull_delivery_disclosed("identity-b"),
+            "a new snapshot identity discloses again"
+        );
+        assert!(
+            !backend.mark_pull_delivery_disclosed("identity-b"),
+            "the new identity dedups too"
+        );
+    }
+
+    #[test]
+    fn committed_selection_identity_comes_from_the_snapshot() -> Result<(), String> {
+        // The dedup key is the committed selection's input identity, so two
+        // snapshots over different inputs disclose independently even when
+        // their budget outcomes are identical.
+        let first = crate::lsp::state::AnalysisSnapshot {
+            input_identity: Some(
+                crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
+                    PathBuf::from("/workspace"),
+                    1,
+                    &crate::lsp::config::LspAnalysisConfig::default(),
+                ),
+            ),
+            ..snapshot_fixture()?
+        };
+        let second = crate::lsp::state::AnalysisSnapshot {
+            input_identity: Some(
+                crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
+                    PathBuf::from("/workspace"),
+                    2,
+                    &crate::lsp::config::LspAnalysisConfig::default(),
+                ),
+            ),
+            ..snapshot_fixture()?
+        };
+        let first_identity = first
+            .input_identity_id()
+            .ok_or_else(|| "fixture snapshot must carry an input identity".to_string())?;
+        let second_identity = second
+            .input_identity_id()
+            .ok_or_else(|| "fixture snapshot must carry an input identity".to_string())?;
+        assert_ne!(
+            first_identity, second_identity,
+            "distinct refresh inputs must produce distinct dedup identities"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hover_state_helpers_reflect_the_session() -> Result<(), String> {
+        // #9604 finding 32: the no-evidence hover's state and language
+        // inputs track the session — nothing committed yet, then a committed
+        // snapshot; the configured default analyzes Rust.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        assert!(
+            !backend.has_committed_analysis(),
+            "a fresh session has no committed analysis"
+        );
+        assert_eq!(
+            backend.configured_language_labels(),
+            vec!["Rust".to_string()],
+            "the default session configuration analyzes Rust"
+        );
+        backend
+            .refresh_plan(crate::lsp::diagnostics::WorkspaceDiagnostics {
+                snapshot: snapshot_fixture()?,
+                batches: Vec::new(),
+            })
+            .ok_or_else(|| "expected committed snapshot".to_string())?;
+        assert!(
+            backend.has_committed_analysis(),
+            "a committed snapshot flips the analyzed state"
+        );
+        Ok(())
+    }
+
+    fn snapshot_fixture() -> Result<crate::lsp::state::AnalysisSnapshot, String> {
+        // Empty evidence keeps the fixture consistent (`is_consistent` ties
+        // the diagnostic count to findings, seams, gaps, and scope guards);
+        // these tests only need a committed snapshot identity.
+        let diagnostics_by_uri = std::collections::BTreeMap::new();
+        Ok(crate::lsp::state::AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
+            input_identity: None,
+            base: Some("origin/main".to_string()),
+            mode: crate::app::Mode::Draft,
+            refresh: crate::lsp::state::RefreshMetadata::generated_now(),
+            findings: Vec::new(),
+            analysis_outcome: None,
+            diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+            classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri,
+            diagnostic_uri_index: None,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
+        })
     }
 }

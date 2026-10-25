@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0028-ex5-override-marker",
+  "subject_id": "authored-py-pytest-unnum",
+  "diff": "cases/unnum-0028-ex5-override-marker.diff",
+  "anchor": {
+    "file": "unnum/child_rate.py",
+    "line": 12
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "pytest_assert_eq_typing_override",
+  "hard_case": "`@override` from `typing` marks the owner and does not wrap it",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return n + 2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_child_rate.py::test_child_rate_adds_one",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`Child.rate` carries `@override` imported from `typing`. The test pins `Child().rate(1) == 2`; `n + 2` gives 3 and fails it. RIPR-SPEC-0028 example 5: a plain-name typing marker returns the function unchanged, so the owner emits no `decorator_indirection` and the exact-value test can credit it.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0028#5"
+  ]
+}

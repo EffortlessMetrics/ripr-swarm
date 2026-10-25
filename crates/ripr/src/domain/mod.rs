@@ -15,6 +15,9 @@ mod git_candidate;
 mod identity;
 mod intervention_study;
 mod language;
+pub(crate) mod language_capability;
+#[cfg(test)]
+mod language_capability_drift;
 mod next_action;
 mod probe;
 mod repair_card;
@@ -34,10 +37,10 @@ pub(crate) use classification::{
     ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_NOT_CREDITED_PREFIX,
     ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP, ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
     ASSERTION_SHAPED_OWNER_REASON, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
-    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, CALLEE_ONLY_REACH_PREFIX,
-    LIMITATION_ANALYZER_ROUTE_PREFIX, LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
-    LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX, LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP,
-    TRANSITIVE_REACH_WITNESS_PREFIX,
+    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP,
+    CALLEE_ONLY_REACH_PREFIX, LIMITATION_ANALYZER_ROUTE_PREFIX,
+    LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+    LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
 };
 pub(crate) use command_spec::command_tokens;
 pub use command_spec::{
@@ -105,10 +108,10 @@ pub(crate) use probe::{
     input_boundary_fact, is_unselected_input_reason,
 };
 pub use probe::{
-    ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-    MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
-    RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext,
-    ValueFact,
+    ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
+    FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
+    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
+    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,

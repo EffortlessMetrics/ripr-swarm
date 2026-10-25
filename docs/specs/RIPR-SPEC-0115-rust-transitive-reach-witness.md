@@ -175,6 +175,43 @@ Unchanged: bare `no_static_path`, no `static_limit_kind`, no witness.
 | `static_limitation` | additive object with `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`, and `non_claim` when all four evidence detail lines are present | omitted |
 | `related_tests` | unchanged (witness NOT added) | unchanged |
 
+### Local function aliases (#8999)
+
+A test that calls a function only through a simple local alias, such as
+`let from_isoywd = NaiveDate::from_isoywd_opt; from_isoywd(..)`, gains one
+call fact for the aliased function, spelled as the aliased path call
+(`NaiveDate::from_isoywd_opt(..)`) from the alias call's own bytes. It is
+reach evidence only: the call fact never strengthens an oracle, and argument and
+free-function readers see the call exactly as if the path had been written.
+The alias is accepted only when all of these hold, and otherwise adds nothing:
+
+- one immutable, untyped `let NAME = a::b::snake_case_fn;` with a qualifier
+  (a bare single-segment name may be a local closure or fn-pointer
+  parameter);
+- the binding is not inside a macro token tree (`stringify!(let ..)`);
+- every other mention of `NAME` in the body is a direct `NAME(..)` call after
+  the binding (no second `let`, `mut`, parameter, pattern or loop binding,
+  nested `fn`, macro or field mention, or passing the alias along);
+- the call's parentheses close on the same line.
+
+Under #9478 the same reader also accepts an explicit safe Rust `fn(..)`
+pointer annotation on an unattributed immutable identifier declaration in the
+test's root statement list. No other declaration may bind that identifier,
+including a raw spelling, and body-local glob imports refuse the alias.
+A bare target then additionally requires that the parsed
+body bind no value of its name; this excludes a local closure, function or
+pointer parameter. Unsafe/ABI pointer types, casts and type aliases remain
+unresolved. Every mutation, shadow, forwarding and use-bound above still
+applies. RIPR-SPEC-0197 separately admits a literal whole-value assertion of
+such a pointer's scalar free-function result; the call fact alone grants no
+oracle credit.
+
+Legacy untyped aliases keep their body-wide mention rule. Typed aliases use the
+root declaration bounds above; pins additionally require the adjacent original
+root assertion under RIPR-SPEC-0197. At most 64 aliases are considered per body;
+typed candidates also consume that parse budget when refused. The path is
+matched by its last segment name only and is never resolved to a definition.
+
 ## Non-Goals
 
 - Adding the witness to `related_tests` — explicit fail-closed boundary.
@@ -257,6 +294,14 @@ requirements in this spec remain unchanged.
 - `crates/ripr/src/analysis/extract/calls.rs::tests::attribute_arguments_are_not_calls_but_code_after_them_is`,
   `parameter_attributes_that_run_their_arguments_stay_calls`, `an_unclosed_attribute_keeps_the_plain_call_reading`
   — attribute arguments are not call facts, except argument-running parameter attributes
+- `crates/ripr/src/analysis/extract/calls.rs::tests::local_function_alias_call_also_reads_as_call_to_the_aliased_function`,
+  `alias_fact_text_is_the_aliased_path_call_not_the_whole_line`, `single_segment_alias_is_not_resolved`,
+  `alias_bound_inside_a_macro_token_tree_is_not_resolved`, `ambiguous_or_non_function_aliases_are_not_resolved`
+  — local function alias calls (#8999): positive, path-spelled fact text, and fail-closed negatives
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call`
+  — the alias fact drives the real related-test relation for a free-function owner
+- `crates/ripr/src/analysis/classify/activation.rs::tests::value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text`
+  — alias calls read their own arguments, not a quoted target-looking substring
 - `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::transitive_summary_names_a_derive_entry_without_claiming_a_call`
   — the grip summary does not say the test calls a derive entry
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured`

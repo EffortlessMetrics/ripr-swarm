@@ -5,7 +5,8 @@ use super::gap_artifacts::{
     validate_gap_artifact, validate_workspace_gap_artifact_report, workspace_path_is_safe,
 };
 use super::state::{
-    AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot, RefreshMetadata,
+    AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot,
+    RefreshMetadata,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
@@ -20,7 +21,7 @@ use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
 use crate::config::{ConfigSeverity, LspDiagnosticProfile, SeverityConfig};
-use crate::core_error::CoreError;
+use crate::core_error::{CheckFailureKind, CoreError};
 #[cfg(test)]
 use crate::domain::RelatedTest;
 use crate::domain::{DiagnosticWitness, ExposureClass, Finding, LanguageId, LanguageStatus};
@@ -220,7 +221,7 @@ pub(super) fn add_canonical_group_data(
                         "miss": test.miss.map(|miss| miss.as_str()),
                         "why": crate::output::related_test_miss::related_test_miss_reason(
                             test,
-                            &finding.activation.missing_discriminators,
+                            &finding.probe.family,
                         ),
                     }))
                     .collect::<Vec<_>>(),
@@ -1105,6 +1106,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
         open_rust_index_paths,
         None,
     )
+    .map_err(String::from)
 }
 
 /// The typed outcome for a seam inventory that cannot run because its
@@ -1193,14 +1195,14 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     defer_seam_inventory: bool,
     open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
     progress_sink: Option<&dyn crate::app::AnalysisProgressSink>,
-) -> Result<WorkspaceDiagnostics, String> {
+) -> Result<WorkspaceDiagnostics, WorkspaceAnalysisFailure> {
     let input = config.check_input(root);
     // Saved-workspace authority (#3183): editor refreshes analyze the live
     // tracked working tree, including staged and unstaged bytes that the
     // client has persisted, through the same canonical path as
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
-    let (output, origins, consumed_sources) =
+    let (output, origins, consumed_sources, language_view) =
         match check_workspace_worktree_with_sources_open_rust_paths_and_progress(
             input,
             config.repo_config(),
@@ -1503,6 +1505,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
             &output.preview_language_advisories,
         ),
+        language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1565,7 +1568,7 @@ pub(super) fn workspace_diagnostics_with_config_and_cancellation(
     cancellation: &AnalysisCancellationToken,
     open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
     progress_sink: Option<&dyn crate::app::AnalysisProgressSink>,
-) -> Result<WorkspaceDiagnostics, String> {
+) -> Result<WorkspaceDiagnostics, WorkspaceAnalysisFailure> {
     crate::analysis::cancellation::with_token(cancellation, || {
         workspace_diagnostics_with_config_and_open_rust_paths_and_progress(
             root,
@@ -1593,7 +1596,7 @@ fn workspace_analysis_error_diagnostics(
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
     error: CoreError,
-) -> Result<WorkspaceDiagnostics, String> {
+) -> Result<WorkspaceDiagnostics, WorkspaceAnalysisFailure> {
     // #2303 / #4859: the current tuple-bearing check reaches this guard
     // before any Display boundary. Context preserves the timeout family.
     if error.is_git_invocation_timeout() {
@@ -1614,7 +1617,47 @@ fn workspace_analysis_error_diagnostics(
             message,
         ));
     }
-    Err(error.with_context("workspace analysis failed").into())
+    // The typed family survives `with_context`; classify before the Display
+    // boundary so the wire never depends on message wording (#6740).
+    let kind = if error.check_failure_kind() == Some(CheckFailureKind::BaseUnresolvable) {
+        AnalysisFailureKind::BaseUnresolvable
+    } else {
+        AnalysisFailureKind::AnalysisError
+    };
+    Err(WorkspaceAnalysisFailure {
+        message: error.with_context("workspace analysis failed").into(),
+        kind,
+    })
+}
+
+/// A workspace analysis failure carrying the wire failure kind chosen at the
+/// typed `CoreError` boundary, so the backend reports it without re-reading
+/// the message text (#6740).
+#[derive(Debug)]
+pub(super) struct WorkspaceAnalysisFailure {
+    pub(super) message: String,
+    pub(super) kind: AnalysisFailureKind,
+}
+
+impl std::fmt::Display for WorkspaceAnalysisFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl From<String> for WorkspaceAnalysisFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            kind: AnalysisFailureKind::AnalysisError,
+        }
+    }
+}
+
+impl From<WorkspaceAnalysisFailure> for String {
+    fn from(failure: WorkspaceAnalysisFailure) -> Self {
+        failure.message
+    }
 }
 
 fn git_timeout_limited_diagnostics(
@@ -1665,6 +1708,7 @@ fn git_timeout_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -1770,6 +1814,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -2211,6 +2256,83 @@ fn non_timeout_analysis_errors_are_not_converted() -> Result<(), String> {
 
 #[cfg(test)]
 #[test]
+fn base_unresolvable_failure_kind_comes_from_the_typed_error_not_the_wording() -> Result<(), String>
+{
+    // #6740: the wire kind is chosen from `CoreError::check_failure_kind`
+    // before any Display boundary. Reworded detail and an added context
+    // layer keep the kind; a plain message that merely reuses the old
+    // default-base phrase stays an ordinary analysis error.
+    let classify = |error: CoreError| match workspace_analysis_error_diagnostics(
+        Path::new("/workspace"),
+        &LspAnalysisConfig::default(),
+        false,
+        error,
+    ) {
+        Err(failure) => Ok(failure.kind),
+        Ok(_) => Err("a base failure must not commit a snapshot".to_string()),
+    };
+    for typed in [
+        CoreError::base_unresolvable("reworded: no usable base"),
+        CoreError::base_unresolvable("reworded: no usable base").with_context("outer"),
+    ] {
+        if classify(typed)? != AnalysisFailureKind::BaseUnresolvable {
+            return Err("a typed base failure must report base_unresolvable".to_string());
+        }
+    }
+    let lookalike = CoreError::message("could not resolve a default base (lookalike)");
+    if classify(lookalike)? != AnalysisFailureKind::AnalysisError {
+        return Err("a lookalike message must stay analysis_error".to_string());
+    }
+    let other = CoreError::config_invalid("bad ripr.toml");
+    if classify(other)? != AnalysisFailureKind::AnalysisError {
+        return Err("a non-base check failure must stay analysis_error".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn unresolvable_base_ref_refresh_reports_the_base_unresolvable_kind() -> Result<(), String> {
+    // #6740: drive the real refresh entry over a real repository whose
+    // configured base ref does not exist, and read the kind off the failure.
+    let root = crate::lsp::tests::unique_lsp_test_root("base-unresolvable-kind")?;
+    let git = |args: &[&str]| crate::lsp::tests::run_lsp_scope_git(root.path(), args);
+    git(&["init"])?;
+    git(&["config", "user.email", "ripr@example.invalid"])?;
+    git(&["config", "user.name", "RIPR Test"])?;
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn gate() -> bool {\n    true\n}\n",
+    )
+    .map_err(|error| format!("write fixture: {error}"))?;
+    git(&["add", "lib.rs"])?;
+    git(&["commit", "-m", "base"])?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("no-such-ref".to_string()),
+        ..LspAnalysisConfig::default()
+    };
+    let token = crate::analysis::cancellation::AnalysisCancellationToken::new();
+    let Err(failure) = workspace_diagnostics_with_config_and_cancellation(
+        root.path(),
+        &config,
+        false,
+        &token,
+        &Default::default(),
+        None,
+    ) else {
+        return Err("an unresolvable base ref must fail the refresh".to_string());
+    };
+    if failure.kind != AnalysisFailureKind::BaseUnresolvable {
+        return Err(format!(
+            "expected base_unresolvable, got {:?}: {failure}",
+            failure.kind
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
 fn cancelled_refresh_is_named_by_the_token_not_the_error_text() -> Result<(), String> {
     // #4860: an LSP refresh whose token is aborted before analysis returns an
     // error, and the backend must classify it as cancellation. Drive the
@@ -2277,10 +2399,10 @@ fn cancelled_refresh_is_named_by_the_token_not_the_error_text() -> Result<(), St
     // The refresh wraps the abort ("workspace analysis failed: analysis
     // cancelled: DeadlineExceeded"), so the retired `starts_with` predicate
     // read this real deadline abort as an ordinary analysis failure.
-    if error != "workspace analysis failed: analysis cancelled: DeadlineExceeded" {
+    if error.message != "workspace analysis failed: analysis cancelled: DeadlineExceeded" {
         return Err(format!("public wording must stay unchanged: {error}"));
     }
-    if error.starts_with("analysis cancelled:") {
+    if error.message.starts_with("analysis cancelled:") {
         return Err("the fixture no longer discriminates prefix matching".to_string());
     }
     Ok(())
@@ -3111,9 +3233,12 @@ fn diagnostic_range_for_finding(
         // replaced by a saved-line search. Absent maps keep the heuristic.
         return crate::lsp::position::range_from_encoded_origin(origin, position_encoding);
     }
-    let line = finding.probe.location.line.saturating_sub(1) as u32;
+    let analyzer_line = finding.probe.location.line.saturating_sub(1) as u32;
     let column = finding.probe.location.column;
-    let saved_line = saved_line_for_finding(root, finding);
+    let (line, saved_line) = match saved_line_for_finding(root, finding) {
+        Some((line, text)) => (line, Some(text)),
+        None => (analyzer_line, None),
+    };
     crate::lsp::position::expression_span_range_on_saved_line(
         line,
         column,
@@ -3123,11 +3248,89 @@ fn diagnostic_range_for_finding(
     )
 }
 
-fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<String> {
+/// The saved line an editor shows for a finding, with its editor line index.
+fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<(u32, String)> {
     let path = absolute_finding_path(root, finding);
     let contents = std::fs::read_to_string(path).ok()?;
     let line_index = finding.probe.location.line.saturating_sub(1);
-    contents.lines().nth(line_index).map(str::to_owned)
+    saved_editor_line(&contents, line_index, &finding.probe.expression)
+}
+
+/// Resolve the analyzer's zero-based line to the editor line holding the
+/// finding.
+///
+/// The analyzer numbers lines by `\n`, as git does, so a bare `\r` is not a
+/// line break there. Editors end a line at `\n`, `\r\n` or a bare `\r`
+/// (#8589). When the analyzer line holds a bare `\r`, it spans several editor
+/// lines: locate the expression inside it and return the editor line it falls
+/// on, or the analyzer line's first editor line when the expression is empty
+/// or absent. Without a bare `\r` both models agree and the line is unchanged.
+pub(super) fn saved_editor_line(
+    contents: &str,
+    analyzer_index: usize,
+    expression: &str,
+) -> Option<(u32, String)> {
+    let mut start = 0usize;
+    let mut analyzer_line = None;
+    for (index, raw) in contents.split_inclusive('\n').enumerate() {
+        if index == analyzer_index {
+            analyzer_line = Some((start, raw));
+            break;
+        }
+        start += raw.len();
+    }
+    let (line_start, raw) = analyzer_line?;
+    let text = raw
+        .strip_suffix('\n')
+        .map_or(raw, |line| line.strip_suffix('\r').unwrap_or(line));
+    // A bare `\r` on an earlier analyzer line also shifts this line's editor
+    // index, so the shortcut needs the whole prefix and line to be free of one.
+    if !has_bare_cr(&contents[..line_start + text.len()]) {
+        return Some((analyzer_index as u32, text.to_owned()));
+    }
+    let offset = if expression.is_empty() {
+        0
+    } else {
+        text.find(expression).unwrap_or(0)
+    };
+    let (line, editor_text) = editor_line_containing(contents, line_start + offset);
+    Some((line, editor_text.to_owned()))
+}
+
+fn has_bare_cr(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+}
+
+/// The editor line (terminators `\n`, `\r\n`, bare `\r`) that holds a byte
+/// offset, with its text excluding the terminator.
+fn editor_line_containing(contents: &str, byte: usize) -> (u32, &str) {
+    let bytes = contents.as_bytes();
+    let mut line = 0u32;
+    let mut start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => 0,
+        };
+        if terminator_len == 0 {
+            index += 1;
+            continue;
+        }
+        if byte <= index {
+            return (line, &contents[start..index]);
+        }
+        line += 1;
+        index += terminator_len;
+        start = index;
+    }
+    (line, &contents[start..])
 }
 
 fn related_information_for_finding(
@@ -3170,7 +3373,7 @@ fn examined_test_related_information(
         .filter_map(|test| {
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             )?;
             related_information_row(
                 root,
@@ -3430,7 +3633,10 @@ fn lsp_message(finding: &Finding) -> String {
             let fix_site = witness.fix_site.as_ref();
             let detail = match fix_site {
                 Some(site) if site.current_oracle.is_some() => {
-                    format!("`{}` only has {} oracle", site.test_name, site.oracle_kind)
+                    format!(
+                        "`{}` only has oracle kind `{}`",
+                        site.test_name, site.oracle_kind
+                    )
                 }
                 Some(site) => format!("`{}` has no producer-supplied oracle text", site.test_name),
                 None => "the exact fix site is unavailable".to_string(),
@@ -5014,6 +5220,8 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5032,6 +5240,8 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5113,6 +5323,7 @@ mod diagnostic_policy_tests {
 
     fn policy_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -5348,6 +5559,42 @@ mod diagnostic_policy_tests {
     }
 
     #[test]
+    fn witness_with_producer_oracle_names_the_oracle_kind_in_lsp_message() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = None;
+        finding.language_status = None;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "Price::Boundary".to_string(),
+            reason: "exact boundary is not observed".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests.push(RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: std::path::PathBuf::from("tests/pricing.rs"),
+            line: 12,
+            oracle: Some("assert!(result.is_ok())".to_string()),
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+
+        let message = lsp_message(&finding);
+        assert!(
+            message.contains("`checks_boundary` only has oracle kind `broad_error`"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("only has broad_error oracle"),
+            "stale wording regressed: {message}"
+        );
+    }
+
+    #[test]
     fn actionable_profile_keeps_a_producer_backed_fix_route() -> Result<(), String> {
         let mut finding = policy_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
@@ -5365,6 +5612,8 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -5417,6 +5666,8 @@ mod diagnostic_policy_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
             finding
         };
@@ -6070,7 +6321,10 @@ mod diagnostic_policy_tests {
         // message names the current profile, so the agent can see it is not
         // "full".
         let outcome = seam_inventory_not_enabled_outcome(&LspAnalysisConfig::default());
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload = outcome.status_payload(
+            Some("snapshot:1"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
         {
@@ -6105,7 +6359,10 @@ mod diagnostic_policy_tests {
             enable_seam_diagnostics: false,
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:2"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:2"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("seam_diagnostics = true") {
             return Err(format!(
@@ -6121,7 +6378,10 @@ mod diagnostic_policy_tests {
             ..LspAnalysisConfig::default()
         };
         config.repo_config.languages.enabled = vec![LanguageId::TypeScript];
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:3"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:3"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("rust") {
             return Err(format!(
@@ -6136,7 +6396,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:4"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:4"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.diagnosticProfile") {
             return Err(format!(
@@ -6163,7 +6426,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "seamDiagnostics": false })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:5"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:5"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.seamDiagnostics") {
             return Err(format!(
@@ -6194,6 +6460,7 @@ mod lsp_next_step_parity_tests {
 
     fn complete_ts_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6276,6 +6543,8 @@ mod lsp_next_step_parity_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
@@ -6321,7 +6590,10 @@ mod lsp_next_step_parity_tests {
             return Err("expected rendered finding hover".to_string());
         };
         assert!(content.value.contains(&finding.id));
-        assert!(content.value.contains("no_static_path"));
+        // The hover header leads with the plain class word (#9367); the raw
+        // schema token stays on `Diagnostic.code` for the Problems panel.
+        assert!(content.value.contains("no path"));
+        assert!(!content.value.contains("no_static_path"));
         assert_eq!(hover.range, Some(diagnostic.range));
         let params = tower_lsp_server::ls_types::CodeActionParams {
             text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
@@ -6471,6 +6743,7 @@ mod delivery_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         })
     }
 

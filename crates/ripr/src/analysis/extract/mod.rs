@@ -10,7 +10,7 @@ mod text;
 
 pub(crate) use calls::{
     MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,
-    has_saturated_line, line_at_call_budget, runs_its_arguments,
+    has_saturated_line, line_at_call_budget, local_fn_pointer_call, runs_its_arguments,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
@@ -18,7 +18,7 @@ pub(crate) use literals::{extract_literal_facts, extract_literals};
 // contents are `text[open + 1..close]`, escapes unprocessed (#7133).
 pub(crate) use mask::{
     mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
-    string_literal_spans,
+    rust_identity_spans, string_literal_spans,
 };
 #[cfg(test)]
 pub(crate) use oracles::contains_macro_invocation;

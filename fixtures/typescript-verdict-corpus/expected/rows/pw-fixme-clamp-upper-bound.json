@@ -1,0 +1,22 @@
+{
+  "case_id": "pw-fixme-clamp-upper-bound",
+  "subject_id": "authored-ts-playwright-units",
+  "origin": "authored",
+  "anchor": "src/skipped.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "playwright_test_fixme_only_upper_test",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

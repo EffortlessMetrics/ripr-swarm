@@ -65,6 +65,14 @@ pub(crate) const RECOVERY_GAP_LIST_TOO_LARGE: &str =
     "this page was already narrowed to fit; there is no narrower MCP read of this list page";
 pub(crate) const RECOVERY_SNAPSHOT_TOO_LARGE: &str =
     "page identities with ripr_list_gaps; this snapshot document exceeds the MCP response bound";
+/// The non-pageable disclosure overflow that filtering cannot cause: only
+/// then is the snapshot identity route the honest recovery (#9895).
+pub(crate) const RECOVERY_GAP_LIST_IDENTITY_ROUTE: &str = "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap";
+/// The overflow the snapshot identity route cannot fix: when the echoed
+/// filter value is the difference between a fitting shell and an
+/// overflowing one, the truthful recovery names the filter, not the page
+/// (#9895).
+pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter value, not the page, exceeds the response bound; narrow the file/class/language filter and retry ripr_list_gaps";
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
@@ -335,6 +343,15 @@ pub(crate) struct Snapshot {
     /// ride the snapshot identity: two otherwise identical snapshots with
     /// different exclusions are different snapshots.
     pub(crate) scope: ScopeFacts,
+    /// The explicit base revision the refresh asked for (`ripr_refresh`
+    /// `base`), `None` when the default branch was resolved. The disclosure
+    /// names it so a snapshot never reads as the default-branch diff when it
+    /// was analyzed against another revision.
+    pub(crate) base: Option<String>,
+    /// The producer's mixed-language completeness view bound at commit time
+    /// (#6475). Served as `session.language_completeness`; deliberately not
+    /// part of the snapshot identity, so existing identities are unchanged.
+    pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
 }
 
 /// The scope-relevant working-tree facts one snapshot was analyzed against.
@@ -342,7 +359,7 @@ pub(crate) struct Snapshot {
 pub(crate) struct ScopeFacts {
     pub(crate) uncommitted_edits: bool,
     pub(crate) untracked: Vec<String>,
-    /// Gitignored Rust files the diff source could not analyze (#7467).
+    /// Gitignored source files the diff source could not analyze (#7467).
     pub(crate) ignored: Vec<String>,
 }
 
@@ -369,9 +386,10 @@ impl Snapshot {
     /// outcomes (`unsupported_input`, `analysis_failed`) stay failures and
     /// never become snapshots; partial outcomes commit with their typed
     /// limitations so complete-zero and incomplete-zero stay distinct.
-    pub(crate) fn from_output(
+    pub(crate) fn from_output_admitted(
         output: &crate::app::CheckOutput,
         root_identity: Option<&str>,
+        admission: &super::repair_admission::SeamAdmission,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -413,7 +431,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(|finding| GapItem::from_finding(finding, &output.root))
+            .map(|finding| GapItem::from_finding_admitted(finding, &output.root, admission))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -459,7 +477,24 @@ impl Snapshot {
             budget,
             selection,
             scope,
+            base: None,
+            language_view: None,
         })
+    }
+
+    /// Finding-level projection with no seam evaluation: unit tests build
+    /// snapshots over fabricated outputs that carry no seam inventory.
+    /// Production refresh always binds [`Self::from_output_admitted`].
+    #[cfg(test)]
+    pub(crate) fn from_output(
+        output: &crate::app::CheckOutput,
+        root_identity: Option<&str>,
+    ) -> Result<Self, AttemptFailure> {
+        Self::from_output_admitted(
+            output,
+            root_identity,
+            &super::repair_admission::SeamAdmission::unevaluated(),
+        )
     }
 
     pub(crate) fn item(&self, id: &str) -> Option<&GapItem> {
@@ -543,6 +578,9 @@ pub(crate) struct WorkspaceSession {
     pub(crate) in_flight: bool,
     pub(crate) last_good: Option<Arc<Snapshot>>,
     pub(crate) last_failure: Option<AttemptFailure>,
+    /// The explicit base revision of the most recent refresh request, `None`
+    /// when it asked for the default branch (or none was requested yet).
+    pub(crate) desired_base: Option<String>,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -585,7 +623,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         let Some(snapshot) = &self.last_good else {
@@ -646,20 +684,68 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
-        let shell_bytes = {
+        let shell = {
             let scope = GapListScope {
                 selection,
                 requested,
                 filter,
                 filtered,
             };
-            let shell =
-                self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?;
-            document_bytes(&shell)?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
         };
+        let shell_bytes = document_bytes(&shell)?;
+        // The same shell with an empty filter echo isolates the echo's
+        // contribution: when the echo is the difference between a fitting
+        // shell and an overflowing one, the overflow is filter-driven and
+        // the refusal must name the filter, not the identity route (#9895).
+        // `filtered` stays as counted so only the echo differs between the
+        // two probes.
+        let shell_without_filter = {
+            let scope = GapListScope {
+                selection,
+                requested,
+                filter: &GapListFilter::default(),
+                filtered,
+            };
+            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+        };
+        let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
+        let shell_envelope_overflows =
+            crate::mcp::protocol::structured_envelope_overflows(&shell, max_envelope_bytes)
+                .map_err(|error| {
+                    AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                })?;
         // Reserve covers the array syntax around the summaries and the
         // byte-accounting margin; per-item commas are charged below.
         let reserve = 256usize;
+        // The recovery names what the caller can change: a shell that fits
+        // once the filter echo is removed overflowed because of the filter;
+        // any other overflow is a disclosure the page cannot narrow.
+        let recovery_for_envelope =
+            |shell_without_filter_envelope_overflows: bool| -> &'static str {
+                if shell_envelope_overflows && !shell_without_filter_envelope_overflows {
+                    RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+                } else {
+                    RECOVERY_GAP_LIST_IDENTITY_ROUTE
+                }
+            };
+        // The overflow side carries the same reserve margin the page budget
+        // charges: the final document adds the echoed window (for example a
+        // past-end offset renders longer than the zero-page shell probe), so
+        // a shell that fits raw can still overflow once page metadata is
+        // rendered. Attributing that overflow without the reserve would
+        // fall back to the identity route even when dropping the echo
+        // leaves a fitting shell (#9895 review).
+        let recovery_for_document = || -> &'static str {
+            if shell_bytes.saturating_add(reserve) > super::MAX_TOOL_DOCUMENT_BYTES
+                && shell_without_filter_bytes.saturating_add(reserve)
+                    <= super::MAX_TOOL_DOCUMENT_BYTES
+            {
+                RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+            } else {
+                RECOVERY_GAP_LIST_IDENTITY_ROUTE
+            }
+        };
         let page_budget =
             super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
 
@@ -738,13 +824,21 @@ impl WorkspaceSession {
                 // includes empty pages whose echoed filters fill the shell;
                 // fail closed instead of shipping a text-only success that
                 // breaks the outputSchema contract (#6021 review, #7768).
+                let shell_without_filter_overflows =
+                    crate::mcp::protocol::structured_envelope_overflows(
+                        &shell_without_filter,
+                        max_envelope_bytes,
+                    )
+                    .map_err(|error| {
+                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                    })?;
                 return Err(AttemptFailure::new(
                     CODE_RESULT_TOO_LARGE,
                     format!(
                         "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {max_envelope_bytes}-byte id-aware envelope budget ({}-byte response bound minus the request id and outer reserve)",
                         super::MAX_RESPONSE_BYTES
                     ),
-                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                    recovery_for_envelope(shell_without_filter_overflows),
                 )
                 .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
             }
@@ -762,7 +856,8 @@ impl WorkspaceSession {
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
         // disclosure alone) outgrows the ceiling cannot be narrowed by
-        // paging; fail closed naming the identity route (#6021).
+        // paging; fail closed naming what the caller can change (#6021,
+        // #9895).
         let bytes = document_bytes(&document)?;
         if bytes > super::MAX_TOOL_DOCUMENT_BYTES {
             return Err(AttemptFailure::new(
@@ -771,7 +866,7 @@ impl WorkspaceSession {
                     "gap list cannot fit even one wire-fitting page: its non-pageable disclosure renders {bytes} bytes against the {}-byte page ceiling",
                     super::MAX_TOOL_DOCUMENT_BYTES
                 ),
-                "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                recovery_for_document(),
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
@@ -820,6 +915,16 @@ impl WorkspaceSession {
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
+            "outcome": {
+                "kind": snapshot.outcome.kind.as_str(),
+                "label": snapshot.outcome.kind.plain_label(),
+                "limitations": snapshot
+                    .outcome
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.kind.as_str())
+                    .collect::<Vec<_>>(),
+            },
             "snapshot_profile_budget_identity": selection.snapshot_profile_budget_identity,
             "selection_basis_version": selection.selection_basis_version,
             "budget": {
@@ -974,7 +1079,19 @@ impl WorkspaceSession {
             .as_ref()
             .map(|failure| failure.value())
             .unwrap_or(Value::Null);
-        json!({
+        // Base-less callers keep the unchanged v1 shape: `base_revision` and
+        // the `explicit` base value exist only after an explicit-base refresh.
+        let mut desired_input = json!({
+            "kind": "workspace_diff",
+            "base": "default_branch",
+            "mode": "draft",
+            "scope": "diff",
+        });
+        if let Some(base) = &self.desired_base {
+            desired_input["base"] = json!("explicit");
+            desired_input["base_revision"] = json!(base);
+        }
+        let mut document = json!({
             "schema_version": SESSION_SCHEMA_VERSION,
             "attempt_state": self.attempt_state(),
             "current_attempt": if self.in_flight {
@@ -982,12 +1099,7 @@ impl WorkspaceSession {
             } else {
                 Value::Null
             },
-            "current_desired_input": {
-                "kind": "workspace_diff",
-                "base": "default_branch",
-                "mode": "draft",
-                "scope": "diff",
-            },
+            "current_desired_input": desired_input,
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
@@ -1009,8 +1121,35 @@ impl WorkspaceSession {
                     "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
                 ])
                 .collect::<Vec<_>>(),
-        })
+        });
+        // Additive (#6475): per-language completeness from the committed
+        // snapshot's aggregate view. Absent without a snapshot or a view, so
+        // consumers that ignore the field see the unchanged v1 shape.
+        if let Some(view) = self
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.language_view.as_ref())
+        {
+            document["language_completeness"] = language_completeness_document(view);
+        }
+        document
     }
+}
+
+/// `[{language, status}]` in label order, straight from the aggregate-owned
+/// view: one row per canonical language label, with the closed status
+/// spelling the aggregate records (`complete`, `complete_zero`, `partial`,
+/// `unavailable`, `invalid`, `failed`, `unsupported`, `not_selected`,
+/// `no_current_scope`).
+fn language_completeness_document(
+    view: &crate::analysis::language_outcome::LanguageCompletenessView,
+) -> Value {
+    Value::Array(
+        view.rows
+            .iter()
+            .map(|row| json!({ "language": row.label, "status": row.status.as_str() }))
+            .collect(),
+    )
 }
 
 /// Guard that clears [`WorkspaceSession::in_flight`] on every terminal path.
@@ -1077,21 +1216,54 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return disclosure;
     }
     const NAMED_PATHS: usize = 3;
+    // #9604 batch G finding 34: the ignored-files wording names the languages
+    // the snapshot actually analyzed, derived from the committed findings, so
+    // a Python or five-language workspace is not mislabeled "Rust".
+    let language_label = analyzed_language_label(&snapshot.findings);
     let ignored_edits = json!({
         "files": scope.ignored.iter().take(NAMED_PATHS).collect::<Vec<_>>(),
         "total": scope.ignored.len(),
         "more": scope.ignored.len().saturating_sub(NAMED_PATHS),
-        "remedy": "gitignored Rust files were excluded and not analyzed; neither the committed diff nor plain `--worktree` sees them. Stage them with `git add -f <paths>` (or `git add -f -N <paths>` force intent-to-add) and rerun `ripr check --worktree`, or pass an explicit `--diff`",
+        "languages_analyzed": language_label,
+        "remedy": format!("gitignored {language_label} files were excluded and not analyzed; neither the committed diff nor plain `--worktree` sees them. Stage them with `git add -f <paths>` (or `git add -f -N <paths>` force intent-to-add) and rerun `ripr check --worktree`, or pass an explicit `--diff`"),
     });
     let base = disclosure.get_or_insert_with(|| {
         json!({
-            "analyzed": "committed default-branch diff",
+            "analyzed": analyzed_label(snapshot),
             "ignored_files": "outside this analysis",
-            "note": "gitignored Rust files were excluded and are not analyzed by this snapshot",
+            "note": format!("gitignored {language_label} files were excluded and are not analyzed by this snapshot"),
         })
     });
     base["ignored_edits"] = ignored_edits;
     disclosure
+}
+
+/// The languages the snapshot actually analyzed, for scope-disclosure wording
+/// (#9604 batch G finding 34): derived from the committed findings so a
+/// Python-only or five-language workspace is not mislabeled "Rust". A snapshot
+/// with zero findings cannot name a language from evidence; the wording falls
+/// back to "source" rather than guessing.
+fn analyzed_language_label(findings: &[crate::domain::Finding]) -> String {
+    let mut languages = findings
+        .iter()
+        .filter_map(|finding| finding.language)
+        .collect::<Vec<_>>();
+    languages.sort_by_key(|language| language.as_str());
+    languages.dedup();
+    match languages.as_slice() {
+        [] => "source".to_string(),
+        [only] => only.display_name().to_string(),
+        _ => "mixed-language".to_string(),
+    }
+}
+
+/// What the snapshot analyzed: the default-branch diff, or the diff against
+/// the explicit `base` the refresh requested.
+fn analyzed_label(snapshot: &Snapshot) -> String {
+    match &snapshot.base {
+        Some(base) => format!("committed diff against base `{base}`"),
+        None => "committed default-branch diff".to_string(),
+    }
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
@@ -1109,7 +1281,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
     if scope.untracked.is_empty() {
         return Some(json!({
-            "analyzed": "committed default-branch diff",
+            "analyzed": analyzed_label(snapshot),
             "uncommitted_edits": "outside this analysis",
             "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
         }));
@@ -1120,7 +1292,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         named.join(", ")
     };
     Some(json!({
-        "analyzed": "committed default-branch diff",
+        "analyzed": analyzed_label(snapshot),
         "uncommitted_edits": "outside this analysis",
         "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
         "untracked_edits": {
@@ -1145,7 +1317,9 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
         })
     });
-    json!({
+    // `requested_base` appears only when the request named one, so a base-less
+    // refresh keeps the unchanged v1 shape.
+    let mut document = json!({
         "schema_version": REFRESH_SCHEMA_VERSION,
         "attempt": {
             "state": session.attempt_state(),
@@ -1170,7 +1344,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
             "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
         ],
-    })
+    });
+    if let Some(base) = &session.desired_base {
+        document["requested_base"] = json!(base);
+    }
+    document
 }
 
 /// The resolved analysis-configuration posture of the session (#6825): which
@@ -1300,6 +1478,7 @@ impl SessionProfile {
 pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
+    base: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
     let config = crate::config::load_for_root(root).map_err(|error| {
         AttemptFailure::new(
@@ -1310,25 +1489,59 @@ pub(crate) fn run_check(
     })?;
     let input = crate::app::CheckInput {
         root: PathBuf::from(root),
+        base: base.map(str::to_string),
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace_with_config(input, &config).map_err(|error| {
-        AttemptFailure::new(
-            CODE_ANALYSIS_FAILED,
-            format!("shared check authority failed: {error}"),
-            "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic",
-        )
-    })?;
-    let mut snapshot = Snapshot::from_output(&output, root_identity)?;
+    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
+        .map_err(|error| check_failure(&error, base))?;
+    // The seam inventory is gathered once inside this bounded attempt and
+    // feeds both consumers: the shared repair validator that decides each
+    // item's repair readiness (#8717) and the repair-card seam bindings
+    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+    // is computed, so the identity binds the admission decision.
+    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+    let admission = super::repair_admission::SeamAdmission::evaluate(
+        &output.findings,
+        &inventory.candidate_seams,
+        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+        &inventory.completeness,
+    );
+    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
+    snapshot.base = base.map(str::to_string);
+    snapshot.language_view = language_view;
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
     // The card producers consume the same resolved workspace configuration
     // as the findings (#6825 review), so one committed snapshot cannot
     // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
+    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
     Ok(snapshot)
+}
+
+/// Project a shared-check refusal into the attempt failure. The recovery
+/// names routes this server can actually take: base resolution is retried
+/// through `ripr_refresh`'s own `base` argument (the CLI's `--base` is not
+/// reachable from a running MCP session), and an unusable repository root
+/// needs a server restart at a Git work tree.
+fn check_failure(error: &crate::core_error::CoreError, base: Option<&str>) -> AttemptFailure {
+    let detail = format!("shared check authority failed: {error}");
+    let recovery = match (error.check_refusal().identity, base) {
+        ("base_unresolvable", None) => {
+            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {\"base\": \"<ref>\"}"
+        }
+        ("base_unresolvable", Some(_)) => {
+            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, or omit `base` to use the default branch"
+        }
+        ("repository_root_unusable", _) => {
+            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh"
+        }
+        _ => {
+            "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic"
+        }
+    };
+    AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery)
 }
 
 fn overflow_reason_as_str(reason: DiagnosticOverflowReason) -> &'static str {
@@ -1472,6 +1685,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1482,6 +1696,192 @@ mod tests {
             Err(failure) if failure.code == code => Ok(()),
             Err(failure) => Err(format!("expected {code}, got {}", failure.code)),
         }
+    }
+
+    /// A session whose committed snapshot carries a producer view: rust ran
+    /// to its boundary with nothing found, python was not selected.
+    fn session_with_language_view() -> Result<WorkspaceSession, String> {
+        use crate::analysis::language_outcome::{
+            FixtureDiffResult, LanguageAggregate, LanguageAnalysisOutcomeV1,
+            LanguageCompletenessView,
+        };
+        let touched = std::collections::BTreeSet::from(["rust".to_string()]);
+        let mut aggregate = LanguageAggregate::new("full".to_string());
+        for child in LanguageAnalysisOutcomeV1::from_diff_result(
+            crate::domain::LanguageId::Rust,
+            &FixtureDiffResult {
+                changed_files: 1,
+                ..FixtureDiffResult::default()
+            },
+            &[],
+            &touched,
+            "full",
+        ) {
+            aggregate.record(child);
+        }
+        aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+            "python",
+            1,
+            "language not in the effective [languages].enabled set",
+            "full",
+        ));
+        let view = LanguageCompletenessView::from_aggregate(&aggregate.finish());
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        snapshot.language_view = Some(view);
+        session.last_good = Some(Arc::new(snapshot));
+        Ok(session)
+    }
+
+    #[test]
+    fn status_serves_per_language_completeness_from_the_view() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        // Literal expectation, independent of the view code under test.
+        assert_eq!(
+            document["language_completeness"],
+            json!([
+                { "language": "python", "status": "not_selected" },
+                { "language": "rust", "status": "complete_zero" }
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn status_without_a_view_keeps_the_unchanged_shape() -> Result<(), String> {
+        for session in [
+            WorkspaceSession::default(),
+            session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?,
+        ] {
+            let document = session.session_document(&SessionProfile::built_in());
+            assert!(
+                document.get("language_completeness").is_none(),
+                "{document}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_emitted_session_key_is_declared_by_the_status_schema() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        let schema = super::super::protocol::status_success_schema();
+        let declared = schema["properties"]["session"]["properties"]
+            .as_object()
+            .ok_or("session schema must declare properties")?;
+        let required = schema["properties"]["session"]["required"]
+            .as_array()
+            .ok_or("session schema must declare required")?;
+        for key in document
+            .as_object()
+            .ok_or("session must be an object")?
+            .keys()
+        {
+            assert!(declared.contains_key(key), "undeclared session key {key}");
+        }
+        // The addition is optional: absent from `required`, so a document
+        // without it (no snapshot) still satisfies the closed schema.
+        assert!(!required.contains(&json!("language_completeness")));
+        let item = &declared["language_completeness"]["items"];
+        for row in document["language_completeness"]
+            .as_array()
+            .ok_or("language_completeness must be an array")?
+        {
+            let status = row["status"].as_str().ok_or("status must be a string")?;
+            assert!(
+                item["properties"]["status"]["enum"]
+                    .as_array()
+                    .ok_or("status enum")?
+                    .iter()
+                    .any(|allowed| allowed == status),
+                "{status}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #6475: MCP carries no per-language state of its own. What it commits
+    /// and serves (the typed outcome and its limitations) must agree with
+    /// the aggregate-owned view on every shared mixed-language fixture.
+    /// Expectations are literal and independent of the view code.
+    #[test]
+    fn committed_snapshot_agrees_with_the_language_completeness_view() -> Result<(), String> {
+        use crate::analysis::language_outcome::{DiffCompleteness, LanguageCompletenessView};
+        use crate::output::language_view_agreement_tests as shared;
+        // (fixture, committed limitation kinds); `None` = refused as unsupported.
+        let expected: [(&str, Option<&[&str]>); 9] = [
+            ("complete", Some(&[])),
+            ("complete_zero", Some(&[])),
+            ("partial", Some(&["producer_failure"])),
+            ("unavailable", Some(&["language_adapter_unavailable"])),
+            ("invalid", Some(&["language_adapter_unavailable"])),
+            ("failed", Some(&["producer_failure"])),
+            ("unsupported", None),
+            (
+                "repo_partial_with_not_selected",
+                Some(&["language_adapter_unavailable"]),
+            ),
+            (
+                "configured_uncompiled_perl_dual_row",
+                Some(&["language_adapter_unavailable"]),
+            ),
+        ];
+        let fixtures = shared::fixtures()?;
+        assert_eq!(fixtures.len(), expected.len());
+        for (name, kinds) in expected {
+            let fixture = fixtures
+                .iter()
+                .find(|fixture| fixture.name == name)
+                .ok_or_else(|| format!("missing fixture {name}"))?;
+            let aggregate = shared::aggregate_for(fixture);
+            let view = LanguageCompletenessView::from_aggregate(&aggregate);
+            let produced = view.total_findings;
+            let findings = (0..produced)
+                .map(|_| shared::rust_finding())
+                .collect::<Result<Vec<_>, _>>()?;
+            let outcome = shared::analysis_outcome(fixture, produced as u64)?;
+            let output = shared::check_output(findings, view.public_runs.clone(), outcome);
+            let committed = Snapshot::from_output(&output, Some("root:sha256:test"));
+            match (kinds, committed) {
+                (None, Err(failure)) => {
+                    assert_eq!(failure.code, CODE_UNSUPPORTED_PROFILE, "{name}");
+                    assert!(
+                        failure.detail.contains("language_scope_unsupported"),
+                        "{name}: {}",
+                        failure.detail
+                    );
+                }
+                (Some(kinds), Ok(snapshot)) => {
+                    let served: Vec<String> = serde_json::to_value(&snapshot.outcome)
+                        .map_err(|error| format!("{name}: {error}"))?["limitations"]
+                        .as_array()
+                        .map(|limitations| {
+                            limitations
+                                .iter()
+                                .filter_map(|item| item["kind"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    assert_eq!(served, kinds, "{name}");
+                    // The view calls a run incomplete exactly when MCP serves
+                    // a non-complete outcome.
+                    assert_eq!(
+                        view.completeness == DiffCompleteness::Incomplete,
+                        !snapshot.outcome.kind.is_complete(),
+                        "{name}"
+                    );
+                }
+                (None, Ok(_)) => return Err(format!("{name}: unsupported input was committed")),
+                (Some(_), Err(failure)) => {
+                    return Err(format!("{name}: refused: {}", failure.detail));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -1501,6 +1901,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -1704,6 +2105,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1783,6 +2185,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1882,7 +2285,84 @@ mod tests {
         Ok(())
     }
 
-    /// #7464: each filter dimension narrows the stored selection on its own,
+    /// #9604 batch G finding 29: a gap list over a partial run must disclose
+    /// the run's outcome, not read as clean. The block embeds the snapshot's
+    /// typed outcome kind, a plain label, and the limitation kinds — and stays
+    /// consistent with the snapshot resource.
+    #[test]
+    fn gap_list_discloses_the_snapshots_analysis_outcome() -> Result<(), String> {
+        let session = session_with_varied_findings()?;
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let snapshot_id = document
+            .pointer("/snapshot_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("gap list lost its snapshot identity: {document}"))?
+            .to_string();
+        let snapshot = session
+            .snapshot_document(&snapshot_id)
+            .map_err(|failure| failure.detail)?;
+        let snapshot_kind = snapshot
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("snapshot resource lost its outcome kind: {snapshot}"))?;
+        let list_kind = document
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("gap list omitted the run outcome: {document}"))?;
+        if list_kind != snapshot_kind {
+            return Err(format!(
+                "gap list outcome ({list_kind}) must match the snapshot resource ({snapshot_kind})"
+            ));
+        }
+        if document
+            .pointer("/outcome/label")
+            .and_then(Value::as_str)
+            .is_none()
+        {
+            return Err(format!("gap list outcome lost its plain label: {document}"));
+        }
+        let outcome_limitations = document
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("gap list outcome lost its limitations array: {document}"))?;
+        let snapshot_limitations = snapshot
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+            .map(|limitations| limitations.len())
+            .unwrap_or(0);
+        if outcome_limitations.len() != snapshot_limitations {
+            return Err(format!(
+                "gap list carried {} outcome limitations where the snapshot carries {snapshot_limitations}",
+                outcome_limitations.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9604 batch G finding 34: ignored-file disclosure must name the
+    /// languages the snapshot actually analyzed, not hardcode Rust.
+    #[test]
+    fn analyzed_language_label_follows_the_committed_findings() -> Result<(), String> {
+        let rust_only = vec![gaps::test_finding()?];
+        assert_eq!(analyzed_language_label(&rust_only), "Rust");
+        let mut python = gaps::test_finding()?;
+        python.language = Some(crate::domain::LanguageId::Python);
+        assert_eq!(analyzed_language_label(&[python]), "Python");
+        let mut typescript = gaps::test_finding()?;
+        typescript.language = Some(crate::domain::LanguageId::TypeScript);
+        let mixed = vec![rust_only[0].clone(), typescript];
+        assert_eq!(analyzed_language_label(&mixed), "mixed-language");
+        let no_language: Vec<crate::domain::Finding> = Vec::new();
+        assert_eq!(analyzed_language_label(&no_language), "source");
+        Ok(())
+    }
     /// dimensions combine conjunctively, and `offset`/`limit` page the
     /// narrowed set — while `selected` stays the full stored-selection count
     /// and `filters` echoes the request.
@@ -2404,6 +2884,177 @@ mod tests {
         Ok(())
     }
 
+    /// #9895: the refusal recovery names what the caller can change. A
+    /// shell that overflows only because of the echoed filter value names
+    /// the filter; a shell that overflows on its own keeps the snapshot
+    /// identity route.
+    #[test]
+    fn list_gaps_overflow_recovery_names_the_shrinkable_cause() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        // An empty page at a past-end offset with no filter echo IS the
+        // no-echo shell probe: its envelope sizes every later comparison.
+        let shell_probe = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 10,
+                    limit: None,
+                },
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let shell_envelope = crate::mcp::protocol::structured_envelope_bytes(&shell_probe)
+            .map_err(|error| error.to_string())?;
+        // A budget the no-echo shell fits with slack to spare: only the
+        // echoed filter can push the with-filter shell past it.
+        let filter_budget = shell_envelope + 64;
+        let huge_echo = GapListFilter {
+            file: Some("x".repeat(4_000)),
+            ..GapListFilter::default()
+        };
+        let filter_refusal: AttemptFailure = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &huge_echo,
+            filter_budget,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a 4000-character filter echo must overflow the {filter_budget}-byte budget: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if filter_refusal.code != CODE_RESULT_TOO_LARGE
+            || filter_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "filter-driven overflow must name the filter: {filter_refusal:?}"
+            ));
+        }
+        // No filter echo at all: a budget a few bytes below the same shell
+        // refuses with the identity route, because nothing caller-side can
+        // shrink the disclosure. (The probe's past-end offset renders one
+        // byte longer than the default window's, hence the margin.)
+        let identity_refusal = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &GapListFilter::default(),
+            shell_envelope.saturating_sub(4),
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a budget below the empty shell must refuse: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if identity_refusal.code != CODE_RESULT_TOO_LARGE
+            || identity_refusal.recovery != RECOVERY_GAP_LIST_IDENTITY_ROUTE
+        {
+            return Err(format!(
+                "shell-driven overflow must keep the identity route: {identity_refusal:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9895 review: the document-branch attribution charges the same
+    /// `reserve` margin the page budget charges. A shell that fits raw at
+    /// the zero offset but overflows once the echoed window gains a digit
+    /// (a past-end offset renders longer than the zero-page shell probe) is
+    /// still echo-driven and must name the filter, not the identity route.
+    /// The reserve-only negative control — shell plus reserve over the
+    /// ceiling, the final rendered document under it — must keep shipping.
+    #[test]
+    fn document_branch_attribution_charges_the_page_metadata_reserve() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        let window = |offset: usize| GapListWindow {
+            offset,
+            limit: None,
+        };
+        let echo = |len: usize| GapListFilter {
+            file: Some("x".repeat(len)),
+            ..GapListFilter::default()
+        };
+        let refuses_at_offset_zero = |len: usize| -> Result<bool, String> {
+            match session.list_gaps(None, window(0), &echo(len), crate::mcp::MAX_RESPONSE_BYTES) {
+                Ok(_) => Ok(false),
+                Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => Ok(true),
+                Err(failure) => Err(format!("unexpected refusal: {failure:?}")),
+            }
+        };
+        // Largest echo whose zero-offset page still ships: the document
+        // guard measures the raw document against MAX_TOOL_DOCUMENT_BYTES,
+        // and the envelope stays clear (the double envelope only exceeds the
+        // wire budget well above the document ceiling), so the search edge
+        // sits exactly at the document ceiling.
+        let (mut low, mut high) = (0usize, 70_000usize);
+        while low < high {
+            let mid = (low + high).div_ceil(2);
+            if refuses_at_offset_zero(mid)? {
+                high = mid - 1;
+            } else {
+                low = mid;
+            }
+        }
+        let edge_echo = low;
+        if session
+            .list_gaps(
+                None,
+                window(0),
+                &echo(edge_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err("the edge echo must still ship at offset zero".to_string());
+        }
+        // One more window digit (offset ten renders two digits) pushes the
+        // final document past the ceiling; without the echo the shell fits
+        // with reserve to spare, so the attribution must name the filter.
+        let metadata_refusal = match session.list_gaps(
+            None,
+            window(10),
+            &echo(edge_echo),
+            crate::mcp::MAX_RESPONSE_BYTES,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "the echoed window metadata must tip the edge echo over: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if metadata_refusal.code != CODE_RESULT_TOO_LARGE
+            || metadata_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "echo-driven document overflow must name the filter: {metadata_refusal:?}"
+            ));
+        }
+        // Reserve-only negative control: 255 fewer echo bytes leave the
+        // shell plus reserve under the ceiling even though the shell alone
+        // is within 256 bytes of it; the widest window echo (20 digits)
+        // must still ship.
+        let reserve_echo = edge_echo.saturating_sub(255);
+        if session
+            .list_gaps(
+                None,
+                window(usize::MAX),
+                &echo(reserve_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err(
+                "reserve exhaustion alone must not refuse: the rendered document fits".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     /// #7768: the pager's structured-envelope fit decision runs on the
     /// caller's id-aware budget. One byte below the empty-page envelope
     /// (the minimum page) refuses typed with the current snapshot bound;
@@ -2796,6 +3447,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -2868,6 +3520,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -2950,6 +3603,37 @@ mod tests {
                 "equivalent roots must preserve one portable snapshot identity".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_totals_change_snapshot_identity_without_changing_rows() -> Result<(), String> {
+        let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.related_tests = vec![finding.related_tests[0].clone(); 8];
+        finding.related_tests_matched_total = Some(12);
+        before.findings.push(finding);
+        let mut after = before.clone();
+        after.findings[0].related_tests_matched_total = Some(13);
+        let twelve =
+            Snapshot::from_output(&before, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let thirteen =
+            Snapshot::from_output(&after, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert_eq!(twelve.items.len(), 1);
+        assert_eq!(thirteen.items.len(), 1);
+        assert_eq!(
+            twelve.items[0].evidence_core["related_tests"],
+            thirteen.items[0].evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.items[0].evidence_bytes,
+            thirteen.items[0].evidence_bytes
+        );
+        assert_ne!(
+            twelve.items[0].evidence_sha256,
+            thirteen.items[0].evidence_sha256
+        );
+        assert_ne!(twelve.snapshot_id, thirteen.snapshot_id);
         Ok(())
     }
 
@@ -3037,6 +3721,7 @@ mod tests {
                 workspace_failure: None,
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
+                desired_base: None,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items

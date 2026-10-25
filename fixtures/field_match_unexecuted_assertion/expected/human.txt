@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:4
   Static exposure: unrevealed (severity: warning, confidence 0.79)
-  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert!`
+  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the intended standard assertion macro
   Canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms
   Changed behavior: Some(ms) =>
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -21,6 +21,13 @@ Start here:
     executed path, and that it resolves to the intended standard macro, then check the changed
     returned value
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach charge: selected
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 8 more detail line(s) in --format human-full

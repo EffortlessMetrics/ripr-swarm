@@ -6,6 +6,7 @@
 mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
+mod operand_callee_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -85,11 +86,12 @@ use super::{
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
-    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureLatencyReport,
-    RepoExposureLatencyRun, RepoExposureLatencyTrace, RepoExposureMeasurement, ReportIndexEntry,
-    ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, RoutedRustEventRoute,
-    SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
-    StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
+    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureFileFactCache,
+    RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
+    RepoExposureMeasurement, ReportIndexEntry, ReportIndexRepoOpsArtifact,
+    RiprSwarmReadinessNextActionSources, RoutedRustEventRoute, SUPPORT_TIERS_PATH, SarifPolicyMode,
+    SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
+    TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
     UNREGISTERED_SPEC_MESSAGE_LIMIT, USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES,
@@ -169,19 +171,21 @@ use super::{
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
     parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
-    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
-    pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
+    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
+    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
+    repo_exposure_latency_status_reasons, repo_exposure_latency_status_with_parity,
     repo_exposure_latency_trace, repo_exposure_resource_cost_from_stderr,
     repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -1335,6 +1339,33 @@ fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() 
     ));
     assert!(!super::evidence_promotion_human_oracle_line_matches(
         line, "unknown", "strong"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording() {
+    let line = "- related test tests/a.ts:3 t uses smoke only oracle: t.truthy(x)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "smoke"
+    ));
+    // The stutter is no longer the rendered form, and other pairs keep the
+    // full "<strength> <kind>" spelling.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.ts:3 t uses smoke smoke only oracle: t.truthy(x)",
+        "smoke_only",
+        "smoke"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "smoke"
     ));
 }
 
@@ -8350,6 +8381,63 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
 }
 
 #[test]
+fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let manifest = br#"{"version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"url":"https://github.com/o/r/releases/download/v1.2.3/a.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let digest = format!("{:x}", Sha256::digest(manifest));
+    let source = super::bound_descriptor_source("1.2.3", manifest, &digest)?;
+    assert!(source.contains(&format!(
+        "{{ generation: \"1.2.3\", manifestSha256: \"{digest}\" }}"
+    )));
+
+    let wrong = "0".repeat(64);
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &wrong) else {
+        return Err("a tampered manifest must be refused".to_string());
+    };
+    assert!(err.contains("does not match the receipted digest"), "{err}");
+    let Err(err) = super::bound_descriptor_source("1.2.4", manifest, &digest) else {
+        return Err("a generation mismatch must be refused".to_string());
+    };
+    assert!(err.contains("does not match generation"), "{err}");
+    for bad in [
+        "ABC".to_string(),
+        digest.to_uppercase(),
+        format!("{digest}\n"),
+    ] {
+        let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &bad) else {
+            return Err(format!("digest `{bad:?}` must be refused"));
+        };
+        assert!(err.contains("64 lowercase hex"), "{err}");
+    }
+    for generation in ["1.2.3-rc.1", "1.2", "a.b.c"] {
+        if super::bound_descriptor_source(generation, manifest, &digest).is_ok() {
+            return Err(format!("generation `{generation}` must be refused"));
+        }
+    }
+    for body in [
+        &b"not json"[..],
+        br#"{"version":"1.2.3","assets":{}}"#,
+        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/a","sha256":"zz"}}}"#,
+    ] {
+        let body_digest = format!("{:x}", Sha256::digest(body));
+        if super::bound_descriptor_source("1.2.3", body, &body_digest).is_ok() {
+            return Err("a malformed manifest must be refused".to_string());
+        }
+    }
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, "ABC") else {
+        return Err("a malformed digest must be refused".to_string());
+    };
+    assert!(err.contains("64 lowercase hex"), "{err}");
+    let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let http_digest = format!("{:x}", Sha256::digest(http));
+    let Err(err) = super::bound_descriptor_source("1.2.3", http, &http_digest) else {
+        return Err("a non-https asset url must be refused".to_string());
+    };
+    assert!(err.contains("non-https"), "{err}");
+    Ok(())
+}
+
+#[test]
 fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
     // The editor descriptor admits a distribution generation
     // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
@@ -9492,6 +9580,317 @@ fn allow_attribute_detection_flags_guarded_lint_suppressions() {
     );
 }
 
+/// #9501 negative experiment: a guarded suppression wrapped in `cfg_attr`
+/// used to bypass the count ledger because only `allow`/`expect` directly
+/// after `#[` were recognized.
+#[test]
+fn allow_attribute_detection_counts_cfg_attr_wrapped_suppressions() {
+    let text = format!(
+        "{}\nfn a() {{}}\n{}\n{}\n{}\n{}\n",
+        concat!("#", "[cfg_attr(test, allow(clippy::unwrap_used))]"),
+        concat!(
+            "#",
+            "![cfg_attr(not(test), expect(dead_code, reason = \"a, (b)\"), inline(never))]"
+        ),
+        concat!(
+            "#",
+            "[cfg_attr(all(unix, test), cfg_attr(test, allow(warnings)))]"
+        ),
+        concat!("#", "[ cfg_attr ( test , allow ( unused_imports ) ) ]"),
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(clippy::module_name_repetitions))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(clippy::unwrap_used)".to_string()),
+            (3, "expect(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (5, "allow(unused_imports)".to_string()),
+        ]
+    );
+}
+
+/// A quoted `)` in a reason string must not end the attribute early and hide a
+/// later suppression in the same wrapper.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
+    let text = format!(
+        "{}\n",
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(dead_code, reason = \")\"), allow(warnings))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(dead_code)".to_string()),
+            (1, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+/// Raw string delimiters, rather than interior quotes or backslashes, bound a
+/// reason. Neither wrapper nesting nor ordinary attributes may lose a lint.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
+    let guarded = guarded_allow_attribute_lints();
+    for (hashes, body) in [
+        ("", "\\"),
+        ("#", "\" )"),
+        ("##", "\"# ) , [ ( \\"),
+        ("###", "🦀 \"## ], ( \\,"),
+    ] {
+        let reason = format!("r{hashes}\"{body}\"{hashes}");
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                reason
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "raw reason must retain both suppressions: {text}",
+            );
+        }
+    }
+}
+
+/// Char literals (`')'`, `'"'`, `'['`, escapes, multibyte) in an attribute
+/// must not desync the paren span or comma split, and lifetimes must not
+/// swallow following text.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_char_literals() {
+    let guarded = guarded_allow_attribute_lints();
+    for literal in [
+        "')'",
+        "'\"'",
+        "'('",
+        "'['",
+        "']'",
+        "','",
+        "'\\''",
+        "'\\\\'",
+        "'\\u{29}'",
+        "'🦀'",
+        "'é'",
+        "'€'",
+        "'\\n'",
+        "'\\x41'",
+        "b'('",
+        "'\\u{1F980}'",
+    ] {
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                literal
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                literal
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "char literal must retain both suppressions: {text}",
+            );
+        }
+    }
+    // A lifetime tick is not a char literal: it must not swallow a following
+    // suppression (tick first), nor a real char literal after it, and a char
+    // literal comma must not split the attribute (split-only discriminator).
+    for (body, expected) in [
+        (
+            "x = &'a T, allow(dead_code), y = ')', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "x = &'a T, allow(dead_code), expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        ("x = ',', allow(dead_code)", vec!["allow(dead_code)"]),
+        (
+            "x = ',', allow(dead_code), y = ',', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), x = 'a, expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), expect(warnings), x = 'a",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+    ] {
+        let text = format!(concat!("#", "[cfg_attr(test, {})]"), body);
+        assert_eq!(
+            guarded_allow_attributes_in_text(&text, &guarded)
+                .into_iter()
+                .map(|(_, f)| f)
+                .collect::<Vec<_>>(),
+            expected,
+            "lifetime/char mix must retain suppressions: {text}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
+    let reason = "r#\"\"), allow(warnings), (\"#";
+    let text = format!(
+        concat!(
+            "#",
+            "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})))]"
+        ),
+        reason
+    );
+    assert_eq!(
+        guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints()),
+        vec![(1, "allow(dead_code)".to_string())],
+    );
+}
+
+#[test]
+fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() -> Result<(), String>
+{
+    with_temp_cwd("allow-attributes-raw-reason", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        write(
+            &root.join("src/lib.rs"),
+            concat!(
+                "#",
+                "[cfg_attr(test, allow(dead_code, reason = r#\"\" )\"#), expect(warnings))]\nfn f() {}\n"
+            ),
+        );
+        badge_fixture_git(&["add", ".ripr/allow-attributes.txt", "src/lib.rs"])?;
+        let listed = super::tracked_files()?;
+        assert!(listed.iter().any(|path| path == "src/lib.rs"), "{listed:?}");
+
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("unbudgeted raw-reason suppressions must fail the gate")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read unbudgeted suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "src/lib.rs:1 contains `{attribute}` 1 time(s), allowed 0"
+                )),
+                "the gate must report the actual tracked suppression: {report}",
+            );
+        }
+
+        write(
+            &root.join(".ripr/allow-attributes.txt"),
+            "src/lib.rs|allow(dead_code)|1|deliberate gate fixture\nsrc/lib.rs|expect(warnings)|1|deliberate gate fixture\n",
+        );
+        super::check_allow_attributes_impl()?;
+
+        write(&root.join("src/lib.rs"), "fn f() {}\n");
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("removing raw-reason suppressions must leave stale budgets")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read stale suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "`{attribute}` allowlist count is stale: found 0, allowed 1"
+                )),
+                "the gate must retain exact budget enforcement: {report}",
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
+    for text in [
+        concat!("#", "[cfg_attr(test, derive(Debug))]"),
+        concat!("#", "[cfg_attr(test, allow)]"),
+        // The predicate position is not an attribute, even if it names a lint.
+        concat!("#", "[cfg_attr(allow(dead_code), derive(Debug))]"),
+        concat!("#", "[cfg_attr(test)]"),
+        concat!("#", "[cfg_attr(test, allow(dead_code)"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn cfg_attr_suppression_spends_the_same_budget_as_the_plain_attribute() {
+    let guarded = guarded_allow_attribute_lints();
+    let text = concat!("#", "[cfg_attr(test, allow(dead_code))]");
+    let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
+    for (line, attribute) in guarded_allow_attributes_in_text(text, &guarded) {
+        counts
+            .entry(("src/lib.rs".to_string(), attribute))
+            .or_default()
+            .push(line);
+    }
+
+    let unbudgeted = allow_attribute_budget_violations(&BTreeMap::new(), &counts, &guarded);
+    assert_eq!(unbudgeted.len(), 1, "{unbudgeted:?}");
+    assert!(unbudgeted[0].contains("allow(dead_code)"), "{unbudgeted:?}");
+
+    let budget = BTreeMap::from([(
+        ("src/lib.rs".to_string(), "allow(dead_code)".to_string()),
+        1,
+    )]);
+    assert!(allow_attribute_budget_violations(&budget, &counts, &guarded).is_empty());
+}
+
 #[test]
 fn allow_attribute_detection_ignores_untracked_lints() {
     let text = format!(
@@ -9889,12 +10288,24 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
     }
+    // #3798: the RC manifest sits under the RC tag but is named for the
+    // X.Y.Z generation, as the editor's rcManifestUrl expects; waiting on a
+    // manifest named after the full RC version never succeeds.
+    if !extension.contains("generation=\"${version%%[-+]*}\"")
+        || !extension.contains("/v${version}/ripr-server-manifest-v${generation}.json")
+        || extension.contains("ripr-server-manifest-v${version}.json")
+    {
+        return Err(
+            "publish-extension.yml must wait for the generation-keyed manifest under the release tag"
+                .to_string(),
+        );
+    }
     // One dispatch authorizes exactly one channel: zero or two must fail
     // before anything packages, publishes or touches the Release.
     if !extension.contains("true/false | false/true) ;;") {
         return Err("publish-extension.yml must admit exactly one marketplace channel".to_string());
     }
-    for job in ["package", "server-assets-ready", "attach-release-asset"] {
+    for job in ["package", "verify-server-assets", "attach-release-asset"] {
         let needs = extension
             .split_once(&format!("\n  {job}:\n"))
             .map(|(_, rest)| {
@@ -9909,8 +10320,14 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
                     .to_string()
             })
             .ok_or_else(|| format!("publish-extension.yml has no {job} job"))?;
-        if !needs.contains("admit-dispatch") {
-            return Err(format!("{job} must need admit-dispatch, found `{needs}`"));
+        // `package` is admitted transitively through `verify-server-assets`.
+        let admitted_by = if job == "package" {
+            "verify-server-assets"
+        } else {
+            "admit-dispatch"
+        };
+        if !needs.contains(admitted_by) {
+            return Err(format!("{job} must need {admitted_by}, found `{needs}`"));
         }
     }
     if extension
@@ -9969,6 +10386,8 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
             || !candidate.contains("candidate_sha: ${{ github.sha }}")
             || !candidate.contains("version: ${{ inputs.version }}")
+            || !candidate.contains("candidate_ref: ${{ inputs.candidate_ref }}")
+            || candidate.contains("candidate_tag")
             || candidate.contains("contents: write")
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
@@ -9990,6 +10409,10 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
         workflow.replace(
             "candidate_sha: ${{ github.sha }}",
             "candidate_sha: ${{ github.ref }}",
+        ),
+        workflow.replace(
+            "candidate_ref: ${{ inputs.candidate_ref }}",
+            "candidate_ref: \"\"",
         ),
     ] {
         if validate(&broken).is_ok() {
@@ -10036,8 +10459,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || !candidate.contains(QUALIFICATION_COMMIT_TYPE_COMMAND)
-            || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
-            || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
+            || !candidate.contains(
+                "test \"${CANDIDATE_REF}\" = \"refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}\"",
+            )
+            || !candidate.contains("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         {
             return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
         }
@@ -10212,8 +10637,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "tag syntax",
             workflow.replacen(
-                "^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$",
-                "^ripr-release-.*$",
+                "refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}",
+                "refs/tags/ripr-release-${candidate_sha}",
                 1,
             ),
         ),
@@ -10732,6 +11157,11 @@ jobs:
 #[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -10868,6 +11298,11 @@ jobs = ["Ripr Rust Small Result"]
 #[test]
 fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -11378,6 +11813,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             Some("full-ci"),
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
+        (
+            "merge_group",
+            Some("checks_requested"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "merge_group",
+            Some("destroyed"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
         (
             "workflow_dispatch",
@@ -11453,6 +11900,93 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&missing_types)
     );
 
+    let no_triggers = workflow
+        .replace("  pull_request:\n    types: [labeled]\n", "")
+        .replace("  merge_group:\n", "  merge_group_removed:\n");
+    assert_ne!(no_triggers, workflow, "fixture must remove both triggers");
+    assert!(
+        routed_rust_ready_event_contract_violations(&no_triggers)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "a workflow with neither trigger must still fail the queue contract: {:?}",
+        routed_rust_ready_event_contract_violations(&no_triggers)
+    );
+    let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
+    assert_ne!(
+        queue_dropped, workflow,
+        "fixture must remove the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "removing the merge-queue types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+    );
+    let queue_widened = workflow.replace(
+        "    types: [checks_requested]",
+        "    types: [checks_requested, destroyed]",
+    );
+    assert_ne!(
+        queue_widened, workflow,
+        "fixture must widen the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_widened)
+            .iter()
+            .any(|violation| violation.contains("merge_group types must be exactly")),
+        "extra merge_group activity types must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_widened)
+    );
+    let queue_unbound = workflow.replace(
+        "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+        "GROUP_HEAD_REF: ''",
+    );
+    assert_ne!(queue_unbound, workflow, "fixture must unbind the queued PR");
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+            .iter()
+            .any(|violation| violation.contains("resolve the queued PR")),
+        "admission must stay bound to the queued PR: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+    );
+
+    for (needle, snippet) in [
+        (
+            "forward the queued PR's labels",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "fork guard to queued PRs",
+            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+        ),
+        (
+            "more than one queued PR",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer",
+            "[ \"$ref_sha\" != \"$head\" ]",
+        ),
+        (
+            "not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
+    ] {
+        let mutated = workflow.replace(snippet, "removed");
+        assert_ne!(mutated, workflow, "fixture must remove {needle}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "dropping the {needle} pin must fail: {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     let cancellation_disabled = workflow.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",
@@ -12678,6 +13212,195 @@ fn pr_shape_warnings_flag_analysis_without_evidence() {
         },
     ];
     assert!(pr_shape_warnings(&with_evidence).is_empty());
+}
+
+const COMPLETE_PR_BODY: &str = "\
+Proposal: none, issue-driven
+Spec: none, no spec governs this surface
+ADR: none
+Plan item: none
+Governing issue or accepted claim: #8601
+Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.
+Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check
+Stack parent or prerequisite PR (if any): none
+Proposed replacement of PR (if any; not yet accepted): none
+Acceptance retained from a replaced candidate (if any): none
+Accepted winner and losing candidate disposition (when decided): not decided
+";
+
+#[test]
+fn pr_body_template_complete_body_passes() -> Result<(), String> {
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    // The `gh pr view --json body` shape unwraps to the same body.
+    let json = serde_json::json!({ "body": COMPLETE_PR_BODY }).to_string();
+    let body = pr_body_from_input_text(&json)?;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    Ok(())
+}
+
+#[test]
+fn pr_body_template_missing_governing_issue_line_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace("Governing issue or accepted claim: #8601\n", "");
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Governing issue or accepted claim:"]);
+    assert!(
+        pr_body_template_missing_error(&missing).contains("Governing issue or accepted claim:")
+    );
+}
+
+#[test]
+fn pr_body_template_missing_acceptance_delta_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace(
+        "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.\n",
+        "",
+    );
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Acceptance delta (one sentence):"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Acceptance delta (one sentence):"));
+}
+
+#[test]
+fn pr_body_template_placeholder_values_fail() {
+    for placeholder in ["", "TBD", "n/a", "<issue or claim>"] {
+        let body = COMPLETE_PR_BODY.replace(
+            "Governing issue or accepted claim: #8601",
+            &format!("Governing issue or accepted claim: {placeholder}"),
+        );
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&"Governing issue or accepted claim:"),
+            "placeholder {placeholder:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).starts_with("claim_identity_missing:"));
+    }
+}
+
+#[test]
+fn pr_body_template_non_gated_placeholder_values_fail_naming_line() {
+    // Findings 1/6: every template line rejects unfilled placeholders,
+    // not only the two admission-gated lines.
+    for (filled, placeholder_line, expected) in [
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: TBD",
+            "Spec:",
+        ),
+        ("Plan item: none", "Plan item: TBD", "Plan item:"),
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: <link>",
+            "Spec:",
+        ),
+        (
+            "Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check",
+            "Candidate branch (GitHub PR head is authoritative after publication): <branch>",
+            "Candidate branch (GitHub PR head is authoritative after publication):",
+        ),
+        (
+            "Proposed replacement of PR (if any; not yet accepted): none",
+            "Proposed replacement of PR (if any; not yet accepted): pending",
+            "Proposed replacement of PR (if any; not yet accepted):",
+        ),
+        (
+            "Accepted winner and losing candidate disposition (when decided): not decided",
+            "Accepted winner and losing candidate disposition (when decided): <winner>",
+            "Accepted winner and losing candidate disposition (when decided):",
+        ),
+    ] {
+        let body = COMPLETE_PR_BODY.replace(filled, placeholder_line);
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&expected),
+            "placeholder {placeholder_line:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).contains(expected));
+    }
+    // Explicit non-applicable values remain legitimate on non-gated lines.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface", "Spec: none");
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_body_template_bulleted_gated_lines_fail_like_admission() {
+    // Finding 2: admission (`extract_fields`) only matches `label:` at
+    // the start of a whitespace-stripped line, so bulleted or spaced
+    // gated lines are refused there and must fail locally too.
+    let bulleted = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "- Governing issue or accepted claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing",
+            "- Acceptance delta (one sentence): A PR body missing",
+        );
+    let missing = pr_body_template_missing_lines(&bulleted);
+    assert!(missing.contains(&"Governing issue or accepted claim:"));
+    assert!(missing.contains(&"Acceptance delta (one sentence):"));
+
+    let spaced = COMPLETE_PR_BODY.replace(
+        "Governing issue or accepted claim: #8601",
+        "Governing issue or accepted claim : #8601",
+    );
+    assert!(
+        pr_body_template_missing_lines(&spaced).contains(&"Governing issue or accepted claim:")
+    );
+
+    // The non-bulleted, admission-accepted forms pass, including the
+    // alternate labels admission accepts (`LABELS` in admission).
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    let alternate = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "Owner / governing claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.",
+            "Acceptance delta: A PR body missing the template lines fails a cheap local check naming the missing line.",
+        );
+    assert!(pr_body_template_missing_lines(&alternate).is_empty());
+}
+
+#[test]
+fn pr_body_template_traceability_spec_does_not_hide_missing_source_spec() {
+    // Finding 3: the bulleted traceability `- Spec:` line must not
+    // satisfy the unbulleted Source-of-truth `Spec:` line.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface\n", "")
+        + "\n## Spec-Test-Code Traceability\n\n- Spec: RIPR-SPEC-0001\n";
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Spec:"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Spec:"));
+}
+
+#[test]
+fn pr_body_template_blank_label_before_filled_value_passes_like_admission() {
+    // Finding 4: admission skips blank occurrences (`if found[key]:
+    // continue` only after a non-empty value), so a blank label before
+    // a completed claim/delta does not mask the later value.
+    let body = "Governing issue or accepted claim:\nAcceptance delta (one sentence):\n".to_string()
+        + COMPLETE_PR_BODY;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    // A filled first occurrence likewise wins over a later blank one.
+    let body = COMPLETE_PR_BODY.to_string()
+        + "\nGoverning issue or accepted claim:\nAcceptance delta (one sentence):\n";
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_shape_report_body_status_agrees_with_body_check_failure() {
+    // Finding 5: a missing body line fails the check, so the report
+    // must record `fail`, not an advisory `warn`/`pass`.
+    let failed = pr_shape_report_body(&[String::from(
+        "PR body is missing or has a placeholder value for `Spec:`; add the line from .github/pull_request_template.md with a real value.",
+    )]);
+    assert!(failed.contains("Status: fail"));
+    assert!(!failed.contains("Status: pass"));
+    assert!(!failed.contains("Status: warn"));
+    assert!(pr_shape_report_body(&[]).contains("Status: pass"));
+    assert!(
+        pr_shape_report_body(&[String::from("Production code changed without evidence.")])
+            .contains("Status: warn")
+    );
 }
 
 #[test]
@@ -31285,12 +32008,29 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
+        let unicode_source =
+            source.replace("is still not an entry", "café 🦀 is still not an entry");
         for (case, source, multiline_command) in [
             ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
             (
                 "crlf",
                 source.replace('\n', "\r\n"),
                 "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "unicode",
+                unicode_source.clone(),
+                "cargo test first\n[[allow]]\n",
+            ),
+            (
+                "unicode-crlf",
+                unicode_source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "no-final-newline",
+                source.trim_end_matches('\n').to_string(),
+                "cargo test first\n[[allow]]\n",
             ),
         ] {
             // Preserve the selected TOML authority's newline bytes, rather
@@ -31337,6 +32077,30 @@ covered_by = ["cargo test common_second"]
                     ),
                 ],
                 "{case}: command order and attribution must come from parsed entries"
+            );
+            // Exercise rendered field diagnostics as well as entry attribution.
+            // Multibyte text, multiline strings and CRLF must keep physical lines.
+            let invalid = format!(
+                "{}\nmystery = \"unknown field\"\n",
+                source.trim_end_matches(['\r', '\n'])
+            );
+            write(&path, &invalid);
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:29 unsupported non-Rust allowlist field `mystery`",
+                    path.display()
+                )),
+                "{case}"
+            );
+            write(&path, &source.replace("glob = \"docs/*.md\"", "glob = 42"));
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:20 string value must be quoted (got: 42)",
+                    path.display()
+                )),
+                "{case}"
             );
         }
         Ok(())
@@ -50660,7 +51424,7 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
     let json = repo_exposure_latency_json(&report);
     let value: Value =
         serde_json::from_str(&json).map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.4");
     assert_eq!(value["report"], "repo-exposure-latency");
     assert_eq!(value["status"], "warn");
     assert_eq!(value["runs"][0]["trace"][0]["phase"], "cache_load");
@@ -50834,7 +51598,7 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
     };
     let value: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
         .map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.4");
     assert_eq!(
         value["runs"][0]["resource_cost"]["observer"],
         "ripr_process_self"
@@ -51160,7 +51924,8 @@ fn repo_exposure_latency_report_builder_runs_markdown_after_json_pass() -> Resul
             "repo-exposure-md".to_string()
         ]
     );
-    assert_eq!(report.status, "pass");
+    // Both formats exited 0, but output parity is unchecked: not `pass` (#9503).
+    assert_eq!(report.status, "warn");
     assert_eq!(report.runs.len(), 2);
     assert_eq!(report.runs[0].duration_ms, 30_000);
     assert_eq!(report.runs[1].duration_ms, 30_000);
@@ -51253,9 +52018,11 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     let timeout = latency_run_with_status("repo-exposure-json", "timeout");
     let skipped = latency_run_with_status("repo-exposure-md", "skipped_after_json_timeout");
 
+    // `pass` needs exit codes AND a clean observed cache AND checked parity
+    // (#9503); an exit-code-only run is `warn`.
     assert_eq!(
         repo_exposure_latency_status(std::slice::from_ref(&pass)),
-        "pass"
+        "warn"
     );
     assert_eq!(repo_exposure_latency_status(&[timeout]), "warn");
     assert_eq!(repo_exposure_latency_status(&[skipped]), "warn");
@@ -51275,6 +52042,100 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     };
     let markdown = repo_exposure_latency_markdown(&report);
     assert!(markdown.contains("No analyzer trace lines were captured"));
+}
+
+fn clean_cache(store_errors: usize, corrupt_ignored: usize) -> RepoExposureFileFactCache {
+    RepoExposureFileFactCache {
+        schema_version: "0.1".to_string(),
+        hits: 1,
+        misses: 0,
+        invalidated: 0,
+        corrupt_ignored,
+        stores: 0,
+        store_errors,
+        store_failures: Vec::new(),
+        store_failures_dropped: store_errors,
+    }
+}
+
+fn observed_run(cache: Option<RepoExposureFileFactCache>) -> RepoExposureLatencyRun {
+    RepoExposureLatencyRun {
+        file_fact_cache_limitation: cache
+            .is_none()
+            .then(|| "cache_phase_not_observed".to_string()),
+        file_fact_cache: cache,
+        ..latency_run_with_status("repo-exposure-json", "pass")
+    }
+}
+
+/// #9503 negative experiments: the same exit-code-clean runs flip from `pass`
+/// to `warn` for each degraded dimension, and only the fully observed, clean,
+/// parity-checked set stays `pass`.
+#[test]
+fn repo_exposure_latency_status_is_not_pass_with_cache_errors_or_unchecked_parity() {
+    let clean = observed_run(Some(clean_cache(0, 0)));
+    // Positive control: this is the only shape allowed to say `pass`.
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&clean), true),
+        "pass"
+    );
+    // Unchecked output parity alone blocks `pass` (the production default).
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&clean)),
+        "warn"
+    );
+    // Cache store errors block `pass` even with parity checked.
+    let store_errors = observed_run(Some(clean_cache(2, 0)));
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&store_errors), true),
+        "warn"
+    );
+    // Ignored corrupt entries block `pass`.
+    let corrupt = observed_run(Some(clean_cache(0, 1)));
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&corrupt), true),
+        "warn"
+    );
+    // An unobserved cache phase blocks `pass`.
+    let unobserved = observed_run(None);
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&unobserved), true),
+        "warn"
+    );
+    let reasons = repo_exposure_latency_status_reasons(&[store_errors, unobserved], false);
+    assert!(reasons.contains(&"repo-exposure-json: file_fact_cache_store_errors=2".to_string()));
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: file_fact_cache_cache_phase_not_observed".to_string())
+    );
+    assert!(reasons.contains(&"output_parity_not_checked".to_string()));
+}
+
+/// #9503: a legitimate Unix file name containing `:` is a valid receipt row
+/// path; a Windows drive-qualified path is still refused.
+#[test]
+fn cache_receipt_accepts_colon_in_unix_row_paths_but_not_drive_paths() {
+    let receipt = |path: &str| {
+        let value = serde_json::json!({
+            "schema_version": "0.1", "hits": 0, "misses": 1, "invalidated": 0,
+            "corrupt_ignored": 0, "stores": 0, "store_errors": 1,
+            "store_failures": [{"path": path, "stage": "write", "error": "boom"}],
+            "store_failures_dropped": 0
+        });
+        repo_exposure_file_fact_cache_from_stderr(&format!(
+            "ripr_file_fact_cache_receipt {value}\n"
+        ))
+    };
+    let (cache, limitation) = receipt("src/a:b.rs");
+    assert!(cache.is_some(), "colon path rejected: {limitation:?}");
+    let (cache, limitation) = receipt("a:b.rs");
+    assert!(
+        cache.is_some(),
+        "top-level colon path rejected: {limitation:?}"
+    );
+    let (cache, limitation) = receipt(&format!("{}:/work/src/lib.rs", "C"));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
 }
 
 /// One observed resource-cost receipt body, in the exact wire shape the
@@ -54636,52 +55497,74 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
-    with_repo_cwd(|| {
-        // Preserve any pre-existing report so the test leaves no false
-        // failure artifact behind for a real check-pr reader.
-        let report_path = Path::new("target")
-            .join("ripr")
-            .join("reports")
-            .join("check-pr.md");
-        let original = fs::read(&report_path).ok();
-        let outcome = (|| -> Result<(), String> {
-            super::write_report("check-pr.md", &super::check_pr_report(None))?;
-            let run_a = || Err("stale-replacement probe".to_string());
-            let gates = [super::CheckPrGate {
-                name: "gate-a",
-                reproduce: "run a",
-                run: &run_a,
-            }];
-            let result = super::run_check_pr_gates(&gates, &|failure| {
-                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-            });
-            assert!(result.is_err());
+    let guard = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().map_err(|err| format!("capture report-test cwd: {err}"))?;
+    let temp = std::env::temp_dir();
+    fs::create_dir_all(&temp).map_err(|err| format!("create runtime temp parent: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("report-test timestamp: {err}"))?
+        .as_nanos();
+    let root = temp.join(format!(
+        "ripr-check-pr-report-{}-{stamp}",
+        std::process::id()
+    ));
+    // Ownership starts only after this exclusive create succeeds. An occupied
+    // leaf must refuse, never borrow or recursively remove another test's state.
+    fs::create_dir(&root).map_err(|err| {
+        format!(
+            "create exclusive report-test scratch {}: {err}",
+            root.display()
+        )
+    })?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::env::set_current_dir(&root)
+            .map_err(|err| format!("enter report-test scratch: {err}"))?;
+        super::write_report("check-pr.md", &super::check_pr_report(None))?;
+        let run_a = || Err("stale-replacement probe".to_string());
+        let gates = [super::CheckPrGate {
+            // This synthetic ci-fast failure has no stable inherited comparison;
+            // the existing owner refuses it before creating comparison worktrees.
+            name: "ci-fast",
+            reproduce: "run a",
+            run: &run_a,
+        }];
+        let result = super::run_check_pr_gates(&gates, &|failure| {
+            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+        });
+        assert!(result.is_err());
 
-            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-                .map_err(|err| format!("read check-pr.md: {err}"))?;
-            assert!(
-                text.contains("Status: fail"),
-                "the failed current run must replace the stale success report"
-            );
-            assert!(!text.contains("Status: pass"));
-            Ok(())
-        })();
-        let restore = match &original {
-            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
-                format!("failed to restore {}: {err}", normalize_path(&report_path))
-            }),
-            None => match fs::remove_file(&report_path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(format!(
-                    "failed to clear {}: {err}",
-                    normalize_path(&report_path)
-                )),
-            },
-        };
-        restore?;
-        outcome
-    })
+        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+            .map_err(|err| format!("read check-pr.md: {err}"))?;
+        assert!(
+            text.contains("Status: fail"),
+            "the failed current run must replace the stale success report"
+        );
+        assert!(!text.contains("Status: pass"));
+        Ok(())
+    }));
+    // As with the existing cwd scopes, restore even after an assertion panic.
+    // A failed restoration retains the owned root instead of deleting a live cwd.
+    let restore = std::env::set_current_dir(&old).map_err(|err| {
+        format!(
+            "restore report-test cwd; retained {}: {err}",
+            root.display()
+        )
+    });
+    restore?;
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
+    drop(guard);
+    match outcome {
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+        Err(panic_payload) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic_payload);
+        }
+    }
 }
 
 #[test]
@@ -55297,6 +56180,41 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
             available.contains(field),
             "real gh rejects production field {field}: {text}"
         );
+    }
+    Ok(())
+}
+
+/// #5531: the capability registry checks are hosted. The docs-gate step must
+/// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
+/// must not use a failure-swallowing form.
+#[test]
+fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let docs_gate = workflow
+        .split("\n  docs-gate:")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  result:").next())
+        .ok_or("routed-rust.yml must declare a docs-gate job before result")?;
+    for needle in [
+        "cargo xtask capability-docs --check",
+        "cargo xtask check-capability-producers",
+        "docs/status/SUPPORT_TIERS\\.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "core.quotePath=false",
+        "docs/specs/",
+    ] {
+        if !docs_gate.contains(needle) {
+            return Err(format!("docs-gate must contain `{needle}`"));
+        }
+    }
+    for line in docs_gate.lines().map(str::trim) {
+        if (line.contains("capability-docs") || line.contains("check-capability-producers"))
+            && line.contains("|| true")
+        {
+            return Err(format!(
+                "docs-gate must not swallow capability failures: {line}"
+            ));
+        }
     }
     Ok(())
 }
