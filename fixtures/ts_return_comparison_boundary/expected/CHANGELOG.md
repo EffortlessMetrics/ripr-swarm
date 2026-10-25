@@ -346,3 +346,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_return_comparison_boundary (26)
+
+Reason:
+RIPR-SPEC-0224: TS missing_input rows carry the finding's boundary as row-owned miss_support, so the renderer names it (#5495)
+
+Command:
+`cargo xtask goldens bless ts_return_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
