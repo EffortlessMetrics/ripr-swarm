@@ -19334,3 +19334,39 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0357"
+name = "A changed value-default binding that reaches the returned text"
+spec = "docs/specs/RIPR-SPEC-0357-binding-default-reaches-return.md"
+tests = [
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_range_bounded_slice_tail_is_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::an_unsafe_get_unchecked_tail_is_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::the_bare_binding_tail_is_a_whole_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_rebound_binding_is_not_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_shadowed_binding_is_not_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_computed_tail_is_not_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::an_intervening_use_or_early_exit_is_not_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_let_inside_a_nested_block_is_not_a_return_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::an_unterminated_previous_line_makes_the_tail_a_different_expression",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::each_early_exit_form_blocks_the_flow",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_start_bound_and_get_tail_are_range_bound_flows",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::the_changed_line_must_be_the_let",
+  "crates/ripr/src/analysis/probes/binding_return.rs::tests::a_semicolon_inside_a_literal_is_not_a_second_statement",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::changed_binding_return_flow_keeps_the_probe_on_the_changed_line",
+  "crates/ripr/src/analysis/language/rust/probes.rs::tests::changed_binding_return_evidence_is_disclosure_only",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/default-flow-unpinned.json",
+  "fixtures/rust-verdict-corpus/cases/default-flow-rebound.json",
+  "fixtures/rust-verdict-corpus/cases/default-flow-smoked.json",
+]
+code = [
+  "crates/ripr/src/analysis/probes/binding_return.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0357-binding-default-reaches-return.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

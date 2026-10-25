@@ -1,0 +1,44 @@
+//! A value default that reaches the returned text through a binding: the
+//! default is credited only when a pinned call takes the default branch.
+
+/// Text before the first `-`; the whole text when there is none.
+pub fn family_unpinned(sku: &str) -> &str {
+    let end = sku.find('-').unwrap_or(sku.len());
+    &sku[..end]
+}
+
+/// Same, with the cut shortened to four bytes after the lookup.
+pub fn family_rebound(sku: &str) -> &str {
+    let mut end = sku.find('-').unwrap_or(sku.len());
+    end = end.min(4);
+    &sku[..end]
+}
+
+/// Same as `family_unpinned`; its test calls the defaulting input without
+/// asserting on the result.
+pub fn family_smoked(sku: &str) -> &str {
+    let end = sku.find('-').unwrap_or(sku.len());
+    &sku[..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unpinned_family_of_a_dashed_sku() {
+        assert_eq!(family_unpinned("BOLT-M8"), "BOLT");
+    }
+
+    #[test]
+    fn rebound_family_is_at_most_four_bytes() {
+        assert_eq!(family_rebound("BOLT-M8"), "BOLT");
+        assert_eq!(family_rebound("WASHER"), "WASH");
+    }
+
+    #[test]
+    fn smoked_family_of_a_dashed_sku() {
+        assert_eq!(family_smoked("BOLT-M8"), "BOLT");
+        let _ = family_smoked("WASHER");
+    }
+}
