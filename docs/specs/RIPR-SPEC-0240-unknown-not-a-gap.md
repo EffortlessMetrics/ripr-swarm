@@ -468,6 +468,9 @@ finding) are judged; either can withhold a gap, which only costs an advisory.
 
 It runs after the should-panic rule and before `withhold_unsupported_gap`,
 and writes the finding the same way. This withholding route credits nothing.
+With bounded recording credit (#9766), the selected public corpus check reads
+`idiom-hand-mock-exact-line` as `credited`; `idiom-fixture-builder-total`
+remains `limited` and `spec0231-oracle-events-sent-len-eq` remains `gap`.
 Historical corpus effect before bounded recording credit (#9766):
 `lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
 `lib-expect-test-assert-debug-eq-variant-payload` and
