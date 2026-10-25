@@ -124,15 +124,23 @@ unchanged. Where that consumer reaches the same cause it already reads
   any other module of the test's own package (`#[macro_use] mod noop;`).
 - Bare-name ambiguity is scoped, not lifted. With placement unavailable, the
   workspace-wide ambiguity set (`trusted_macro_ambiguities`) is replaced by the
-  names the test's own package (path-derived package root) makes ambiguous
-  without a scope, scanned from only that package's files, plus every withheld
-  file's. A site in another package (a `pub use core::*` glob or an exported
-  `macro_rules!` in a sibling crate) reaches this test only if that crate's file
-  is mounted into the test's target, which unplaced placement can neither
-  establish nor rule out; it is part of the unplaced doubt, so a bare
-  `assert_eq!` in that workspace is withheld, not a gap. A file whose package
-  cannot be named from its path counts as the test's own, and a test whose
-  package cannot be named keeps the workspace-wide answer.
+  names the test's own scope makes ambiguous without a scope, scanned from only
+  that scope's files, plus every withheld file's. The own scope is: the test's
+  package (path-derived package root); every file a resolved `mod` declaration
+  mounts from the scope, including a literal `#[path]` into another package or
+  under a nested `src/` directory; the declaring parents of the test file; and
+  every package the scope reaches through an explicit import edge (`use dep::*`,
+  `use dep::name`, `extern crate dep`, read lexically, to a fixpoint). An import
+  of a workspace-owned crate under a name no package directory carries reaches
+  every package. A site in any other package (a `pub use core::*` glob or an
+  exported `macro_rules!` in a sibling crate the test's scope never imports or
+  mounts) reaches this test only if that crate's file is mounted into the test's
+  target, which unplaced placement can neither establish nor rule out; it is
+  part of the unplaced doubt, so a bare `assert_eq!` there is withheld, not a
+  gap. A file whose package cannot be named from its path counts as the test's
+  own, mounted or not, and a test whose package cannot be named keeps the
+  workspace-wide answer. The import scan is lexical and over-approximate (a name
+  in a comment or string widens the scope), which only keeps more gaps.
 - A new schema version or a new stop reason.
 
 ## Required Evidence
@@ -169,22 +177,47 @@ unchanged. Where that consumer reaches the same cause it already reads
   `a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable`. Dropping
   the mention filter: `an_unrelated_weak_assertion_does_not_lift_the_withhold`.
   Scoping off (the workspace-wide ambiguity set read as before):
-  `another_crates_glob_reexport_is_part_of_the_unplaced_doubt`. The own-package
-  scan seeing no file: `an_own_crate_macro_in_another_module_keeps_the_bare_assertion_gap`.
+  `another_crates_glob_reexport_is_part_of_the_unplaced_doubt`. The own-scope
+  scan seeing no file, and lifting the whole macro check: the same-file,
+  own-crate, mount, nested-`src` and dependency-import negatives. Mount edges
+  off: `a_literal_path_mount_of_another_packages_macro_keeps_the_gap` and
+  `a_mounted_file_under_a_nested_src_directory_keeps_the_gap`. Import edges off:
+  `a_glob_import_of_a_dependency_macro_keeps_the_gap` (`use mac::*;`,
+  `#[macro_use] extern crate mac;` and `use mac::assert_eq;` cases). A file with
+  no nameable package not counted as own:
+  `an_unmounted_file_with_no_nameable_package_keeps_the_gap`.
   Judging every indexed test instead of the finding's related tests:
   `a_same_named_type_in_another_crate_does_not_trigger_the_withhold`. Lifting
   the whole macro check instead of the placement input:
   `a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap`.
-  Unexercised: the "at least one assertion names the owner" guard has no
-  discriminating test (mutating it away leaves every test green) and this spec
-  does not claim it is redundant or proved. It is kept only because it fails
-  closed (no assertion naming the owner keeps the gap). The former `!test.assertions.is_empty()` and
+  Unexercised, survive mutation, and are not claimed proved: (1) the
+  "at least one assertion names the owner" guard; (2) the reach-every-package
+  rule for an owned crate imported under a rename (the renamed-dependency test
+  also keeps its gap with the rule removed, because the renamed glob is already
+  a foreign-glob site in the test's own file); (3) the declaring parents of the
+  test file in the own scope (no constructible shape: the harness test file
+  sits in the package of its own `lib.rs`); (4) the withheld-file refusals
+  (`withheld.any_name`, `withheld.trusted`), which need a narrowed diff index
+  with withheld files; (5) the `target_roots.disabled` conjunct on the
+  placement-input condition, `unplaced = trust && disabled` reduced to `trust`,
+  and the `std`/`core` match on the placement-input condition: the caller
+  `inherent_owner_call_resolves_if_macros_trusted` already requires placement
+  to be unavailable before any trusted judgment, so the first two are
+  likely-redundant guards, and a non-`std` qualified root reaching the placement
+  skip has no constructed case. The first item has no discriminating test
+  (mutating it away leaves every test green); it is kept only because it fails
+  closed (no assertion naming the owner keeps the gap). R4: the path-only
+  `package_root` takes the last `/src/` component, so a nested `x/src/` splits a
+  package by path; a file mounted from the package is still own through its
+  resolved `mod` edge (tested), and no gap was found hidden by it. A test file
+  itself under a nested `src/` is covered only by its declaring parents
+  (item 3, unexercised). The former `!test.assertions.is_empty()` and
   `test.body.contains(owner)` conjuncts were removed as subsumed by the
   assertion-text check. The removal of the post-pass itself and the
   receiver-negative mutations (dropping the comparison, dropping the placement
-  requirement) were not re-run for this revision. Every mutation above was
-  re-run on this revision's final source and killed as named; the two
-  own-package mutations each also fail the same-file macro negative.
+  requirement) were not re-run for this revision. The mutations listed as killed
+  above were re-run on this revision's final source and killed as named; the
+  unexercised ones are listed there and are not called proved.
 - Cache generation decision: `CACHE_SCHEMA_VERSION` (1.99) and the sharded and
   compact generations (0.106) are not bumped. Every cache in `seam_cache.rs`
   (`SeamFacts`, `CompactClassifiedSeams`, sharded) stores `ClassifiedSeam`
@@ -202,6 +235,10 @@ unchanged. Where that consumer reaches the same cause it already reads
   and whose assertions naming the owner are all `strong`. The
   qualifying positive is `std::assert_eq!(Widget::new().read(), 4)` behind the
   generated include; the `> 0` and `assert_ne!(.., 0)` controls sit beside it.
+- R2 choice: import-edge scoping was taken, not the documented-limitation
+  fallback. The serde rows' test package `serde_derive` does not import
+  `serde_core`, so the `serde_core` `pub use core::*`/`std::*` sites stay
+  outside its own scope and both rows still read `limited`.
 - Instrumented cause for the serde rows
   `serde-derive-rename-field-upper` and `serde-derive-rename-variant-lower`:
   their tests assert through a bare `assert_eq!`; of the three bare-name

@@ -596,3 +596,119 @@ fn another_crates_glob_reexport_is_part_of_the_unplaced_doubt() -> Result<(), St
     );
     Ok(())
 }
+
+/// The workspace with `a` mounting a file of another package through a literal
+/// `#[path]` ahead of `shared`: the mount is resolved, so the file is part of
+/// the test's own scope whatever package directory holds it (the placed variant
+/// of this workspace is a gap).
+#[test]
+fn a_literal_path_mount_of_another_packages_macro_keeps_the_gap() -> Result<(), String> {
+    let workspace =
+        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+    workspace.write_file(
+        "a/src/lib.rs",
+        "#[macro_use]\n#[path = \"../../b/src/noop.rs\"]\nmod noop;\nmod shared;\n",
+    )?;
+    workspace.write_file(
+        "b/src/noop.rs",
+        "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+    )?;
+    let finding = workspace.finding()?;
+    assert_keeps_gap("literal #[path] mount into another package", &finding)
+}
+
+/// A mount that sits under a directory named `src` inside the package is the
+/// package's own file, though its path carries a second `src` component.
+#[test]
+fn a_mounted_file_under_a_nested_src_directory_keeps_the_gap() -> Result<(), String> {
+    let workspace =
+        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+    workspace.write_file(
+        "a/src/lib.rs",
+        "#[macro_use]\n#[path = \"x/src/noop.rs\"]\nmod noop;\nmod shared;\n",
+    )?;
+    workspace.write_file(
+        "a/src/x/src/noop.rs",
+        "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+    )?;
+    let finding = workspace.finding()?;
+    assert_keeps_gap("mount under a nested src directory", &finding)
+}
+
+/// A glob import of a workspace crate that exports `assert_eq!` shadows the
+/// prelude macro in the importing package, so the crate's export is the test
+/// package's own doubt, not placement's. Contrast the `g` crate above, which
+/// the test package never imports.
+#[test]
+fn a_glob_import_of_a_dependency_macro_keeps_the_gap() -> Result<(), String> {
+    for import in [
+        "use mac::*;",
+        "#[macro_use]\nextern crate mac;",
+        "use mac::assert_eq;",
+    ] {
+        let workspace =
+            Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+        workspace.write_file(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\"]\nresolver = \"2\"\n",
+        )?;
+        workspace.write_file(
+            "a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\nmac = { path = \"../mac\" }\n",
+        )?;
+        workspace.write_file(
+            "mac/Cargo.toml",
+            "[package]\nname = \"mac\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )?;
+        workspace.write_file(
+            "mac/src/lib.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        )?;
+        workspace.write_file("a/src/lib.rs", &format!("{import}\nmod shared;\n"))?;
+        let finding = workspace.finding()?;
+        assert_keeps_gap(&format!("dependency macro via `{import}`"), &finding)?;
+    }
+    Ok(())
+}
+
+/// A file with no nameable package (outside every `src/`, `tests/` layout) is
+/// counted as the test's own, so a macro defined there keeps the gap even when
+/// nothing mounts it. This is the conservative reading, not a proved reach.
+#[test]
+fn an_unmounted_file_with_no_nameable_package_keeps_the_gap() -> Result<(), String> {
+    let workspace =
+        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+    workspace.write_file(
+        "stray/macros.rs",
+        "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+    )?;
+    let finding = workspace.finding()?;
+    assert_keeps_gap("file with no nameable package", &finding)
+}
+
+/// The dependency is imported under a rename no package directory carries, so
+/// the import cannot be pinned to one package and every package is reached.
+#[test]
+fn a_glob_import_of_a_renamed_dependency_macro_keeps_the_gap() -> Result<(), String> {
+    let workspace =
+        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+    workspace.write_file(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\"]\nresolver = \"2\"\n",
+    )?;
+    workspace.write_file(
+        "a/Cargo.toml",
+        "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\nm2 = { package = \"mac\", path = \"../mac\" }\n",
+    )?;
+    workspace.write_file(
+        "mac/Cargo.toml",
+        "[package]\nname = \"mac\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )?;
+    workspace.write_file(
+        "mac/src/lib.rs",
+        "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+    )?;
+    workspace.write_file("a/src/lib.rs", "use m2::*;\nmod shared;\n")?;
+    let finding = workspace.finding()?;
+    assert_keeps_gap("renamed dependency macro", &finding)
+}

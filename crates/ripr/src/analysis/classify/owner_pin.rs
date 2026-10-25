@@ -1012,11 +1012,15 @@ impl OwnerPinSyntax {
                 .any(|candidate| candidate == name)
     }
 
-    /// The names the test's own package makes ambiguous without a scope,
-    /// from a scan of only that package's files. `None` when the test's
-    /// package cannot be named from its path (the caller keeps the
-    /// workspace-wide answer). A file whose package cannot be named counts
-    /// as the test's own.
+    /// The names the test's own scope makes ambiguous without a scope of
+    /// their own (RIPR-SPEC-0352). The own scope is the test's package, every
+    /// file a resolved `mod` declaration mounts from the scope (a literal
+    /// `#[path]` into another package included) together with the declaring
+    /// parents of the test file, and every package the scope reaches through
+    /// an explicit import edge (`use dep::*`, `use dep::x`, `extern crate dep`).
+    /// `None` when the test's package cannot be named from its path (the caller
+    /// keeps the workspace-wide answer). A file whose package cannot be named
+    /// counts as the test's own.
     fn own_package_ambiguities(
         &self,
         test: &TestSummary,
@@ -1027,10 +1031,76 @@ impl OwnerPinSyntax {
         if let Some(names) = self.own_package_macro_ambiguities.borrow().get(&package) {
             return Some(names.clone());
         }
+        let mut packages: BTreeSet<String> = BTreeSet::from([package.clone()]);
+        let mut mounted: BTreeSet<PathBuf> = BTreeSet::new();
+        if let Some(context) = self.execution_context(&test.file, index).as_ref() {
+            mounted.extend(context.edges.iter().map(|edge| edge.parent.clone()));
+        }
+        // Directory name of every package that holds an indexed file, the
+        // crate name a path dependency is imported under.
+        let directories: BTreeMap<String, String> = index
+            .files()
+            .iter()
+            .filter_map(|(path, _)| package_root(path))
+            .filter(|root| !root.is_empty())
+            .map(|root| {
+                let name = root
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .replace('-', "_");
+                (root, name)
+            })
+            .collect();
+        let owned = index.macro_scope_crates();
+        loop {
+            let in_scope =
+                |path: &Path, packages: &BTreeSet<String>, mounted: &BTreeSet<PathBuf>| {
+                    mounted.contains(path)
+                        || package_root(path).is_none_or(|root| packages.contains(&root))
+                };
+            let mut changed = false;
+            if let Some(parents) = index.execution_module_parents.as_ref() {
+                for (child, edges) in parents {
+                    if !in_scope(child, &packages, &mounted)
+                        && edges
+                            .iter()
+                            .any(|edge| in_scope(&edge.parent, &packages, &mounted))
+                    {
+                        mounted.insert(child.clone());
+                        changed = true;
+                    }
+                }
+            }
+            let mut roots = BTreeSet::new();
+            for (path, facts) in index.files().iter() {
+                if in_scope(path, &packages, &mounted) {
+                    imported_crate_roots(facts.data().source.as_ref(), &mut roots);
+                }
+            }
+            // A workspace-owned crate imported under a name no package
+            // directory carries (a renamed dependency) cannot be pinned to
+            // one package, so every package is reached.
+            let reach_all = roots
+                .iter()
+                .any(|root| owned.contains(root) && !directories.values().any(|name| name == root));
+            for (directory, name) in &directories {
+                if (reach_all || roots.contains(name)) && packages.insert(directory.clone()) {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         let files: Vec<MacroScanFile<'_>> = index
             .files()
             .iter()
-            .filter(|(path, _)| package_root(path).is_none_or(|root| root == package))
+            .filter(|(path, _)| {
+                mounted.contains(path.as_path())
+                    || package_root(path).is_none_or(|root| packages.contains(&root))
+            })
             .map(|(path, facts)| {
                 let data = facts.data();
                 (path, data.source.as_ref(), data.macro_candidates.as_deref())
@@ -2553,6 +2623,35 @@ fn absorb_macro_sites(
         } else {
             global.insert(name);
         }
+    }
+}
+
+/// The first path segment of every `use` item and `extern crate` in `source`,
+/// read lexically: a name inside a comment or string only adds a segment,
+/// which widens the own scope and never narrows it.
+fn imported_crate_roots(source: &str, roots: &mut BTreeSet<String>) {
+    let ident = |text: &str| -> Option<String> {
+        let text = text.trim_start().trim_start_matches("::").trim_start();
+        let end = text
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(text.len());
+        (end > 0).then(|| text[..end].to_string())
+    };
+    for (offset, _) in source.match_indices("use ") {
+        let boundary = source[..offset]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        if !boundary {
+            continue;
+        }
+        let statement = source[offset + 4..].split(';').next().unwrap_or_default();
+        for part in statement.split([',', '{']) {
+            roots.extend(ident(part));
+        }
+    }
+    for (offset, _) in source.match_indices("extern crate ") {
+        roots.extend(ident(&source[offset + 13..]));
     }
 }
 
