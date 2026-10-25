@@ -4325,11 +4325,16 @@ impl UnextractedTestFinder<'_> {
         visit: impl FnOnce(&mut Self),
     ) {
         let depth = self.shadowed.len();
+        let rest = params
+            .rest
+            .iter()
+            .flat_map(|rest| rest.rest.argument.get_binding_identifiers());
         self.shadowed.extend(
             params
                 .items
                 .iter()
                 .flat_map(|param| param.pattern.get_binding_identifiers())
+                .chain(rest)
                 .map(|identifier| identifier.name.to_string()),
         );
         visit(self);
@@ -4337,11 +4342,24 @@ impl UnextractedTestFinder<'_> {
     }
 
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
+        // A declaration in this block can rebind a parameter's name to
+        // something else (`const test = runner`). Fail closed: the name no
+        // longer counts as a parameter inside this block.
+        let mut rebound = Vec::new();
+        collect_block_declared_names(statements, &mut rebound);
+        let outer = (!rebound.is_empty()).then(|| {
+            let outer = self.shadowed.clone();
+            self.shadowed.retain(|name| !rebound.contains(name));
+            outer
+        });
         for stmt in statements {
             if self.gap.is_some() {
-                return;
+                break;
             }
             self.visit_statement(stmt);
+        }
+        if let Some(outer) = outer {
+            self.shadowed = outer;
         }
     }
 
@@ -4726,7 +4744,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, false);
             }
             Argument::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Argument::FunctionExpression(func) => self.visit_function(func),
             Argument::ClassExpression(class) => self.visit_class(class),

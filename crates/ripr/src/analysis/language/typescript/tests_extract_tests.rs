@@ -36,6 +36,8 @@ fn a_parameter_named_like_the_runner_is_not_a_dropped_registration() {
         ("{ test }", "await test();"),
         ("test", "test('id', () => { expect(1).toBe(1); });"),
         ("[test]", "await test('id', () => { expect(1).toBe(1); });"),
+        ("...test", "await test('id', () => { expect(1).toBe(1); });"),
+        ("...[test]", "test('id', () => { expect(1).toBe(1); });"),
     ] {
         let shadowed = format!(
             "import {{ test }} from 'node:test';\nasync function run({params}) {{\n  {call}\n}}\n"
@@ -53,6 +55,32 @@ fn a_parameter_named_like_the_runner_is_not_a_dropped_registration() {
         assert!(
             detect_partial_test_extraction(file, &unshadowed, &tests).is_some(),
             "an unshadowed registration in a helper must stay disclosed: {unshadowed}"
+        );
+    }
+}
+
+#[test]
+fn callback_parameters_shadow_the_runner_and_inner_rebinds_do_not() {
+    let file = Path::new("test/helpers/register.test.ts");
+    let head = "import { test, test as runner } from 'node:test';\n";
+    // A callback parameter is not the runner.
+    let callback = format!("{head}register((test) => {{ test('case', () => {{}}); }});\n");
+    let tests = extract_tests(file, &callback);
+    assert!(detect_partial_test_extraction(file, &callback, &tests).is_none());
+    // An inner declaration that rebinds the name can be the runner again, so
+    // the unindexed registration stays disclosed.
+    for rebound in [
+        "const test = runner;",
+        "function test() {}",
+        "class test {}",
+    ] {
+        let source = format!(
+            "{head}function build(test) {{ {{ {rebound} test('actual', () => {{}}); }} }}\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{source}"
         );
     }
 }
