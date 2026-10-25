@@ -130,7 +130,7 @@ impl Project {
                 ],
             ),
             ByteCaptureBudget {
-                timeout: Duration::from_secs(60),
+                timeout: Duration::from_mins(1),
                 stdout_bytes: 128 * 1024,
                 stderr_bytes: 128 * 1024,
             },
@@ -206,6 +206,10 @@ fn equality_assertion_rejects_old_behavior_and_zero_test_success() -> Result<(),
         );
     }
     let old = project.test("equality_gets_discount")?;
+    assert!(
+        !old.timed_out,
+        "old-behavior test must finish before its failure is accepted"
+    );
     assert!(old.status.is_some_and(|status| !status.success()));
     let stdout = String::from_utf8_lossy(&old.stdout);
     assert!(stdout.contains("equality_gets_discount ... FAILED"));
