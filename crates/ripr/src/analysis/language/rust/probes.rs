@@ -334,12 +334,12 @@ pub(crate) fn mask_rust_char_literals(text: &str) -> String {
     let mut masked = bytes.to_vec();
     let mut index = 0usize;
     while index < bytes.len() {
-        if bytes[index] == b'\'' {
-            if let Some(close) = rust_char_literal_close(bytes, index) {
-                mask_non_newline_bytes(&mut masked, index.saturating_add(1), close);
-                index = close.saturating_add(1);
-                continue;
-            }
+        if bytes[index] == b'\''
+            && let Some(close) = rust_char_literal_close(bytes, index)
+        {
+            mask_non_newline_bytes(&mut masked, index.saturating_add(1), close);
+            index = close.saturating_add(1);
+            continue;
         }
         index = index.saturating_add(1);
     }
