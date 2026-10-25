@@ -611,6 +611,15 @@ pub(super) fn render_finding_with_shared_sections(
                 reason.as_str(),
                 reason.describe()
             ));
+            // A gap-evidence stop always rides a named static limitation, whose
+            // `Next:` line is specific; the generic stop-reason line would
+            // compete with it.
+            if *reason == crate::domain::StopReason::GapEvidenceUnresolved
+                && finding.static_limit_kind.is_some()
+            {
+                continue;
+            }
+            out.push_str(&format!("    Next: {}\n", reason.next_step()));
         }
     }
 
@@ -625,6 +634,7 @@ pub(super) fn render_finding_with_shared_sections(
             static_limit_kind.as_str(),
             static_limit_kind.describe_for_family(&finding.probe.family)
         ));
+        out.push_str(&format!("  Next: {}\n", static_limit_kind.next_step()));
     }
 
     // RIPR-SPEC-0115/0117: when a Rust reach limitation (on a no_static_path
