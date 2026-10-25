@@ -493,11 +493,12 @@ impl PathDependencyScopeExpansion {
             PathDependencyGraphStatus::Complete => return Ok(None),
             PathDependencyGraphStatus::Limited => (
                 "The path-dependency graph is limited: at least one Cargo.toml could not be \
-                 parsed, so reverse-dependency scope expansion used a partial edge inventory \
+                 parsed or followed, so reverse-dependency scope expansion used a partial edge inventory \
                  and may have missed crates that depend on the changed packages, along with \
                  their tests.",
-                "Fix the Cargo.toml that fails to parse (run `cargo metadata` to see which), \
-                 then re-run the analysis.",
+                "Fix the Cargo.toml that fails to parse (run `cargo metadata` to see which), or \
+                 make any `workspace` redirect point at a manifest ripr can follow, then re-run \
+                 the analysis.",
             ),
             PathDependencyGraphStatus::Unavailable => (
                 "The path-dependency graph is unavailable: no local Cargo.toml manifest was \
@@ -1643,6 +1644,48 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&missing_root);
         let _ = std::fs::remove_dir_all(&limited_root);
+        Ok(())
+    }
+
+    /// #10182: the typed twin of the stderr disclosure exists exactly when
+    /// the disclosure does, and names the right state and a next step.
+    #[test]
+    fn scope_limitation_is_typed_for_limited_and_unavailable_only() -> Result<(), String> {
+        let missing_root = unique_dir("limitation-missing");
+        let _ = std::fs::remove_dir_all(&missing_root);
+        let unavailable = expansion_for(&missing_root, &roots(&["a/"]))
+            .scope_limitation()?
+            .ok_or_else(|| "unavailable must be a limitation".to_string())?;
+        let detail = unavailable.bounded_detail.unwrap_or_default();
+        assert!(detail.contains("unavailable") && !detail.contains("is limited"));
+        assert!(unavailable.recovery.detail.contains("workspace root"));
+
+        let limited_root = unique_dir("limitation-limited");
+        let _ = std::fs::remove_dir_all(&limited_root);
+        write_manifest(&limited_root, "Cargo.toml", "[package\nname = \"broken\"\n")?;
+        chain_dependents_under_broken_root(&limited_root)?;
+        let limited = expansion_for(&limited_root, &roots(&["a/"]))
+            .scope_limitation()?
+            .ok_or_else(|| "limited must be a limitation".to_string())?;
+        let detail = limited.bounded_detail.unwrap_or_default();
+        assert!(detail.contains("is limited") && !detail.contains("unavailable"));
+        assert!(limited.recovery.detail.contains("fails to parse"));
+
+        let complete_root = unique_dir("limitation-complete");
+        let _ = std::fs::remove_dir_all(&complete_root);
+        chain_dependents_under_broken_root(&complete_root)?;
+        write_manifest(
+            &complete_root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        )?;
+        let complete = expansion_for(&complete_root, &roots(&["a/"]));
+        assert_eq!(complete.status(), PathDependencyGraphStatus::Complete);
+        assert_eq!(complete.scope_limitation()?, None);
+
+        let _ = std::fs::remove_dir_all(&missing_root);
+        let _ = std::fs::remove_dir_all(&limited_root);
+        let _ = std::fs::remove_dir_all(&complete_root);
         Ok(())
     }
 

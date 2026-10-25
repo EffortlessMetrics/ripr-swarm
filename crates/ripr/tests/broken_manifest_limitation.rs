@@ -41,8 +41,12 @@ impl Repo {
     }
 
     fn check(&self, format: &str) -> Result<(String, String), String> {
+        self.check_mode(format, "draft")
+    }
+
+    fn check_mode(&self, format: &str, mode: &str) -> Result<(String, String), String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(["check", "--root"])
+            .args(["check", "--mode", mode, "--root"])
             .arg(&self.root)
             .arg("--diff")
             .arg(self.base.join("change.diff"))
@@ -101,6 +105,13 @@ fn broken_manifest_is_a_limitation_not_a_complete_analysis() -> Result<(), Strin
     assert!(stderr.contains("path-dependency graph status is limited"));
     let outcome = outcome(&stdout)?;
     assert_eq!(outcome["analysis_complete"], false, "{outcome}");
+    assert_eq!(outcome["outcome"]["kind"], "partial_with_limitations");
+    assert!(
+        outcome["outcome"]["counts"]["finding_count"]
+            .as_u64()
+            .is_some_and(|n| n > 0),
+        "findings stay retained next to the limitation: {outcome}"
+    );
     let limitation = path_dependency_limitation(&outcome)
         .ok_or_else(|| format!("no path-dependency limitation: {outcome}"))?;
     assert!(
@@ -108,6 +119,16 @@ fn broken_manifest_is_a_limitation_not_a_complete_analysis() -> Result<(), Strin
             .as_str()
             .is_some_and(|d| d.contains("limited") && d.contains("may have missed")),
         "{limitation}"
+    );
+    assert_eq!(limitation["kind"], "producer_failure", "{limitation}");
+    assert_eq!(limitation["producer_stage"], "language_adapter");
+    assert_eq!(limitation["recovery"]["kind"], "inspect_failure");
+    assert!(
+        !limitation["bounded_detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unavailable"),
+        "a parse failure is limited, not unavailable: {limitation}"
     );
     assert!(
         limitation["recovery"]["detail"]
@@ -129,7 +150,7 @@ fn missing_manifest_is_a_limitation_with_unavailable_reason() -> Result<(), Stri
     assert!(
         limitation["bounded_detail"]
             .as_str()
-            .is_some_and(|d| d.contains("unavailable")),
+            .is_some_and(|d| d.contains("unavailable") && !d.contains("is limited")),
         "{limitation}"
     );
     Ok(())
@@ -154,7 +175,8 @@ fn hostile_manifest_bytes_still_yield_a_bounded_limitation() -> Result<(), Strin
     let mut bytes = b"[package\nname = \"\xff\xfe\x00".to_vec();
     bytes.extend(std::iter::repeat_n(b'[', 200_000));
     fs::write(repo.root.join("Cargo.toml"), bytes).map_err(|e| e.to_string())?;
-    let (stdout, _) = repo.check("json")?;
+    let (stdout, stderr) = repo.check("json")?;
+    assert!(stderr.contains("path-dependency graph status is limited"));
     let outcome = outcome(&stdout)?;
     assert_eq!(outcome["analysis_complete"], false, "{outcome}");
     let limitation = path_dependency_limitation(&outcome)
@@ -177,5 +199,49 @@ fn human_report_does_not_read_as_plain_complete() -> Result<(), String> {
             && stdout.contains("Fix the Cargo.toml that fails to parse"),
         "human report must name the limitation and its next step:\n{stdout}"
     );
+    Ok(())
+}
+
+/// A Limited graph with no parse failure: every manifest parses, but a
+/// package's `workspace = "..."` redirect is not followed. The limitation must
+/// not claim a parse failure.
+#[test]
+fn unfollowed_workspace_redirect_is_limited_without_a_parse_claim() -> Result<(), String> {
+    let repo = Repo::new("redirect", Some(MANIFEST))?;
+    let sub = repo.root.join("sub");
+    let other = repo.root.join("other-root");
+    fs::create_dir_all(&sub).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&other).map_err(|e| e.to_string())?;
+    write(
+        &other.join("Cargo.toml"),
+        "[workspace]\nmembers = []\n\n[workspace.dependencies]\nshared = { path = \"other-shared\" }\n",
+    )?;
+    write(
+        &sub.join("Cargo.toml"),
+        "[package]\nname = \"sub\"\nversion = \"0.1.0\"\nworkspace = \"../other-root\"\n\n[dependencies]\nshared = { workspace = true }\n",
+    )?;
+    let (stdout, _) = repo.check("json")?;
+    let outcome = outcome(&stdout)?;
+    let limitation = path_dependency_limitation(&outcome)
+        .ok_or_else(|| format!("no path-dependency limitation: {outcome}"))?;
+    let detail = limitation["bounded_detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("parsed or followed"), "{detail}");
+    assert!(
+        limitation["recovery"]["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("redirect")),
+        "recovery must cover a redirect, not only a parse failure: {limitation}"
+    );
+    Ok(())
+}
+
+/// Instant mode never runs the expansion, so a broken manifest adds nothing
+/// there (documented contract; the limitation follows the expansion).
+#[test]
+fn instant_mode_adds_no_path_dependency_limitation() -> Result<(), String> {
+    let repo = Repo::new("instant", Some("not toml [[["))?;
+    let (stdout, _) = repo.check_mode("json", "instant")?;
+    let outcome = outcome(&stdout)?;
+    assert!(path_dependency_limitation(&outcome).is_none(), "{outcome}");
     Ok(())
 }
