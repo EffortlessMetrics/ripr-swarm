@@ -1,4 +1,4 @@
-<!-- section: Fixed -->
+<!-- section: Internal / CI -->
 - `cargo xtask repo-exposure-latency-report` now compares cache-served output
   with a cold recomputation for each format (a private `RIPR_CACHE_DIR`: cold
   run, then a run that must show a cache hit). `output_parity` is `pass`,

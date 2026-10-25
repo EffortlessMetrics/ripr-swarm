@@ -1,2 +1,2 @@
-<!-- section: Changed -->
+<!-- section: Internal / CI -->
 - The nightly `first-run-main` job now gates its verdict rows against `metrics/dx-scoreboard/first-run-main-baseline.json` (3 of 3 first-run crates decisive on a main build), so a regression in the first-run verdicts fails the job instead of surfacing at release; a required xtask test feeds the gate a crate that ends `infection_unknown` and expects it to fail (#9276).
