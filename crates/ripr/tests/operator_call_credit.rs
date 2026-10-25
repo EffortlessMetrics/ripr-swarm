@@ -698,6 +698,21 @@ fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> 
     let limit = findings[0].static_limit_kind.map(|kind| kind.as_str());
     assert_eq!(limit, Some("rust_implicit_call_unresolved"));
 
+    // A result bound under the method's own name is not a call: the operator
+    // still reaches the impl, no assertion confirms the changed line, and the
+    // gap stays withheld.
+    let bound_as_method_name = Case {
+        label: "bound_as_add",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "let add = Money(2) + Money(3);\n    assert_eq!(add, Money(5));",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&bound_as_method_name)?,
+        [ExposureClass::StaticUnknown]
+    );
+
     // The same impl is a gap when the test never exercises the operator.
     let unexercised = Case {
         label: "self_constructor_unexercised",

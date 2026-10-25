@@ -176,7 +176,7 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
 }
 
 /// Whether every test related to the owner by a direct call reaches it only
-/// through syntax: none of them spells the owner's method name, so the relation
+/// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
 /// no such test, or with one that names the method, is judged by its own
 /// evidence.
@@ -200,7 +200,7 @@ fn reached_only_through_syntax(
             .find(|test| test.name == related.name && test.file == related.file)
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                !contains_as_whole_word(&code, &owner.name)
+                !calls_method_named(&code, &owner.name)
             })
     })
 }
