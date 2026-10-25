@@ -4041,7 +4041,13 @@ mod tests {
         ] {
             let expected = classes
                 .as_array()
-                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
                 .unwrap_or_default();
             let refused = reason(
                 &scope(json!({"scope": "gap_ledger_artifact", "coverage_refused": classes})),
