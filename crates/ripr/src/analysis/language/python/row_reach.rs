@@ -290,7 +290,10 @@ fn closed_body_scan(
 /// side effects) stay documented in the spec.
 pub(super) fn row_cannot_reach_owner(owner: &PythonOwner, test: &PythonTest) -> bool {
     // A module header or conditional import runs at import; an `import` inside
-    // the test body can load a module that calls the owner.
+    // the test body can load a module that calls the owner. Today the bound-name
+    // rule below also catches it (body imports are recorded in `test.imports`),
+    // so this guard is redundant defense in depth, kept so a change to import
+    // recording cannot silently open the shape.
     if owner.owner_kind != Some(OwnerKind::Function)
         || owner.is_module_owner()
         || test.constant_rebinding.header_reach
@@ -309,16 +312,9 @@ pub(super) fn row_cannot_reach_owner(owner: &PythonOwner, test: &PythonTest) -> 
     let Some(code) = code_only(&test.body_text) else {
         return false;
     };
-    let bound_import_used = test.imports.iter().any(|import| {
-        let bound = if import.alias.is_empty() {
-            import.imported.split('.').next().unwrap_or("")
-        } else {
-            import.alias.as_str()
-        };
-        !matches!(bound, "" | "pytest" | "unittest")
-            && bound != owner.name
-            && (bound == "*" || contains_word(&code, bound))
-    });
+    let bound_import_used = super::admission::bound_import_names(&test.imports)
+        .iter()
+        .any(|bound| bound != &owner.name && contains_word(&code, bound));
     !bound_import_used && closed_body_scan(owner, test, &[], true)
 }
 

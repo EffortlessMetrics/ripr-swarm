@@ -1958,16 +1958,80 @@ pub(super) fn module_implicit_reach(
 /// call, is an effect. Nested class bodies are walked like the module.
 /// Subscripted annotations (`Foo[int]`) and attribute reads stay invisible
 /// limits.
-pub(super) fn module_header_effects(source: &str, statements: &[Stmt]) -> bool {
+pub(super) fn module_header_effects(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> bool {
+    let names = bound_import_names(imports);
+    header_effects(source, statements, &names)
+}
+
+/// The local names the module's imports bind, except `pytest` and `unittest`
+/// (whose APIs the closed-body readings vouch for) and the `*` of a star
+/// import (withheld elsewhere).
+pub(super) fn bound_import_names(imports: &[PythonImport]) -> Vec<String> {
+    imports
+        .iter()
+        .map(|import| {
+            if import.alias.is_empty() {
+                import.imported.split('.').next().unwrap_or("").to_string()
+            } else {
+                import.alias.clone()
+            }
+        })
+        .filter(|name| !matches!(name.as_str(), "" | "*" | "pytest" | "unittest"))
+        .collect()
+}
+
+/// Whether `text` mentions `word` as a whole identifier.
+pub(super) fn mentions_word(text: &str, word: &str) -> bool {
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(word) {
+        let start = from + rel;
+        let end = start + word.len();
+        if !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[end..].chars().next().is_some_and(is_word)
+        {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// A decorator spelled as one dotted name with at most one flat argument
+/// group, `name` or `name(args)` with no nested parenthesis.
+fn is_flat_decorator(spelled: &str) -> bool {
+    let (head, rest) = match spelled.find('(') {
+        Some(at) => (&spelled[..at], Some(&spelled[at..])),
+        None => (spelled, None),
+    };
+    let name_ok = head
+        .chars()
+        .next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+        && head
+            .chars()
+            .all(|c| c == '_' || c == '.' || c.is_ascii_alphanumeric());
+    name_ok
+        && rest.is_none_or(|group| {
+            group.ends_with(')') && !group[1..group.len() - 1].contains(['(', ')'])
+        })
+}
+
+fn header_effects(source: &str, statements: &[Stmt], names: &[String]) -> bool {
     use rustpython_parser::text_size::TextRange;
     let text = |range: TextRange| -> &str {
         source
             .get(usize::from(range.start())..usize::from(range.end()))
             .unwrap_or("(")
     };
+    let mentions_import = |text: &str| names.iter().any(|name| mentions_word(text, name));
     let bad_decorator = |decorator: &Expr| {
         let spelled = text(decorator.range());
-        let head = spelled.split('(').next().unwrap_or(spelled).trim();
+        let head = spelled.split('(').next().unwrap_or(spelled);
         let inert = head.starts_with("pytest.mark.")
             || head == "pytest.fixture"
             || matches!(
@@ -1979,9 +2043,12 @@ pub(super) fn module_header_effects(source: &str, statements: &[Stmt]) -> bool {
                     | "unittest.skipUnless"
                     | "unittest.expectedFailure"
             );
-        !inert || spelled.matches('(').count() > 1
+        !is_flat_decorator(spelled) || !inert || mentions_import(spelled)
     };
-    let has_call = |range: TextRange| text(range).contains('(');
+    let has_call = |range: TextRange| {
+        let spelled = text(range);
+        spelled.contains('(') || mentions_import(spelled)
+    };
     fn arguments_hold_call(
         args: &ast::Arguments,
         has_call: &dyn Fn(rustpython_parser::text_size::TextRange) -> bool,
@@ -2006,6 +2073,7 @@ pub(super) fn module_header_effects(source: &str, statements: &[Stmt]) -> bool {
             || args.kwarg.as_deref().is_some_and(annotated)
     }
     statements.iter().any(|statement| match statement {
+        Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Pass(_) => false,
         Stmt::FunctionDef(function) => {
             function.decorator_list.iter().any(bad_decorator)
                 || arguments_hold_call(&function.args, &has_call)
@@ -2029,21 +2097,16 @@ pub(super) fn module_header_effects(source: &str, statements: &[Stmt]) -> bool {
                     .keywords
                     .iter()
                     .any(|keyword| has_call(keyword.range()))
-                || module_header_effects(source, &class.body)
+                || header_effects(source, &class.body, names)
         }
-        Stmt::If(_)
-        | Stmt::Try(_)
-        | Stmt::TryStar(_)
-        | Stmt::With(_)
-        | Stmt::AsyncWith(_)
-        | Stmt::For(_)
-        | Stmt::AsyncFor(_)
-        | Stmt::While(_)
-        | Stmt::Match(_) => {
-            let body = text(statement.range());
-            body.contains('(') || body.contains("import")
+        // Everything else runs at import: a call, an import, or any use of an
+        // imported object (`X = OBJ.attr`, `assert OBJ == 1`, `with CTX:`,
+        // `for i in ITEMS:`, `if OBJ:`) can run code through dunders and
+        // properties. `if (True):` counts too: an accepted recall cost.
+        other => {
+            let body = text(other.range());
+            body.contains('(') || mentions_word(body, "import") || mentions_import(body)
         }
-        _ => false,
     })
 }
 

@@ -298,8 +298,14 @@ Python does not yet write:
   `importlib`, `__import__`, `lambda`, `partial`, `builtins`) appears; and
   no module-level `def`/`class` header (decorator outside the inert list,
   call in a default, annotation, return annotation, base or keyword) or
-  module-level compound statement holding an import or call runs code at
-  import; no `import` appears in the test body; no import other than the
+  module-level statement outside a function body (headers included) that
+  holds a call, an import, or any use of an imported object other than
+  `pytest`/`unittest` (`X = OBJ.attr`, `assert OBJ == 1`, `with CTX:`,
+  `for i in ITEMS:`, `if OBJ:`) runs code at import, and a decorator counts
+  as inert only when its whole text is a dotted name with at most one flat
+  argument group (no nested call, subscript hiding a call or boolean) whose
+  head is on the inert list and which mentions no import (any `(` in a
+  compound statement, even `if (True):`, is an accepted recall cost); no `import` appears in the test body; no import other than the
   owner, `pytest` and `unittest` is used in the body; and
   every mention of the owner, strings and comments included, is one of
   `callable(owner)`, `owner is [not] None`, `owner.__name__`/`__qualname__`/

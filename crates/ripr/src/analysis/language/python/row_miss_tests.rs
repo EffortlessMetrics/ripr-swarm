@@ -310,6 +310,66 @@ fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(),
             format!("def test_defaults():\n{REF}    with OBJ:\n        pass\n"),
         ),
         (
+            "decorator subscript hides a call",
+            "import pytest\n\n@pytest.mark.x[score(1)]\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator boolean hides a call",
+            "import pytest\n\n@pytest.mark.slow or score()\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator attribute subscript hides a call",
+            "import pytest\n\n@pytest.mark.slow.args[score(1)]\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module statement reads an imported attribute",
+            "from src.other import OBJ\n\nX = OBJ.attr\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level assert on an imported object",
+            "from src.other import OBJ\n\nassert OBJ == 1\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level with an imported object",
+            "from src.other import CTX\n\nwith CTX:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level for over an imported object",
+            "from src.other import ITEMS\n\nfor i in ITEMS:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level if on an imported object",
+            "from src.other import OBJ\n\nif OBJ:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module statement adds to an imported object",
+            "from src.other import OBJ\n\nX = OBJ + 1\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "default reads an imported attribute",
+            "from src.other import OBJ\n\ndef helper(x=OBJ.attr):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "default subscripts an imported object",
+            "from src.other import OBJ\n\ndef helper(x=OBJ[0]):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "parenthesized module condition",
+            "if (True):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
             "owner called directly",
             "",
             format!("def test_defaults():\n{REF}    assert len([score(0)]) == 1\n"),
@@ -333,6 +393,8 @@ fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(),
         "import pytest\n\n@pytest.mark.slow\ndef helper():\n    pass\n\n",
         "def helper(x=1, y: int = 0) -> int:\n    return 0\n\n",
         "from src.other import OBJ\n",
+        "import pytest\n\n@pytest.mark.parametrize('x', [1, 2])\ndef helper(x):\n    pass\n\n",
+        "LIMIT = 3\n\n",
     ] {
         let finding = closed_row_case(prefix, NO_CALL_PATH_CONTROL)?;
         assert_eq!(
