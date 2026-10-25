@@ -148,6 +148,36 @@ When a new case labels a spec example, add its id to the case's
 spec with numbered acceptance examples fails `validate` until it has a
 `[[spec]]` entry.
 
+### Observation correction for #9869
+
+The original metadata for the following cases is preserved at commit
+`93eb4b2d75e02fce559cd0e55d2b04f4172a3ce7`. It attributed each observation
+to `2939c0d6`; no analyzer, xtask, lockfile or toolchain bytes changed between
+that source parent and the case-adding commit. A clean locked execution of
+`93eb4b2d75e02fce559cd0e55d2b04f4172a3ce7` on each complete stored authored
+crate, with its recorded diff applied, establishes the corrected observations:
+
+| Case | Original metadata | Reconciled verdict and classifications |
+| --- | --- | --- |
+| `spec0186-ex03-discarded-boundary-result` | gap; weakly_exposed | gap; exposed, weakly_exposed |
+| `spec0186-ex04-dead-branch-argument` | gap; weakly_exposed | gap; exposed, weakly_exposed |
+| `spec0186-ex06-private-predicate-via-wrapper` | credited; exposed | gap; exposed, weakly_exposed |
+
+Their `ripr_commit` now names that actual execution revision. The composed
+replay at `2873a7963c2fa0b45f31d2416dc2c8e7f872357d` (including main
+`d84b8bedcf172ec3c6d02d384f61f485a1ed1826`) agrees. The three derived rows
+therefore cease reporting spurious `changed_since_labeling`; their verdicts,
+classifications and outcomes are unchanged. The wrapper case remains
+`false_actionable`, with its known-false record owned by #9849.
+
+Runtime truth, case IDs, retained-file hashes and original receipt identities
+are unchanged. [Review 5631336941](https://github.com/EffortlessMetrics/ripr-swarm/pull/9869#pullrequestreview-5631336941)
+records the separate runtime/relabel evidence for `93eb4b2d`: raw runtime
+receipt SHA-256 `1ff2f1d77164f1daa0a64571dec382f58ce3286be397239fbeb84c4edf69e2e8`,
+relabel receipt SHA-256 `edda931337f41e570fd30de685ecd67f50a4506c2d6b2a6f4cf2e8a2aea4a636`.
+Those receipts retain their original source and toolchain. At reconciliation,
+#9934 was still unmerged; this metadata repair does not claim its analyzer fix.
+
 ## Re-deriving truth
 
 `cargo xtask verdict-corpus relabel --sample 10` replays ten cases'

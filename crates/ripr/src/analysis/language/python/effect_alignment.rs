@@ -63,15 +63,18 @@ impl ChangedEffect {
             .class_facts
             .direct_statements
             .iter()
-            .any(|statement| statement == line)
-            || guard_entered;
+            .any(|statement| statement == line);
+        // Guard entry (#9833) is proved for the method-call rows of a
+        // `self.attr` write; it does not widen a free function's module
+        // object write, which stays physically direct only.
+        let self_run = direct || guard_entered;
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
             // Only a statement written directly in the method body always
             // runs; a write under an `if`, `try` or loop may never run in
             // the test (#9421, #9782), so it reads no effect unless every
             // strong call provably enters the guard (#9833).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -87,7 +90,7 @@ impl ChangedEffect {
             // Only a statement written directly in the method body always
             // runs; one under an `if`, `try` or loop may never run in the
             // test, so it reads no effect (unknown facts fail closed).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
