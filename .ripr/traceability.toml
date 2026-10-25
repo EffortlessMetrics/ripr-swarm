@@ -2022,6 +2022,7 @@ tests = [
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_owner_attribution_runs_under_the_run_token",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_budget_spent_in_owner_attribution_records_timeout",
+  "crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::registration_observes_an_expired_budget_per_file",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_ordinary_canonical_analysis_failure_records_failed",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",
   "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
