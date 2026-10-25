@@ -15,7 +15,9 @@ Start here:
   Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:check_score_invariants:predicate_boundary:predicate:let_clamped=if_value==0
   Changed behavior: let clamped = if value >= 0 { value } else { 0 };
-  Missing discriminator (1 of 3): Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…
+  Missing discriminator (1 of 3): Changed boundary input is unresolved: the changed comparison's
+    operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of
+    the boundary a test reaches; activation/infection is unknown
   Related test: tests/scores.rs:4 validate_score_accepts_in_range_values
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
