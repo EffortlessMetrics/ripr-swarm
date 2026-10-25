@@ -396,3 +396,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (34)
+
+Reason:
+RIPR-SPEC-0164: guard-variant probe credits on the combined tree; union-resolve the pending-entry reason with main's #10426 evidence-legend rewording
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

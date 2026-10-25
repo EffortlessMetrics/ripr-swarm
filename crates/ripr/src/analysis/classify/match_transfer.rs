@@ -230,17 +230,16 @@ fn split_guard(pattern: &str) -> Option<(&str, Option<String>)> {
             }
             None => match character {
                 '"' | '\'' => quote = Some(character),
-                ' ' => {
-                    // An ` if ` at this space, outside any literal,
-                    // introduces the guard.
-                    if pattern[index..].starts_with(" if ") {
-                        let guard = pattern[index + 4..].trim();
-                        if guard.is_empty() {
-                            return None;
-                        }
-                        return Some((pattern[..index].trim(), Some(guard.to_string())));
+                // An ` if ` at this space, outside any literal,
+                // introduces the guard.
+                ' ' if pattern[index..].starts_with(" if ") => {
+                    let guard = pattern[index + 4..].trim();
+                    if guard.is_empty() {
+                        return None;
                     }
+                    return Some((pattern[..index].trim(), Some(guard.to_string())));
                 }
+                ' ' => {}
                 _ => {}
             },
         }
