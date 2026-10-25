@@ -757,3 +757,33 @@ fn given_a_non_ascii_prefixed_call_in_a_caller_then_no_helper_edge_is_made() -> 
     assert_eq!(relations, ["test_x via make as helper_owner_call"]);
     Ok(())
 }
+
+#[test]
+fn given_non_identifier_non_ascii_neighbours_then_the_call_is_an_intentional_miss() {
+    // Pinned: a non-ASCII neighbour is treated as part of the identifier, so
+    // these are not seen as a call of `helper`. They cannot occur in valid code
+    // outside strings and comments, so the cost is a miss, never a credit.
+    for body in [
+        "assert \u{d7}helper(0) == x\n",
+        "assert \u{a0}helper(0) == x\n",
+        "assert f\"\"\"v\n{\n\u{d7}helper(0)\n}\"\"\" == x\n",
+        "assert f\"\"\"v\n{\n\u{a0}helper(0)\n}\"\"\" == x\n",
+        "assert f\"\"\"v\r\n{\r\n\u{a0}helper(0)\r\n}\"\"\" == x\r\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_crlf_positive_controls_then_real_calls_stay_seen() {
+    for body in [
+        "assert f\"\"\"v\r\n{\r\nhelper(0)\r\n}\"\"\" == x\r\n",
+        "assert (helper(0)) == x\r\n",
+        "assert \u{e9} + helper(0) == x\r\n",
+        "assert f\"\"\"v\r\n{\r\n\u{e9} + helper(0)\r\n}\"\"\" == x\r\n",
+    ] {
+        assert!(sees_call(body), "{body:?}");
+    }
+    assert!(!sees_call("assert other.helper(0) == x\r\n"));
+    assert!(!sees_call("assert nothelper(0) == x\r\n"));
+}
