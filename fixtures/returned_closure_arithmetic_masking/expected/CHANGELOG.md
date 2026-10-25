@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (6)
+
+Reason:
+RIPR-SPEC-0265: re-bless for main's evidence legend (#10426) and no-seam repair wording; no verdict change
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
