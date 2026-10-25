@@ -235,10 +235,15 @@ pub(crate) fn render_pilot_human_summaries(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> (String, String) {
-    let target = summary_uncommitted_inline_target(classified, context, 1);
+    let top = top_actionable_seams(classified, context.max_seams.max(1), context.current_change);
+    let terminal_top = &top[..top.len().min(1)];
+    let markdown_top = &top[..top.len().min(context.max_seams)];
+    let target = terminal_top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
     (
-        render_pilot_summary_md_with_target(classified, context, target.as_deref()),
-        render_pilot_terminal_with_target(classified, context, target.as_deref()),
+        render_pilot_summary_md_with_target(classified, context, markdown_top, target.as_deref()),
+        render_pilot_terminal_with_target(classified, context, terminal_top, target.as_deref()),
     )
 }
 
@@ -247,17 +252,20 @@ pub(crate) fn render_pilot_summary_md(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let target = summary_uncommitted_inline_target(classified, context, context.max_seams);
-    render_pilot_summary_md_with_target(classified, context, target.as_deref())
+    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let target = top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    render_pilot_summary_md_with_target(classified, context, &top, target.as_deref())
 }
 
 fn render_pilot_summary_md_with_target(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
     uncommitted_inline_target: Option<&str>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -615,16 +623,19 @@ pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let target = summary_uncommitted_inline_target(classified, context, 1);
-    render_pilot_terminal_with_target(classified, context, target.as_deref())
+    let top = top_actionable_seams(classified, 1, context.current_change);
+    let target = top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    render_pilot_terminal_with_target(classified, context, &top, target.as_deref())
 }
 
 fn render_pilot_terminal_with_target(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
     uncommitted_inline_target: Option<&str>,
 ) -> String {
-    let top = top_actionable_seams(classified, 1, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -948,16 +959,10 @@ fn render_pilot_terminal_with_target(
 /// the same one the repair start's baseline capture enforces, so a staged-only
 /// difference is named too and pilot does not fork its own check. The predicate
 /// fails open (`None`) whenever the answer is not positively established.
-fn summary_uncommitted_inline_target(
-    classified: &[ClassifiedSeam],
-    context: PilotSummaryContext<'_>,
-    max_seams: usize,
-) -> Option<String> {
-    let top = top_actionable_seams(classified, max_seams, context.current_change);
-    let entry = top.first()?;
-    repair_start_command(context.root, entry)?;
+fn uncommitted_inline_target(root: &std::path::Path, entry: &ClassifiedSeam) -> Option<String> {
+    repair_start_command(root, entry)?;
     repair_inline_target_file(entry)
-        .filter(|file| crate::edit_cage::inline_target_is_uncommitted(context.root, file))
+        .filter(|file| crate::edit_cage::inline_target_is_uncommitted(root, file))
 }
 
 /// Precondition printed ahead of the repair steps when `file`, the inline test

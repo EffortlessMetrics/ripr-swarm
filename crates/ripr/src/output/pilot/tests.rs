@@ -2432,6 +2432,28 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
         "a staged inline file must not leak into a tests/ target"
     );
 
+    // The observation follows the ranked first seam, not inventory order or
+    // any dirty inline target appearing later in the Markdown list.
+    let mut preferred = tests_dir_entry.clone();
+    preferred.seam = seam("src/other.rs", 3, "amount >= discount_threshold");
+    let entries = [inline_entry.clone(), preferred];
+    let preferred_change = changed("src/other.rs", 3);
+    let mut context = pilot_context(&artifacts);
+    context.root = root;
+    context.current_change = Some(&preferred_change);
+    assert!(
+        top_actionable_seams(&entries, 1, context.current_change)
+            .first()
+            .is_some_and(|entry| std::ptr::eq(*entry, &entries[1]))
+    );
+    let before = crate::git::test_process_spawns();
+    let (markdown, terminal) = render_pilot_human_summaries(&entries, context);
+    assert!(!terminal.contains("uncommitted edits"), "{terminal}");
+    assert!(!markdown.contains("uncommitted edits"), "{markdown}");
+    assert_eq!(markdown, render_pilot_summary_md(&entries, context));
+    assert_eq!(terminal, render_pilot_terminal(&entries, context));
+    assert_eq!(crate::git::test_process_spawns() - before, 0);
+
     // A subdirectory root is refused by the repair start, so the first root
     // probe is the only process and neither surface claims a dirty target.
     let (terminal, markdown) = render(&root.join("src"), &inline_entry, &change, 1)?;

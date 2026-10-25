@@ -120,9 +120,9 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 
 ## Implementation Mapping
 
-- `crates/ripr/src/output/pilot/render/complete.rs`: `render_pilot_terminal`,
-  `render_pilot_summary_md`, `render_pilot_human_summaries`,
-  `summary_uncommitted_inline_target`,
+- `crates/ripr/src/output/pilot/render/complete.rs`: `render_pilot_terminal_with_target`,
+  `render_pilot_summary_md_with_target`, `render_pilot_human_summaries`,
+  `uncommitted_inline_target`,
   `dirty_target_precondition`.
 - `crates/ripr/src/cli/commands/pilot.rs`: the complete pilot summary writes.
 - `crates/ripr/src/output/pilot/commands.rs`: `repair_inline_target_file`.
