@@ -48,7 +48,7 @@ exercised boundary from a missing one.
   calls the owner holds only strong assertions (a weakly asserted call may
   be the one-character input that `len() < 2` would change), and each row is
   readable. Rows may come from direct calls or from the cells of a constant
-  `for` table, where a whole string or char literal cell is an exact input
+  `for` table, where a whole string literal cell is an exact input
   for this guard alone; any other string-valued column stays unread.
   Rows on one side only, a literal other than `0`, a compound condition and
   a loop that can leave a row early keep the unknown reading. Integer owner

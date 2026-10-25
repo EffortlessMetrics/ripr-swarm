@@ -221,6 +221,13 @@ fn a_computed_cell_hides_the_rows_and_stays_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn a_char_cell_is_no_text_row_and_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(NEW, &table(&[("'a'", 'A'), ("\"ada\"", 'A')], ASSERT_ROW))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
 fn a_loop_that_skips_rows_stays_unknown() -> Result<(), String> {
     let body = "        if want == 'B' {\n            continue;\n        }\n        assert_eq!(initial(name), want, \"{name:?}\");\n";
     let findings = guard_findings(NEW, &table(BOTH_SIDES, body))?;

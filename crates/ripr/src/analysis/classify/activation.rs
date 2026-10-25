@@ -5303,14 +5303,17 @@ fn owner_argument_values_in(test: &TestSummary, argument: &str, text_cells: bool
             .map(|cell| {
                 // The cell must be one whole scalar, as an rstest case is:
                 // `Some(1)` or `"1"` is not the value `1`. With `text_cells`
-                // a whole string or char literal is the same exact input a
+                // a whole string literal is the same exact input a
                 // direct call argument gives (`initial("")`) and stays
-                // quoted; a raw or byte string, or an escape the scalar
-                // reader would respell, is no whole scalar and yields
-                // nothing.
+                // quoted. A char cell is no text input, a raw or byte string
+                // is no whole scalar, and an escape the scalar reader would
+                // respell is not the same value; each yields nothing.
                 let cell = cell.trim();
-                ((text_cells || !cell.starts_with(['"', '\'']))
-                    && scalar_values(cell).as_slice() == [cell.to_string()])
+                ((if text_cells {
+                    !cell.starts_with('\'')
+                } else {
+                    !cell.starts_with(['"', '\''])
+                }) && scalar_values(cell).as_slice() == [cell.to_string()])
                 .then(|| cell.to_string())
             })
             .collect();
