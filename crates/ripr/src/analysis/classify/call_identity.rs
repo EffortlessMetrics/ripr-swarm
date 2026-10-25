@@ -1109,7 +1109,8 @@ pub(super) fn library_module_path_is_bound(
 /// (`#[cfg(test)] mod tests { use super::entry; }` beside the entry, #10279)
 /// extend the file's module before `self`/`super` apply, every such item
 /// must resolve to the entry's module, and one must sit in the same inline
-/// module as the test function (`test_line`). Fails closed (`false`) on anything
+/// module as the test function (`test_name`, whose `fn` token is on
+/// `test_line`). Fails closed (`false`) on anything
 /// else: a `#[path]` anywhere in the package, a file outside the root
 /// package's library, a function-local spelling, glob import, `cfg`-gated
 /// `use` or item-position macro in the test file, or a path that goes through
@@ -1117,6 +1118,7 @@ pub(super) fn library_module_path_is_bound(
 pub(super) fn unit_test_relative_import_names_entry(
     index: &RustIndex,
     test_file: &Path,
+    test_name: &str,
     test_line: usize,
     import_path: &str,
     entry: &FunctionSummary,
@@ -1217,31 +1219,30 @@ pub(super) fn unit_test_relative_import_names_entry(
     // The inline-module scope the test function itself sits in: an import in
     // another inline module (a sibling `mod a { use super::entry; }`) does not
     // bind the test's bare call, so only items in the test's own scope count.
-    let line_start = facts
-        .source
-        .split_inclusive('\n')
-        .take(test_line.saturating_sub(1))
-        .map(str::len)
-        .sum::<usize>();
-    let indent = facts.source[line_start..]
-        .chars()
-        .take_while(|c| *c == ' ' || *c == '\t')
-        .count();
-    let Ok(offset) = u32::try_from(line_start + indent) else {
+    // The test fn is found by name and by the line of its `fn` token (the
+    // test producer's `start_line`), so attributes, a module header or other
+    // items sharing that line do not pick another node. Anything but exactly
+    // one match refuses.
+    let line_of = |offset: ra_ap_syntax::TextSize| {
+        facts
+            .source
+            .get(..usize::from(offset))
+            .map(|before| 1 + before.bytes().filter(|byte| *byte == b'\n').count())
+    };
+    let mut test_fns = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function.name().is_some_and(|name| name.text() == test_name)
+                && function
+                    .fn_token()
+                    .is_some_and(|token| line_of(token.text_range().start()) == Some(test_line))
+        });
+    let (Some(test_fn), None) = (test_fns.next(), test_fns.next()) else {
         return false;
     };
-    let Some(test_scope) = tree
-        .syntax()
-        .token_at_offset(offset.into())
-        .right_biased()
-        .and_then(|token| token.parent())
-        .and_then(|node| {
-            // The test's own fn node: its scope is that of the fn item.
-            node.ancestors()
-                .find(|a| ast::Fn::can_cast(a.kind()))
-                .and_then(|function| inline_modules(&function))
-        })
-    else {
+    let Some(test_scope) = inline_modules(test_fn.syntax()) else {
         return false;
     };
     // Every `use` item that spells this import, resolved from where it sits:

@@ -1864,6 +1864,17 @@ fn an_in_file_test_module_import_resolves_from_its_own_scope() -> Result<(), Str
         ),
         "raw module name",
     )?;
+    // A one-line module header and test signature: the `fn` token is not the
+    // line's first token, so the test is found by name and `fn` line.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &format!(
+                "#[cfg(test)] mod tests {{ use super::order_discount; #[test] fn discount_boundary() {{\n{BARE}\n}} }}\n"
+            ),
+        ),
+        "one-line module header",
+    )?;
     // Regression guard (no named relative import, so the resolver is not
     // consulted): the glob-only layout links.
     assert_recovered(
@@ -1932,6 +1943,16 @@ fn an_in_file_relative_import_of_another_scope_stays_refused() -> Result<(), Str
             ),
         ),
         "import only in a sibling module",
+    )?;
+    // The same on one line: the sibling module's header comes first there.
+    assert_refused(
+        &in_file(
+            LIB,
+            &format!(
+                "mod a {{ use super::order_discount; }} #[cfg(test)] mod tests {{ #[test] fn discount_boundary() {{\n{BARE}\n}} }}\n"
+            ),
+        ),
+        "one-line header, import only in a sibling module",
     )?;
     // A nearer foreign binding in the test's scope beside a resolved import
     // elsewhere (sibling and nested). End-to-end pins: the file-wide renamed-
