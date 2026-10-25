@@ -493,13 +493,14 @@ impl PathDependencyScopeExpansion {
             PathDependencyGraphStatus::Complete => return Ok(None),
             PathDependencyGraphStatus::Limited => (
                 "The path-dependency graph is limited: at least one Cargo.toml could not be \
-                 parsed or followed, so reverse-dependency scope expansion used a partial edge inventory \
+                 parsed, followed or read, so reverse-dependency scope expansion used a partial edge inventory \
                  and may have missed crates that depend on the changed packages, along with \
                  their tests.",
-                "Fix any Cargo.toml that fails to parse (run `cargo metadata` to see which). ripr does \
-                 not follow `[package] workspace = ...` redirects, so declare the path \
-                 dependencies of such a package directly in its manifest, and use UTF-8 \
-                 manifest paths. Then re-run the analysis.",
+                "Fix any Cargo.toml that fails to parse (`cargo metadata` only lists workspace \
+                 members, so check stray manifests too). ripr does not follow `[package] \
+                 workspace = ...` redirects: inline or remove that package's `workspace = \
+                 true` dependencies, or drop the redirect, and use UTF-8 manifest paths. \
+                 Then re-run the analysis.",
             ),
             PathDependencyGraphStatus::Unavailable => (
                 "The path-dependency graph is unavailable: no local Cargo.toml manifest was \

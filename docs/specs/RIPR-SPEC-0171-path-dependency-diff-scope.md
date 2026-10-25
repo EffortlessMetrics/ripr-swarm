@@ -179,6 +179,7 @@ schema shape (the typed limitation below reuses the existing
 - `crates/ripr/tests/broken_manifest_limitation.rs::human_report_does_not_read_as_plain_complete`
 - `crates/ripr/tests/broken_manifest_limitation.rs::unfollowed_workspace_redirect_is_limited_without_a_parse_claim`
 - `crates/ripr/tests/broken_manifest_limitation.rs::instant_mode_adds_no_path_dependency_limitation`
+- `crates/ripr/tests/broken_manifest_limitation.rs::inlining_the_inherited_dependency_clears_the_redirect_limitation`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::empty_dependent_roots_reproduce_the_unchanged_selection`

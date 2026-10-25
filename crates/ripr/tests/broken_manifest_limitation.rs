@@ -225,11 +225,11 @@ fn unfollowed_workspace_redirect_is_limited_without_a_parse_claim() -> Result<()
     let limitation = path_dependency_limitation(&outcome)
         .ok_or_else(|| format!("no path-dependency limitation: {outcome}"))?;
     let detail = limitation["bounded_detail"].as_str().unwrap_or_default();
-    assert!(detail.contains("parsed or followed"), "{detail}");
+    assert!(detail.contains("followed or read"), "{detail}");
     assert!(
         limitation["recovery"]["detail"]
             .as_str()
-            .is_some_and(|d| d.contains("does not follow") && !d.contains("point at")),
+            .is_some_and(|d| d.contains("does not follow") && d.contains("`workspace = true`")),
         "recovery must say redirects are not followed and offer a supported workaround: {limitation}"
     );
     Ok(())
@@ -243,5 +243,27 @@ fn instant_mode_adds_no_path_dependency_limitation() -> Result<(), String> {
     let (stdout, _) = repo.check_mode("json", "instant")?;
     let outcome = outcome(&stdout)?;
     assert!(path_dependency_limitation(&outcome).is_none(), "{outcome}");
+    Ok(())
+}
+
+/// The advertised workaround must actually clear the limitation: the same
+/// redirected package with its inherited dependency inlined is Complete.
+#[test]
+fn inlining_the_inherited_dependency_clears_the_redirect_limitation() -> Result<(), String> {
+    let repo = Repo::new("redirect-inlined", Some(MANIFEST))?;
+    let sub = repo.root.join("sub");
+    fs::create_dir_all(sub.join("shared")).map_err(|e| e.to_string())?;
+    write(
+        &sub.join("shared/Cargo.toml"),
+        "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n",
+    )?;
+    write(
+        &sub.join("Cargo.toml"),
+        "[package]\nname = \"sub\"\nversion = \"0.1.0\"\nworkspace = \"../other-root\"\n\n[dependencies]\nshared = { path = \"shared\" }\n",
+    )?;
+    let (stdout, _) = repo.check("json")?;
+    let outcome = outcome(&stdout)?;
+    assert!(path_dependency_limitation(&outcome).is_none(), "{outcome}");
+    assert_eq!(outcome["analysis_complete"], true, "{outcome}");
     Ok(())
 }
