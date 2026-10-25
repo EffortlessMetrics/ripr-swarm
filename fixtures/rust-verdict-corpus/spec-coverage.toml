@@ -21,7 +21,11 @@ floor = 220
 # 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
 # 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-missed_credit_ceiling = 146
+# 147 (#9197): plus `strsim-sorensen-dice-equal`, which compares a local rebound
+# from the parameter (`let a = a.chars()..collect()`), so the name-only credit
+# is withheld and the row abstains; fail-closed by design. Measured on the
+# combined tree.
+missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
