@@ -1225,6 +1225,7 @@ fn unresolved_source_location_json() -> Value {
 pub(crate) fn gap_ledger_analysis_scope_json(
     records: &[crate::output::gap_decision_ledger::GapRecord],
     coverage: Option<&Value>,
+    refusal: &[String],
 ) -> Value {
     if let Some(coverage) = coverage {
         return json!({
@@ -1237,7 +1238,13 @@ pub(crate) fn gap_ledger_analysis_scope_json(
             "downstream_consumable": true,
         });
     }
-    analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records))
+    let mut scope = analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
+    // Why a disclosed workspace coverage was refused (additive, inert to
+    // consumers): the input classes that differ from the ledger's disclosure.
+    if !refusal.is_empty() {
+        scope["coverage_refused"] = json!(refusal);
+    }
+    scope
 }
 
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {

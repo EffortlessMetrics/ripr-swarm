@@ -3915,7 +3915,8 @@ envelope whose governed `content_sha256` still matches the bytes read;
 guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
 present; every seam converted to a record; and a `source_subject.corpus` carrying
 the producer's `cache_schema_version`, 16-lowercase-hex `files_content_hash`, and
-`analyzed_production_files` array and `analysis_inputs` object):
+`analyzed_production_files` array and `analysis_inputs` object; a refused disclosure is named in the fallback
+`gap_ledger_artifact` scope's additive `coverage_refused` array):
 `scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
 `corpus`, `records_total` and `records_digest` (SHA-256 over every record's
 canonical serialization, ordered by `gap_id`). The digest is tamper-evident
@@ -3924,8 +3925,12 @@ rewrite the ledger and recompute it is out of scope (a writer who deletes
 records and recomputes the digest and total still earns the disclosure).
 `gate evaluate --gap-ledger` honors the disclosure only while the records still
 match the count and digest, and the disclosed corpus hash and production-file
-membership, and `corpus.analysis_inputs` (hashes of the classified config,
-test-intent file, suppressions file and `RIPR_CFG_FEATURES`; all four required)
+membership, and `corpus.analysis_inputs` (the producer cache key's 64-bit FNV
+hashes of the classified config including raw `ripr.toml` bytes, test-intent
+file, suppressions file, `RIPR_CFG_FEATURES`, Cargo workspace manifests and
+configuration (checkout-path bound), `Cargo.lock`, the toolchain label, plus the
+analyzer build identity; all eight required, seam limit not compared because a
+complete run applied none)
 equal the current inventory owner's discovery, role selection and inputs
 for the tree being gated (`--root`, loaded with its `ripr.toml`). Membership
 comes from the actual inventory inputs, including cache hits, independently of

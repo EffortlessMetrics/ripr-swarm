@@ -5052,13 +5052,31 @@ fn e2e_gate_json_in(
     e2e_gate_json_with_files(pr_guidance, gap_ledger, project_lib_source, &[])
 }
 
+/// A per-test, recreated project root. The ledger's Cargo-configuration
+/// identity is bound to the checkout path, so a ledger and the gate that reads
+/// it must see the same absolute root (as one CI job does).
+fn e2e_fixed_root() -> Result<PathBuf, String> {
+    let tag = format!("{:?}", std::thread::current().id())
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    let path = std::env::temp_dir().join(format!("ripr-gate-e2e-fixed-{tag}"));
+    ignore_remove_dir_all(path.clone());
+    fs::create_dir_all(&path).map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
 fn e2e_gate_json_with_files(
     pr_guidance: Option<&str>,
     gap_ledger: Option<&str>,
     project_lib_source: Option<&str>,
     extra_files: &[(&str, &str)],
 ) -> Result<String, String> {
-    let dir = temp_dir("gate-e2e-9301")?;
+    let dir = if project_lib_source.is_some() {
+        e2e_fixed_root()?
+    } else {
+        temp_dir("gate-e2e-9301")?
+    };
     if let Some(lib_source) = project_lib_source {
         e2e_write_project(&dir, lib_source)?;
     }
@@ -5502,7 +5520,7 @@ fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
 /// Real chain for one project: full Rust inventory -> repo-exposure JSON
 /// (production writer) -> gap decision ledger (production builder/renderer).
 fn e2e_real_ledger(lib_source: &str) -> Result<String, String> {
-    let root = temp_dir("gate-e2e-ledger-9599")?;
+    let root = e2e_fixed_root()?;
     e2e_write_project(&root, lib_source)?;
     let rendered = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
     ignore_remove_dir_all(root);
@@ -5638,39 +5656,79 @@ fn e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs() -> Result<()
         captured["analysis_coverage"]["corpus"]["analysis_inputs"]
             .as_object()
             .map(|inputs| inputs.len()),
-        Some(4),
+        Some(8),
         "{captured}"
     );
-    let scope_of = |root: &Path| -> Result<Value, String> {
-        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(root, &ledger)?)
+    let scope_of = |root: &Path, ledger: &str| -> Result<Value, String> {
+        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(root, ledger)?)
             .map_err(|err| err.to_string())?;
-        Ok(gate["analysis_scope"]["scope"].clone())
+        Ok(gate["analysis_scope"].clone())
     };
-    assert_eq!(scope_of(&root)?, "rust_workspace_complete");
+    let scope = scope_of(&root, &ledger)?;
+    assert_eq!(scope["scope"], "rust_workspace_complete");
+    assert!(scope.get("coverage_refused").is_none());
 
     let intent = root.join(".ripr").join("test_intent.toml");
     let suppressions = root.join(config.suppressions().path());
-    for (name, path, text) in [
-        ("config", root.join("ripr.toml"), "[analysis]\n# changed\n"),
-        ("test_intent", intent, "# changed\n"),
-        ("suppressions", suppressions, "# changed\n"),
+    for (name, class, path, text) in [
+        (
+            "config",
+            "config",
+            root.join("ripr.toml"),
+            "[analysis]\n# changed\n",
+        ),
+        ("test_intent", "test_intent", intent, "# changed\n"),
+        ("suppressions", "suppressions", suppressions, "# changed\n"),
+        (
+            "manifest harness",
+            "workspace_manifests",
+            root.join("Cargo.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[test]]\nname = \"boundary\"\npath = \"tests/boundary.rs\"\nharness = false\n",
+        ),
+        (
+            "lockfile",
+            "lockfile",
+            root.join("Cargo.lock"),
+            "# changed\n",
+        ),
     ] {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
         fs::write(&path, text).map_err(|err| err.to_string())?;
-        assert_eq!(scope_of(&root)?, "gap_ledger_artifact", "{name}");
+        let scope = scope_of(&root, &ledger)?;
+        assert_eq!(scope["scope"], "gap_ledger_artifact", "{name}");
+        assert!(
+            scope["coverage_refused"]
+                .as_array()
+                .is_some_and(|classes| classes.contains(&json!(class))),
+            "{name}: {scope}"
+        );
         fs::remove_file(&path).map_err(|err| err.to_string())?;
         assert_eq!(
-            scope_of(&root)?,
+            scope_of(&root, &ledger)?["scope"],
             "rust_workspace_complete",
             "{name} restored"
         );
     }
 
-    // A disclosure with the input identity removed or blanked establishes
-    // nothing, even on the matching tree.
-    for patch in [None, Some(json!({"cfg_features_hash": ""}))] {
+    // A ledger produced under other build features / toolchain / analyzer
+    // inputs (disclosed hashes differ from the gate's recomputation) is
+    // refused, naming the class; a removed or blanked identity establishes
+    // nothing.
+    for (key, class) in [
+        ("cfg_features_hash", "cfg_features"),
+        ("toolchain_hash", "toolchain"),
+        ("analyzer_version", "analyzer_version"),
+    ] {
+        let mut other = captured.clone();
+        other["analysis_coverage"]["corpus"]["analysis_inputs"][key] = json!("different");
+        let other = serde_json::to_string(&other).map_err(|err| err.to_string())?;
+        let scope = scope_of(&root, &other)?;
+        assert_eq!(scope["scope"], "gap_ledger_artifact", "{key}");
+        assert_eq!(scope["coverage_refused"], json!([class]), "{key}");
+    }
+    for patch in [None, Some("cfg_features_hash")] {
         let mut stripped = captured.clone();
         match patch {
             None => {
@@ -5678,15 +5736,12 @@ fn e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs() -> Result<()
                     corpus.remove("analysis_inputs");
                 }
             }
-            Some(blank) => {
-                stripped["analysis_coverage"]["corpus"]["analysis_inputs"]["cfg_features_hash"] =
-                    blank["cfg_features_hash"].clone();
+            Some(key) => {
+                stripped["analysis_coverage"]["corpus"]["analysis_inputs"][key] = json!("");
             }
         }
         let stripped = serde_json::to_string(&stripped).map_err(|err| err.to_string())?;
-        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(&root, &stripped)?)
-            .map_err(|err| err.to_string())?;
-        assert_eq!(gate["analysis_scope"]["scope"], "gap_ledger_artifact");
+        assert_eq!(scope_of(&root, &stripped)?["scope"], "gap_ledger_artifact");
     }
     ignore_remove_dir_all(root);
     Ok(())

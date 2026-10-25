@@ -126,11 +126,13 @@ pub(crate) fn build_gate_decision_report(
         None => Value::Null,
     };
     let mut gap_ledger_coverage = None;
+    let mut gap_ledger_refusal: Vec<String> = Vec::new();
     let gap_ledger = read_gap_ledger(
         input,
         &mut config_errors,
         &mut consumed,
         &mut gap_ledger_coverage,
+        &mut gap_ledger_refusal,
     );
     warn_for_optional_json(
         &input.root,
@@ -235,6 +237,7 @@ pub(crate) fn build_gate_decision_report(
                 crate::output::review_comments::gap_ledger_analysis_scope_json(
                     records,
                     gap_ledger_coverage.as_ref(),
+                    &gap_ledger_refusal,
                 ),
             ),
             None => {
@@ -521,8 +524,9 @@ fn read_gap_ledger(
     config_errors: &mut Vec<String>,
     consumed: &mut input::ConsumedInputHashes,
     coverage: &mut Option<Value>,
+    refusal: &mut Vec<String>,
 ) -> Option<Vec<GapRecord>> {
-    input::read_gap_ledger_impl(input, config_errors, consumed, coverage)
+    input::read_gap_ledger_impl(input, config_errors, consumed, coverage, refusal)
 }
 
 fn read_recommendation_calibration(

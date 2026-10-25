@@ -239,10 +239,17 @@ each; roughly 47 KB for 900 files) and is carried in the repo-exposure
 artifact, the ledger and the gate decision; very large workspaces carry a
 proportionally larger list.
 Gate admission also recomputes the non-Rust analysis inputs (classified config
-text, `.ripr/test_intent.toml`, the suppressions file, `RIPR_CFG_FEATURES`) and
-requires them to equal the ledger's `corpus.analysis_inputs`; a ledger produced
-under different config, test intent, suppressions or feature environment stays
-`not_evaluated`, so run the gate under the same inputs. A writer who deletes
+including raw `ripr.toml` bytes, `.ripr/test_intent.toml`, the suppressions
+file, `RIPR_CFG_FEATURES`, Cargo workspace manifests/configuration,
+`Cargo.lock`, the toolchain label and the ripr build) and requires them to equal
+the ledger's `corpus.analysis_inputs`. A ledger produced under different inputs
+stays `not_evaluated`, so run the gate under the same inputs: a byte-different
+`ripr.toml` (comments, whitespace, CRLF) refuses coverage, `RIPR_CFG_FEATURES`
+and the toolchain must match the producer's, and the Cargo manifest identity is
+bound to the checkout path, so gate in the checkout that produced the ledger.
+The hashes are 64-bit FNV digests (non-adversarial change detection). The
+differing classes are named in the gate scope's `coverage_refused` and quoted by
+`baseline diff`. A writer who deletes
 records and recomputes `records_digest`/`records_total` still earns the
 disclosure: the digest is tamper-evident against accidental filtering only.
 The inventory discloses `corpus.analyzed_production_files` from its actual

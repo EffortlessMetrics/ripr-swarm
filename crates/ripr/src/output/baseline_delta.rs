@@ -1523,10 +1523,21 @@ pub(super) fn absence_not_evaluated_reason(
         );
     }
     if kind == "gap_ledger_artifact" {
-        return Some(
-            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution (regenerate the ledger from a complete `ripr check --format repo-exposure-json` run with `reports gap-ledger --repo-exposure` so it discloses workspace coverage, #9599)"
-                .to_string(),
-        );
+        let refused = scope
+            .get("coverage_refused")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .filter(|items| !items.is_empty())
+            .map(|items| {
+                format!(
+                    " (the ledger's workspace coverage was refused at gate time; differing: {})",
+                    items.join(", ")
+                )
+            })
+            .unwrap_or_default();
+        return Some(format!(
+            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution{refused} (regenerate the ledger from a complete `ripr check --format repo-exposure-json` run with `reports gap-ledger --repo-exposure` so it discloses workspace coverage, #9599)"
+        ));
     }
     if kind != "diff_scoped_changed_files" {
         return Some(format!(
@@ -4103,7 +4114,7 @@ mod tests {
                 "analyzed_production_files": [
                     "src/anywhere/new.rs", "crates/a/src/lib.rs", "src/target.rs"
                 ],
-                "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d"},
+                "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d", "workspace_manifests_hash": "e", "lockfile_hash": "f", "toolchain_hash": "g", "analyzer_version": "h"},
             },
             "records_total": 1,
             "records_digest": format!("sha256:{}", "0".repeat(64)),

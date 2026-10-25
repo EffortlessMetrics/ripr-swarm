@@ -7905,7 +7905,7 @@ mod tests {
             "cache_schema_version": SCHEMA,
             "files_content_hash": "0123456789abcdef",
             "analyzed_production_files": ["src/lib.rs"],
-            "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d"},
+            "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d", "workspace_manifests_hash": "e", "lockfile_hash": "f", "toolchain_hash": "g", "analyzer_version": "h"},
         })
     }
 

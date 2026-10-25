@@ -88,11 +88,15 @@ fn rust_corpus_hash(stamp: Option<&Value>) -> Result<&str, CorpusSubjectCheck> {
 /// file: the build-feature environment, the classified configuration, the
 /// test-intent file and the suppressions file. They are the producer cache
 /// key's own hashes, so a gate recomputes them with the same helper.
-const ANALYSIS_INPUT_KEYS: [&str; 4] = [
+const ANALYSIS_INPUT_KEYS: [&str; 8] = [
     "cfg_features_hash",
     "config_hash",
     "test_intent_hash",
     "suppressions_hash",
+    "workspace_manifests_hash",
+    "lockfile_hash",
+    "toolchain_hash",
+    "analyzer_version",
 ];
 
 pub(crate) fn analysis_inputs_subject(
@@ -103,17 +107,21 @@ pub(crate) fn analysis_inputs_subject(
         "config_hash": key.config_hash,
         "test_intent_hash": key.test_intent_hash,
         "suppressions_hash": key.suppressions_hash,
+        "workspace_manifests_hash": key.workspace_manifests_hash,
+        "lockfile_hash": key.lockfile_hash,
+        "toolchain_hash": key.toolchain_hash,
+        "analyzer_version": key.analyzer_version,
     })
 }
 
 /// The disclosed input identity, `None` unless every component is a
 /// non-empty string (missing or partial identity never establishes coverage).
-pub(crate) fn analysis_inputs(corpus: &Value) -> Option<[&str; 4]> {
+pub(crate) fn analysis_inputs(corpus: &Value) -> Option<[&str; 8]> {
     let inputs = corpus.get("analysis_inputs")?.as_object()?;
     if inputs.len() != ANALYSIS_INPUT_KEYS.len() {
         return None;
     }
-    let mut out = [""; 4];
+    let mut out = [""; 8];
     for (slot, name) in out.iter_mut().zip(ANALYSIS_INPUT_KEYS) {
         let value = inputs.get(name)?.as_str()?;
         if value.is_empty() {
@@ -157,40 +165,59 @@ pub(crate) fn analyzed_production_files(corpus: &Value) -> Option<BTreeSet<&str>
 }
 
 /// Gate admission uses the same discovery/role owner as the producer. A
-/// matching Rust content hash alone cannot establish production membership
-/// after a source-role policy or Cargo target declaration changes.
-pub(crate) fn rust_workspace_coverage_is_current(
+/// matching Rust content hash alone cannot establish production membership or
+/// the non-Rust analysis inputs. Returns the classes that differ from the
+/// disclosure (`content`, `membership`, or an input name such as `config`,
+/// `test_intent`, `suppressions`, `cfg_features`, `workspace_manifests`,
+/// `lockfile`, `toolchain`, `analyzer_version`); `unverifiable` when the
+/// disclosure is malformed or the current workspace cannot be read. Empty
+/// means current. The hashes are the cache key's 64-bit FNV digests:
+/// non-adversarial change detection, not authentication.
+pub(crate) fn rust_workspace_coverage_mismatches(
     root: &Path,
     coverage: &Value,
     config: &RiprConfig,
-) -> bool {
+) -> Vec<&'static str> {
+    let unverifiable = || vec!["unverifiable"];
     let Ok(hash) = rust_corpus_hash(Some(coverage)) else {
-        return false;
+        return unverifiable();
     };
     let Some(captured) = coverage.get("corpus").and_then(analyzed_production_files) else {
-        return false;
+        return unverifiable();
+    };
+    let Some(inputs) = coverage.get("corpus").and_then(analysis_inputs) else {
+        return unverifiable();
     };
     let Ok((key, files)) = workspace_cache_key_and_production_files_at_with_config(root, config)
     else {
-        return false;
+        return unverifiable();
     };
     let Some(current) = production_files_subject(&files) else {
-        return false;
+        return unverifiable();
     };
-    let Some(current) = current.as_array() else {
-        return false;
+    let current_wrapper = serde_json::json!({"analysis_inputs": analysis_inputs_subject(&key)});
+    let Some(current_inputs) = analysis_inputs(&current_wrapper) else {
+        return unverifiable();
     };
-    let Some(inputs) = coverage.get("corpus").and_then(analysis_inputs) else {
-        return false;
-    };
-    let current_inputs = analysis_inputs_subject(&key);
-    key.files_content_hash == hash
-        && analysis_inputs(&serde_json::json!({"analysis_inputs": current_inputs})) == Some(inputs)
-        && captured
-            == current
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<BTreeSet<_>>()
+    let mut mismatched = Vec::new();
+    if key.files_content_hash != hash {
+        mismatched.push("content");
+    }
+    let current_members = current.as_array().map(|items| {
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<BTreeSet<_>>()
+    });
+    if current_members.as_ref() != Some(&captured) {
+        mismatched.push("membership");
+    }
+    for ((name, captured), current) in ANALYSIS_INPUT_KEYS.iter().zip(inputs).zip(current_inputs) {
+        if captured != current {
+            mismatched.push(name.strip_suffix("_hash").unwrap_or(name));
+        }
+    }
+    mismatched
 }
 
 /// Normalized portable Rust path shape, shared by membership admission and
