@@ -1563,3 +1563,49 @@ fn the_child_never_inherits_a_variable_that_redirects_git() {
         );
     }
 }
+
+#[test]
+fn the_termination_consumer_binds_runtime_produced_manifest_bytes() -> TestResult {
+    use crate::reports::release::candidate_harness::live_head::tests::Fixture;
+    let fixture = Fixture::new()?;
+    fixture.write()?;
+    let args = [
+        "release-manifest-proposal",
+        "--controller-root",
+        fixture.root.to_str().ok_or("non-UTF-8 fixture")?,
+        "--version",
+        "0.11.0",
+        "--input",
+        "manifest.json",
+        "--out",
+        "proposal",
+    ];
+    crate::dispatch::execute(crate::XtaskCommand::parse(
+        args.into_iter().map(String::from),
+    ))?;
+    let produced = fixture.root.join("proposal/manifest.json");
+    let path = produced.to_str().ok_or("non-UTF-8 proposal")?;
+    let sha = "a".repeat(40);
+    let args: Vec<String> = [
+        "--binary",
+        "unexecuted",
+        "--candidate-manifest",
+        path,
+        "--expected-commit",
+        &sha,
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let options = super::command::parse_args(&args)?;
+    assert_eq!(options.expected_commit.as_deref(), Some(sha.as_str()));
+    let mut disagree = args;
+    *disagree.last_mut().ok_or("missing expected commit")? = "f".repeat(40);
+    match super::command::parse_args(&disagree) {
+        Err(error) if error.contains("disagrees with the candidate manifest") => {}
+        _ => return Err("explicit commit disagreement must refuse produced bytes".to_string()),
+    }
+    // This proves runtime producer/consumer wiring only. The synthetic owner
+    // packets grant no final-main, protected-ref or native #1609 acceptance.
+    Ok(())
+}
