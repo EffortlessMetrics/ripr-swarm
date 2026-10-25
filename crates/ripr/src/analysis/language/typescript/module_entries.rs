@@ -44,7 +44,7 @@ pub(crate) struct TypeScriptModuleEntry {
     /// method name (`constructor` for a constructor).
     pub(crate) class_member: Option<TypeScriptMethodKind>,
     /// `Some` when the entry is an instance method that a bare `@owner`
-    /// decorator wraps (`decorated_entries`, RIPR-SPEC-0243 rule 20). `name`
+    /// decorator wraps (`decorated_entries`, RIPR-SPEC-0243 rule 21). `name`
     /// is the method name.
     pub(crate) decorated: Option<TypeScriptDecoratedMethod>,
 }

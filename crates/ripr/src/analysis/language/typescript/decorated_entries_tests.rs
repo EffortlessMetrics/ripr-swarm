@@ -129,3 +129,81 @@ fn a_decorator_with_two_declarations_or_no_application_records_no_entry() {
     assert_no_decorated_entry(&duplicated);
     assert_no_decorated_entry(&AUDITED.replace("@audited\n  add", "add"));
 }
+
+#[test]
+fn decorated_call_must_be_on_a_receiver_of_the_decorated_class() {
+    use super::super::classifier::ts_observes_decorated_method_call as observes;
+    let body = "const l = new Ledger();\n  l.add(1, 1);";
+    assert!(observes("new Ledger().add(2, 3)", "", "Ledger", "add"));
+    assert!(observes("new Ledger(5).add(2, 3)", "", "Ledger", "add"));
+    assert!(observes("l.add(2, 3)", body, "Ledger", "add"));
+    assert!(!observes("new Other().add(2, 3)", body, "Ledger", "add"));
+    assert!(!observes("o.add(2, 3)", body, "Ledger", "add"));
+    assert!(!observes("new Ledger().total(2, 3)", body, "Ledger", "add"));
+    assert!(!observes("makeLedger().add(2, 3)", body, "Ledger", "add"));
+}
+
+#[test]
+fn decorated_call_refuses_a_method_replaced_in_the_test() {
+    use super::super::classifier::ts_observes_decorated_method_call as observes;
+    for body in [
+        "const l = new Ledger();\n  l.add = () => 99;",
+        "const l = new Ledger();\n  Ledger.prototype.add = () => 99;",
+        "const l = new Ledger();\n  jest.spyOn(l, \"add\").mockReturnValue(99);",
+        "const l = new Ledger();\n  Object.defineProperty(l, 'add', { value: () => 99 });",
+    ] {
+        assert!(!observes("l.add(2, 3)", body, "Ledger", "add"), "{body}");
+    }
+    assert!(observes(
+        "l.add(2, 3)",
+        "const l = new Ledger();\n  const added = l.add(2, 3);",
+        "Ledger",
+        "add"
+    ));
+}
+
+#[test]
+fn replacement_descriptor_or_outer_control_flow_records_no_entry() {
+    assert_no_decorated_entry(&AUDITED.replace(
+        "  };\n}\n",
+        "  };\n  return { value: function () { return 99; } };\n}\n",
+    ));
+    assert_no_decorated_entry(&AUDITED.replace(
+        "  descriptor.value = function",
+        "  if (key === \"x\") { return; }\n  descriptor.value = function",
+    ));
+    assert_no_decorated_entry(&AUDITED.replace(
+        "  descriptor.value = function",
+        "  Object.defineProperty(target, key, { value: 1 });\n  descriptor.value = function",
+    ));
+}
+
+#[test]
+fn returned_value_must_be_the_originals_result_combined_only_by_add_or_subtract() {
+    for returned in [
+        "return (original.apply(this, args) + 1, 99);",
+        "return [original.apply(this, args)][0];",
+        "return original.apply(this, args) * 0 + 99;",
+        "return original.apply(this, args) + original.apply(this, args);",
+        "return 99 + 1;",
+        "return original.apply(null, args) + 1;",
+        "return original?.apply(this, args) + 1;",
+        "return String(original.apply(this, args));",
+    ] {
+        assert_no_decorated_entry(
+            &AUDITED.replace("return original.apply(this, args) + 1;", returned),
+        );
+    }
+    for returned in [
+        "return original.apply(this, args);",
+        "return original.call(this, key) - 1;",
+        "return (original.apply(this, args) as number) + 1;",
+    ] {
+        assert_eq!(
+            decorator_entries(&AUDITED.replace("return original.apply(this, args) + 1;", returned))
+                .len(),
+            1,
+            "{returned}"
+        );
+    }
+}

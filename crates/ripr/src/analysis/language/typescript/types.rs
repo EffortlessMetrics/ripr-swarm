@@ -345,7 +345,7 @@ pub(crate) enum TypeScriptRelationKind {
     ModuleEntryCall,
     /// Test calls an instance method that a bare `@owner` method decorator
     /// wraps, where the owner is a straight-line pass-through decorator
-    /// (RIPR-SPEC-0243 rule 20, #10189). Unlike `ModuleEntryCall`, the
+    /// (RIPR-SPEC-0243 rule 21, #10189). Unlike `ModuleEntryCall`, the
     /// decorated method's call result *is* the wrapper's return value, so
     /// the classifier may lend `exposed` when the changed line is that
     /// return. Entries only exist for shapes `decorated_entries` proves.

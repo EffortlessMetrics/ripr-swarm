@@ -295,7 +295,7 @@ pub(crate) fn ts_changed_value_is_observed(
                 let decorated_reach =
                     candidate.relation == TypeScriptRelationKind::DecoratedMethodCall;
                 let mut owner_names: Vec<&str> = if decorated_reach {
-                    // RIPR-SPEC-0243 rule 20: the test calls the decorated
+                    // RIPR-SPEC-0243 rule 21: the test calls the decorated
                     // method, whose result is the decorator's return value.
                     owner
                         .module_entries
@@ -337,6 +337,28 @@ pub(crate) fn ts_changed_value_is_observed(
                 // owners keep the legacy member-segment reading: their honest
                 // needle IS `receiver.method(...)`.
                 let observed_code = ts_mask_literals_and_comments(observed);
+                // RIPR-SPEC-0243 rule 21: the credited assertion must call
+                // the decorated method on a receiver of the decorated class;
+                // an assertion on another class's same-named method sees
+                // nothing of the decorator.
+                if decorated_reach {
+                    if owner
+                        .module_entries
+                        .iter()
+                        .filter_map(|entry| entry.decorated.as_ref().map(|d| (entry, d)))
+                        .any(|(entry, decorated)| {
+                            ts_observes_decorated_method_call(
+                                &observed_code,
+                                &candidate.test.body_text,
+                                &decorated.class_name,
+                                &entry.name,
+                            )
+                        })
+                    {
+                        return true;
+                    }
+                    continue;
+                }
                 // #7507/#7815: `typeof cost` observes the type string, not
                 // the changed value. [`ts_masked_observes_owner`] excludes
                 // only those consumed occurrences, so a mixed assertion
@@ -5718,6 +5740,71 @@ pub(crate) fn owner_line_context<'a>(
     }
 }
 
+/// `true` when `observed` (literals masked) calls `method` on a receiver of
+/// `class`: `new Class(...).method(` directly, or `x.method(` where the test
+/// body binds `x` to `new Class(...)`. A same-named method of another class
+/// is not the decorated one.
+pub(crate) fn ts_observes_decorated_method_call(
+    observed: &str,
+    test_body: &str,
+    class: &str,
+    method: &str,
+) -> bool {
+    let call = format!(".{method}(");
+    let construct = format!("new {class}(");
+    // A method replaced on the instance or prototype (`l.add = () => 99`,
+    // `spyOn(l, "add")`, `defineProperty(l, "add", ...)`) bypasses the
+    // decorator wrapper, so no assertion in this test sees it.
+    let member = format!(".{method}");
+    let replaced = test_body.match_indices(&member).any(|(at, _)| {
+        let after = test_body[at + member.len()..].trim_start();
+        after.starts_with('=') && !after.starts_with("==")
+    }) || [
+        format!("\"{method}\""),
+        format!("'{method}'"),
+        format!("`{method}`"),
+    ]
+    .iter()
+    .any(|quoted| test_body.contains(quoted.as_str()));
+    if replaced {
+        return false;
+    }
+    observed.match_indices(&call).any(|(at, _)| {
+        let receiver = observed[..at].trim_end();
+        if receiver.ends_with(')') {
+            return receiver.rfind(&construct).is_some_and(|start| {
+                let open = start + construct.len() - 1;
+                let mut depth = 0usize;
+                for (offset, ch) in receiver[open..].char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return open + offset + 1 == receiver.len();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                false
+            });
+        }
+        let name: String = receiver
+            .chars()
+            .rev()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        !name.is_empty()
+            && ["const", "let", "var"]
+                .iter()
+                .any(|kw| test_body.contains(&format!("{kw} {name} = {construct}")))
+    })
+}
+
 /// `true` when `line` is inside the pass-through return a decorated-method
 /// entry of `owner` recorded (`decorated_entries`).
 fn decorated_return_changed(owner: &TypeScriptOwner, line: usize) -> bool {
@@ -5752,7 +5839,7 @@ pub(crate) fn classify_resolved_owner(
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
 ) -> Option<Finding> {
-    // RIPR-SPEC-0243 rule 20: a decorated-method reach observes only an edit
+    // RIPR-SPEC-0243 rule 21: a decorated-method reach observes only an edit
     // to the wrapper's pass-through return. Any other line of the decorator
     // keeps the reading it had before the relation existed.
     let decorated_gated: Vec<TypeScriptRelatedCandidate<'_>>;

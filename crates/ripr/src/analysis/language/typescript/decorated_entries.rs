@@ -1,4 +1,4 @@
-//! Methods wrapped by a pass-through method decorator (RIPR-SPEC-0243 rule 20).
+//! Methods wrapped by a pass-through method decorator (RIPR-SPEC-0243 rule 21).
 //!
 //! A changed line inside `D(target, key, descriptor)` is reached by no test
 //! that calls `D`: tests call the class the decorator is applied to. For one
@@ -187,6 +187,9 @@ fn pass_through_return(
     let text = &source[decorator.span.start as usize..decorator.span.end as usize];
     // The descriptor may only be read once and assigned once, both as `.value`.
     let member = format!("{descriptor}.value");
+    if text.contains("defineProperty") || text.contains("Reflect.") {
+        return None;
+    }
     let stripped = text.replace(&member, "");
     if word_count(&stripped, descriptor) != 1 || text.matches(&member).count() != 2 {
         return None;
@@ -225,7 +228,9 @@ fn pass_through_return(
                     wrapper = Some(function);
                 }
             }
-            _ => {}
+            // Control flow or a `return` outside the wrapper can install a
+            // different descriptor or skip the assignment.
+            _ => return None,
         }
     }
     let (original, wrapper) = (original?, wrapper?);
@@ -244,32 +249,23 @@ fn pass_through_return(
         return None;
     };
     let argument = ret.argument.as_ref()?;
-    let returned = &source[argument.span().start as usize..argument.span().end as usize];
-    let calls_original = [".apply(this", ".call(this"]
-        .iter()
-        .any(|call| returned.contains(&format!("{original}{call}")));
-    if !calls_original
-        || returned.contains('?')
-        || returned.contains("&&")
-        || returned.contains("||")
-    {
-        return None;
-    }
-    let mut allowed: Vec<&str> = vec![original, "this", "true", "false", "null", "undefined"];
+    let mut operands: Vec<&str> = Vec::new();
     for item in &wrapper.params.items {
         if let BindingPattern::BindingIdentifier(id) = &item.pattern {
-            allowed.push(id.name.as_str());
+            operands.push(id.name.as_str());
         }
     }
     if let Some(rest_param) = wrapper.params.rest.as_ref()
         && let BindingPattern::BindingIdentifier(id) = &rest_param.rest.argument
     {
-        allowed.push(id.name.as_str());
+        operands.push(id.name.as_str());
     }
-    if free_identifiers(returned)
-        .iter()
-        .any(|name| !allowed.contains(name))
-    {
+    // The returned value must be the original's result and nothing that can
+    // replace or discard it: exactly one call of the original, combined only
+    // by `+`/`-` with literals or wrapper parameters. A sequence, array,
+    // object, logical or conditional expression can return a value the
+    // original did not produce (`return (original.apply(this, args) + 1, 99)`).
+    if original_flow_count(argument, original, &operands) != Some(1) {
         return None;
     }
     Some((
@@ -300,44 +296,55 @@ fn word_count(text: &str, word: &str) -> usize {
         .count()
 }
 
-/// Identifier tokens of `expression` that are not property names (`.apply`)
-/// or part of a numeric literal. Strings and templates are rejected by the
-/// caller's other checks only in so far as their words appear here, which is
-/// fail-closed.
-fn free_identifiers(expression: &str) -> Vec<&str> {
-    let bytes = expression.as_bytes();
-    let mut out = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if byte.is_ascii_digit() {
-            while index < bytes.len()
-                && (bytes[index].is_ascii_alphanumeric()
-                    || bytes[index] == b'.'
-                    || bytes[index] == b'_')
-            {
-                index += 1;
-            }
-            continue;
+/// Number of calls of `original` in `expression` when the expression is only
+/// that call, combined by `+`/`-` with literals or wrapper parameters;
+/// `None` for any other shape.
+fn original_flow_count(
+    expression: &Expression<'_>,
+    original: &str,
+    operands: &[&str],
+) -> Option<usize> {
+    use oxc_ast::ast::BinaryOperator;
+    match expression {
+        Expression::ParenthesizedExpression(inner) => {
+            original_flow_count(&inner.expression, original, operands)
         }
-        if byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$' {
-            let start = index;
-            while index < bytes.len()
-                && (bytes[index].is_ascii_alphanumeric()
-                    || bytes[index] == b'_'
-                    || bytes[index] == b'$')
-            {
-                index += 1;
-            }
-            let after_dot = expression[..start].trim_end().ends_with('.');
-            if !after_dot {
-                out.push(&expression[start..index]);
-            }
-            continue;
+        Expression::TSAsExpression(inner) => {
+            original_flow_count(&inner.expression, original, operands)
         }
-        index += 1;
+        Expression::TSNonNullExpression(inner) => {
+            original_flow_count(&inner.expression, original, operands)
+        }
+        Expression::CallExpression(call) => {
+            let Expression::StaticMemberExpression(callee) = &call.callee else {
+                return None;
+            };
+            let Expression::Identifier(object) = &callee.object else {
+                return None;
+            };
+            let first_is_this = matches!(call.arguments.first(), Some(argument)
+                if matches!(argument.as_expression(), Some(Expression::ThisExpression(_))));
+            (object.name == original
+                && matches!(callee.property.name.as_str(), "apply" | "call")
+                && first_is_this
+                && !call.optional)
+                .then_some(1)
+        }
+        Expression::BinaryExpression(binary)
+            if matches!(
+                binary.operator,
+                BinaryOperator::Addition | BinaryOperator::Subtraction
+            ) =>
+        {
+            Some(
+                original_flow_count(&binary.left, original, operands)?
+                    + original_flow_count(&binary.right, original, operands)?,
+            )
+        }
+        Expression::NumericLiteral(_) | Expression::StringLiteral(_) => Some(0),
+        Expression::Identifier(id) if operands.contains(&id.name.as_str()) => Some(0),
+        _ => None,
     }
-    out
 }
 
 #[cfg(test)]

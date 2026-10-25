@@ -1027,7 +1027,7 @@ The gate text keeps strings, templates and regex literals visible beside the
 two masks, so a string spelling `module.exports = x` refuses the file (fail
 closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
 
-**Rule 20. A method decorator that passes the original result through
+**Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
 A changed line inside `D(target, key, descriptor)` is reached by no test
 that calls `D`, because tests call the class the decorator is applied to.
@@ -1042,14 +1042,17 @@ or `static_unknown`, never `exposed`):
    assigns `descriptor.value = function (...) { ... }` once, and the
    changed line is the wrapper's final top-level `return`. Statements
    before it are plain expression statements: no earlier `return`, `throw`,
-   `if`, loop, `try` or `await`, so the return runs on every call.
-2. The returned expression calls the captured original
-   (`original.apply(this, args)` or `original.call(this, ...)`, where
-   `original` is `descriptor.value` read before the assignment) and
-   reads nothing else that outlives the call. A wrapper that returns a
-   cached, stored or otherwise independent value
-   (`return cache.get(n)`) replaces the result: a change to the original's
-   path is not what the test observes, so this reading does not apply.
+   `if`, loop, `try` or `await`, so the return runs on every call. The
+   decorator body itself has only variable declarations and expression
+   statements: a `return` of a replacement descriptor, outer control flow,
+   `Object.defineProperty` and `Reflect` use all refuse.
+2. The returned expression is the original's result and nothing that can
+   replace or discard it: exactly one `original.apply(this, ...)` or
+   `original.call(this, ...)`, combined only by `+` or `-` with literals or
+   wrapper parameters, through parentheses and `as` casts. A wrapper that
+   returns a cached or stored value (`return cache.get(n)`), a sequence
+   (`return (original.apply(this, args) + 1, 99)`), an array, a logical or
+   conditional expression, or a second call keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
    in a class whose methods the owner relation can name. A decorator
@@ -1060,6 +1063,12 @@ or `static_unknown`, never `exposed`):
 4. A test reaches the method by the existing `class_method_call` identity
    gates. The assertion must be a strong exact oracle of the whole call
    result, so the same exactness rules as a direct return-value owner apply.
+   The asserted call must be on a receiver of the decorated class
+   (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
+   in the test): an assertion on another class's same-named method sees
+   nothing of the decorator. A test that replaces the method
+   (`ledger.add = ...`, `Ledger.prototype.add = ...`, `spyOn(l, "add")`,
+   `defineProperty(l, "add", ...)`) bypasses the wrapper and earns nothing.
    The relation is admitted only when no test calls `D` itself.
 5. Tests of every decorated method count; a decorated method nobody tests
    is not a path.
