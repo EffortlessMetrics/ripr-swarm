@@ -18880,6 +18880,34 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0353"
+name = "A pure bool && or || owner is infected when its directly-called literal rows tell the changed chain from each one-step mutation"
+spec = "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::truth_table_rows_must_separate_every_one_step_mutant",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_separate_the_chain_from_every_one_step_mutant_credit_infection",
+  "crates/ripr/tests/bool_truth_table_infection.rs::an_or_chain_pinned_on_its_own_table_credits_infection",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_cannot_tell_the_connectives_apart_stay_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_single_row_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::another_caller_of_the_owner_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_fed_through_a_table_stay_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_body_with_a_leading_statement_stays_unknown",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/grid-bool-exact.json",
+]
+code = [
+  "crates/ripr/src/analysis/classify/infection.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0351"
 name = "A test that asserts on the local it passed as &mut observes the change only when the changed expression writes through that parameter"
 spec = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"

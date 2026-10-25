@@ -12,13 +12,13 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 203
+floor = 204
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 143
+missed_credit_ceiling = 142
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -965,6 +965,19 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
+
+# Pure bool chain infection from literal truth-table rows
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "an abstain-when-rows-cannot-separate negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs, and a corpus case would need an abstain-ideal row with no catching test"
+
+[[spec.waived]]
+example = 3
+reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a

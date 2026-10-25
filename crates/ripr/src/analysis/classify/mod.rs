@@ -87,7 +87,9 @@ pub(in crate::analysis) use helper_transfer::{
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
-pub(in crate::analysis) use infection::infection_evidence_for_owner;
+pub(in crate::analysis) use infection::{
+    exercised_bool_chain_return_sink, infection_evidence_for_owner,
+};
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
 pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
