@@ -7,8 +7,9 @@ Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding un
 
 Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+Analysis outcome: limitations below (analysis incomplete)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: some changed files were not analyzed during language analysis; file: test/notify.test.ts; affected items: 1; recovery: inspect the failure — Some test files (affected items) register tests in shapes the TypeScript extractor does not index; the JSON limitation detail names samples. Check whether they exercise the changed code before trusting a no-path or weak result, or register them as top-level `test`/`it` calls with plain string titles (array-form `.each` is indexed).
 
 Start here:
   State: preview language, advisory only
@@ -20,7 +21,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: sender.send(2 * id);
   Missing discriminator (1 of 2): Related test reaches `notify` with a mock interaction oracle, but TypeScript preview does not yet establish the changed call payload; keep the item advisory until mock-shape…
-  Related test: test/notify.test.ts:5 notify alias
+  Related test: test/notify.test.ts:10 notify alias
   Next step — TypeScript preview advisory: related mock interaction evidence is present, but mock
     payloads are not yet a safe discriminator for `call sender.send includes 2 * id`; no actionable
     repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and

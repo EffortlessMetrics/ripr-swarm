@@ -4,6 +4,7 @@ Spec: RIPR-SPEC-0243 decision 22; RIPR-SPEC-0108. Issue: #10174.
 
 `notify` rewrites `sender.send(id * 2)` as `sender.send(2 * id)`. The test
 asserts `const calls = fn.mock.calls; assert.equal(calls.length, 1);` after passing the node:test mock to the owner.
+The alias is inside a named callback declared before its registration.
 The changed SideEffect has a removed counterpart. Its reading must be
 `weakly_exposed`: the count cannot see 8 versus 5.
 
