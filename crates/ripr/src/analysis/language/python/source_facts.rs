@@ -1,5 +1,7 @@
 use super::admission::PythonAdmissionContext;
-use super::module_constants::{module_literal_constants, with_module_rebinding};
+use super::module_constants::{
+    module_literal_constants, module_object_bindings, with_module_rebinding,
+};
 use super::owners_tests::{
     TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
     collect_tests_from_statements, module_owner,
@@ -8,7 +10,7 @@ use super::source_utils::{
     SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
 };
 use super::{PythonFramework, PythonOwner, PythonTest, expr_full_name};
-use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
+use crate::domain::{LanguageId as DomainLanguageId, OwnerKind, StaticLimitKind};
 use rustpython_parser::{
     Mode,
     ast::{self, Expr, Mod, Ranged, Stmt},
@@ -691,6 +693,12 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
+    let module_objects = module_object_bindings(source, &module.body);
+    for owner in snapshot.owners.iter_mut().filter(|owner| {
+        owner.class_path.is_empty() && matches!(owner.owner_kind, Some(OwnerKind::Function))
+    }) {
+        owner.class_facts.module_objects = module_objects.clone();
+    }
     mark_rebound_decorators(source, &mut snapshot.owners);
     snapshot
         .owners
