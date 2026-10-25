@@ -3737,6 +3737,24 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_inline_tests.rs::given_a_call_that_does_not_own_its_lines_then_it_stays_unknown",
   "crates/ripr/src/analysis/language/python/helper_inline_tests.rs::given_an_assert_the_substitution_cannot_prove_then_it_stays_unknown",
   "crates/ripr/src/analysis/language/python/helper_inline_tests.rs::given_a_test_with_a_non_expression_statement_then_it_stays_unknown",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_multiline_f_string_replacement_field_then_a_call_inside_it_is_kept",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_text_outside_an_f_string_field_then_a_call_shaped_mention_stays_hidden",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_literal_format_spec_text_then_a_call_shaped_mention_stays_hidden",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_nested_triple_quoted_literal_in_a_field_then_its_text_stays_hidden",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_comment_or_same_delimiter_literal_in_a_field_then_the_rest_stays_hidden",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_nested_f_string_in_a_field_then_only_its_live_fields_are_visible",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_real_field_expressions_then_calls_in_them_stay_visible",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_crlf_inside_a_triple_quoted_f_string_then_fields_and_text_are_classified",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_crlf_line_endings_then_a_continued_string_hides_its_continuation_line",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_backslash_before_a_brace_in_an_f_string_then_the_brace_still_lexes",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_literal_spec_or_nested_literal_text_then_the_classifier_credits_no_call",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_real_field_calls_then_the_classifier_credits_a_syntactic_call",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_deeply_nested_f_strings_then_the_depth_limit_hides_rather_than_exposes",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_degenerate_nested_f_string_text_then_the_call_lexer_never_panics",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_non_ascii_identifier_prefix_then_no_call_of_the_ascii_suffix_is_seen",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_non_ascii_identifier_prefix_then_the_classifier_credits_no_call",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_non_identifier_non_ascii_neighbours_then_the_call_is_an_intentional_miss",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned_as_an_f_string",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -3861,6 +3879,7 @@ code = [
   "crates/ripr/src/output/outcome/mod.rs",
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/analysis/language/python/helper_inline.rs",
+  "crates/ripr/src/analysis/language/python/related_tests.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md",

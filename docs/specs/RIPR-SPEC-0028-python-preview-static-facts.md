@@ -314,6 +314,36 @@ Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.
 
+The call-site lexer behind direct owner calls and helper edges hides comment,
+string and docstring text. A backslash continues an ordinary string over the
+next line break, which may be CRLF, so a quoted `"""` on the continuation line
+opens nothing and a call there stays hidden. The `{...}` replacement fields of
+a triple-quoted f-string (prefix `f`, `F`, `rf`, `fr`, any case) are code: a
+call on a line of a multiline field is visible, while the string's own text, a
+`{{` escape, a string nested in a field (single-line or a complete
+different-delimiter triple-quoted literal, newlines and braces included), the
+literal format-spec text after a field's top-level `:` (only a nested `{...}`
+inside the spec is code again), and a field not closed before the string ends
+stay hidden (#8787). A backslash before a brace in an f-string is a literal
+character on its own and the brace lexes normally. A nested f-string literal (up
+to four levels) in a field has its own replacement fields scanned by the same
+rules, so only real field code is visible; its own text, `{{`, spec text, and a
+plain or `b` nested literal are hidden locally while a later call in the same
+field stays visible. The scanner gives up and hides the rest of the text only
+for a `#` comment in field expression text (Python 3.12), the string's own
+delimiter nested in a field (3.12), a single-line f-string with a field of its
+own inside a field (3.12 same-quote nesting), a field or nested literal that is
+not closed, and nesting deeper than four levels. A colon that may or may not be
+the spec colon hides. The triple-quoted scanning here gives up and hides
+rather than inventing a call for the cases above. Known limits: inside
+triple-quoted f-strings a replacement field on the same line as the opening
+quote is hidden by the line-prefix quote check, and a real call after a field the
+scanner gave up on is hidden too (misses). Separately, and not changed by this
+change, top-level single-line f-strings that use Python 3.12 same-quote nesting
+(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
+replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
+call (#9230).
+
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
 is related, with the weak `fixture_owner_call` relation, when that fixture's
