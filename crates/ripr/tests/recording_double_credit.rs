@@ -200,6 +200,16 @@ fn missing_argument_transfer_is_never_credited() -> Result<(), String> {
             false,
         )?;
     }
+    let raw_receiver = source(
+        "self.lines.push(line);",
+        "&mut dyn Sink",
+        &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+    ).replace("use super::*;", "use super::*; struct r#Recorder { lines: Vec<String>, other: Vec<String> } impl super::Sink for r#Recorder { fn send(&mut self, _: String) { self.lines.push(\"n=3\".to_string()); } }");
+    assert_reading(
+        "raw local double cannot borrow the root writer",
+        &raw_receiver,
+        false,
+    )?;
     Ok(())
 }
 #[test]
