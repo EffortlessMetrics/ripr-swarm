@@ -97,7 +97,11 @@ impl StableNames {
         let mut globals = Vec::new();
         collect_global_declarations(statements, &mut globals);
         Some(Self {
-            counts: bindings.counts().into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            counts: bindings
+                .counts()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
             globals,
             // `alias.NAME = ...` can rebind the name through a self-import.
             attributes: assigned_attributes(source),

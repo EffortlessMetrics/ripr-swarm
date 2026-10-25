@@ -12,9 +12,9 @@
 
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
-    is_python_identifier_char, owner_class_locals, owner_method_bound_locals, owner_module_callees,
-    owner_result_locals, python_text_hides_code, test_rebinds_import_alias, with_entry,
-    import_source_module_matches_owner,
+    import_source_module_matches_owner, is_python_identifier_char, owner_class_locals,
+    owner_method_bound_locals, owner_module_callees, owner_result_locals, python_text_hides_code,
+    test_rebinds_import_alias, with_entry,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
