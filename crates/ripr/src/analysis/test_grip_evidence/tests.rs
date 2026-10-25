@@ -480,7 +480,7 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     let root = authority_fixture_root("file-scan-memo")?;
     fs::write(
         root.join("src/lib.rs"),
-        "const LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
+        "mod other;\nconst LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
     )
     .map_err(|error| error.to_string())?;
     fs::write(
