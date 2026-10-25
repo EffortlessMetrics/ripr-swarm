@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Python verdict corpus: 7 `py-bands-*` cases on `authored-py-pytest-bands` covering the RIPR-SPEC-0238 rule 21 abstentions (a positional `approx` band, a `**` spread, named constants, a two-statement owner, a method owner, a decorated owner), labelled by real pytest runs; the Python missed-credit ceiling rises 25 to 26 for the documented positional-band abstention on an edit the band rejects (#9412).

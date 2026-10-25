@@ -33,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/test_in_index_read_not_exact/input --diff <cwd>/fixtures/test_in_index_read_not_exact/diff.patch --mode fast probe:src_lib.rs:return_value:27ba9fa1
   ripr context --root <cwd>/fixtures/test_in_index_read_not_exact/input --diff <cwd>/fixtures/test_in_index_read_not_exact/diff.patch --mode fast --at probe:src_lib.rs:return_value:27ba9fa1
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value); run `ripr repair probe:src_lib.rs:return_value:27ba9fa1 --root <cwd>/fixtures/test_in_index_read_not_exact/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: return_value; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/test_in_index_read_not_exact/input --at src/lib.rs:2 --kind return_value
 

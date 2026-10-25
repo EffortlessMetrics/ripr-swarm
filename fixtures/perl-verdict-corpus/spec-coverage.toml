@@ -678,6 +678,11 @@ scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 [[spec]]
+id = "RIPR-SPEC-0357"
+scope = "out"
+reason = "Rust-only changed-binding return flow; not a perl verdict example"
+
+[[spec]]
 id = "RIPR-SPEC-0360"
 scope = "out"
 reason = "Rust-only loop-accumulator credit; not a perl verdict example"
@@ -716,17 +721,5 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case canno
 # Rust unsafe boundary probes
 [[spec]]
 id = "RIPR-SPEC-0168"
-scope = "out"
-reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
-
-# Cargo path-dependency diff scope
-[[spec]]
-id = "RIPR-SPEC-0171"
-scope = "out"
-reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
-
-# Cargo cross-crate dependency edges
-[[spec]]
-id = "RIPR-SPEC-0172"
 scope = "out"
 reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"

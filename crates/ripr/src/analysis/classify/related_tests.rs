@@ -2118,6 +2118,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                             && super::call_identity::unit_test_relative_import_names_entry(
                                 index,
                                 &test.file,
+                                &test.name,
+                                test.start_line,
                                 &import.path,
                                 caller,
                             )))

@@ -434,3 +434,97 @@ fn given_a_test_module_plain_def_then_the_conftest_fixture_is_still_attached() -
     );
     Ok(())
 }
+
+const AUDIT_PY: &str = "import logging\nlog = logging.getLogger(\"audit\")\n\n\ndef check_balance(balance):\n    if balance < 10:\n        log.warning(\"low balance: %s\", balance)\n        return False\n    return True\n";
+
+/// The class and static limit of the edit `low balance` -> `balance low`
+/// over a workspace, the way the public path reaches it (#9546).
+fn log_edit(files: &[(&str, &str)]) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let (owners, tests) = workspace(files);
+    let finding = classify_change_with_source(
+        Path::new("src/audit.py"),
+        7,
+        "        log.warning(\"balance low: %s\", balance)",
+        Some("        log.warning(\"low balance: %s\", balance)"),
+        &owners,
+        &tests,
+        Some(AUDIT_PY),
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const PINNED: &str = "import logging\nimport pytest\nfrom src.audit import check_balance\n\n\ndef test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n";
+const ABSTAINS: (ExposureClass, Option<StaticLimitKind>) = (
+    ExposureClass::StaticUnknown,
+    Some(StaticLimitKind::UnsupportedSyntax),
+);
+
+#[test]
+fn given_the_builtin_caplog_then_the_logged_text_is_credited() -> Result<(), String> {
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", PINNED)])?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_conftest_or_module_caplog_fixture_then_the_logged_text_abstains() -> Result<(), String> {
+    let conftest = "import pytest\n\n\n@pytest.fixture\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    let module = PINNED.replace(
+        "def test_low_balance",
+        "@pytest.fixture\ndef caplog():\n    return Recorder()\n\n\ndef test_low_balance",
+    );
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", &module)])?,
+        ABSTAINS
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_directly_parametrized_caplog_then_the_logged_text_abstains() -> Result<(), String> {
+    let test = PINNED.replace(
+        "def test_low_balance",
+        "@pytest.mark.parametrize(\"caplog\", [Recorder()])\ndef test_low_balance",
+    );
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", &test)])?,
+        ABSTAINS
+    );
+    Ok(())
+}
+
+#[test]
+fn given_more_fixtures_than_the_attach_cap_then_a_caplog_override_is_still_found()
+-> Result<(), String> {
+    // Parameters sort before `caplog`, so eight plain fixtures use the cap
+    // first (#10407 review).
+    let names: Vec<String> = (1..=8).map(|n| format!("a{n}")).collect();
+    let mut module = String::from("import pytest\n\n\n");
+    for name in names.iter().map(String::as_str).chain(["caplog"]) {
+        module.push_str(&format!(
+            "@pytest.fixture\ndef {name}():\n    return 1\n\n\n"
+        ));
+    }
+    let signature = format!("def test_low_balance({}, caplog):", names.join(", "));
+    let test = PINNED.replace("def test_low_balance(caplog):", &signature);
+    let test = test.replace(
+        "\n\n\ndef test_low_balance",
+        &format!("\n\n\n{module}def test_low_balance"),
+    );
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", &test)])?,
+        ABSTAINS
+    );
+    Ok(())
+}
