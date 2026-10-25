@@ -1,0 +1,88 @@
+Static evidence for #9814
+
+Production source basis: 1818f481c279b84634c32ee19e9c23d199459967
+Production source tree: 83621868be9c417527d2bc79d7d1f52769abe566
+Toolchain: rustc 1.95.0 (59807616e 2026-04-14), default language features.
+The candidate adds only corpus/spec/evidence; production source is unchanged.
+Scratch and Cargo-home paths in native output are normalized for publication.
+
+Compiler-selected baseline executable SHA256: d23fc52cf0963f5b7cff12453ce32675c83599eead56419b528778b78d1c5d70
+Compiler-selected wrong-implementation executable SHA256: 18721df4eb9265e4f88310da3705e402967895be67b11168abffb8a27e8fbe89
+Wrong-implementation patch SHA256: e2d85eb81334df57eca32597ae140f18360bc5ccb09adae2d21fcbc9c8d5b2e4
+
+corpus-validate.log; native exit 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/xtask verdict-corpus validate --language python`
+verdict-corpus: 241 cases across 23 subjects are valid; spec examples covered 57/57 (floor 57)
+
+corpus-report.log; native exit 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/xtask verdict-corpus report --language python --cases py-nested-independent-outer-owner,py-nested-repeated-inner-owner,py-nested-idempotent-owner --out <proof>/scored`
+$ CARGO_HOME=<cargo-home> RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=<rustup-home> cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+verdict-corpus: 3 cases; false verdicts 0.3333 (1/3), contradictions 0.0000 (0/3); wrote <proof>/scored
+verdict-corpus: spec examples covered 1.0000 (57/57), floor 57
+verdict-corpus: operator grid covers 2/21 cells (floor off); traps credited 0/0 (ceiling off)
+
+corpus-check-python.log; native exit 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/xtask verdict-corpus check --language python`
+$ CARGO_HOME=<cargo-home> RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=<rustup-home> cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+verdict-corpus: 241 cases; false verdicts 0.0041 (1/241), contradictions 0.0000 (0/241); wrote target/ripr/reports/verdict-corpus/python
+verdict-corpus: spec examples covered 1.0000 (57/57), floor 57
+verdict-corpus: operator grid covers 21/21 cells (floor 21); traps credited 0/17 (ceiling 0)
+
+same-callee-control.log; native exit 1
+   Compiling xtask v0.1.0 (/workspace/ripr-swarm/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.79s
+     Running `target/debug/xtask verdict-corpus check --language python --cases py-nested-repeated-inner-owner --out <proof>/same-callee-score`
+$ CARGO_HOME=<cargo-home> RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=<rustup-home> cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s
+verdict-corpus: 1 cases; false verdicts 1.0000 (1/1), contradictions 0.0000 (0/1); wrote <proof>/same-callee-score
+verdict-corpus: spec examples covered 1.0000 (57/57), floor 57
+verdict-corpus: operator grid covers 1/21 cells (floor off); traps credited 0/0 (ceiling off)
+xtask: verdict-corpus: the report drifted from fixtures/python-verdict-corpus/expected:
+- case `py-nested-repeated-inner-owner`: verdict moved; changed since labeling (line 11: expected `  "observed_verdict": "gap",`, got `  "observed_verdict": "credited",`)
+Read <proof>/same-callee-score/report.md. If the change is intended, re-bless fixtures/python-verdict-corpus/expected (`cargo xtask verdict-corpus bless --language python`) and state why each moved row changed in the PR.
+
+Wrong-implementation source delta (experimental, restored before candidate commit):
+diff --git a/crates/ripr/src/analysis/language/python/oracles.rs b/crates/ripr/src/analysis/language/python/oracles.rs
+index 833ffea00..f1b6f6079 100644
+--- a/crates/ripr/src/analysis/language/python/oracles.rs
++++ b/crates/ripr/src/analysis/language/python/oracles.rs
+@@ -707,7 +707,9 @@ fn is_property_compare(compare: &ast::ExprCompare, loops: &[String], source: &st
+                     loops.iter().any(|loop_name| loop_name == name.id.as_str())
+                         && super::mentions_python_name(&arguments, name.id.as_str())
+                 }
+-                Expr::Call(_) => {
++                Expr::Call(other_call)
++                    if expr_full_name(call.func.as_ref()) == expr_full_name(other_call.func.as_ref()) =>
++                {
+                     let inner = code_without_spacing(&text_for_range(source, other.range()));
+                     let arguments = code_without_spacing(&arguments);
+                     // The shared call must start at an identifier boundary,
+
+Wrong-implementation scored row:
+{
+  "case_id": "py-nested-repeated-inner-owner",
+  "subject_id": "authored-py-nested-call-9814",
+  "origin": "authored",
+  "anchor": "nested/core.py:6",
+  "behavior_family": "return_value",
+  "test_shape": "unittest_nested_assert_equality",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

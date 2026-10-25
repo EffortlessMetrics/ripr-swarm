@@ -16650,6 +16650,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python-verdict-corpus/subjects/authored-py-nested-call-9814",
+  "fixtures/python-verdict-corpus/cases/py-nested-independent-outer-owner.json",
+  "fixtures/python-verdict-corpus/cases/py-nested-repeated-inner-owner.json",
+  "fixtures/python-verdict-corpus/cases/py-nested-idempotent-owner.json",
   "fixtures/python_assertion_helper_field",
   "fixtures/python_assertion_helper_wrong_receiver",
   "fixtures/python_assertion_helper_wrong_field",

@@ -129,6 +129,50 @@ digest. Each such case cites its example in `spec_examples`, and
 `spec-coverage.toml` gates those citations on a floor; example 34, added at
 merge, has its cases under the same prefix.
 
+## Owner-sensitive nested calls (#9814)
+
+`authored-py-nested-call-9814` uses only stdlib `unittest`. Its single
+`assert f(g(5)) == g(5)` observes two different owners: independent `g`
+returns 10, so constant/increment edits of identity `f` fail; constant edits
+of `g` still pass because identity `f` preserves the changed value on both
+sides. A separate `normalize(normalize(x)) == normalize(x)` test retains
+the ordinary idempotence control.
+
+The three `py-nested-*-owner` cases retain these runtime labels. The outer
+owner's current gap is an explicit `known-false` record owned by #9814,
+not an accepted ideal result. Its expected row preserves the observation
+until a safe repair removes that record. Do not fix it by comparing only
+the outer and repeated callee names: that would falsely credit the inner
+owner case. A repair must resolve the oracle per finding and keep the same
+resolved assertion facts in selection, alignment and every direct strength
+consumer. Import aliases, receiver identity, owner calls nested inside the
+repeated expression, and helper calls back into the changed owner need
+separate controls before widening credit.
+
+At base `1818f481c279b84634c32ee19e9c23d199459967`, the direct strength
+readers include `assertion_selection`, `related_tests`, `classify`,
+`sink_alignment`, `boundary`, `table_rows`, `approx_band`, `arm_activation`,
+`guard_activation`, `term_activation`, `no_behavior`, `message_pin` and
+`static_limits`. `repo/evidence` also projects selected candidate assertions
+without an old changed line. A correction confined to the public row or the
+main classifier's final verdict would leave those consumers inconsistent.
+
+The retained [runtime transcript](evidence/9814-unittest.txt) records the
+three edited subjects and six return mutations. Replay their own test
+command from a scratch subject after applying the selected diff and then
+each recorded `mutated_line`, or use the existing `verdict-corpus relabel`
+route. Static scoring runs no Python:
+
+```bash
+cargo xtask verdict-corpus check --language python --cases py-nested-independent-outer-owner,py-nested-repeated-inner-owner,py-nested-idempotent-owner
+```
+
+The [static transcript](evidence/9814-static.txt) also retains a deliberately
+wrong same-callee-only experiment: it turns the inner-owner row into
+`exposed` / `false_exposed`, and the unchanged corpus check rejects that
+row. The experiment is excluded from the candidate; current extraction
+continues to demote all three cases.
+
 ## Refreshing
 
 When a ripr change moves a verdict, `check` fails and names each moved row.

@@ -1,0 +1,9 @@
+diff --git a/nested/core.py b/nested/core.py
+--- a/nested/core.py
++++ b/nested/core.py
+@@ -7,4 +7,4 @@
+ 
+ 
+ def normalize(value):
+-    return value.strip()
++    return str.strip(value)

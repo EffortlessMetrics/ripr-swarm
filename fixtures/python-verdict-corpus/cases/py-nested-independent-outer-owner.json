@@ -1,0 +1,52 @@
+{
+  "case_id": "py-nested-independent-outer-owner",
+  "subject_id": "authored-py-nested-call-9814",
+  "diff": "cases/py-nested-independent-outer-owner.diff",
+  "anchor": {
+    "file": "nested/core.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "unittest_nested_assert_equality",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python3 -B -m unittest discover -s tests -v",
+    "toolchain": "Python 3.12.14, stdlib unittest, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 0",
+        "mutated_line": "return 0",
+        "outcome": "tests_failed",
+        "failing_test": "test_nested.NestedCallTests.test_independent_helper_repeat",
+        "equivalence_review": "not equivalent: changes the return for at least one input of the edited owner"
+      },
+      {
+        "replacement": "return value + 1",
+        "mutated_line": "return value + 1",
+        "outcome": "tests_failed",
+        "failing_test": "test_nested.NestedCallTests.test_independent_helper_repeat",
+        "equivalence_review": "not equivalent: changes the return for at least one input of the edited owner"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Independent g(5) returns 10. Changing f to a constant or increment fails the repeated-helper assertion. Extraction currently demotes before the changed owner is known (#9814).",
+  "labeling_observation": {
+    "ripr_commit": "1818f481c279b84634c32ee19e9c23d199459967",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -850,6 +850,17 @@ mutant calibrates the rule; ripr reports only the static shape.
     `assertEqual` and helper forms keep their strength
     (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
 
+    Known missed credit (#9814): `f(g(x)) == g(x)` can discriminate a
+    change to identity `f` when `g` is independent, although the current
+    extraction-time rule demotes it. With owner `g`, the same assertion
+    still admits constant returns, so checking only whether the outer and
+    repeated callees have the same name is unsafe. The
+    `py-nested-independent-outer-owner` corpus case records this missed
+    credit; `py-nested-repeated-inner-owner` and
+    `py-nested-idempotent-owner` retain the negative controls. Owner-aware
+    credit remains pending a per-finding assertion model shared by all
+    strength consumers.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
