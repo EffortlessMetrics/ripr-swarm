@@ -34,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_path_actual_name_decoy/input --diff <cwd>/fixtures/module_reach_path_actual_name_decoy/diff.patch --mode fast probe:src_cmp.rs:predicate:8ac51101
   ripr context --root <cwd>/fixtures/module_reach_path_actual_name_decoy/input --diff <cwd>/fixtures/module_reach_path_actual_name_decoy/diff.patch --mode fast --at probe:src_cmp.rs:predicate:8ac51101
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_cmp.rs:predicate:8ac51101 --root <cwd>/fixtures/module_reach_path_actual_name_decoy/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/module_reach_path_actual_name_decoy/input --at src/cmp.rs:2 --kind predicate
 

@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_multiline_literal_sibling_read/input
+config: <cwd>/fixtures/python_multiline_literal_sibling_read/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING labels.py:4
+  id: probe:labels.py:python_preview:c4a51c9b
+
+Changed
+  after:          "label": "y",
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:labels.py::labels
+  canonical gap: gap:python:labels.py:labels:predicate_boundary:predicate:label_y
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `labels`
+  - infection yes: Changed Python expression can alter preview-classified predicate behavior: `"label": "y",`
+  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
+  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: "label": "y", (line 4) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_labels.py:3 test_name_is_x uses strong exact value oracle: assert labels()["name"] == "x"; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+
+Weakness
+  - A strong Python oracle reaches `labels`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
+
+Repair placement
+  suggested file: tests/test_labels.py
+  suggested test: test_name_is_x
+  pytest node: tests/test_labels.py::test_name_is_x
+  verify: python -m pytest tests/test_labels.py::test_name_is_x (high)
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast probe:labels.py:python_preview:c4a51c9b
+  ripr context --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast --at probe:labels.py:python_preview:c4a51c9b
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
