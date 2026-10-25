@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return subtotal + shipping(subtotal) + FLAT;
-  Missing discriminator (1 of 2): The change to `price` only adds or drops the additive term `fee`, which is 0 for every tested input, so both versions return the same value. Add a case whose input makes `fee`…
+  Missing discriminator (1 of 2): The change to `price` only adds or drops the additive term `fee`,
+    which is 0 for every tested input, so both versions return the same value. Add a case whose
+    input makes `fee` non-zero
   Related test: tests/price.test.ts:3 price
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `return value == subtotal + shipping(subtotal) + FLAT`; no actionable repair
