@@ -118,6 +118,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped `FmtContext` memo by owner slot (#9260).
+    fmt_contexts: fmt_dispatch::FmtContextMemo,
     /// Source-expansion facts for this immutable classification run.
     implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
@@ -311,6 +313,10 @@ impl RelatedTestCandidateIndex {
         &self,
     ) -> &super::super::classifier::OwnerCallerNames {
         &self.owner_caller_names
+    }
+
+    fn fmt_contexts(&self) -> &fmt_dispatch::FmtContextMemo {
+        &self.fmt_contexts
     }
 
     fn candidate_indices(
@@ -952,8 +958,20 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
-    let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
+    // #9260: the context depends only on (index, owner); the run-level memo
+    // shares one build across every probe of the owner.
+    let fmt_context: std::cell::OnceCell<std::sync::Arc<Option<fmt_dispatch::FmtContext>>> =
         std::cell::OnceCell::new();
+    #[cfg(test)]
+    let local_fmt_contexts;
+    let fmt_contexts = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.fmt_contexts(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => {
+            local_fmt_contexts = fmt_dispatch::FmtContextMemo::default();
+            &local_fmt_contexts
+        }
+    };
     // #9329: a free-function owner reached through a method-hop chain cannot be
     // the target of a receiver call. A call fact whose only mention of the
     // owner's name is `x.name(..)` (a std `expected.to_string()` inside a test
@@ -993,17 +1011,10 @@ fn find_related_tests_with_candidates<'a>(
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
-            fmt_context
-                .get_or_init(|| fmt_dispatch::FmtContext::new(index, owner))
-                .as_ref()
-                .is_some_and(|context| {
-                    fmt_dispatch::test_dispatches_to_fmt(
-                        test,
-                        owner,
-                        &indexed_same_name_ids,
-                        context,
-                    )
-                })
+            let context = fmt_context.get_or_init(|| fmt_contexts.context(index, owner));
+            Option::as_ref(context).is_some_and(|context| {
+                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids, context)
+            })
         });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
@@ -2006,10 +2017,21 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 if !(local_root && names_entry) {
                     return false;
                 }
-                // Known limit (RIPR-SPEC-0159): a relative-prefixed import of
-                // the entry is never resolved. Only `crate::` from a unit test
-                // inside the library's `src/` stays credited.
-                !(in_src_unit_test && segments.first() == Some(&"crate"))
+                // `crate::` from a unit test inside the library's `src/` stays
+                // credited. A relative `self::`/`super::` import (#9971) is
+                // credited only when the scope-aware resolver proves it names
+                // the entry's own module; every other relative-prefixed
+                // import of the entry (an integration test's, an aliased or
+                // unresolved one) is never resolved and refuses.
+                !(in_src_unit_test
+                    && (segments.first() == Some(&"crate")
+                        || import.alias.is_none()
+                            && super::call_identity::unit_test_relative_import_names_entry(
+                                index,
+                                &test.file,
+                                &import.path,
+                                caller,
+                            )))
             })
     };
     if binds_entry_locally(&facts.source) || binds_entry_locally(&test.body) {
@@ -2028,7 +2050,22 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 .map(unraw)
                 .is_some_and(|first| is_lib_first(&first))
         });
-    if !uses_prefix {
+    // A resolved relative import (#9971) carries no library prefix, but its
+    // bare call still meets the nearer-binding vetoes below.
+    let uses_relative = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                let segments: Vec<&str> = import.path.split("::").collect();
+                matches!(segments.first(), Some(&("self" | "super")))
+                    && segments.last().map(|last| unraw(last)).as_deref()
+                        == Some(caller.name.as_str())
+            })
+    };
+    let relative_route = in_src_unit_test
+        && !uses_prefix
+        && (uses_relative(&facts.source) || uses_relative(&test.body));
+    if !uses_prefix && !relative_route {
         return true;
     }
     // Resolve the imported suffix, not just the prefix: every import of the
@@ -2185,6 +2222,9 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         )
     {
         return false;
+    }
+    if relative_route {
+        return true;
     }
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;

@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0097-ex5-camelcase-identifier",
+  "subject_id": "authored-ts-vitest-unnum",
+  "origin": "authored",
+  "anchor": "src/parserIdent.ts:3",
+  "behavior_family": "error_message",
+  "test_shape": "vitest_tothrow_camelcase_identifier",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

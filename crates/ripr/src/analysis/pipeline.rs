@@ -1162,6 +1162,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         .collect::<Vec<_>>();
 
     let mut findings: Vec<Finding> = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
@@ -1252,6 +1253,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
         rust_consumed_sources = result.rust_consumed_sources;
+        value_origins.extend(result.value_origins);
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
@@ -1389,6 +1391,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                 if repeat_typescript_pass {
                     continue;
                 }
+                value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
                 if reads_only_supplied_evidence {
                     supplied_evidence_limitations += result.limitations.len();
@@ -1933,6 +1936,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     }
 
     Ok(AnalysisResult {
+        value_origins,
         harness_projections,
         analysis_outcome,
         summary: summary_result,
@@ -2062,6 +2066,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
@@ -2106,6 +2111,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             rust_harness_projections = result.harness_projections;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
             rust_consumed_sources = result.rust_consumed_sources;
+            value_origins.extend(result.value_origins);
             findings.extend(result.findings);
             rust_production_files += result.production_files;
             files_by_language.push((LanguageId::Rust, result.production_files));
@@ -2138,6 +2144,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                     matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
                         && std::mem::replace(&mut typescript_family_merged, true);
                 if !repeat_typescript_pass {
+                    value_origins.extend(result.value_origins);
                     findings.extend(result.findings);
                     // The shared adapter's file total covers the whole
                     // TS/JS family. With both ids selected it is attributed
@@ -2213,6 +2220,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     }
 
     Ok(AnalysisResult {
+        value_origins,
         harness_projections: rust_harness_projections,
         analysis_outcome: None,
         summary: summary_result,
@@ -2829,6 +2837,7 @@ fn rebase_finding_paths_to_repository(
             |relative| repository_root.join(relative),
         )
     };
+    result.value_origins.rebase(rebase);
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An assertion that compares a wrapped test now reads the same wrapper under a trailing comma (`Some(x == 3,)` against `Some(true)`), a fully qualified standard path (`std::option::Option::Some`, `::core::result::Result::Ok`), a closure argument (`Foo::new(|v| v == 1)` holds an unevaluated body, not a test), or a comment after a one-element tuple's comma (`(x == 1, /* note */).0` against `true`). These four spellings read weak where exact was right; no reading rises above what it was for a wrapper that holds a test (#8654).
