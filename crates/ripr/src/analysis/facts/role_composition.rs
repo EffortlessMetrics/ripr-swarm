@@ -17,8 +17,9 @@
 //!   function inside a context that structurally requires a test build is
 //!   granted `CfgTestModule`.
 //! - **Composition only mints `CfgTestModule`** (evidence-only). It never
-//!   creates or removes executable `TestFact`s — that stays behind the
-//!   #3499/#3532 executable-test authority.
+//!   creates executable `TestFact`s — that stays behind the #3499/#3532
+//!   executable-test authority. The one removal is the tests of a file no
+//!   Cargo target compiles (#8999), which never run.
 //! - **Unknown fails closed.** Ambiguous or cyclic module ownership,
 //!   conflicting module/include contexts, dynamic `#[path]` targets, and
 //!   unresolved targets grant nothing and name the earliest unresolved edge
@@ -33,6 +34,7 @@ use super::FunctionSourceRole;
 use super::model::{
     ModuleDeclarationFact, ModulePathTarget, ResolvedIncludeParent, RustIndex, SourceRoleProvenance,
 };
+use super::stray_files;
 use super::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -137,10 +139,32 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
             facts.role_provenance = provenance;
         }
     }
+    withhold_tests_outside_module_tree(index, &outside_module_tree);
     if granted.is_empty() {
         return;
     }
     apply_cfg_test_module_grants(index, &granted);
+}
+
+/// Drops the executable tests of files that no Cargo target compiles (#8999):
+/// they never run, so they are not related-test evidence. Only the test
+/// registrations go; the files, their functions and their provenance stay, so
+/// an owner in such a file still reads as outside the module tree. Every
+/// composition pass starts from freshly normalized tests, so a file that a
+/// later leaf addition links gets its tests back through incremental reuse.
+fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<PathBuf>) {
+    if outside.is_empty() {
+        return;
+    }
+    for file in outside {
+        if let Some(facts) = index.files.get_mut(file) {
+            facts.tests.clear();
+        }
+    }
+    let test_facts = &index.test_facts;
+    index
+        .test_order
+        .retain(|&id| !outside.contains(&test_facts[id].file));
 }
 
 /// The files positively outside every crate's module tree (#7426): plain
@@ -159,50 +183,89 @@ fn files_outside_module_tree(
     workspace_root: &Path,
     resolutions: &[(PathBuf, Context, SourceRoleProvenance)],
 ) -> BTreeSet<PathBuf> {
-    let unresolved_composition = !index.include_limitations.is_empty()
-        || index.files.values().any(|facts| {
-            facts.used_lexical_fallback
-                || facts
-                    .module_declarations
-                    .iter()
-                    .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
-        });
-    if unresolved_composition {
+    if !index.include_limitations.is_empty() {
         return BTreeSet::new();
     }
+    let is_poisoning = |facts: &super::index::IndexedFileFacts| {
+        facts.used_lexical_fallback
+            || facts
+                .module_declarations
+                .iter()
+                .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
+    };
     let mut crate_roots = CrateRoots::default();
+    // Files no known edge reaches and that are not a crate root.
+    let unlinked: Vec<&PathBuf> = resolutions
+        .iter()
+        .filter(|(file, context, provenance)| {
+            *context == Context::Production
+                && provenance.edges.is_empty()
+                && provenance.earliest_unresolved_reason.is_none()
+                && !index.include_parents.contains_key(file)
+                && !crate_roots.is_crate_root(workspace_root, file)
+        })
+        .map(|(file, _, _)| file)
+        .collect();
+    // Any lexical-fallback file or unknown `#[path]` may compile an unlinked
+    // file, so the `src/<name>.rs` shape needs none anywhere. The stray shape
+    // tolerates them in files that are themselves unlinked: a file no root
+    // reaches never compiles its own declarations either, and a poisoning
+    // file that is a root or is linked blocks every claim.
+    let unresolved_composition = index.files.values().any(&is_poisoning);
+    let poison_only_in_unlinked = index
+        .files
+        .iter()
+        .filter(|(_, facts)| is_poisoning(facts))
+        .all(|(file, _)| unlinked.contains(&file));
     let mut outside = BTreeSet::new();
-    for (file, context, provenance) in resolutions {
-        let unlinked = *context == Context::Production
-            && provenance.edges.is_empty()
-            && provenance.earliest_unresolved_reason.is_none()
-            && !index.include_parents.contains_key(file);
-        if !unlinked || crate_roots.is_crate_root(workspace_root, file) {
-            continue;
-        }
+    let mut stray_candidates: Vec<PathBuf> = Vec::new();
+    let mut manifest_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+    for file in unlinked {
         let Some(package_dir) = crate_roots.package_manifest_dir(workspace_root, file) else {
             continue;
         };
         let Ok(relative) = file.strip_prefix(&package_dir) else {
             continue;
         };
+        let package_root_indexed = ["lib.rs", "main.rs"].iter().any(|root| {
+            index
+                .files
+                .contains_key(&package_dir.join("src").join(root))
+        });
+        if !package_root_indexed {
+            continue;
+        }
         let direct_src_module = matches!(
             relative.components().collect::<Vec<_>>().as_slice(),
             [Component::Normal(dir), Component::Normal(name)]
                 if dir.to_str() == Some("src")
                     && name.to_str().is_some_and(|name| name.ends_with(".rs"))
         );
-        let package_root_indexed = ["lib.rs", "main.rs"].iter().any(|root| {
-            index
-                .files
-                .contains_key(&package_dir.join("src").join(root))
-        });
-        if direct_src_module
-            && package_root_indexed
-            && !module_may_be_declared_invisibly(index, workspace_root, &package_dir, file)
-        {
-            outside.insert(file.clone());
+        if direct_src_module {
+            if !unresolved_composition
+                && !module_may_be_declared_invisibly(index, workspace_root, &package_dir, file)
+            {
+                outside.insert(file.clone());
+            }
+        } else if poison_only_in_unlinked && stray_files::is_stray_shape(relative) {
+            stray_candidates.push(file.clone());
+            manifest_dirs.insert(package_dir);
         }
+    }
+    if !stray_candidates.is_empty() {
+        // Every package manifest and member manifest may name a target path.
+        for file in index.files.keys() {
+            if let Some(dir) = crate_roots.package_manifest_dir(workspace_root, file) {
+                manifest_dirs.insert(dir);
+            }
+        }
+        manifest_dirs.extend(index.workspace_member_dirs.iter().cloned());
+        outside.extend(stray_files::never_compiled(
+            index,
+            workspace_root,
+            &manifest_dirs,
+            &stray_candidates,
+        ));
     }
     outside
 }

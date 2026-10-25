@@ -631,6 +631,11 @@ id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust-only out-parameter oracle credit; not a perl verdict example"
 
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
 # listed row is no longer false, so a bless cannot absorb a new false verdict
