@@ -2571,20 +2571,58 @@ fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> 
         if !is_invocation {
             return false;
         }
-        let head = masked.get(..at).unwrap_or_default().trim_end();
-        let path_start = head
-            .char_indices()
-            .rev()
-            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ':'))
-            .map(|(index, c)| index + c.len_utf8())
-            .unwrap_or(0);
-        let path = head.get(path_start..).unwrap_or_default();
-        if path.is_empty() || PREFIX_KEYWORDS.contains(&path) {
+        let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        let [name] = segments.as_slice() else {
+            // No path is no macro; a qualified path (`dep :: r#println!`,
+            // `::m!`) may name any crate's macro, so it is opaque.
+            return !segments.is_empty();
+        };
+        if global {
+            return true;
+        }
+        if PREFIX_KEYWORDS.contains(name) {
             return false;
         }
-        let name = path.trim_start_matches("r#");
-        path.contains(':') || transparent_macros_rebound || !TRANSPARENT_STD_MACROS.contains(&name)
+        transparent_macros_rebound
+            || !TRANSPARENT_STD_MACROS.contains(&name.trim_start_matches("r#"))
     })
+}
+
+/// The macro path that ends `head`, read token by token from the end:
+/// identifier segments (a raw one keeps its `r#`) joined by `::`
+/// with any whitespace or masked comment between them. Returns the
+/// segments, root first, and whether the path starts with `::`.
+fn macro_path_before(head: &str) -> (Vec<&str>, bool) {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut segments = Vec::new();
+    let mut rest = head.trim_end();
+    loop {
+        let start = rest
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !is_ident(*c))
+            .map_or(0, |(index, c)| index + c.len_utf8());
+        if rest.get(start..).is_none_or(str::is_empty) {
+            break;
+        }
+        // Keep a raw marker on the segment: `r#if!` is a macro, not `if`.
+        let start = match rest.get(..start) {
+            Some(before) if before.ends_with("r#") => start - 2,
+            _ => start,
+        };
+        segments.push(rest.get(start..).unwrap_or_default());
+        rest = rest.get(..start).unwrap_or_default().trim_end();
+        match rest.strip_suffix("::") {
+            Some(before) => rest = before.trim_end(),
+            None => break,
+        }
+        if !rest.ends_with(is_ident) {
+            segments.reverse();
+            return (segments, true);
+        }
+    }
+    segments.reverse();
+    (segments, false)
 }
 
 /// Whether `receiver` is exactly one receiver expression: `self`, or a
@@ -3844,12 +3882,27 @@ mod tests {
             "tracing::info!(qty);",
             "log::warn!(qty);",
             "std::println!(\"x\");",
+            // #10351 review: spacing, comments and raw identifiers do not
+            // turn a qualified path into a bare trusted name.
+            "dep :: println!(qty);",
+            "dep::r#println!(qty);",
+            "dep /* c */ :: r#println ! (qty);",
+            "::println!(qty);",
         ] {
             assert!(caller_invokes_opaque_macro(body, false), "{body}");
         }
         // Once any file rebinds a standard name, no bare macro is trusted.
         assert!(caller_invokes_opaque_macro("println!(\"x\");", true));
         assert!(!caller_invokes_opaque_macro("let same = a != b;", true));
+        assert!(!caller_invokes_opaque_macro("r#println!(\"x\");", false));
+        assert_eq!(
+            macro_path_before("x; dep    :: r#m "),
+            (vec!["dep", "r#m"], false)
+        );
+        assert!(caller_invokes_opaque_macro("r#if!(x);", false));
+        assert_eq!(macro_path_before("x; :: m"), (vec!["m"], true));
+        assert_eq!(macro_path_before("let s = a"), (vec!["a"], false));
+        assert_eq!(macro_path_before("(a) "), (Vec::<&str>::new(), false));
     }
 
     // #6694 / #6672: an exact oracle on the wrapper's result stands for the

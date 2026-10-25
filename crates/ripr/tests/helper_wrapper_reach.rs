@@ -254,6 +254,8 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
 // #10284: neither twin borrows the wrapper's pins when the wrapper binds
 // the helper's name or runs a user macro that may return first; a logging
 // macro keeps both twins credited.
+const DEP_PRINTLN: &str = "use crate as dep;\n#[macro_export]\nmacro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }";
+
 #[test]
 fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), String> {
     for wrapper in [
@@ -298,6 +300,10 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
             "macro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }\n",
             "println!(qty);",
         ),
+        // Equivalent spellings of one qualified path to an exported macro.
+        (DEP_PRINTLN, "dep::println!(qty);"),
+        (DEP_PRINTLN, "dep :: println!(qty);"),
+        (DEP_PRINTLN, "dep /* routed */ :: r#println ! (qty);"),
     ] {
         let source = format!(
             "{prelude}\n{}",
