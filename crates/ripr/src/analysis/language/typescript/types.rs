@@ -206,6 +206,15 @@ pub(crate) struct TypeScriptTest {
     /// returns is not recorded. Internal: it feeds one abstention and never a
     /// relation or credit.
     pub(crate) setup_hook_bodies: Vec<String>,
+    /// #10438: the unevaluated `if` condition(s), outermost first and joined
+    /// with `&&`, that this test's registration sits under (a platform or
+    /// environment guard such as `if (isWindows) { test(...) }`). The test
+    /// is indexed so it reaches its owner, but it may never be registered at
+    /// runtime, so its assertions are not credited (fail-closed) and a
+    /// finding that consults it carries the
+    /// `typescript_conditional_registration` limitation. `None` for a test
+    /// registered unconditionally.
+    pub(crate) conditional_registration: Option<String>,
 }
 
 impl TypeScriptTest {

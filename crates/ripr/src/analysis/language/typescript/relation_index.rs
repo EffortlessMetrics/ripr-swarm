@@ -239,6 +239,7 @@ mod tests {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
         }

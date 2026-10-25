@@ -1014,6 +1014,49 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.levels.pop();
             continue;
         }
+        if let Statement::IfStatement(if_stmt) = stmt
+            && constant_condition_value(&if_stmt.test).is_none()
+        {
+            // #10438: a registration under a platform or environment guard
+            // is indexed so it reaches its owner, marked conditional so its
+            // assertions earn no credit. The condition is the guard for the
+            // consequent; the alternate runs under its negation.
+            let condition = snippet_for_span(
+                source.text(),
+                if_stmt.test.span().start as usize,
+                if_stmt.test.span().end as usize,
+            );
+            for (branch, guard) in std::iter::once((&if_stmt.consequent, condition.clone())).chain(
+                if_stmt
+                    .alternate
+                    .iter()
+                    .map(|alternate| (alternate, format!("!({condition})"))),
+            ) {
+                scope.guards.push(guard);
+                match branch {
+                    Statement::BlockStatement(block) => collect_tests_from_statements(
+                        &block.body,
+                        file,
+                        source,
+                        mocks,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                    other => collect_tests_from_statements(
+                        std::slice::from_ref(other),
+                        file,
+                        source,
+                        mocks,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                }
+                scope.guards.pop();
+            }
+            continue;
+        }
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
             // A `for`/`for...of`/`for...in` or `.forEach` callback body
             // registers its tests once per iteration; its loop variables or
@@ -1066,6 +1109,13 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .collect();
             test.scope_bindings = scope.resolve_with(parameters);
             test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
+            if !scope.guards.is_empty() {
+                // Fail-closed cap: the test still reaches its owner, but a
+                // registration that may not happen cannot credit an oracle.
+                test.conditional_registration = Some(scope.guards.join(" && "));
+                test.assertions.clear();
+                test.assertion_admission = TypeScriptAssertionAdmission::Unresolved;
+            }
             tests.push(test);
         }
     }
@@ -1229,6 +1279,9 @@ pub(crate) struct TestScope {
     assertion_bindings: TypeScriptAssertionBindings,
     /// File-wide facts for each test's assertion admission (#5524).
     admission: TypeScriptAdmissionContext,
+    /// The unevaluated `if` conditions the statements being walked sit
+    /// under, outermost first (#10438).
+    guards: Vec<String>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -3071,6 +3124,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        conditional_registration: None,
     })
 }
 
