@@ -22,7 +22,10 @@ concurrency:
 jobs:
   size-scaling:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 11 cells x 3 steps x the 3-minute step deadline is 99 minutes in the worst
+    # case, plus the release build; the report is written only after the last
+    # cell, so the job must outlive that.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v6
         with:
