@@ -1696,7 +1696,7 @@ fn single_variant() {
             let facts = crate::analysis::extract::extract_assertions_in(
                 text,
                 7,
-                &super::LocalDecls::from_source(source),
+                &crate::analysis::extract::LazyDecls::new(source),
             );
             let scanned = facts
                 .iter()

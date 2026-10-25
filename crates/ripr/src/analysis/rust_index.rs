@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) use super::extract::contains_macro_invocation;
 pub(crate) use super::extract::{
-    LocalDecls, OracleTextShape, classify_assertion, classify_assertion_with,
+    LazyDecls, OracleTextShape, classify_assertion, classify_assertion_with,
     err_return_guard_oracles, extract_assertions, extract_assertions_in, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,

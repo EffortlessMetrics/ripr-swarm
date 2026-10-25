@@ -6,7 +6,7 @@ use super::arguments::{
     parenthesized_contents, starts_discarded_matcher_computation,
 };
 use super::classify::{classify_assertion, classify_assertion_with};
-use super::pattern_admission::LocalDecls;
+use super::pattern_admission::LazyDecls;
 use super::patterns::{
     ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
     is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
@@ -18,13 +18,13 @@ use crate::analysis::extract::text::extract_identifier_tokens;
 use crate::analysis::extract::{delimiters_balance, group_end, mask_comments_and_strings};
 
 pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFact> {
-    extract_assertions_in(body, start_line, &LocalDecls::from_source(body))
+    extract_assertions_in(body, start_line, &LazyDecls::new(body))
 }
 
 pub(crate) fn extract_assertions_in(
     body: &str,
     start_line: usize,
-    decls: &LocalDecls,
+    decls: &LazyDecls,
 ) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
     // #3709: the dedicated guarded-Result-match scanner owns every recognized
@@ -105,7 +105,7 @@ pub(crate) fn extract_assertions_in(
             }
             let preceding_lines = leading_blank_lines(&trimmed);
             trimmed = trimmed.trim().to_string();
-            let mut classification = classify_assertion_with(&trimmed, decls);
+            let mut classification = classify_assertion_with(&trimmed, decls.get());
             // RIPR-SPEC-0106: upgrade exact assertions on unwrap_err-bound
             // variables to ExactErrorVariant so the ErrorVariant seam can credit
             // them as a kind-matching discriminator. Constructor-payload
