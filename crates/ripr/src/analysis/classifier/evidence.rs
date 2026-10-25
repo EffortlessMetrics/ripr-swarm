@@ -11,7 +11,7 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
     observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    owner_touches_field_only_at, package_prefix, parameter_rebound,
+    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field, unexercised_mask_bits,
@@ -475,7 +475,12 @@ impl ClassifiedProbeEvidence {
                             &context.related_tests,
                         )
                     } else {
-                        !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                        !chain_forwards_to_observed_hops(
+                            &owner.name,
+                            chain,
+                            &context.related_tests,
+                            context.index,
+                        )
                             && field_projection.is_none()
                     } =>
             {
@@ -970,6 +975,14 @@ impl ClassifiedProbeEvidence {
             )
             .activation
         };
+        // #9329: the asserting entry's check helper never names the owner,
+        // so only the name defeats gate it.
+        let entry_loan = |test: &TestSummary, assertion: &OracleFact| {
+            context.owner_fn.filter(|owner| {
+                !import_defeats(test, &owner.name) && !cross_package_defeats(test, &owner.name)
+            })?;
+            pin_syntax.helper_loan(test, assertion, context.index)
+        };
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
@@ -1015,6 +1028,7 @@ impl ClassifiedProbeEvidence {
                     .map(|chain| WrapperEntryPairing {
                         chain,
                         test_activation: &one_test_activation,
+                        entry_loan: &entry_loan,
                     }),
                 context.index,
             ) {
@@ -1050,6 +1064,13 @@ impl ClassifiedProbeEvidence {
         // to the same value: the field equals that operand there. Both
         // operands must be established primitive, so the dropped operator cannot
         // be an overloaded call with side effects (#7084 review).
+        let outer_imports = context
+            .owner_fn
+            .filter(|_| {
+                matches!(context.probe.family, ProbeFamily::FieldConstruction)
+                    && discriminate.state == StageState::Yes
+            })
+            .and_then(|owner| outer_imported_names(context.index, owner));
         let discriminate = if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && discriminate.state == StageState::Yes
             && let Some(owner) = context.owner_fn
@@ -1057,6 +1078,7 @@ impl ClassifiedProbeEvidence {
                 &context.probe.expression,
                 &owner.name,
                 owner.body.as_str(),
+                outer_imports.as_ref(),
                 &context.related_tests,
                 context.index,
             ) {

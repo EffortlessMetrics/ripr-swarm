@@ -1,0 +1,22 @@
+{
+  "case_id": "macro-table-arrow-rows-refused",
+  "subject_id": "authored-macro-table",
+  "origin": "authored",
+  "anchor": "src/lib.rs:21",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_arrow_separator",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

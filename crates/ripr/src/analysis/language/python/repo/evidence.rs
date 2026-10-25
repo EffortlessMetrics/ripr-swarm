@@ -355,6 +355,14 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &reach_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
+    super::super::fixtures::taint_admission_by_conftest_declarations(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+        root.join(path).exists()
+    });
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
@@ -737,13 +745,13 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, None, &focus, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, None, None, &focus, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
-    let alignment = classify_sink_alignment_with_old(owner, text, None, related, all_tests);
+    let alignment = classify_sink_alignment_with_old(owner, text, None, related, all_tests, false);
     let strongest = related
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())

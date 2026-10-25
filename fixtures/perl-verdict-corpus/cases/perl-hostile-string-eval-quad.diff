@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..ec54ea2 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -50,7 +50,7 @@ for my $op (sort keys %MULT) {
+     *{__PACKAGE__ . "::$op"} = sub { return $_[0] * $by };
+ }
+ 
+-eval "sub quad { \$_[0] * 4 }";
++eval "sub quad { 4 * \$_[0] }";
+ 
+ sub café_price {
+     my ($montant) = @_;
