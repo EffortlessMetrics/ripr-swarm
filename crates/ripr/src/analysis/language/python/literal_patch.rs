@@ -331,10 +331,12 @@ fn patch_target(expr: &Expr, imports: &[PythonImport]) -> Option<String> {
         return None;
     };
     // A zero stand-in makes `x + v` and `x - v` the same value, hiding an
-    // operator flip; a string stand-in raises on `-`, which the test sees.
+    // operator flip, and an empty string stand-in hides a reorder of the call
+    // among string parts; a non-empty string raises on `-` or shows in the
+    // asserted value, which the test sees.
     let usable = match &value.value {
         ast::Constant::Int(number) => number.to_string() != "0",
-        ast::Constant::Str(_) => true,
+        ast::Constant::Str(text) => !text.is_empty(),
         _ => false,
     };
     usable.then(|| target.clone())

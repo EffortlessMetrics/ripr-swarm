@@ -249,6 +249,33 @@ fn a_non_integer_stand_in_keeps_the_limit() {
     }
 }
 
+/// An empty string stand-in contributes nothing to the value, so moving the
+/// call among the string parts is invisible to the test.
+#[test]
+fn an_empty_string_stand_in_keeps_the_limit() {
+    let empty = clock_test("with patch(\"idioms.clock.time.time\", return_value=\"\"):");
+    for (new, old) in [
+        (
+            "    return f\"{prefix}{time.time()}\"",
+            "    return f\"{time.time()}{prefix}\"",
+        ),
+        (
+            "    return prefix + \"x\" + time.time()",
+            "    return prefix + time.time() + \"x\"",
+        ),
+        (
+            "    return prefix + time.time()",
+            "    return time.time() + prefix",
+        ),
+    ] {
+        assert_eq!(
+            limit(new, old, &empty),
+            Some(StaticLimitKind::MockedModule),
+            "{new}"
+        );
+    }
+}
+
 /// With a zero stand-in `x + v` and `x - v` agree, so an operator flip is
 /// invisible; a nonzero one keeps it visible.
 #[test]
