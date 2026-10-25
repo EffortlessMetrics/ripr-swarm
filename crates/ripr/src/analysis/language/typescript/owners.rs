@@ -71,6 +71,7 @@ pub(crate) fn owners_from_program(
         }
     }
     assign_class_entries(&mut owners, &class_instance_field_names(program));
+    assign_decorated_entries(program, source, &mut owners);
     owners
 }
 
