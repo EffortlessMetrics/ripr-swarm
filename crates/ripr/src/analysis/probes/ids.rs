@@ -61,14 +61,14 @@ fn normalize_outside_literals(
     result
 }
 
-/// Compute the 8-char hex fingerprint for a content-addressed probe id.
-/// Payload is NUL-separated: `<sanitized_path>\0<family_str>\0<owner_str>\0<normalized_expression>\0`
-fn compute_fp8(
+/// SHA-256 over the identity payload
+/// `<sanitized_path>\0<family_str>\0<owner_str>\0<normalized_expression>\0`.
+fn payload_digest(
     sanitized_path: &str,
     family_str: &str,
     owner_str: &str,
     normalized_expression: &str,
-) -> String {
+) -> [u8; 32] {
     // Normalize path separators in the owner symbol so the fingerprint is
     // platform-independent. The owner `SymbolId` embeds a file path walked
     // from the filesystem, which uses `\` on Windows and `/` elsewhere;
@@ -84,10 +84,39 @@ fn compute_fp8(
     hasher.update(b"\0");
     hasher.update(normalized_expression.as_bytes());
     hasher.update(b"\0");
-    let hash = hasher.finalize();
+    hasher.finalize().into()
+}
+
+/// Compute the 8-char hex fingerprint for a content-addressed probe id.
+fn compute_fp8(
+    sanitized_path: &str,
+    family_str: &str,
+    owner_str: &str,
+    normalized_expression: &str,
+) -> String {
+    let hash = payload_digest(sanitized_path, family_str, owner_str, normalized_expression);
     format!(
         "{:02x}{:02x}{:02x}{:02x}",
         hash[0], hash[1], hash[2], hash[3]
+    )
+}
+
+/// Full-width digest of the payload a probe id fingerprints. Probes that
+/// share one eight-hex id but carry different payloads (#8838) rank by this
+/// key, so their collision ordinals do not depend on the order the diff
+/// presents them in. `base_id` stands in for the path component: probes
+/// ranked together already share it.
+pub(crate) fn collision_rank_key(
+    base_id: &str,
+    family_str: &str,
+    owner_str: &str,
+    expression: &str,
+) -> [u8; 32] {
+    payload_digest(
+        base_id,
+        family_str,
+        owner_str,
+        &normalize_rust_expression(expression),
     )
 }
 

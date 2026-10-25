@@ -127,8 +127,11 @@ identity input invalidates the
 ID so an earlier suppression cannot silently select a different value. Genuine
 repeated expressions retain distinct ordinal-suffixed IDs. The public-path
 metamorphic and stale-suppression controls are in
-`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
-fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). Distinct expressions
+that share an fp8 at one owner take their collision ordinals from a full
+payload digest, so their IDs do not depend on diff order (#8838). The
+sole-expression half of #8838, a lone changed expression whose fp8 equals a
+different earlier expression's, remains unmet acceptance; duplicate-expression
 ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
