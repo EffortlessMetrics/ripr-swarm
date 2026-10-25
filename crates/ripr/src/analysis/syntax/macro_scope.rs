@@ -93,6 +93,31 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
     Some(scope)
 }
 
+/// Byte offset of the first `name!` token pair in the code (not a comment or
+/// a literal, and not the tail of a longer identifier) for any `names`.
+pub(crate) fn first_macro_call(
+    source: &str,
+    names: &std::collections::BTreeSet<String>,
+) -> Option<usize> {
+    let parse = parse_clean_source_file(source)?;
+    let mut previous: Option<ra_ap_syntax::SyntaxToken> = None;
+    for token in parse
+        .syntax_node()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+    {
+        if token.kind() == SyntaxKind::BANG
+            && let Some(name) = previous.as_ref().filter(|p| p.kind() == SyntaxKind::IDENT)
+            && names.contains(name.text())
+        {
+            return Some(usize::from(name.text_range().start()));
+        }
+        previous = Some(token);
+    }
+    None
+}
+
 fn module_attributes(module: &ast::Module) -> (bool, bool) {
     let mut macro_use = false;
     let mut plain = true;
@@ -224,6 +249,14 @@ mod tests {
         assert_eq!(scope.map(|scope| scope.opaque), Some(true));
         let plain = macro_scope("mod inner { macro_rules! t { () => {} } }\n");
         assert_eq!(plain.map(|scope| scope.opaque), Some(false));
+    }
+
+    #[test]
+    fn a_call_is_a_name_and_a_bang_in_code() {
+        let names: std::collections::BTreeSet<String> = ["t".to_string()].into();
+        assert_eq!(first_macro_call("assert!(x); t!(a);", &names), Some(12));
+        assert_eq!(first_macro_call("fn f() { /* t!(x) */ }", &names), None);
+        assert_eq!(first_macro_call("const S: &str = \"t!(x)\";", &names), None);
     }
 
     #[test]

@@ -37,7 +37,7 @@ pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
-pub(crate) use macro_scope::{MacroScope, macro_scope};
+pub(crate) use macro_scope::{MacroScope, first_macro_call, macro_scope};
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
     NameScope, NameScopes, UseBinding, fn_call_has_local_binding, name_scopes_for_fn,

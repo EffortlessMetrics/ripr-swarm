@@ -292,11 +292,11 @@ body) applies to them unchanged:
 - the invoking file is a child module `mod name;` of a parent that defines
   the macro, or imports it with `#[macro_use]`, before that declaration.
 
-The definitions are hoisted ahead of the file's first item, so the position of
-a `#[macro_use] mod` relative to the invocation is not checked: a program
-rustc accepts never invokes a macro before the `mod` that brings it into
-scope, and a second definition of the same name anywhere in the file makes the
-name ambiguous and indexes nothing. A definition containing a token that spans
+The definitions are hoisted ahead of the file's first item. A `#[macro_use]
+mod` declared after the first generator call is not imported. A program rustc
+accepts never invokes a macro before the `mod` that brings it into scope, and a
+second definition of the same name anywhere in the file makes the name
+ambiguous and indexes nothing. A definition containing a token that spans
 lines (a multi-line string literal) is left out, a file that does not parse
 cleanly resolves nothing, and only a file that spells `name!` for a macro whose
 definition mentions `test` is resolved at all. `build.rs`, `main.rs` and

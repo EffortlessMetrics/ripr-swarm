@@ -17,10 +17,10 @@
 //! are out of scope.
 
 use crate::analysis::sync_memo::SyncMemo;
-use crate::analysis::syntax::{MacroScope, macro_scope};
+use crate::analysis::syntax::{MacroScope, first_macro_call, macro_scope};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Child modules followed through `#[macro_use]` and parents followed
 /// upward. A deeper chain is refused.
@@ -37,6 +37,9 @@ pub(crate) struct MacroVisibility {
     /// spells one of them followed by `!` needs nothing resolved.
     generators: BTreeSet<String>,
     scopes: SyncMemo<BTreeMap<PathBuf, Option<Arc<MacroScope>>>>,
+    /// Module name to the files that declare it with a `#[path]` or another
+    /// attribute; built on first use.
+    attributed: OnceLock<BTreeMap<String, BTreeSet<PathBuf>>>,
 }
 
 impl Clone for MacroVisibility {
@@ -45,6 +48,7 @@ impl Clone for MacroVisibility {
             sources: self.sources.clone(),
             generators: self.generators.clone(),
             scopes: SyncMemo::default(),
+            attributed: OnceLock::new(),
         }
     }
 }
@@ -67,6 +71,7 @@ impl MacroVisibility {
             sources,
             generators,
             scopes: SyncMemo::default(),
+            attributed: OnceLock::new(),
         }
     }
 
@@ -76,21 +81,11 @@ impl MacroVisibility {
         let Some(source) = self.sources.get(file) else {
             return String::new();
         };
-        if !self
-            .generators
-            .iter()
-            .any(|name| source.contains(&format!("{name}!")))
-        {
-            return String::new();
-        }
         // A `#[macro_use]` module declared after the first call is not in
         // scope at it.
-        let first_call = self
-            .generators
-            .iter()
-            .filter_map(|name| source.find(&format!("{name}!")))
-            .min()
-            .unwrap_or(0);
+        let Some(first_call) = first_macro_call(source, &self.generators) else {
+            return String::new();
+        };
         let mut walk = Walk::default();
         if self.scope(file).is_none_or(|scope| scope.opaque) {
             return String::new();
@@ -128,7 +123,7 @@ impl MacroVisibility {
     /// The `#[macro_use]` modules of `file` declared before byte `before`,
     /// with the definitions their files make visible.
     fn collect_imports(&self, file: &Path, before: usize, depth: usize, walk: &mut Walk) {
-        if depth >= MAX_DEPTH {
+        if depth > MAX_DEPTH {
             walk.refused = true;
             return;
         }
@@ -136,6 +131,7 @@ impl MacroVisibility {
             walk.refused = true;
             return;
         };
+        walk.active.insert(file.to_path_buf());
         for module in scope
             .modules
             .iter()
@@ -155,6 +151,13 @@ impl MacroVisibility {
             if child_scope.opaque {
                 walk.refused = true;
             }
+            // A module that is still being walked is a cycle through the
+            // anchor alternatives, not a program rustc accepts; one already
+            // finished is reused.
+            if walk.active.contains(&child) {
+                walk.refused = true;
+                continue;
+            }
             if !walk.visited.insert(child.clone()) {
                 continue;
             }
@@ -162,6 +165,7 @@ impl MacroVisibility {
                 .extend(child_scope.macros.iter().map(|scoped| scoped.text.clone()));
             self.collect_imports(&child, usize::MAX, depth + 1, walk);
         }
+        walk.active.remove(file);
     }
 
     /// Definitions a parent makes visible to `file` through the position of
@@ -175,6 +179,7 @@ impl MacroVisibility {
             return;
         }
         if !walk.visited.insert(parent.clone()) {
+            walk.refused = true;
             return;
         }
         let Some(scope) = self.scope(&parent) else {
@@ -218,16 +223,29 @@ impl MacroVisibility {
         }
         // A `#[path]` or cfg'd declaration of the name anywhere can include
         // the same file in another crate, where the macros differ.
-        let other_declaration = self.sources.keys().any(|candidate| {
-            candidate != file
-                && self.scope(candidate).is_some_and(|scope| {
-                    scope
-                        .modules
-                        .iter()
-                        .any(|module| module.name == name && !module.plain)
-                })
-        });
+        let other_declaration = self
+            .attributed_declarations()
+            .get(&name)
+            .is_some_and(|files| files.iter().any(|candidate| candidate != file));
         (found.len() == 1 && !other_declaration).then(|| found.remove(0))
+    }
+
+    fn attributed_declarations(&self) -> &BTreeMap<String, BTreeSet<PathBuf>> {
+        self.attributed.get_or_init(|| {
+            let mut index = BTreeMap::<String, BTreeSet<PathBuf>>::new();
+            for path in self.sources.keys() {
+                let Some(scope) = self.scope(path) else {
+                    continue;
+                };
+                for module in scope.modules.iter().filter(|module| !module.plain) {
+                    index
+                        .entry(module.name.clone())
+                        .or_default()
+                        .insert(path.clone());
+                }
+            }
+            index
+        })
     }
 
     /// Files whose `mod name;` could resolve into `location`.
@@ -300,6 +318,8 @@ fn is_root_directory(directory: &Path) -> bool {
 #[derive(Default)]
 struct Walk {
     visited: BTreeSet<PathBuf>,
+    /// Files whose imports are being walked now.
+    active: BTreeSet<PathBuf>,
     out: Vec<String>,
     /// Something that could define or shadow a macro was not resolved.
     refused: bool,
@@ -498,5 +518,47 @@ mod tests {
         assert!(is_root_directory(Path::new("crates/x/tests")));
         assert!(!is_root_directory(Path::new("src/tests")));
         assert!(!is_root_directory(Path::new("crates/x/src/tests")));
+    }
+
+    #[test]
+    fn a_generator_exactly_at_the_depth_limit_is_followed() {
+        let mut files: Vec<(String, String)> =
+            vec![("src/lib.rs".to_string(), format!("{GENERATOR}mod m1;\n"))];
+        for depth in 1..=MAX_DEPTH {
+            let next = if depth == MAX_DEPTH {
+                "t!(x);\n".to_string()
+            } else {
+                format!("mod m{};\n", depth + 1)
+            };
+            let directory = (1..depth).map(|n| format!("m{n}/")).collect::<String>();
+            files.push((format!("src/{directory}m{depth}.rs"), next));
+        }
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect();
+        let deepest = files[files.len() - 1].0.clone();
+        assert!(defines_t(&imported(&refs, &deepest)));
+    }
+
+    #[test]
+    fn only_a_real_call_orders_the_macro_use_modules() {
+        let before = [
+            "assert!(x);\n#[macro_use]\nmod macros;\nt!(a);\n",
+            "fn helper() { /* t!(earlier); */ }\n#[macro_use]\nmod macros;\nt!(a);\n",
+            "const S: &str = \"t!(earlier)\";\n#[macro_use]\nmod macros;\nt!(a);\n",
+        ];
+        for main in before {
+            let files = [("tests/main.rs", main), ("tests/macros.rs", GENERATOR)];
+            assert!(defines_t(&imported(&files, "tests/main.rs")), "{main}");
+        }
+    }
+
+    #[test]
+    fn a_cycle_through_the_anchor_alternatives_is_refused() {
+        let a = "#[macro_use]\nmod b;\nt!(x);\n";
+        let b = format!("{GENERATOR}#[macro_use]\nmod a;\n");
+        let files = [("tests/a.rs", a), ("tests/b.rs", b.as_str())];
+        assert_eq!(imported(&files, "tests/a.rs"), "");
     }
 }
