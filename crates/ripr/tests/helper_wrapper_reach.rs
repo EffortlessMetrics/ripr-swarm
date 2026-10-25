@@ -254,6 +254,7 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
 // #10284: neither twin borrows the wrapper's pins when the wrapper binds
 // the helper's name or runs a user macro that may return first; a logging
 // macro keeps both twins credited.
+const EPRINTLN: &str = "macro_rules! éprintln { ($q:expr) => { if $q == 10 { return 5; } }; }\n";
 const DEP_PRINTLN: &str = "use crate as dep;\n#[macro_export]\nmacro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }";
 
 #[test]
@@ -304,6 +305,10 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
         (DEP_PRINTLN, "dep::println!(qty);"),
         (DEP_PRINTLN, "dep :: println!(qty);"),
         (DEP_PRINTLN, "dep /* routed */ :: r#println ! (qty);"),
+        // A distinct user macro whose name only ends in `println`; it binds
+        // no standard name, so only the tokenizer can refuse it.
+        (EPRINTLN, "éprintln!(qty);"),
+        (EPRINTLN, "r#éprintln!(qty);"),
     ] {
         let source = format!(
             "{prelude}\n{}",
@@ -325,19 +330,24 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
             assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
         }
     }
-    // Positive control: the standard `println!`, unshadowed, stays transparent.
-    let logged = bulk_source(
-        "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
-        BOUNDARY_TESTS,
-    );
-    assert_eq!(
-        predicate_finding(&logged, BULK_DIFF)?["classification"],
-        "exposed"
-    );
-    assert_eq!(
-        family_finding(&logged, BULK_DIFF, "return_value")?["classification"],
-        "exposed"
-    );
+    // Positive controls: the standard `println!`, unshadowed and in its raw
+    // spelling, stays transparent.
+    for call in ["println!(\"{qty}\");", "r#println!(\"{qty}\");"] {
+        let logged = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        assert_eq!(
+            predicate_finding(&logged, BULK_DIFF)?["classification"],
+            "exposed",
+            "{call}"
+        );
+        assert_eq!(
+            family_finding(&logged, BULK_DIFF, "return_value")?["classification"],
+            "exposed",
+            "{call}"
+        );
+    }
     Ok(())
 }
 

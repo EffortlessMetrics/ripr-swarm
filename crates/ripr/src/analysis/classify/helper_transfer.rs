@@ -2593,7 +2593,9 @@ fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> 
 /// with any whitespace or masked comment between them. Returns the
 /// segments, root first, and whether the path starts with `::`.
 fn macro_path_before(head: &str) -> (Vec<&str>, bool) {
-    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    // Any non-ASCII character counts as identifier text, so `éprintln`
+    // stays one token instead of yielding its ASCII tail `println`.
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || !c.is_ascii();
     let mut segments = Vec::new();
     let mut rest = head.trim_end();
     loop {
@@ -3888,6 +3890,11 @@ mod tests {
             "dep::r#println!(qty);",
             "dep /* c */ :: r#println ! (qty);",
             "::println!(qty);",
+            // #10351 review: a non-ASCII identifier is one token, not its
+            // ASCII tail.
+            "éprintln!(qty);",
+            "r#éprintln!(qty);",
+            "dep::éprintln!(qty);",
         ] {
             assert!(caller_invokes_opaque_macro(body, false), "{body}");
         }
@@ -3895,6 +3902,7 @@ mod tests {
         assert!(caller_invokes_opaque_macro("println!(\"x\");", true));
         assert!(!caller_invokes_opaque_macro("let same = a != b;", true));
         assert!(!caller_invokes_opaque_macro("r#println!(\"x\");", false));
+        assert_eq!(macro_path_before("x; éprintln"), (vec!["éprintln"], false));
         assert_eq!(
             macro_path_before("x; dep    :: r#m "),
             (vec!["dep", "r#m"], false)
