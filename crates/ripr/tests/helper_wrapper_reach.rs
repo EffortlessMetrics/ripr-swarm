@@ -220,6 +220,16 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
             "    let _ = is_bulk(qty);\n    if qty >= 10 { 5 } else { 0 }",
             BOUNDARY_TESTS,
         ),
+        // #10284: a wrapper-local binding shadows the helper, and a macro
+        // statement may return before the forwarded call.
+        (
+            "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        (
+            "    early!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
         (
             "    if is_bulk(qty) { qty / 2 } else { 5 }",
             "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 5);",
