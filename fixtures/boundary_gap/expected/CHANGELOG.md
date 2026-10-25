@@ -1205,9 +1205,15 @@ The same snapshots follow corpus cache generation 1.98 to 1.99 for the
 one-line `else if` ladder tail (#9630), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
 
+### equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.99 to 1.100 for the
+equal-valued arm sink limit (#9843), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
 ### indirect owner call limit classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.99 to 1.100 for owners
+The same snapshots follow corpus cache generation 1.100 to 1.101 for owners
 reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
