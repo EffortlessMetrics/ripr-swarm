@@ -264,10 +264,13 @@ fn an_operator_bound_through_lets_is_credited_when_typed() -> Result<(), String>
             "let m = Money(1);\n        {\n            let m = Tile(1);\n            let _ = m;\n        }\n        assert_eq!(m + Money(2), Money(3));",
             false,
         ),
+        // The operator is typed and runs the impl, but `v` shares no token with
+        // the changed expression, so no assertion confirms the credit and the
+        // gap stays withheld (#9567) instead of reading `weakly_exposed`.
         (
             "destructured result",
             "let Money(v) = Money(2) + Money(3);\n        assert_eq!(v, 5);",
-            true,
+            false,
         ),
         (
             "reassigned accumulator",
