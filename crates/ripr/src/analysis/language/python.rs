@@ -68,9 +68,12 @@ mod guard_credit;
 mod helper_inline;
 mod message_pin;
 mod wrapped_call;
-use classify::{PythonNoBehaviorContext, classify_change_with_context};
+use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
-use classify::{classify_change, classify_change_with_old, classify_change_with_source};
+use classify::{
+    classify_change, classify_change_with_context, classify_change_with_old,
+    classify_change_with_source,
+};
 mod discriminators;
 mod effect_alignment;
 mod hypothesis;
@@ -1019,6 +1022,7 @@ impl PythonAdapter {
             .collect::<BTreeSet<_>>();
 
         let mut findings: Vec<Finding> = Vec::new();
+        let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut changed_count: usize = 0;
         for changed in python_changed_files {
             if absent_changed_paths.contains(&normalized_path(&changed.path)) {
@@ -1152,7 +1156,7 @@ impl PythonAdapter {
                         && is_structural_def_header_text(&added.text),
                     multi_line_def_header_line: in_multi_line_def_header,
                 };
-                if let Some(finding) = classify_change_with_context(
+                if let Some(finding) = classify_change_with_value_origins(
                     &changed.path,
                     added.line,
                     &added.text,
@@ -1164,6 +1168,7 @@ impl PythonAdapter {
                         .sources
                         .get(&changed.path)
                         .map(String::as_str),
+                    &mut value_origins,
                 ) {
                     findings.push(finding);
                 }
@@ -1171,7 +1176,7 @@ impl PythonAdapter {
             // A deleted behavior line no added line pairs with is kept as
             // base-side evidence on its owner, as the Rust adapter keeps it
             // (#7587, RIPR-SPEC-0156).
-            let deleted = deleted_lines::deleted_line_findings(
+            let deleted = deleted_lines::deleted_line_findings_with_value_origins(
                 changed,
                 &counterparts,
                 &deleted_lines::OldSideRanges {
@@ -1186,10 +1191,12 @@ impl PythonAdapter {
                 &all_owners,
                 &all_tests,
                 &findings,
+                &mut value_origins,
             );
             findings.extend(deleted);
         }
         Ok(LanguageDiffResult {
+            value_origins,
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,
@@ -1225,6 +1232,7 @@ impl PythonAdapter {
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
         Ok(LanguageRepoResult {
+            value_origins: evidence.value_origins,
             findings: evidence.findings,
             // No test-harness registry registrations exist in repo mode
             // (#3532): the projection is empty.

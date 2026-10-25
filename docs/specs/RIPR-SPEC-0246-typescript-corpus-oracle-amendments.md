@@ -332,6 +332,34 @@ runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
 `static_unknown`; it credits nothing. The credit, which needs an iteration
 count model, is tracked in #9874.
 
+**Rule 9. A callback that must settle a `done` test is read as the test's own.**
+(Added 2026-10-22.) When a test callback takes a first parameter `d` (mocha
+`done`), a call in the test, other than the forms rule 2 reads, passes an
+inline non-`async`, non-generator function whose body consists of
+expression and declaration statements up to a top-level `d()` call with no
+arguments, the statements before that call are collected as the test's own
+assertions. The runner cannot pass the test unless the callback runs and
+reaches `d()`, and an assertion before it either holds or throws, so a
+changed value that reaches the callback must hold up against it. `d` must
+be named exactly once in the whole test body, inside that callback, so no
+other path (a second `d()`, a sibling callback, a branch) settles the test.
+Refused,
+collecting nothing: a test callback without a parameter; a callback that
+never calls `d()`, calls it with arguments, or calls it behind an `if`,
+`try`, loop, `return` or `throw`; an assertion after `d()`; a callback
+parameter or declaration named `d`; an `async` or generator callback.
+
+**Rule 10. An expectation that pins the unchanged value at the boundary is a discriminator.**
+(Added 2026-10-22.) The boundary witness (RIPR-SPEC-0027) reads the two
+branch values of a changed `if (<comparison>) { return A; } return B;` at
+the witnessed input: the changed behavior's and the unchanged one's. An
+expectation equal to exactly one of them tells the two apart and keeps the
+witness. This includes a test that still pins the unchanged value, which
+fails against the changed code. An expectation equal to both or to neither
+is dead, as before. A test that still pins the unchanged value is a discriminator
+because RIPR-SPEC-0245 scores the diff as its own single mutant, and that
+test fails against it.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -482,7 +510,6 @@ and the rejected alternative.
     `weakly_exposed`. With a test whose reader throws or rejects
     (`throw new Error(...)`, `Promise.reject(...)`): `exposed`. An edit
     outside the `catch` arm: the ladder result.
-
 16. A mocha file importing `chai`, `before(() => { register("  alpha "); })`
     in the `describe`, the owner `register` with the change `names.push(name.trim())`
     to `names.push(name)`, tests `expect(registered()).to.deep.equal(["alpha"])`
@@ -491,17 +518,31 @@ and the rejected alternative.
     sibling `describe`, `async`, taking `done`, calling another function,
     naming `register` only in a comment or string, or in a file that imports
     `vitest` or uses `jest.`: `weakly_exposed`.
+17. `it("x", (done) => { load((value) => { expect(value).toBe(3); done(); }); })`
+    with `load` calling `done(3)` changed to `done(4)`: one assertion,
+    observing `value`; the finding reads `exposed`. Without the `done`
+    parameter, with `done(value)`, with the assertion after `done()` or
+    behind an `if`, or with an `async` callback: no assertion.
+18. `if (weightGrams <= 500) { return 399; } return 899;` changed to
+    `<`, test `expect(shippingCents(500)).to.equal(399)`: the test pins the
+    unchanged value at the boundary input, so it keeps the witness and the
+    finding reads `exposed`. `.to.equal(500)`, equal to neither value, stays
+    `weakly_exposed`.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
-  pins examples 1 to 14; `spread_override_guard.rs` unit tests pin the
+  pins examples 1 to 14 and 17; `spread_override_guard.rs` unit tests pin the
   rule 3 shape, input reads and member-write detection.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows; cases
   `jest-spec0246-ex07-then-rejection-handler` and
   `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`). The unit test
   `refused_nested_callback_assertion_reads_static_unknown` pins both shapes
   and a shadowed-`expect` negative.
+- Cases `mocha-done-callback-value`
+  (example 17) and `mocha-nested-describe-boundary` (example 18) pin rules 9
+  and 10; `expected_side_is_live_credits_an_expectation_pinning_the_unchanged_value`
+  pins rule 10's dead-expectation negatives.
 - `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and
   `catch_arm_guard.rs` unit tests pin rule 6 (example 15); corpus case
   `shape-async-catch-fallback-unexercised` pins the row.
@@ -524,6 +565,9 @@ and the rejected alternative.
   `SpreadOverride`, `ts_test_local_object`; `dropped_term_guard.rs`:
   `ts_members_written`; `classifier.rs`: `ts_spread_override_unseen`,
   `ts_owner_call_member_arguments` (rule 3).
+- `crates/ripr/src/analysis/language/typescript/oracle.rs`:
+  `collect_done_callback_assertions` (rule 9); `classifier.rs`:
+  `expected_side_is_live` (rule 10).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
 - `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
