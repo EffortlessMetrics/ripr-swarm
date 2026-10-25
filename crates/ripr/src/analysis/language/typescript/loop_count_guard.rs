@@ -2273,9 +2273,14 @@ mod tests {
         assert_eq!(binding_names(" { a = fn, b: c, d } = o"), ["a", "c", "d"]);
         assert_eq!(binding_names(" [a = fn, b] = o"), ["a", "b"]);
         assert_eq!(binding_names(" r: ReturnType<typeof fn> = x"), ["r"]);
+        // Sized for parallel CI shards: an unbounded reduction shows up at
+        // any depth (a recursion that ignores the budget, or per-unit
+        // exponential work, still explodes at 2,000 units), while the
+        // smaller input keeps the 2 s wall-clock bound honest on slow or
+        // contended shared runners.
         for unit in ["(", "(a, (", "(<T>", "!)(", "(x, "] {
             let closer = if unit == "!)(" { "!)" } else { "))" };
-            let nested = format!("{}svc as any{}", unit.repeat(20_000), closer.repeat(20_000));
+            let nested = format!("{}svc as any{}", unit.repeat(2_000), closer.repeat(2_000));
             let started = std::time::Instant::now();
             let _ = without_receiver_casts(&nested);
             assert!(

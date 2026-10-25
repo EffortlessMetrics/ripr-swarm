@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `binding_names_skip_defaults_and_keys` sized its reduction-boundedness check at 20,000 nested units against a 2 s wall-clock bound; under the parallel nextest shards that bound tripped on contended runners and blocked every merge gate with a `"(a, (" reduction is not bounded` panic. The input is now 2,000 units — still far past the recursion budget, so an unbounded reduction still explodes — which keeps the bound honest on slow shared machines (#10395).
