@@ -21,6 +21,19 @@ use crate::domain::{Probe, SourceCurrentness};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeInclusive;
 
+/// The probe id before any `.N` collision ordinal; a fingerprint is hex, so a
+/// dot followed by digits is always an ordinal.
+fn base_probe_id(id: &str) -> &str {
+    match id.rsplit_once('.') {
+        Some((base, ordinal))
+            if !ordinal.is_empty() && ordinal.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            base
+        }
+        _ => id,
+    }
+}
+
 /// A deleted-line finding awaiting its collision ordinal.
 struct PendingDeleted {
     finding: Finding,
@@ -73,7 +86,8 @@ pub(super) fn deleted_line_findings_with_value_origins(
         .collect();
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
-        *ids.entry(finding.probe.id.0.clone()).or_default() += 1;
+        *ids.entry(base_probe_id(&finding.probe.id.0).to_string())
+            .or_default() += 1;
     }
     // A paired line is the candidate side's record, not this deletion's, so
     // it does not use up the one record a run inside a kept statement gets.

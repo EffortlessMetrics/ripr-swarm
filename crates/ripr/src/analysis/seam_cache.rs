@@ -524,7 +524,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// is credited by a row that walks a non-empty literal input and pins a
 /// nonzero total; a table that separates nothing or cannot be read is
 /// withheld (RIPR-SPEC-0360, #6485). Old entries read it as a gap.
-/// `1.107` is reserved for the indirect-owner limit (#9845).
+/// `1.107`: a top-level `crate::name!` call to a `#[macro_export]` test
+/// generator registers its tests like the imported ones (#10298).
 /// `1.108`: a literal-row `#[test_case]` body counts as running once per row,
 /// and an arrow-form `#[test_case(x => y)]` carries the named generated-
 /// assertion limit (RIPR-SPEC-0120, #10190). Old entries read the test as
@@ -682,7 +683,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.108";
 /// `0.111`: same loop-accumulator update as full `1.104` (#6485).
 /// `0.112`: same exported-macro table tests as full `1.105`.
 /// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
-/// `0.114` is reserved for the indirect-owner limit (#9845).
+/// `0.114`: same `crate::name!` generator registration as full `1.107` (#10298).
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.115";
@@ -840,7 +841,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.115";
 /// `0.111`: same loop-accumulator update as full `1.104` (#6485).
 /// `0.112`: same exported-macro table tests as full `1.105`.
 /// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
-/// `0.114` is reserved for the indirect-owner limit (#9845).
+/// `0.114`: same `crate::name!` generator registration as full `1.107` (#10298).
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.115";
@@ -4991,7 +4992,7 @@ mod tests {
         // 1.103 -> 1.104: loop-accumulator update credit (#6485).
         // 1.104 -> 1.105: exported macro tables named by path (#10298).
         // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
-        // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #9845's.
+        // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #10298's.
         assert_eq!(CACHE_SCHEMA_VERSION, "1.108");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
