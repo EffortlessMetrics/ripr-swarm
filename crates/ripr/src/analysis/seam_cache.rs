@@ -518,11 +518,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.104`: a returned zero-initialized loop accumulator's update is a
 /// `return_value` change credited by a literal non-empty nonzero pin
 /// (RIPR-SPEC-0360, #6485). Old entries keep it `static_unknown`.
-/// `1.105`: a returned loop accumulator pinned through a constant-row table
+/// `1.105`: the generator may also be a `#[macro_export]` macro named by
+/// `use crate::name;` (#10298). Old entries read the owner as unreached.
+/// `1.106`: a returned loop accumulator pinned through a constant-row table
 /// is credited by a row that walks a non-empty literal input and pins a
 /// nonzero total; a table that separates nothing or cannot be read is
 /// withheld (RIPR-SPEC-0360, #6485). Old entries read it as a gap.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.105";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.106";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -673,8 +675,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.105";
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
 /// `0.110`: same cross-file macro table tests as full `1.103`.
 /// `0.111`: same loop-accumulator update as full `1.104` (#6485).
-/// `0.112`: same table-driven loop-accumulator pin as full `1.105` (#6485).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.112";
+/// `0.112`: same exported-macro table tests as full `1.105`.
+/// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.113";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -827,8 +830,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.112";
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
 /// `0.110`: same cross-file macro table tests as full `1.103`.
 /// `0.111`: same loop-accumulator update as full `1.104` (#6485).
-/// `0.112`: same table-driven loop-accumulator pin as full `1.105` (#6485).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.112";
+/// `0.112`: same exported-macro table tests as full `1.105`.
+/// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.113";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4974,8 +4978,9 @@ mod tests {
         // 1.101 -> 1.102: equal-valued arms of a rustfmt-layout chain (#10134).
         // 1.102 -> 1.103: cross-file macro_rules! test tables (#6925).
         // 1.103 -> 1.104: loop-accumulator update credit (#6485).
-        // 1.104 -> 1.105: table-driven loop-accumulator pin (#6485).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.105");
+        // 1.104 -> 1.105: exported macro tables named by path (#10298).
+        // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.106");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5068,9 +5073,10 @@ mod tests {
         // 0.108 -> 0.109: same multi-line equal-arm sink limit as full 1.102.
         // 0.109 -> 0.110: same cross-file macro tables as full 1.103 (#6925).
         // 0.110 -> 0.111: same loop-accumulator update as full 1.104 (#6485).
-        // 0.111 -> 0.112: same table-driven loop-accumulator pin as full 1.105.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.112");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.112");
+        // 0.111 -> 0.112: same exported macro tables as full 1.105 (#10298).
+        // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.113");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.113");
     }
 
     #[test]

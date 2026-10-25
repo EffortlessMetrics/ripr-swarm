@@ -865,8 +865,15 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
     };
     let pattern = &statement[..eq];
     if let Some(colon) = pattern.find(':') {
-        return type_head(&pattern[colon + 1..])
-            .is_some_and(|(segments, _)| segments.last() == Some(&self_type));
+        // A path-qualified annotation (`other_crate::Merge`) may name a type
+        // of another crate or module that merely shares the local type's
+        // name; only an in-crate prefix keeps the annotation the local type.
+        return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
+            segments.last() == Some(&self_type)
+                && segments[..segments.len() - 1]
+                    .iter()
+                    .all(|segment| matches!(*segment, "crate" | "self" | "super"))
+        });
     }
     let init = statement[eq + 1..].trim();
     initializer_is_one_head_expr(init)
@@ -1162,6 +1169,186 @@ mod tests {
         assert_eq!(memo.builds_for_test(), 3, "another index is not cached");
         assert!(memo.context(&index, owner).is_some());
         assert_eq!(memo.builds_for_test(), 3, "bound index still hits");
+    }
+
+    /// Related tests of a helper `sanitize_label` whose one caller is the
+    /// `fmt` of `impls[0]`, reached through a one-hop helper chain (#8999).
+    fn helper_reasons(impls: &[&str], bodies: &[&str]) -> Vec<(String, RelationReason)> {
+        helper_reasons_via(impls, bodies, &[(true, false)])
+    }
+
+    /// Like `helper_reasons`, with the chain given from the helper upward as
+    /// `(is_fmt_hop, through_macro)`. A non-fmt hop is a free `wrapper`.
+    fn helper_reasons_via(
+        impls: &[&str],
+        bodies: &[&str],
+        hops: &[(bool, bool)],
+    ) -> Vec<(String, RelationReason)> {
+        use crate::analysis::classify::helper_transfer::{HelperChain, HelperHop};
+        let mut files = std::collections::BTreeMap::new();
+        let source = "pub struct Merge;\npub struct Other;\n";
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        let mut helper = fmt_function("src/error.rs", "unused");
+        helper.id = SymbolId("src/error.rs::sanitize_label".to_string());
+        helper.name = "sanitize_label".to_string();
+        let fmts: Vec<FunctionSummary> = impls
+            .iter()
+            .map(|header| fmt_function("src/error.rs", header))
+            .collect();
+        let chain = HelperChain {
+            hops: hops
+                .iter()
+                .map(|&(is_fmt, through_macro)| {
+                    let mut caller = fmts[0].clone();
+                    if !is_fmt {
+                        caller.id = SymbolId("src/error.rs::wrapper".to_string());
+                        caller.name = "wrapper".to_string();
+                    }
+                    HelperHop {
+                        caller,
+                        call_text: "sanitize_label(l)".to_string(),
+                        arguments: vec!["l".to_string()],
+                        receiver: None,
+                        through_macro,
+                    }
+                })
+                .collect(),
+            stop_above: None,
+        };
+        let mut functions = vec![helper.clone()];
+        functions.extend(fmts);
+        let tests: Vec<TestSummary> = bodies
+            .iter()
+            .enumerate()
+            .map(|(at, body)| test_with_body(&format!("t{at}"), body))
+            .collect();
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let mut probe = probe();
+        probe.owner = Some(helper.id.clone());
+        probe.expression = "s.replace('\\n', \" \")".to_string();
+        find_related_tests(&probe, Some(&helper), &index, true, Some(&chain), None)
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason))
+            .collect()
+    }
+
+    #[test]
+    fn a_helper_called_only_by_display_fmt_is_reached_by_formatting_the_type() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge"],
+            &[
+                "let merge: Merge = Merge::new(vec![]);\nassert_eq!(\n    merge.to_string(),\n    \"a\"\n);",
+                "let merge = Merge { labels: vec![] };\nassert_eq!(format!(\"{}\", merge), \"a\");",
+                // Refused: another type, the other trait's placeholder, an
+                // untyped factory, and a test that never formats the value.
+                "let other = Other;\nassert_eq!(other.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
+                "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified annotation names the local type only with
+                // an in-crate prefix.
+                "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: other_crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: shared::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+            ],
+        );
+        let helper_calls: Vec<&str> = reasons
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(helper_calls, ["t0", "t1", "t6"], "{reasons:?}");
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall),
+            "reaching a helper through fmt is never a direct owner call: {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_macro_argument_hop_carries_no_formatting_reach() {
+        let body = "let merge: Merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");";
+        let direct = helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, false)]);
+        assert!(
+            direct
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: the same test reaches through a call hop: {direct:?}"
+        );
+        let through_macro =
+            helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, true)]);
+        // The macro hop sits below the fmt hop: the helper is only named as a
+        // macro token argument of `wrapper`, which `fmt` calls.
+        let below = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, true), (true, false)],
+        );
+        assert!(
+            !below
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{below:?}"
+        );
+        let above = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, false), (true, false)],
+        );
+        assert!(
+            above
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: direct hops below the fmt hop keep the reach: {above:?}"
+        );
+        assert!(
+            !through_macro
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{through_macro:?}"
+        );
+    }
+
+    #[test]
+    fn a_helper_chain_entry_that_is_not_a_fmt_owner_is_not_reached_by_formatting() {
+        // The chain entry is `fmt` of a trait other than Display/Debug.
+        let reasons = helper_reasons(
+            &["fmt::LowerHex for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn two_display_impls_for_the_entry_type_fail_closed() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge", "fmt::Display for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
     }
 
     #[test]
