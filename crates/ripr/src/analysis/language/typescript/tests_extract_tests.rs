@@ -1353,6 +1353,10 @@ fn skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices() {
     deep.push_str("a34.skip = custom; describe.skip('off', () => { it('live', () => {}); });");
     for source in [
         deep.as_str(),
+        "let d; [d = describe] = []; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "let d; ({ value: d = describe } = {}); d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "describe.skip(new String((() => { it('live', () => {}); return 'off'; })()), () => { it('dormant', () => {}); });",
+        "let title; describe.skip(title = (() => { it('live', () => {}); return 'off'; })(), () => { it('dormant', () => {}); });",
         "var d = describe; var d; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
         "var d = describe; { var d; d.skip = custom; } describe.skip('off', () => { it('live', () => {}); });",
         "var d = describe; d.skip = custom; var d; describe.skip('off', () => { it('live', () => {}); });",

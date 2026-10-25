@@ -4614,6 +4614,33 @@ impl UnextractedTestFinder<'_> {
                     }
                 }
             }
+            Expression::NewExpression(call) => {
+                self.visit_empty_table_evaluated_expression(&call.callee);
+                self.visit_evaluated_arguments(&call.arguments);
+            }
+            Expression::AssignmentExpression(assignment) => {
+                self.visit_empty_table_evaluated_expression(&assignment.right)
+            }
+            Expression::ImportExpression(import) => {
+                self.visit_empty_table_evaluated_expression(&import.source);
+                if let Some(options) = &import.options {
+                    self.visit_empty_table_evaluated_expression(options);
+                }
+            }
+            Expression::TaggedTemplateExpression(tagged) => {
+                self.visit_empty_table_evaluated_expression(&tagged.tag);
+                for value in &tagged.quasi.expressions {
+                    self.visit_empty_table_evaluated_expression(value);
+                }
+            }
+            Expression::YieldExpression(yielded) => {
+                if let Some(value) = &yielded.argument {
+                    self.visit_empty_table_evaluated_expression(value);
+                }
+            }
+            Expression::PrivateFieldExpression(member) => {
+                self.visit_empty_table_evaluated_expression(&member.object)
+            }
             Expression::StaticMemberExpression(member) => {
                 self.visit_empty_table_evaluated_expression(&member.object)
             }

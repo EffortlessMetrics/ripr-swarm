@@ -529,6 +529,7 @@ impl<'a> Visit<'a> for DeclarationBindings {
                 }
             }
             AstKind::AssignmentPattern(pattern) => self.escape_value(&pattern.right),
+            AstKind::AssignmentTargetWithDefault(target) => self.escape_value(&target.init),
             AstKind::CallExpression(call) => self.escape_arguments(&call.arguments),
             AstKind::NewExpression(call) => self.escape_arguments(&call.arguments),
             AstKind::ReturnStatement(returned) => {
