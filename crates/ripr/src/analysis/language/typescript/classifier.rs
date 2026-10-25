@@ -6228,7 +6228,7 @@ pub(crate) fn classify_resolved_owner(
                         old,
                         line_text,
                         owner,
-                        &related_candidates,
+                        related_candidates,
                         all_tests,
                         alias_map,
                         workspace_root,
