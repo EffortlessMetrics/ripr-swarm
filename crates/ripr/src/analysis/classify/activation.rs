@@ -9893,6 +9893,9 @@ assert_eq!(input.amount, 100);"#
         // #9197: `x.add_assign(5)` changes a `mut` parameter in place, so the
         // name no longer holds the test's input; on an immutable parameter the
         // same shape (`x.abs()`, `x.min(3)`) is a read and keeps the credit.
+        // This is the pin for the `receiver_call` guard: it fails with the guard
+        // disabled. (Publicly a `mut x` parameter is already unmapped, so the
+        // guard is defense-in-depth should `mut` parameters become mappable.)
         let credited = |signature: &str, prelude: &str| {
             let owner = function(&format!(
                 "pub fn thr({signature}) -> bool {{\n{prelude}\n    x > 102\n}}"

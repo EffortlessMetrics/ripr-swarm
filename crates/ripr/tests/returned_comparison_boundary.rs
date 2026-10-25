@@ -576,55 +576,19 @@ fn a_rebound_or_mutated_parameter_does_not_satisfy_the_equality_boundary() -> Re
             );
         }
     }
-
-const RIVAL_MOD: &str =
-    "mod rival {\n    pub fn thr(x: i32) -> bool {\n        x > 0\n    }\n}\n\n";
-const FAR_ONLY: &str = "#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n";
-
-#[test]
-fn a_qualified_rival_call_is_not_a_boundary_input() -> Result<(), String> {
-    // #9218: the owner is called only with far inputs; `rival::thr(101)` is
-    // another function, so it must not supply the boundary-equal input.
-    let rival = findings(
-        NEW,
-        OLD,
-        &format!(
-            "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!rival::thr(101));\n}}\n"
-        ),
-    )?;
-    assert_gap_named(&rival, true)?;
-    let owner = family(&rival, "return_value")?;
-    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
-    // The same holds when the rival module is not defined in the test file.
-    let foreign = findings(
-        NEW,
-        OLD,
-        &format!(
-            "use thr::thr;\n\n{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!other_dep::thr(101));\n}}\n"
-        ),
-    )?;
-    assert_gap_named(&foreign, true)?;
-    let owner = family(&foreign, "return_value")?;
-    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
-    // Positive control: the plain owner call at the boundary still clears it.
-    let plain = findings(
-        NEW,
-        OLD,
-        &format!(
-            "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn at() {{\n    assert!(!thr(101));\n}}\n"
-        ),
-    )?;
-    assert_gap_named(&plain, false)?;
     Ok(())
 }
 
 #[test]
-fn a_receiver_call_on_a_mut_parameter_makes_the_predicate_boundary_unresolved() -> Result<(), String>
-{
-    // #9197: `x.add_assign(5)` changes the `mut` parameter in place, so the
-    // observed 101 is not the compared value and the predicate reads
-    // infection-unknown; a read-only receiver call on an immutable parameter
-    // keeps the credit.
+fn a_mut_parameter_with_a_receiver_call_reads_infection_unknown() -> Result<(), String> {
+    // #9197: a `mut x` parameter whose owner calls `x.add_assign(5)` reads
+    // infection-unknown. This is currently so because `function_parameters`
+    // keeps the raw `mut x` pattern, so a `mut` parameter is not mapped to its
+    // observed input at all; it does NOT exercise the receiver-call guard in
+    // `owner_rebinds_operand` (that guard is pinned by the lib unit test
+    // `a_receiver_call_mutates_only_a_mut_parameter` and is defense-in-depth
+    // should `mut` parameters become mappable). The plain-`x` controls keep
+    // their credit.
     let read = |parameter: &str, prefix: &str| -> Result<(ExposureClass, usize), String> {
         let findings = findings_with_parameter(
             parameter,
@@ -809,7 +773,145 @@ fn a_multiline_tuple_or_array_binding_makes_the_boundary_unresolved() -> Result<
             ExposureClass::InfectionUnknown,
             "{unbound:?} {predicate:?}"
         );
+    }
+    Ok(())
+}
 
+#[test]
+fn guard_operators_ranges_and_struct_patterns_still_bind_the_name() -> Result<(), String> {
+    // #9197: each arm pattern binds `x` from `y`, however the pattern and its
+    // guard are spelled, so the observed 101 must not satisfy `x > 101`.
+    for pattern in [
+        "        Some(x) if x == 3 =>\n",
+        "        Some(x) if x >= 3 =>\n",
+        "        Some(\n            x\n        ) if y != 3 =>\n",
+        "        (a, x) if a == 1 =>\n",
+        "        Some(x)\n            if a == 1 =>\n",
+        "        x @ 1..=5 =>\n",
+        "        Some(x @ 1..=5) =>\n",
+        "        S { f: x } =>\n",
+        "        S { x } =>\n",
+        "        S { x, .. } =>\n",
+        "        Foo::Bar { x: 1, y: x } =>\n",
+        "        Or(x)\n            if x == 3 =>\n",
+    ] {
+        let opening = format!("    match y {{\n{pattern}");
+        let findings = findings_wrapped(
+            &opening,
+            "    }\n",
+            "            if x > 101 { true } else { false }",
+            "            if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{pattern:?} {predicate:?}"
+        );
+    }
+    // Control: `x` only used in an earlier arm's result keeps the credit.
+    let control = findings_wrapped(
+        "    match y {\n        A => x_not_bound(),\n        B =>\n",
+        "    }\n",
+        "            if x > 101 { true } else { false }",
+        "            if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&control, "predicate")?;
+    assert_ne!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_arm_after_a_nontrivial_earlier_result_still_binds_the_name() -> Result<(), String> {
+    // #9197: `x =>` re-binds `x` however the previous arm's result is spelled.
+    for result in [
+        "a + 1",
+        "-1",
+        "f(a)?",
+        "1_u8..2",
+        "if a { 1 } else { 2 }",
+        "match z { Z => 1, _ => 2 }",
+    ] {
+        let opening = format!("    match y {{\n        0 => {result},\n        x =>\n");
+        let findings = findings_wrapped(
+            &opening,
+            "    }\n",
+            "            if x > 101 { true } else { false }",
+            "            if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{result:?} {predicate:?}"
+        );
+    }
+    // Control: the same shape binding `z`, not `x`, keeps the credit.
+    let control = findings_wrapped(
+        "    match y {\n        0 => a + 1,\n        z =>\n",
+        "    }\n",
+        "            if x > 101 { true } else { false }",
+        "            if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&control, "predicate")?;
+    assert_ne!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
+    Ok(())
+}
+
+const RIVAL_MOD: &str =
+    "mod rival {\n    pub fn thr(x: i32) -> bool {\n        x > 0\n    }\n}\n\n";
+const FAR_ONLY: &str = "#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n";
+
+#[test]
+fn a_qualified_rival_call_is_not_a_boundary_input() -> Result<(), String> {
+    // #9218: the owner is called only with far inputs; `rival::thr(101)` is
+    // another function, so it must not supply the boundary-equal input.
+    let rival = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!rival::thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&rival, true)?;
+    let owner = family(&rival, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    // The same holds when the rival module is not defined in the test file.
+    let foreign = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr::thr;\n\n{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!other_dep::thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&foreign, true)?;
+    let owner = family(&foreign, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    // Positive control: the plain owner call at the boundary still clears it.
+    let plain = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn at() {{\n    assert!(!thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&plain, false)?;
+    Ok(())
+}
+
+#[test]
 fn a_crate_qualified_owner_call_is_still_a_boundary_input() -> Result<(), String> {
     // #9218: a qualification that resolves to the owner's own module keeps
     // supplying its input (`thr::thr` names the owner crate's root `thr`).
@@ -944,53 +1046,6 @@ fn a_genuine_reexport_of_the_owner_still_supplies_the_boundary_input() -> Result
 }
 
 #[test]
-fn guard_operators_ranges_and_struct_patterns_still_bind_the_name() -> Result<(), String> {
-    // #9197: each arm pattern binds `x` from `y`, however the pattern and its
-    // guard are spelled, so the observed 101 must not satisfy `x > 101`.
-    for pattern in [
-        "        Some(x) if x == 3 =>\n",
-        "        Some(x) if x >= 3 =>\n",
-        "        Some(\n            x\n        ) if y != 3 =>\n",
-        "        (a, x) if a == 1 =>\n",
-        "        Some(x)\n            if a == 1 =>\n",
-        "        x @ 1..=5 =>\n",
-        "        Some(x @ 1..=5) =>\n",
-        "        S { f: x } =>\n",
-        "        S { x } =>\n",
-        "        S { x, .. } =>\n",
-        "        Foo::Bar { x: 1, y: x } =>\n",
-        "        Or(x)\n            if x == 3 =>\n",
-    ] {
-        let opening = format!("    match y {{\n{pattern}");
-        let findings = findings_wrapped(
-            &opening,
-            "    }\n",
-            "            if x > 101 { true } else { false }",
-            "            if x > 100 { true } else { false }",
-            AT_NEW_THRESHOLD,
-        )?;
-        let predicate = family(&findings, "predicate")?;
-        assert_eq!(
-            predicate.class,
-            ExposureClass::InfectionUnknown,
-            "{pattern:?} {predicate:?}"
-        );
-    }
-    // Control: `x` only used in an earlier arm's result keeps the credit.
-    let control = findings_wrapped(
-        "    match y {\n        A => x_not_bound(),\n        B =>\n",
-        "    }\n",
-        "            if x > 101 { true } else { false }",
-        "            if x > 100 { true } else { false }",
-        AT_NEW_THRESHOLD,
-    )?;
-    let predicate = family(&control, "predicate")?;
-    assert_ne!(
-        predicate.class,
-        ExposureClass::InfectionUnknown,
-        "{predicate:?}"
-    );
-
 fn a_dependency_export_of_a_same_named_function_is_not_the_owner() -> Result<(), String> {
     // #9218: the root exports `other_dep`'s `thr`, so `thr::thr(101)` is not
     // the owner whether the export is named, grouped, glob or renamed.
@@ -1009,46 +1064,6 @@ fn a_dependency_export_of_a_same_named_function_is_not_the_owner() -> Result<(),
 }
 
 #[test]
-fn a_bare_arm_after_a_nontrivial_earlier_result_still_binds_the_name() -> Result<(), String> {
-    // #9197: `x =>` re-binds `x` however the previous arm's result is spelled.
-    for result in [
-        "a + 1",
-        "-1",
-        "f(a)?",
-        "1_u8..2",
-        "if a { 1 } else { 2 }",
-        "match z { Z => 1, _ => 2 }",
-    ] {
-        let opening = format!("    match y {{\n        0 => {result},\n        x =>\n");
-        let findings = findings_wrapped(
-            &opening,
-            "    }\n",
-            "            if x > 101 { true } else { false }",
-            "            if x > 100 { true } else { false }",
-            AT_NEW_THRESHOLD,
-        )?;
-        let predicate = family(&findings, "predicate")?;
-        assert_eq!(
-            predicate.class,
-            ExposureClass::InfectionUnknown,
-            "{result:?} {predicate:?}"
-        );
-    }
-    // Control: the same shape binding `z`, not `x`, keeps the credit.
-    let control = findings_wrapped(
-        "    match y {\n        0 => a + 1,\n        z =>\n",
-        "    }\n",
-        "            if x > 101 { true } else { false }",
-        "            if x > 100 { true } else { false }",
-        AT_NEW_THRESHOLD,
-    )?;
-    let predicate = family(&control, "predicate")?;
-    assert_ne!(
-        predicate.class,
-        ExposureClass::InfectionUnknown,
-        "{predicate:?}"
-    );
-
 fn a_reexport_outside_the_crate_roots_top_level_is_not_a_root_export() -> Result<(), String> {
     // #9218: the dependency's `thr` is what the root exports.
     let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
