@@ -36,10 +36,11 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # 148: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
 # 147 (#6485): minus one more on this branch (two grid rows recovered by the loop-accumulator credit, one bound-input abstention added). Measured on the combined tree.
 # 143: that 147 minus the four spec-b-0164 rows #10196 credits.
-# 144: plus spec-b-0159-path-qualified-imported-module (#8999), the reject shape of
+# 142: minus spec0186-ex06-private-predicate-via-wrapper, credited once in-file test-module imports resolve (#10279). Measured on the combined tree.
+# 143: plus spec-b-0159-path-qualified-imported-module (#8999), the reject shape of
 # RIPR-SPEC-0159#5: a discriminating test reached through an imported qualifier that
 # ripr deliberately leaves abstained.
-missed_credit_ceiling = 144
+missed_credit_ceiling = 143
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -83,7 +84,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 40
+trap_floor = 41
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -1012,6 +1013,11 @@ reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+# A changed value-default binding that reaches the returned text
+[[spec]]
+id = "RIPR-SPEC-0357"
+scope = "in"
 
 [[spec]]
 id = "RIPR-SPEC-0360"

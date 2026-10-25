@@ -1358,6 +1358,48 @@ mod tests {
     }
 
     #[test]
+    fn module_object_write_is_limited_by_a_rebinding_test_unless_a_live_reader_credits_it()
+    -> Result<(), String> {
+        let route = "from types import SimpleNamespace\n\nresponse = SimpleNamespace(status_code=200)\n\n\ndef checkout(expired):\n    response.status_code = 400\n";
+        let live = "from route import checkout, response\n\n\ndef test_live():\n    checkout(True)\n    assert response.status_code == 400\n";
+        let reload = "import importlib\nimport route\nfrom route import checkout, response\n\n\ndef test_reload():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 400\n";
+        let limits =
+            |label: &str, tests: &[(&str, &str)]| -> Result<Vec<Option<StaticLimitKind>>, String> {
+                let root = unique_test_root(label);
+                std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+                write_file(&root.join("route.py"), route)?;
+                for (name, body) in tests {
+                    write_file(&root.join(name), body)?;
+                }
+                let input = super::super::select_repo_input_with_limit(&root, default_limit());
+                let evidence = build_repo_evidence(&input, &root);
+                let checkout = find_owner(&evidence, "checkout")?;
+                let kinds = checkout
+                    .behavior_items
+                    .iter()
+                    .map(|item| item.static_limit)
+                    .collect();
+                std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+                Ok(kinds)
+            };
+        // The rebinding test alone limits the write.
+        assert_eq!(
+            limits("rebind-only", &[("test_reload.py", reload)])?,
+            vec![Some(StaticLimitKind::MockedModule)]
+        );
+        // A live reader beside it credits the write, so the item is not
+        // limited, matching the finding classifier.
+        assert_eq!(
+            limits(
+                "rebind-live",
+                &[("test_reload.py", reload), ("test_live.py", live)]
+            )?,
+            vec![None]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn dynamic_import_site_yields_a_typed_static_limit_row() -> Result<(), String> {
         let root = unique_test_root("static-limit");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;

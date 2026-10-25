@@ -107,18 +107,46 @@ fn compute_fp8(
 /// the order the diff presents the probes in. The sanitized path and family
 /// are read back from `base_id` (`<prefix>:<path>:<family>:<fp8>`; the
 /// sanitized path holds no `:`), keeping the payload identical to the one
-/// `fingerprint_probe_id` hashed. A malformed id falls back to ranking by the
-/// whole id, which still ties by encounter order.
-pub(crate) fn collision_rank_key(base_id: &str, owner_str: &str, expression: &str) -> [u8; 32] {
+/// `fingerprint_probe_id` hashed; the caller passes the owner and the
+/// expression normalized the way its producer normalized it. A malformed id
+/// falls back to ranking by the whole id, which still ties by encounter order.
+pub(crate) fn collision_rank_key(
+    base_id: &str,
+    owner_str: &str,
+    normalized_expression: &str,
+) -> [u8; 32] {
     let mut parts = base_id.rsplitn(4, ':');
     let (_fp8, family, path, prefix) = (parts.next(), parts.next(), parts.next(), parts.next());
-    let expression = normalize_rust_expression(expression);
     match (path, family) {
         (Some(path), Some(family)) if prefix.is_some() => {
-            payload_digest(path, family, owner_str, &expression)
+            payload_digest(path, family, owner_str, normalized_expression)
         }
-        _ => payload_digest(base_id, "", owner_str, &expression),
+        _ => payload_digest(base_id, "", owner_str, normalized_expression),
     }
+}
+
+/// The collision ordinal (1-based) of each probe, given its base id and rank
+/// key. Probes sharing a base id are ranked by key, then by encounter index,
+/// so distinct payloads get the same ordinals whichever order they arrive in
+/// and exact duplicates keep encounter order (#8838).
+pub(crate) fn collision_ordinals(entries: &[(&str, [u8; 32])]) -> Vec<u32> {
+    use std::collections::HashMap;
+    let mut groups: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, (base, _)) in entries.iter().enumerate() {
+        groups.entry(base).or_default().push(index);
+    }
+    let mut ordinals = vec![1; entries.len()];
+    for indices in groups.into_values().filter(|indices| indices.len() > 1) {
+        let mut ranked = indices
+            .into_iter()
+            .map(|index| (entries[index].1, index))
+            .collect::<Vec<_>>();
+        ranked.sort();
+        for (rank, (_, index)) in ranked.into_iter().enumerate() {
+            ordinals[index] = rank as u32 + 1;
+        }
+    }
+    ordinals
 }
 
 /// Build a content-addressed probe id.
