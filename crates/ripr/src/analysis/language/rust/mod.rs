@@ -21,7 +21,9 @@ mod probe_shape;
 pub(crate) mod probes;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
-pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
+pub(crate) use probes::{
+    changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
+};
 
 use super::super::probes as analysis_probes;
 use super::super::{

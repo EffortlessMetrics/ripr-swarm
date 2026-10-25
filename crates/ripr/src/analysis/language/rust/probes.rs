@@ -325,6 +325,27 @@ pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
     }
 }
 
+/// Blank the content of char and byte-char literals, keeping the quotes and
+/// every byte offset. `mask_rust_comments_and_strings` deliberately leaves
+/// them alone (a `'"'` there opens a string), so a scan that must not read
+/// `';'` or `'{'` as punctuation runs this first (#10228).
+pub(crate) fn mask_rust_char_literals(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'\'' {
+            if let Some(close) = rust_char_literal_close(bytes, index) {
+                mask_non_newline_bytes(&mut masked, index.saturating_add(1), close);
+                index = close.saturating_add(1);
+                continue;
+            }
+        }
+        index = index.saturating_add(1);
+    }
+    String::from_utf8(masked).unwrap_or_else(|_| text.to_string())
+}
+
 fn starts_with_bytes(bytes: &[u8], index: usize, needle: &[u8]) -> bool {
     bytes
         .get(index..index.saturating_add(needle.len()))
@@ -338,6 +359,45 @@ fn mask_non_newline_bytes(bytes: &mut [u8], start: usize, end: usize) {
             *byte = b' ';
         }
     }
+}
+
+/// Index of the closing quote when `start` opens a char or byte-char literal
+/// (`'x'`, `'\n'`, `'\''`, `'\x41'`, `'\u{1F600}'`), `None` for a lifetime or
+/// label (`'a`, `'outer:`), which has no closing quote right after one
+/// character.
+fn rust_char_literal_close(bytes: &[u8], start: usize) -> Option<usize> {
+    let body = start.saturating_add(1);
+    let first = *bytes.get(body)?;
+    let close = if first == b'\\' {
+        match *bytes.get(body.saturating_add(1))? {
+            b'x' => body.saturating_add(4),
+            b'u' => {
+                let open = body.saturating_add(2);
+                if bytes.get(open) != Some(&b'{') {
+                    return None;
+                }
+                let end = bytes
+                    .get(open..)?
+                    .iter()
+                    .take(10)
+                    .position(|byte| *byte == b'}')?;
+                open.saturating_add(end).saturating_add(1)
+            }
+            _ => body.saturating_add(2),
+        }
+    } else if first == b'\'' || first == b'\n' {
+        return None;
+    } else {
+        let width = match first {
+            0x00..=0x7f => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => return None,
+        };
+        body.saturating_add(width)
+    };
+    (bytes.get(close) == Some(&b'\'')).then_some(close)
 }
 
 fn rust_string_literal_end(bytes: &[u8], start: usize) -> usize {
@@ -468,6 +528,33 @@ mod tests {
             "adapter mask must keep treating the quote inside a char literal as a string opener: {masked:?}"
         );
         assert!(masked.contains("let quote"));
+    }
+
+    #[test]
+    fn char_literal_mask_blanks_content_and_keeps_lifetimes() {
+        for (source, hidden) in [
+            ("let c = ';'; x", ";"),
+            ("let c = '{'; x", "{"),
+            ("let c = '\\''; x", "\\"),
+            ("let c = '\\u{3b}'; x", "3b"),
+            ("let c = '\\x3b'; x", "x3b"),
+            ("let c = b';'; x", ";"),
+            ("let c = '\u{e9}'; x", "\u{e9}"),
+        ] {
+            let masked = super::mask_rust_char_literals(source);
+            assert_eq!(masked.len(), source.len(), "{source}");
+            assert!(
+                !masked.contains(&format!("'{hidden}'")),
+                "{source} -> {masked:?}"
+            );
+            assert!(masked.ends_with("; x"), "{source} -> {masked:?}");
+        }
+        // Lifetimes and labels have no closing quote after one character.
+        let kept = "fn f<'a>(x: &'a str) -> &'a str { 'outer: loop { break 'outer; } }";
+        assert_eq!(super::mask_rust_char_literals(kept), kept);
+        // `'"'` is blanked before the string masker can open a string on it.
+        let quote = super::mask_rust_char_literals("let q = '\"'; keep_alive(x);");
+        assert!(mask_rust_comments_and_strings(&quote).contains("keep_alive"));
     }
 
     #[test]
