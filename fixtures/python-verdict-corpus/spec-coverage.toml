@@ -15,6 +15,11 @@
 # protects, one per line in sorted order. A locked example that loses its case
 # fails; covering a new one passes with a note naming the line to add.
 # Dropping a line is a reviewed edit with a reason.
+#
+# A new spec's scope goes in `spec-scopes/<RIPR-SPEC-NNNN>.toml` (`id`, `scope`,
+# `reason`, `[[waived]]`, or `unmeasured = true` with a `reason`) instead of a
+# `[[spec]]` or `[[unmeasured]]` entry here, so two spec PRs never append to the
+# same place. Entries below stay valid; both forms load into one list.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 
@@ -811,17 +816,5 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot lab
 # Rust unsafe boundary probes
 [[spec]]
 id = "RIPR-SPEC-0168"
-scope = "out"
-reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
-
-# Cargo path-dependency diff scope
-[[spec]]
-id = "RIPR-SPEC-0171"
-scope = "out"
-reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
-
-# Cargo cross-crate dependency edges
-[[spec]]
-id = "RIPR-SPEC-0172"
 scope = "out"
 reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
