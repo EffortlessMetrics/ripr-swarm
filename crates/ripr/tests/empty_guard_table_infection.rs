@@ -288,6 +288,31 @@ fn a_table_beside_an_unread_direct_call_stays_unknown() -> Result<(), String> {
     Ok(())
 }
 
+/// The two-row table of `BOTH_SIDES` plus one extra line after the loop, in the
+/// SAME test: two table rows and two owner calls would pass a bare count check.
+fn two_row_table_then(extra: &str) -> String {
+    let mut test = table(&BOTH_SIDES[..2], ASSERT_ROW);
+    let end = test.rfind("}\n").unwrap_or(test.len());
+    test.insert_str(end, extra);
+    test
+}
+
+#[test]
+fn a_table_and_an_unread_direct_call_in_the_same_test_stay_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&make_name()), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_and_a_read_direct_call_in_the_same_test_still_credit() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(\"Bob\"), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
 #[test]
 fn an_unasserted_empty_call_is_no_input_row() -> Result<(), String> {
     let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    let _ = initial(\"\");\n    assert_eq!(initial(\"ada\"), 'A');\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
