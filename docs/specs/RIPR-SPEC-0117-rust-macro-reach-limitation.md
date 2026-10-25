@@ -329,8 +329,11 @@ indexes nothing when a second macro of the name, exported or not, exists
 anywhere in the crate; when the macro is not exported; when `macro_export` is
 spelled anywhere the scope cannot list as a top-level plain export (inside a
 module or function, behind a `cfg`, with arguments, in a macro body); or when
-a file that could belong to the crate has no known crate root. A
-`crate::name!` call written as a path is not read.
+a file that could belong to the crate has no known crate root; when the
+sole definition sits in a module that is `cfg`'d, `#[path]`'d or not declared
+at all; or when any `name!` call is not directly at the file's top level (a
+`use` is not visible in a child module). A `crate::name!` call written as a
+path is not read.
 
 This is not macro expansion in general. Repetition other than the table form,
 generators reached by anything but the routes above, and procedural macros stay

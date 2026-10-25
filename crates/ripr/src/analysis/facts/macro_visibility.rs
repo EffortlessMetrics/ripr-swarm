@@ -22,7 +22,9 @@
 //! renamed or grouped imports and `include!` are out of scope.
 
 use crate::analysis::sync_memo::SyncMemo;
-use crate::analysis::syntax::{ImportedMacros, MacroScope, first_macro_call, macro_scope};
+use crate::analysis::syntax::{
+    ImportedMacros, MacroScope, calls_only_at_top_level, first_macro_call, macro_scope,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -118,7 +120,9 @@ impl MacroVisibility {
         {
             // An import that does not resolve stays in the file, so the
             // expander refuses that one name; the others are unaffected.
-            if let Some(text) = self.exported_definition(file, &import.name) {
+            if calls_only_at_top_level(source, &import.name)
+                && let Some(text) = self.exported_definition(file, &import.name)
+            {
                 walk.out.push(text);
                 path_imports.push(import.name.clone());
             }
@@ -161,11 +165,15 @@ impl MacroVisibility {
             .get(name)?
             .iter()
             .filter(|(candidate, _)| same_crate(candidate));
-        let (_, definition) = here.next()?;
+        let (definer, definition) = here.next()?;
         if here.next().is_some() {
             return None;
         }
-        definition.clone()
+        // The definer must be known to belong to the crate: a `cfg`'d, `path`
+        // or undeclared module may not be compiled at all.
+        (self.crate_root(definer).as_ref() == Some(&root))
+            .then(|| definition.clone())
+            .flatten()
     }
 
     /// The crate root file `file` belongs to, following unique `mod`
@@ -173,21 +181,41 @@ impl MacroVisibility {
     fn crate_root(&self, file: &Path) -> Option<PathBuf> {
         let mut current = file.to_path_buf();
         for _ in 0..=CRATE_ROOT_DEPTH {
-            if matches!(
-                current.file_name().and_then(|name| name.to_str()),
-                Some("lib.rs" | "main.rs" | "build.rs")
-            ) {
-                return Some(current);
-            }
-            // A file directly in `tests/` is a crate of its own only when no
-            // module declaration includes it in another.
+            // A declaration decides first: `src/commands/build.rs` declared
+            // by `mod build;` is a module, not a crate root.
             match self.parent(&current) {
                 Some((parent, _)) => current = parent,
-                None if current.parent().is_some_and(is_root_directory) => return Some(current),
+                None if self.is_crate_root(&current) => return Some(current),
                 None => return None,
             }
         }
         None
+    }
+
+    /// A root file nothing declares: `lib.rs`, `main.rs`, `build.rs` (not
+    /// inside a `src` tree, where it is a module), or a file directly in
+    /// `tests`, `benches` or `examples`.
+    fn is_crate_root(&self, file: &Path) -> bool {
+        match file.file_name().and_then(|name| name.to_str()) {
+            // `src/lib.rs`, `src/main.rs` and `src/bin/<name>/main.rs`; a
+            // `lib.rs` deeper in a tree is a module that `mod lib;` names.
+            Some("lib.rs" | "main.rs")
+                if file.parent().is_some_and(|directory| {
+                    directory.file_name().is_some_and(|name| name == "src")
+                        || directory
+                            .parent()
+                            .and_then(Path::file_name)
+                            .is_some_and(|name| name == "bin")
+                }) =>
+            {
+                true
+            }
+            Some("build.rs") => !file
+                .ancestors()
+                .skip(1)
+                .any(|directory| directory.file_name().is_some_and(|name| name == "src")),
+            _ => file.parent().is_some_and(is_root_directory),
+        }
     }
 
     fn export_index(&self) -> &ExportIndex {
@@ -546,6 +574,93 @@ mod tests {
         assert_eq!(refused(EXPORTED, gated), none, "cfg'd export");
         let local = "#[macro_export(local_inner_macros)]\nmacro_rules! t { () => {} }\n";
         assert_eq!(refused(local, "fn f() {}\n"), none, "export with arguments");
+    }
+
+    #[test]
+    fn a_path_import_needs_top_level_calls_and_a_declared_definer() {
+        let lib = "mod macros;\nmod cases;\n";
+        let nested = "use crate::t;\nmod tests { t!(a); }\n";
+        let files = [
+            ("src/lib.rs", lib),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", nested),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/cases.rs"),
+            (String::new(), Vec::new()),
+            "a child module does not see the import"
+        );
+        let cases = "use crate::t;\nt!(a);\n";
+        for declaration in [
+            "#[cfg(feature = \"x\")]\nmod macros;\nmod cases;\n",
+            "#[path = \"macros.rs\"]\nmod macros;\nmod cases;\n",
+            "mod cases;\n",
+        ] {
+            let files = [
+                ("src/lib.rs", declaration),
+                ("src/macros.rs", EXPORTED),
+                ("src/cases.rs", cases),
+            ];
+            assert_eq!(
+                path_imported(&files, "src/cases.rs"),
+                (String::new(), Vec::new()),
+                "{declaration}"
+            );
+        }
+        // `#[cfg(test)]` leaves the module plain.
+        let files = [
+            ("src/lib.rs", "#[cfg(test)]\nmod macros;\nmod cases;\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", cases),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/cases.rs").1,
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_nested_lib_rs_is_a_module_not_a_crate_root() {
+        // `src/a/lib.rs` is declared by `mod lib;` in `src/a.rs`; `module_identity`
+        // cannot name it, so the exported macro in it is not attributed to a
+        // crate, and a sibling is refused rather than credited from a wrong root.
+        let files = [
+            ("src/lib.rs", "mod a;\n"),
+            ("src/a.rs", "mod lib;\nmod cases;\n"),
+            ("src/a/lib.rs", EXPORTED),
+            ("src/a/cases.rs", "use crate::t;\nt!(boundary);\n"),
+        ];
+        let visibility = visibility(&files);
+        assert!(!visibility.is_crate_root(Path::new("src/a/lib.rs")));
+        assert!(visibility.is_crate_root(Path::new("src/lib.rs")));
+        assert!(visibility.is_crate_root(Path::new("crates/x/src/main.rs")));
+        assert!(visibility.is_crate_root(Path::new("src/bin/tool/main.rs")));
+        assert_eq!(
+            visibility
+                .imported_macros(Path::new("src/a/cases.rs"))
+                .path_imports,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_module_file_named_like_a_root_is_not_taken_for_a_crate() {
+        // `module_identity` cannot name a `build.rs` module, so its parent is
+        // unknown; it must not become a crate of its own either.
+        let files = [
+            ("src/lib.rs", "mod commands;\nmod macros;\nmod other;\n"),
+            ("src/commands/mod.rs", "mod build;\n"),
+            ("src/commands/build.rs", "use crate::t;\nt!(a);\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/other.rs", GENERATOR),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/commands/build.rs"),
+            (String::new(), Vec::new())
+        );
+        // A package-root build script is still a root.
+        assert!(!visibility(&files).is_crate_root(Path::new("src/commands/build.rs")));
+        assert!(visibility(&files).is_crate_root(Path::new("crates/x/build.rs")));
     }
 
     #[test]

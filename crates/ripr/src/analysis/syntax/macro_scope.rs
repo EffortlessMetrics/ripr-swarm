@@ -138,6 +138,25 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
     Some(scope)
 }
 
+/// Whether every `name!` invocation in `source` sits directly in the file's
+/// top-level module. A `use` is not visible in a child module, so a macro
+/// named by one reaches no call nested in an inline module or a function.
+pub(crate) fn calls_only_at_top_level(source: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    parse
+        .syntax_node()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| call.path().is_some_and(|path| path.syntax().text() == name))
+        .all(|call| {
+            call.syntax()
+                .parent()
+                .is_some_and(|parent| parent.kind() == SyntaxKind::SOURCE_FILE)
+        })
+}
+
 /// The `name` of an attribute-free `use crate::name;`.
 fn crate_path_import(item: &ast::Use) -> Option<String> {
     if item.attrs().next().is_some() {
@@ -400,6 +419,23 @@ mod tests {
             "macro_rules! unused { () => { t!(earlier); } }\n#[macro_use] mod macros;\nt!(x);\n";
         assert_eq!(first_macro_call(inert, &names), inert.rfind("t!(x)"));
         assert_eq!(first_macro_call("const S: &str = \"t!(x)\";", &names), None);
+    }
+
+    #[test]
+    fn a_path_import_reaches_only_top_level_calls() {
+        assert!(calls_only_at_top_level(
+            "use crate::t;\nt!(a);\nt!(b);\n",
+            "t"
+        ));
+        assert!(!calls_only_at_top_level(
+            "use crate::t;\nmod tests { t!(a); }\n",
+            "t"
+        ));
+        assert!(!calls_only_at_top_level(
+            "use crate::t;\nfn f() { t!(a); }\n",
+            "t"
+        ));
+        assert!(calls_only_at_top_level("use crate::t;\nu!(a);\n", "t"));
     }
 
     #[test]
