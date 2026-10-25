@@ -18,10 +18,10 @@ floor = 220
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-# 145 = 143 on main + 2 new measured rows (spec0096-named-binding-used,
+# 146 = 144 on main + 2 new measured rows (spec0096-named-binding-used,
 # spec0048-label-rendered-observed) whose initializer-call and const shapes
 # abstain today; analyzer fix tracked in #9871.
-missed_credit_ceiling = 145
+missed_credit_ceiling = 146
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
