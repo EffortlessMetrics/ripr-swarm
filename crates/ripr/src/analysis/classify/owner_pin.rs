@@ -1370,7 +1370,7 @@ impl OwnerPinSyntax {
                                 .map(|(path, file)| (path.clone(), file.source.clone())),
                         )
                     })
-                    .imported_definitions(&test.file);
+                    .imported_macros(&test.file);
                 generated_test_pins(&test.file, &facts.source, &imported, NON_RETURNING_MACROS)
             })
             .iter()
