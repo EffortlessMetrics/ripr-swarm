@@ -246,13 +246,33 @@ fn a_length_other_than_zero_stays_unknown() -> Result<(), String> {
 
 #[test]
 fn a_weakly_asserted_call_of_the_owner_stays_unknown() -> Result<(), String> {
-    // `len() < 2` agrees with the guard on every row but the one-character
-    // input, and the weak `is_ok()` call may be exactly that input.
+    // A weakly asserted call of the owner is not read as pinning the guard
+    // (`idiom-result-empty-guard`), even when the table rows are strong.
     let test = format!(
         "{}\n#[test]\nfn one_letter() {{\n    assert!(initial(\"a\") == 'A' || true);\n    let _ = initial(\"b\");\n}}\n",
         table(BOTH_SIDES, ASSERT_ROW)
     );
     let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_compound_condition_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(
+        "    if name.len() == 0 || name == \"x\" {",
+        &table(BOTH_SIDES, ASSERT_ROW),
+    )?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn one_unreadable_row_among_readable_ones_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(
+        NEW,
+        &direct(&[("\"\"", '?'), ("\"ada\"", 'A'), ("unknown_name", 'X')]),
+    )?;
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())
 }

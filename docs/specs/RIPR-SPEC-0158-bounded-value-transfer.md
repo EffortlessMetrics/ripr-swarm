@@ -45,9 +45,11 @@ exercised boundary from a missing one.
   comparison `text.len() == 0` or `text.len() != 0` over a `&str` or
   `String` parameter. It credits only when the related calls give the
   operand both an empty and a non-empty value, every related test that
-  calls the owner holds only strong assertions (a weakly asserted call may
-  be the one-character input that `len() < 2` would change), and each row is
-  readable. Rows may come from direct calls or from the cells of a constant
+  calls the owner holds only strong assertions (a conservative proxy: a
+  weakly asserted call is not read as pinning the guard), and each row is
+  readable; one unreadable row keeps the unknown reading. The credit covers
+  the guard's negation, `== 1` and constant `true`/`false` mutants; it does
+  not claim neighbours such as `len() < 2`, which need a one-character row. Rows may come from direct calls or from the cells of a constant
   `for` table, where a whole string literal cell is an exact input
   for this guard alone; any other string-valued column stays unread.
   Rows on one side only, a literal other than `0`, a compound condition and

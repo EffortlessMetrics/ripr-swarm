@@ -915,13 +915,14 @@ fn emptiness_guard_operand<'a>(probe: &Probe, left: &'a str, right: &'a str) -> 
 /// 0` or `!= 0`, admits it only when the related calls give the operand both
 /// an empty and a non-empty value: the empty row separates the guard from
 /// `!=`, `== 1` and a constant `false`, the non-empty row from a constant
-/// `true`. A neighbour such as `len() < 2` survives unless the input of
-/// length one is asserted exactly, so every related test that calls the owner
-/// must also hold only strong assertions; a weakly asserted call may be the
-/// one that sits on that neighbour. Rows on one side only, other literals and
-/// unreadable rows keep the unknown reading. Rows reach this through the same
-/// call-value reader as every other boundary input, so a literal table loop
-/// counts row by row.
+/// `true`. A neighbour such as `len() < 2` is not separated by these rows
+/// and is not claimed: the credit covers the one-step negation and constant
+/// mutants of the guard. Every related test that calls the owner must also
+/// hold only strong assertions, a conservative proxy that keeps a weakly
+/// asserted call (`idiom-result-empty-guard`) from being read as pinning the
+/// guard. Rows on one side only, other literals and any unreadable row keep
+/// the unknown reading. Rows reach this through the same call-value reader as
+/// every other boundary input, so a literal table loop counts row by row.
 fn admits_closed_form(
     owner: &FunctionSummary,
     probe: &Probe,
@@ -961,14 +962,30 @@ fn admits_closed_form(
     if !every_call_pinned {
         return false;
     }
+    // A call whose argument ripr cannot read yields no row, and may be the
+    // input that sits on a neighbour of the guard. Every call of the owner
+    // must contribute at least one row (a table loop contributes one per row).
+    let owner_calls: usize = related_tests
+        .iter()
+        .map(|test| {
+            test.body_calls()
+                .filter(|call| call.name == owner.name)
+                .count()
+        })
+        .sum();
+    if call_values.len() < owner_calls {
+        return false;
+    }
     let (mut empty, mut non_empty) = (false, false);
     for row in call_values {
         let inputs: super::value_transfer::ExactInputs = row
             .iter()
             .map(|cell| (cell.parameter.clone(), cell.value.clone()))
             .collect();
+        // One unreadable row may be the input that sits on a neighbour of the
+        // guard, so it withholds the credit rather than being skipped.
         let Some(exact) = exact_operand_for_row(&resolved, row, &inputs, index, true) else {
-            continue;
+            return false;
         };
         match exact.value.trim().parse::<u64>() {
             Ok(0) => empty = true,
