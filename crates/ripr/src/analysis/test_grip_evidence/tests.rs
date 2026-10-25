@@ -19699,11 +19699,7 @@ fn value_facts_keep_one_fact_per_test_file() {
         value: "amount == threshold".to_string(),
         context: ValueContext::FunctionArgument,
     };
-    let mut values = vec![
-        fact("tests/b.rs"),
-        fact("tests/a.rs"),
-        fact("tests/b.rs"),
-    ];
+    let mut values = vec![fact("tests/b.rs"), fact("tests/a.rs"), fact("tests/b.rs")];
     sort_value_facts(&mut values);
     let files = values
         .iter()
