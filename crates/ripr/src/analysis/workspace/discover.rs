@@ -342,7 +342,7 @@ pub(crate) fn discover_python_test_files(
     };
     Ok(Some(UnlinkedPythonTests {
         count,
-        example: example.to_string_lossy().replace('\\', "/"),
+        example: crate::output::path::path_display_lossy(&example),
         at_least: capped,
     }))
 }

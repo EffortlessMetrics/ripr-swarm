@@ -178,6 +178,10 @@ of any serialized output; verdicts, classes, JSON, SARIF and gate output are
 unchanged. A walk that finds no Python test adds nothing, and a cancelled walk
 fails the analysis rather than yielding a partial count.
 
+The example is native display text: a literal backslash in a Unix filename
+stays distinct from a `/` separator; Windows separators display as `/`.
+This human-only value is not a stored baseline identity (#9791).
+
 ## Required Evidence
 
 - `CheckOutput.summary` fields: `findings`, `exposed`, `weakly_exposed`,
