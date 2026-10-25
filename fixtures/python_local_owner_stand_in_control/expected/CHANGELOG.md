@@ -103,3 +103,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_local_owner_stand_in_control (9)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_local_owner_stand_in_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_local_owner_stand_in_control (10)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_local_owner_stand_in_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
