@@ -3772,8 +3772,18 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_decorator_that_patches_only_other_names_then_the_callee_is_still_credited",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_requests_style_utils_file_then_the_callee_is_credited_despite_mock_and_monkeypatch",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_patching_that_names_the_callee_by_any_spelling_then_the_assertion_stays_smoke",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_decorator_that_patches_the_callee_then_the_assertion_stays_smoke",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_patch_target_that_cannot_be_read_then_the_assertion_stays_smoke",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_an_aliased_or_unreadable_patch_helper_then_the_assertion_stays_smoke",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_file_wide_dynamic_namespace_marker_then_unrelated_patching_does_not_restore_credit",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_patch_marker_in_the_owner_module_that_names_the_owner_then_the_assertion_stays_smoke",
 ]
 fixtures = [
+  "fixtures/python_bool_owner_patched_callee",
   "fixtures/python_dynamic_namespace_dunder_setattr",
   "fixtures/python_dynamic_namespace_reload",
   "fixtures/python_dynamic_namespace_renamed_delattr",
@@ -3873,6 +3883,8 @@ fixtures = [
   "fixtures/python-real-repo-evals",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/bool_oracle.rs",
+  "crates/ripr/src/analysis/language/python/bool_oracle/patch_scope.rs",
   "xtask/src/fixture_contracts/upstream_python.rs",
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",

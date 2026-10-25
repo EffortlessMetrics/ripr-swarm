@@ -197,7 +197,19 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke
+    or non-literal argument stays smoke. Patching is read per name (#10391), not
+    per file: a test file that mentions `mock` / `monkeypatch` only for other
+    names (`monkeypatch.setenv`, `mock.patch.dict`, `mock.patch("pkg.other")`,
+    `monkeypatch.setattr(Other, "attr", ..)`, mock constructors) still keeps the
+    credit. The credit is withheld, fail closed, when a patching call names the
+    callee or its owner name in any identifier or string, when its target is
+    dynamic (a variable, concatenation, f-string, `*args` / `**kwargs`,
+    `autospec`), when a patch-like name is aliased (`p = patch`,
+    `import .. as ..`) or called through anything this reading does not
+    understand (`monkeypatch.context()`, `mocker.spy`, a helper whose name
+    contains `patch` / `mock`), and file-wide for `globals(`, `vars(`, `exec(`,
+    `eval(`, `__code__`, `__dict__`, `sys.modules` and `importlib`. A fixture in
+    an unreadable `conftest.py` is outside this reading, as before.
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak

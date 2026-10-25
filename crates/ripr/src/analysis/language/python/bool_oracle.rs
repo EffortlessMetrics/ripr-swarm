@@ -22,13 +22,17 @@
 //!
 //! The name must also have no other binding anywhere in the owner's module
 //! (imports, `if`/`try` redefinitions, `del`, loops), the owner must not be a
-//! generator, and the test file must not patch, mock or rebind the callee. A
+//! generator, and the test file must not patch, mock or rebind the callee
+//! (patching of other names, such as `monkeypatch.setenv`, is not a rebinding;
+//! see [`patch_scope`]). A
 //! `Compare` is taken as a `bool`; a type with a custom `__eq__` returning
 //! another value is an accepted residual.
 //!
 //! Anything else — a non-literal argument, a method, a decorated or
 //! re-exported-under-another-name owner, two candidate owners, a `bool`
 //! operand the assertion does not pin — stays smoke.
+
+mod patch_scope;
 
 use super::import_source_module_matches_owner;
 use super::related_tests::related_test_relation;
@@ -63,8 +67,9 @@ pub(super) fn credit_bare_bool_asserts<'a>(
             let keeps_callee = *kept
                 .entry((test.file.clone(), call.callee.clone()))
                 .or_insert_with(|| {
-                    read_source(&test.file)
-                        .is_some_and(|source| test_keeps_callee(source, &test.file, &call.callee))
+                    read_source(&test.file).is_some_and(|source| {
+                        test_keeps_callee(source, &test.file, &call.callee, &owner.name)
+                    })
                 });
             if !keeps_callee {
                 continue;
@@ -120,13 +125,11 @@ fn unique_callee_owner<'o>(
     .then_some(owner)
 }
 
-/// Markers of dynamic rebinding or patching. Textual on purpose: a hit in a
-/// comment or string only leaves the assertion smoke.
-const DYNAMIC_MARKERS: [&str; 12] = [
-    "patch",
-    "mock",
-    "Mock",
-    "setattr",
+/// Markers of dynamic rebinding that no reading of the test can scope to one
+/// name. Textual on purpose: a hit in a comment or string only leaves the
+/// assertion smoke. Patching and mocking are not here: [`patch_scope`] reads
+/// them against the names they could rebind (#10391).
+const DYNAMIC_MARKERS: [&str; 8] = [
     "globals(",
     "vars(",
     "exec(",
@@ -137,15 +140,18 @@ const DYNAMIC_MARKERS: [&str; 12] = [
     "importlib",
 ];
 
-fn may_rebind_dynamically(source: &str, name: &str) -> bool {
-    DYNAMIC_MARKERS.iter().any(|marker| source.contains(marker)) || binds_by_walrus(source, name)
+fn may_rebind_dynamically(source: &str, names: &[&str]) -> bool {
+    DYNAMIC_MARKERS.iter().any(|marker| source.contains(marker))
+        || names.iter().any(|name| binds_by_walrus(source, name))
+        || patch_scope::may_patch_names(source, names)
 }
 
 /// Whether the test file keeps `callee` bound to the one import that brought it
 /// in: exactly one binding of the name anywhere in the file (the import itself)
-/// and no dynamic rebinding. A file that does not parse is not trusted.
-fn test_keeps_callee(source: &str, path: &Path, callee: &str) -> bool {
-    if may_rebind_dynamically(source, callee) {
+/// and no dynamic rebinding or patching of `callee` or the owner it imports.
+/// A file that does not parse is not trusted.
+fn test_keeps_callee(source: &str, path: &Path, callee: &str, owner_name: &str) -> bool {
+    if may_rebind_dynamically(source, &[callee, owner_name]) {
         return false;
     }
     let Ok(Mod::Module(module)) = parse_module_result(path, source) else {
@@ -188,7 +194,9 @@ fn owner_returns_bool(
     };
     // Dynamic rebinding, then any binding of the name besides the owner's own
     // definition, at any depth (the definition itself is the one allowed).
-    if may_rebind_dynamically(source, &owner.name) || count_bindings(module, &owner.name) != 1 {
+    if may_rebind_dynamically(source, &[owner.name.as_str()])
+        || count_bindings(module, &owner.name) != 1
+    {
         return false;
     }
     let args = &function.args;
