@@ -812,6 +812,7 @@ fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
         super::static_limits::static_limit_for_focused_change(
             new,
             Some(old),
+            None,
             &focus,
             &owners[0],
             &candidates,

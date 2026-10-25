@@ -43,3 +43,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_mask_rebound (4)
+
+Reason:
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_mask_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

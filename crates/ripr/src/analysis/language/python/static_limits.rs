@@ -2,6 +2,7 @@ use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::caplog_text::PythonLogEvidence;
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
     is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
@@ -36,7 +37,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, None, &focus, owner, related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -45,6 +46,7 @@ pub(super) fn static_limit_for_change(
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
     old_line_text: Option<&str>,
+    log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -182,9 +184,11 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
         });
     }
-    if changed_logging_call_literal(trimmed).is_some_and(|literal| {
-        related_candidates_have_log_membership_limit(related_candidates, focus, literal)
-    }) {
+    if log_evidence.is_none()
+        && changed_logging_call_literal(trimmed).is_some_and(|literal| {
+            related_candidates_have_log_membership_limit(related_candidates, focus, literal)
+        })
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
             evidence: "static_limit unsupported_syntax: related test reads the changed log message through `caplog` membership"
@@ -208,7 +212,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation semantics.".to_string(),
         });
     }
-    if trimmed.contains("lambda ") {
+    if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
             evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
@@ -217,6 +221,23 @@ pub(super) fn static_limit_for_focused_change(
         });
     }
     None
+}
+
+/// A `lambda` expression: the keyword at an identifier boundary and followed
+/// by a space, `:` or `(`. Text in a string is read as text only when the line
+/// is a plain one-line string literal return (`return "lambda x"`): no braces
+/// (an f-string expression or a dict could hold code), no triple quotes (the
+/// line may close a string opened above) and no other quote state to track.
+fn contains_lambda_keyword(text: &str) -> bool {
+    let plain_line =
+        !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
+    text.match_indices("lambda").any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after = text[idx + "lambda".len()..].chars().next();
+        before.is_none_or(|ch| !is_python_identifier_char(ch))
+            && after.is_some_and(|ch| ch == ' ' || ch == ':' || ch == '(')
+            && !(plain_line && python_prefix_hides_code(line_prefix_before(text, idx)))
+    })
 }
 
 /// A dunder method owner (`Cache.__setitem__`) with no related test, in a
@@ -310,9 +331,22 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
     text.contains("__getattr__")
-        || text.contains("type(")
-        || text.contains("setattr(")
+        || contains_call_at_name_boundary(text, "type(")
+        || contains_call_at_name_boundary(text, "setattr(")
         || contains_metaclass_declaration(text)
+}
+
+/// `call` (`type(`) where the name starts at an identifier boundary:
+/// `type(x)` and `builtins.type(x)`, not `content_type(x)`. Text in a string
+/// still counts: a boundary is the only thing read, so an f-string expression
+/// or a multi-line string can never hide a real call.
+fn contains_call_at_name_boundary(text: &str, call: &str) -> bool {
+    text.match_indices(call).any(|(idx, _)| {
+        !text[..idx]
+            .chars()
+            .next_back()
+            .is_some_and(is_python_identifier_char)
+    })
 }
 
 fn contains_metaclass_declaration(text: &str) -> bool {
@@ -589,7 +623,13 @@ pub(super) fn test_has_mocked_module(test: &PythonTest) -> bool {
         "monkeypatch.delattr(",
     ]
     .iter()
-    .any(|call| body_calls_at_name_boundary(&test.body_text, call))
+    .any(|call| {
+        if call.starts_with("patch") {
+            body_calls_patch(&test.body_text, call, &test.imports)
+        } else {
+            body_calls_at_name_boundary(&test.body_text, call)
+        }
+    })
 }
 
 /// Whether `body` contains `call` where the name starts at an identifier
@@ -601,6 +641,59 @@ fn body_calls_at_name_boundary(body: &str, call: &str) -> bool {
             .chars()
             .next_back()
             .is_some_and(is_python_identifier_char)
+    })
+}
+
+/// Receivers whose `.patch(...)` is an HTTP request, not `mock.patch`.
+const HTTP_CLIENT_RECEIVERS: &[&str] = &[
+    "client",
+    "test_client",
+    "api_client",
+    "async_client",
+    "session",
+    "requests",
+    "httpx",
+];
+
+/// `body_calls_at_name_boundary` for a `patch` form, except an HTTP client's
+/// `client.patch("/x")` (RIPR-SPEC-0238 rule 8). The exemption is fail-closed:
+/// it applies only to a plain `<http client>.patch(` receiver, and only when
+/// neither the test body (which holds its signature) nor its imports mention
+/// a mock at all, so a client that is itself a mock keeps the limit.
+fn body_calls_patch(body: &str, call: &str, imports: &[PythonImport]) -> bool {
+    let mentions_mock = body.to_ascii_lowercase().contains("mock")
+        || imports.iter().any(|import| {
+            let text = format!(
+                "{} {} {}",
+                import.imported, import.alias, import.source_module
+            );
+            text.to_ascii_lowercase().contains("mock")
+        });
+    body.match_indices(call).any(|(idx, _)| {
+        let before = &body[..idx];
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(is_python_identifier_char)
+        {
+            return false;
+        }
+        let http_request = before.ends_with('.') && !mentions_mock && http_client_receiver(before);
+        !http_request
+    })
+}
+
+/// Whether the text before `.patch(` ends in `<http client>.`, with the client
+/// name starting at an identifier boundary (`self.client.` and `client.` both,
+/// `other_client.` not).
+fn http_client_receiver(before: &str) -> bool {
+    let receiver = before.trim_end_matches('.');
+    HTTP_CLIENT_RECEIVERS.iter().any(|name| {
+        receiver.strip_suffix(name).is_some_and(|rest| {
+            rest.chars()
+                .next_back()
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+        })
     })
 }
 
@@ -830,44 +923,194 @@ fn related_candidates_have_log_membership_limit(
                     // may overlap; `assert` and `caplog.text` are scaffolding.
                     caplog_membership_literals(&assertion.gate_text)
                         .iter()
-                        .any(|checked| words(checked).iter().any(|word| changed.contains(word)))
+                        .any(|checked| {
+                            words(&checked.literal)
+                                .iter()
+                                .any(|word| changed.contains(word))
+                        })
+                        // Indexed and list forms over `caplog.messages` or
+                        // `caplog.records` (`caplog.records[0].message == ...`,
+                        // `caplog.messages == [...]`) are not evaluated: any
+                        // shared word abstains.
+                        || (assertion.gate_text.contains("caplog.messages")
+                            || assertion.gate_text.contains("caplog.records"))
+                            && words(&assertion.gate_text)
+                                .iter()
+                                .any(|word| changed.contains(word))
                 })
         })
 }
 
-/// The string literals an assertion checks for membership in `caplog.text`,
+/// How an assertion compares its literal with what the logging call emitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CaplogRead {
+    /// `"<text>" in caplog.text`: a substring of the formatted record text.
+    Text,
+    /// `"<text>" in caplog.messages` or `any(r.message == "<text>" ...)`: one
+    /// whole formatted message.
+    MessageEquals,
+    /// `any("<text>" in r.message for r in caplog.records)`: a substring of one
+    /// formatted message.
+    MessageContains,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CaplogMembership {
+    pub(super) literal: String,
+    pub(super) read: CaplogRead,
+}
+
+/// The string literals an assertion checks against the captured log records
+/// (`caplog.text`, `caplog.messages`, or `any(...)` over `caplog.records`),
 /// read from the parsed expression so spacing, parentheses, line breaks and
 /// implicit literal concatenation do not change what is recognized.
-fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<CaplogMembership> {
+    caplog_literals(gate_text, false)
+}
+
+/// The literals that must all hold for the assertion to pass: a single
+/// membership or an `and` chain of them. A literal under `or` is not one of
+/// them (`assert A in caplog.text or B in caplog.text` still passes when A
+/// alone disappears), so crediting an edit never reads through an `or`.
+pub(super) fn caplog_required_literals(gate_text: &str) -> Vec<CaplogMembership> {
+    caplog_literals(gate_text, true)
+}
+
+fn caplog_literals(gate_text: &str, conjunctive_only: bool) -> Vec<CaplogMembership> {
     let expression = gate_text.trim_start();
     let expression = expression.strip_prefix("assert").unwrap_or(expression);
     let mut literals = Vec::new();
     if let Some(value) = parse_expression(expression) {
-        collect_caplog_membership_literals(&value, &mut literals);
+        collect_caplog_membership_literals(&value, conjunctive_only, &mut literals);
     }
     literals
 }
 
-fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+fn string_constant(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Str(text) => Some(text.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `<name>.message` or `<name>.getMessage()` for the loop variable `name`.
+fn is_record_message(expr: &Expr, name: &str) -> bool {
+    let is_name = |value: &Expr| matches!(value, Expr::Name(n) if n.id.as_str() == name);
+    match expr {
+        Expr::Attribute(attribute) => {
+            attribute.attr.as_str() == "message" && is_name(&attribute.value)
+        }
+        Expr::Call(call) => {
+            call.args.is_empty()
+                && call.keywords.is_empty()
+                && matches!(
+                    call.func.as_ref(),
+                    Expr::Attribute(attribute)
+                        if attribute.attr.as_str() == "getMessage" && is_name(&attribute.value)
+                )
+        }
+        _ => false,
+    }
+}
+
+/// `[r.message for r in caplog.records]` (or `r.getMessage()`): the formatted
+/// message of every captured record.
+fn is_record_messages_list(expr: &Expr) -> bool {
+    let Expr::ListComp(list) = expr else {
+        return false;
+    };
+    let [comprehension] = list.generators.as_slice() else {
+        return false;
+    };
+    let Expr::Name(target) = &comprehension.target else {
+        return false;
+    };
+    !comprehension.is_async
+        && comprehension.ifs.is_empty()
+        && expr_full_name(&comprehension.iter).as_deref() == Some("caplog.records")
+        && is_record_message(&list.elt, target.id.as_str())
+}
+
+/// `any("<text>" in r.message for r in caplog.records)` and the `==` forms.
+fn caplog_records_any(call: &ast::ExprCall) -> Option<CaplogMembership> {
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "any")
+        || call.args.len() != 1
+        || !call.keywords.is_empty()
+    {
+        return None;
+    }
+    let Expr::GeneratorExp(generator) = &call.args[0] else {
+        return None;
+    };
+    let [comprehension] = generator.generators.as_slice() else {
+        return None;
+    };
+    if comprehension.is_async
+        || !comprehension.ifs.is_empty()
+        || expr_full_name(&comprehension.iter).as_deref() != Some("caplog.records")
+    {
+        return None;
+    }
+    let Expr::Name(target) = &comprehension.target else {
+        return None;
+    };
+    let name = target.id.as_str();
+    let Expr::Compare(compare) = generator.elt.as_ref() else {
+        return None;
+    };
+    let [op] = compare.ops.as_slice() else {
+        return None;
+    };
+    let [other] = compare.comparators.as_slice() else {
+        return None;
+    };
+    match op {
+        ast::CmpOp::In if is_record_message(other, name) => Some(CaplogMembership {
+            literal: string_constant(&compare.left)?,
+            read: CaplogRead::MessageContains,
+        }),
+        ast::CmpOp::Eq if is_record_message(&compare.left, name) => Some(CaplogMembership {
+            literal: string_constant(other)?,
+            read: CaplogRead::MessageEquals,
+        }),
+        ast::CmpOp::Eq if is_record_message(other, name) => Some(CaplogMembership {
+            literal: string_constant(&compare.left)?,
+            read: CaplogRead::MessageEquals,
+        }),
+        _ => None,
+    }
+}
+
+fn collect_caplog_membership_literals(
+    expr: &Expr,
+    conjunctive_only: bool,
+    out: &mut Vec<CaplogMembership>,
+) {
     match expr {
         Expr::BoolOp(bool_op) => {
+            if conjunctive_only && bool_op.op != ast::BoolOp::And {
+                return;
+            }
             for value in &bool_op.values {
-                collect_caplog_membership_literals(value, out);
+                collect_caplog_membership_literals(value, conjunctive_only, out);
             }
         }
+        Expr::Call(call) => out.extend(caplog_records_any(call)),
         Expr::Compare(compare)
-            if compare.ops.len() == 1
-                && matches!(compare.ops[0], ast::CmpOp::In)
-                && compare
-                    .comparators
-                    .first()
-                    .and_then(expr_full_name)
-                    .is_some_and(|name| name == "caplog.text") =>
+            if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::In) =>
         {
-            if let Expr::Constant(constant) = compare.left.as_ref()
-                && let ast::Constant::Str(text) = &constant.value
-            {
-                out.push(text.clone());
+            let comparator = compare.comparators.first();
+            let read = match comparator.and_then(expr_full_name).as_deref() {
+                Some("caplog.text") => CaplogRead::Text,
+                Some("caplog.messages") => CaplogRead::MessageEquals,
+                _ if comparator.is_some_and(is_record_messages_list) => CaplogRead::MessageEquals,
+                _ => return,
+            };
+            if let Some(literal) = string_constant(&compare.left) {
+                out.push(CaplogMembership { literal, read });
             }
         }
         _ => {}
@@ -960,9 +1203,68 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
             contains_python_call_shape(text, "sys.exit")
                 || contains_python_call_shape(text, "sys.stdout.write")
                 || contains_python_call_shape(text, "sys.stderr.write")
+                || prints_to_standard_stream(text)
         }
         _ => false,
     }
+}
+
+/// `print(..., file=sys.stderr)` names a standard stream, not an imported
+/// implementation: a test reads it back through `capsys` without resolving `sys`.
+///
+/// The whole changed line must be that one `print` call, with `sys.stderr` or
+/// `sys.stdout` as its `file=` argument and no other use of `sys` anywhere on
+/// the line (`print(sys.argv[0], file=sys.stderr)` still reads an unresolved
+/// attribute, and a conditional or second call may print elsewhere).
+fn prints_to_standard_stream(text: &str) -> bool {
+    // Offset of the parsed text inside `parse_expression`'s wrapper source.
+    const WRAPPER_PREFIX: usize = "_ = (\n".len();
+    let trimmed = text.trim();
+    let Some(Expr::Call(call)) = parse_expression(trimmed) else {
+        return false;
+    };
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "print") {
+        return false;
+    }
+    let file_keywords: Vec<_> = call
+        .keywords
+        .iter()
+        .filter(|keyword| {
+            keyword
+                .arg
+                .as_ref()
+                .is_some_and(|arg| arg.as_str() == "file")
+        })
+        .collect();
+    let [file_keyword] = file_keywords.as_slice() else {
+        return false;
+    };
+    if !matches!(
+        expr_full_name(&file_keyword.value).as_deref(),
+        Some("sys.stderr" | "sys.stdout")
+    ) {
+        return false;
+    }
+    let start = usize::try_from(u32::from(file_keyword.range.start())).ok();
+    let end = usize::try_from(u32::from(file_keyword.range.end())).ok();
+    let (Some(start), Some(end)) = (start, end) else {
+        return false;
+    };
+    let (Some(start), Some(end)) = (
+        start.checked_sub(WRAPPER_PREFIX),
+        end.checked_sub(WRAPPER_PREFIX),
+    ) else {
+        return false;
+    };
+    let (Some(before), Some(after)) = (trimmed.get(..start), trimmed.get(end..)) else {
+        return false;
+    };
+    !contains_identifier(before, "sys") && !contains_identifier(after, "sys")
+}
+
+fn contains_identifier(text: &str, identifier: &str) -> bool {
+    text.match_indices(identifier)
+        .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
 }
 
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
@@ -1093,6 +1395,7 @@ mod tests {
             imports,
             cli_receiver_names: Vec::new(),
             route_paths: Vec::new(),
+            route_methods: Vec::new(),
             dynamic_route_decorators: Vec::new(),
             unplain_decorators: Vec::new(),
             decorator_lines: None,
@@ -1470,5 +1773,80 @@ mod tests {
             decorator_limit(&owner),
             Some(StaticLimitKind::DecoratorIndirection)
         );
+    }
+
+    /// Token-shaped detection reads names, not substrings (RIPR-SPEC-0238
+    /// rule 8): a call named `content_type`, the word `lambda` inside a string
+    /// and an HTTP client's `.patch` are not metaprogramming, lambda syntax or a
+    /// mocked module.
+    #[test]
+    fn substring_lookalikes_are_not_metaprogramming_lambda_or_mock_patch() {
+        for code in ["    return content_type(x)", "    return my_setattr(x)"] {
+            assert!(!contains_metaprogramming(code), "{code}");
+        }
+        // Fail closed where string hiding is unsafe: f-string expressions run.
+        for code in [
+            "    return f\"{type(x)}\"",
+            "    return f\"{setattr(o, n, v)}\"",
+            "    return type(x)",
+            "    return builtins.type(x)",
+            "    setattr(obj, name, value)",
+            "    return cls.__getattr__(name)",
+        ] {
+            assert!(contains_metaprogramming(code), "{code}");
+        }
+        for code in [
+            "    return \"lambda x\"",
+            "    return 'a lambda (x)'",
+            "    return lambdas(x)",
+            "    return my_lambda + 1",
+        ] {
+            assert!(!contains_lambda_keyword(code), "{code}");
+        }
+        for code in [
+            "    return lambda x: x",
+            "    key = lambda: 0",
+            "    return f\"{(lambda x: x)(1)}\"",
+            "    \"\"\"; k = lambda x: x",
+            "    return sorted(items, key=lambda(x))",
+        ] {
+            assert!(contains_lambda_keyword(code), "{code}");
+        }
+        let none: Vec<PythonImport> = Vec::new();
+        for body in [
+            "    client.patch(\"/x\")\n",
+            "    self.client.patch(\"/x\")\n",
+            "    response = requests.patch(url)\n",
+            "    session.patch(url, json={})\n",
+        ] {
+            assert!(!body_calls_patch(body, "patch(", &none), "{body}");
+        }
+        let from_mock = vec![PythonImport {
+            imported: "mock".to_string(),
+            alias: "m".to_string(),
+            source_module: "unittest".to_string(),
+        }];
+        for (body, imports) in [
+            ("    patch(\"os.getcwd\")\n", &none),
+            ("    mock.patch(\"os.getcwd\")\n", &none),
+            ("    unittest.mock.patch(\"os.getcwd\")\n", &none),
+            ("    mocker.patch(\"os.getcwd\")\n", &none),
+            ("    m.patch(\"os.getcwd\")\n", &from_mock),
+            ("    self.mocker.patch(\"os.getcwd\")\n", &none),
+            ("    mock_client.patch(\"/x\")\n", &none),
+            // An unrecognized receiver fails closed.
+            ("    other_client.patch(\"/x\")\n", &none),
+            (
+                "    client = mock.Mock()\n    client.patch(\"/x\")\n",
+                &none,
+            ),
+        ] {
+            assert!(body_calls_patch(body, "patch(", imports), "{body}");
+        }
+        assert!(body_calls_patch(
+            "    mocker.patch.object(a, \"b\")\n",
+            "patch.object(",
+            &none
+        ));
     }
 }

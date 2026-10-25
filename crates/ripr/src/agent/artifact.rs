@@ -613,7 +613,7 @@ pub(crate) struct ValidatedCheckFindings {
 /// Validate a `check-findings-json` artifact with the same identity,
 /// commitment and Git-provenance authority as `validate_repo_exposure_artifact`
 /// (one shared validator, no weaker twin), then require a complete document: an
-/// analysis that did not complete, or a findings array bounded to a prefix,
+/// analysis that did not complete, or a findings array bounded to a subset,
 /// cannot show a gap as closed.
 pub(crate) fn validate_check_findings_artifact(
     root: &Path,

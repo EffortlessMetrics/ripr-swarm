@@ -44,6 +44,13 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// Trimmed text of the single-line expression statements written directly
     /// in this method's body (not nested under a guard). Set at extraction.
     pub(in crate::analysis::language::python) direct_statements: Vec<String>,
+    /// For a module-level function owner: the module-scope names bound once to
+    /// a call result and never rebound, objects the function can mutate
+    /// through an attribute write. Filled after extraction; empty when unknown.
+    pub(in crate::analysis::language::python) module_objects: Vec<String>,
+    /// For a function owner: the names its own body binds (parameters, locals,
+    /// walrus targets). None when unknown, which keeps every consumer closed.
+    pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
 }
 
 /// Fills [`PythonClassFacts`] on each method owner from the owners that share
