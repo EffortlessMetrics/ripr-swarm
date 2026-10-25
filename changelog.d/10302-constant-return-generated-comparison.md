@@ -4,5 +4,6 @@
   `rust_macro_wrapped_assertion_unresolved`: its generated comparison cannot
   notice the owner, so the missing discriminator stays a gap instead of
   reading as an unreadable comparison (#10302). A return that may carry the
-  owner's value, or any `return`, `?`, macro or closure in the body, keeps the
-  limit.
+  owner's value, any `return`, `?`, macro or closure in the body, or an
+  expected value that is not a plain literal (`with`, `matches`, `panics`),
+  keeps the limit.

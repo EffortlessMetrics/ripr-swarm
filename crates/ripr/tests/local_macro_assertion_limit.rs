@@ -201,9 +201,18 @@ fn a_generated_comparison_on_a_constant_return_is_not_a_limit() -> Result<(), St
     // unreadable comparison" would hide the missing discriminator (#10302).
     let constant = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
     let found = findings(constant)?;
-    if found.iter().any(limited) {
+    if found.is_empty() || found.iter().any(limited) {
         return Err(format!(
             "a constant-return generated comparison must stay a gap: {:?}",
+            summary(&found)
+        ));
+    }
+    if found
+        .iter()
+        .any(|f| f.class == ripr::ExposureClass::StaticUnknown)
+    {
+        return Err(format!(
+            "the unlimited finding must not read static_unknown: {:?}",
             summary(&found)
         ));
     }
@@ -213,6 +222,21 @@ fn a_generated_comparison_on_a_constant_return_is_not_a_limit() -> Result<(), St
     if !found.iter().any(limited) {
         return Err(format!(
             "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_predicate_beside_a_constant_return_keeps_the_limit() -> Result<(), String> {
+    // `with` runs a predicate of its own, which can read state the owner
+    // changed even though the row returns a literal.
+    let with = "    #[test_case(100 => with |_: u32| assert_eq!(surcharge(100), 110))]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
+    let found = findings(with)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "a `with` predicate must keep the generated-comparison limit: {:?}",
             summary(&found)
         ));
     }

@@ -5,5 +5,7 @@ id = "RIPR-SPEC-0120"
 tests = [
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_generated_comparison_on_a_constant_return_is_not_a_limit",
   "crates/ripr/src/analysis/syntax/constant_return.rs::a_literal_tail_after_a_discarded_call_is_constant",
+  "crates/ripr/tests/local_macro_assertion_limit.rs::a_generated_predicate_beside_a_constant_return_keeps_the_limit",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::only_a_plain_literal_expected_value_is_independent_of_the_owner",
   "crates/ripr/src/analysis/syntax/constant_return.rs::anything_that_may_carry_the_owner_value_is_not_constant",
 ]
