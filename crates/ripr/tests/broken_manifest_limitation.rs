@@ -267,3 +267,41 @@ fn inlining_the_inherited_dependency_clears_the_redirect_limitation() -> Result<
     assert_eq!(outcome["analysis_complete"], true, "{outcome}");
     Ok(())
 }
+
+/// A manifest at a non-UTF-8 path cannot yield a portable repo-relative edge
+/// identity, so it is the only Limited cause here: every manifest parses and
+/// no redirect exists. The recovery must still name UTF-8 paths. Only Unix
+/// filesystems accept arbitrary path bytes.
+#[cfg(unix)]
+#[test]
+fn non_utf8_manifest_path_is_limited_with_a_utf8_path_next_step() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let repo = Repo::new("non-utf8-path", Some(MANIFEST))?;
+    let odd = repo.root.join(OsStr::from_bytes(b"odd-\xff\xfe"));
+    if fs::create_dir_all(&odd).is_err() {
+        // The filesystem refuses non-UTF-8 names (for example some
+        // normalization-enforcing mounts); nothing to prove there.
+        return Ok(());
+    }
+    assert!(odd.to_str().is_none(), "fixture path must be non-UTF-8");
+    write(
+        &odd.join("Cargo.toml"),
+        "[package]\nname = \"odd\"\nversion = \"0.1.0\"\n",
+    )?;
+    let (stdout, _) = repo.check("json")?;
+    let outcome = outcome(&stdout)?;
+    assert_eq!(outcome["analysis_complete"], false, "{outcome}");
+    let limitation = path_dependency_limitation(&outcome)
+        .ok_or_else(|| format!("no path-dependency limitation: {outcome}"))?;
+    let detail = limitation["bounded_detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("limited"), "{detail}");
+    assert!(
+        limitation["recovery"]["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("UTF-8 manifest paths") && d.contains("re-run")),
+        "recovery must tell the user to use UTF-8 paths: {limitation}"
+    );
+    Ok(())
+}

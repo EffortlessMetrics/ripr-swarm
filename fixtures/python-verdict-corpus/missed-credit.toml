@@ -29,14 +29,6 @@ case = "py-idioms-doctest-separator"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "py-idioms-patch-clock-offset"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "py-idioms-patch-clock-separator"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "py-shapes-dataclass-default-rate"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
