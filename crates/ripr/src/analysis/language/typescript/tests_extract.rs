@@ -2455,7 +2455,7 @@ fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
 /// guard only sees a declaration that starts its line, so a destructured or
 /// inline declaration would otherwise leave an assertion binding credited
 /// while shadowed (#4638 review). Over-collecting only withholds credit.
-fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+pub(crate) fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
     for statement in statements {
         collect_statement_declared_names(statement, out);
     }
@@ -2780,7 +2780,7 @@ fn collect_hoisted_names(
     }
 }
 
-fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
+pub(crate) fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
         oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
@@ -3715,6 +3715,56 @@ fn is_playwright_describe_member(
     }
 }
 
+/// A `describe`-root call the runner skips: a `.skip` / `.fixme`
+/// modifier on the root (alone or after active modifiers), or an options
+/// object that turns the suite off.
+fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    fn skipped_modifier_on_describe(expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::StaticMemberExpression(member) => {
+                (matches!(member.property.name.as_str(), "skip" | "fixme")
+                    && expression_is_active_declaration(
+                        &member.object,
+                        TestDeclarationRoot::Describe,
+                    ))
+                    || (is_active_declaration_modifier(member.property.name.as_str())
+                        && skipped_modifier_on_describe(&member.object))
+            }
+            _ => false,
+        }
+    }
+    // Only a literal `skip: true` turns the suite off; a
+    // dynamic value, a spread or any other key (`fails`) leaves it active.
+    let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
+        call.arguments.iter().take(3).any(|argument| {
+            let oxc_ast::ast::Argument::ObjectExpression(options) = argument else {
+                return false;
+            };
+            // A later spread or computed key may override `skip`, so the
+            // literal counts only when nothing after it can.
+            let mut off = false;
+            for property in &options.properties {
+                let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) = property else {
+                    off = false;
+                    continue;
+                };
+                if property.computed {
+                    off = false;
+                } else if property.key.static_name().as_deref() == Some("skip") {
+                    off = matches!(
+                        &property.value,
+                        Expression::BooleanLiteral(literal) if literal.value
+                    );
+                }
+            }
+            off
+        })
+    };
+    skipped_modifier_on_describe(&call.callee)
+        || (expression_is_active_declaration(&call.callee, TestDeclarationRoot::Describe)
+            && literally_off(call))
+}
+
 fn is_active_declaration_modifier(name: &str) -> bool {
     matches!(name, "only" | "concurrent" | "sequential")
 }
@@ -4450,6 +4500,12 @@ impl UnextractedTestFinder<'_> {
                     return;
                 }
             }
+            return;
+        }
+        // A skipped suite (`describe.skip(...)`, `describe('x', { skip: true },
+        // ...)`) registers nothing and its callback never runs, so a
+        // registration inside it is not one the extractor dropped.
+        if callee_is_skipped_describe(call) {
             return;
         }
         if statement_position && self.gap.is_none() {
