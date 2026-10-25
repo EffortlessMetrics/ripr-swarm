@@ -1,0 +1,9 @@
+use pricing::score;
+
+// score(7) is pinned elsewhere, not here.
+#[test]
+fn label_names_the_count() {
+    let note = "score(7) is not called in this test";
+    assert_eq!(orders::label(3), "3 items");
+    assert!(!note.is_empty());
+}

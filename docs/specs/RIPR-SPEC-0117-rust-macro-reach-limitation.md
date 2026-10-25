@@ -242,11 +242,29 @@ otherwise indexes nothing for it:
   `$name:fragment` metavariables only; the selected arm is the first whose
   metavariable count matches the invocation's top-level arguments, and an
   `ident`, `literal`, `block` or `tt` argument must have that shape;
-- the selected transcriber contains `#[test]`, no repetition and no call to
-  another macro defined in the file, and no argument invokes one;
+- the selected transcriber contains `#[test]` and no call to another macro
+  defined in the file, and no argument invokes one; its only repetition is
+  the table form below;
 - no `use` in the file imports the generator's name (rustc rejects that
   invocation as ambiguous), and the expansion carries no `cfg` other than
   `cfg(test)` and no `cfg_attr`.
+
+A generator that is a table, itoa's `test! { name(value, expected) ... }`
+(#6925), is the one repetition shape: the whole matcher is
+`$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
+or `block` variables, literal `,`, `;` or `:` tokens, and delimited groups of
+comma-separated metavariables (an `expr` outside a group needs a `,`, `;` or
+`:` after it, or the row separator); the transcriber is exactly one
+separator-free `$( body )*` over those variables. The invocation must split
+into rows with nothing left over, and every fragment must fit as for a plain
+arm. Each row becomes one expansion of the body, so a table of ten rows
+indexes ten tests, up to 512 rows and 128 KiB of expansion text per
+invocation; a larger table indexes nothing. Any other row layout (`=>`,
+nested repetition, a trailing separator, a leftover token, a group of the
+wrong arity) indexes nothing. A matcher that ends in a literal `,`, or an
+invocation that ends in one the matcher does not take, indexes nothing for
+that arm, because rustc would match a different arm. A row group is the same:
+`edge(10,)` does not fit `($v:expr)`.
 
 Each metavariable is replaced by its argument's source text and `$crate` by
 `crate`; an `expr` or `literal` argument of more than one element (`-1`) is
@@ -261,10 +279,76 @@ deferred or escaping assertion inside the transcriber is refused exactly as it
 would be written by hand.
 
 This is not macro expansion in general. Generators defined in another file,
-`#[macro_use]` imports, repetition and procedural macros stay unindexed, and
+`#[macro_use]` imports, repetition other than the table form, and procedural
+macros stay unindexed, and
 reach through them keeps the limitations above. A generated test whose
 transcriber calls a helper macro from another file is indexed for reach, but
 an assertion inside that helper is refused like any untrusted macro.
+
+## Literal Tests In A Pass-Through Item Macro
+
+A test file can also wrap hand-written tests in a same-file macro that only
+re-emits its input (`suite! { #[test] fn a() { .. } }`). An arbitrary
+item-position macro may drop, rename, gate or wrap its input, so ripr reads the
+invocation's own tokens as source only when the macro is provably the identity
+(#8999 item 5):
+
+- the macro is defined once in the file, directly in the file or an inline
+  module, before the invocation and in an enclosing scope, with no `use` of its
+  name and no cfg on the definition or any enclosing module;
+- the definition has exactly one arm, matcher `$($x:tt)*` or `$($x:item)*` and
+  transcriber `$($x)*` (a different binding name, a separator, another fragment,
+  a second arm or any wrapper refuses);
+- no other item-position macro call and no out-of-line `mod x;` sits between
+  the definition and the invocation (its unseen expansion or file could
+  redefine the name);
+- the invocation is at item position with no attribute, and its tokens contain
+  no `$` metavariable, raw identifier, `include!`, macro definition, call to a
+  file-local macro, or `cfg`/`cfg_attr` other than `cfg(test)`;
+- the tokens parse cleanly as complete `fn` items (any other item refuses the
+  whole invocation), at least one carrying a literal `#[test]`.
+
+An invocation whose tokens contain `use`, `extern`, `macro_use` or
+`no_implicit_prelude` (a function-local alias could rebind `assert_eq`) is still
+expanded, but keeps counting as a possible macro-binding site, so an assertion
+mention in it stays ambiguous instead of being credited.
+
+The expansion is summarised alone, so it never sees the file's other items.
+The proof is therefore refused, over-conservatively, when the file contains any
+of the following that a wrapped test's identifiers could resolve to instead of
+the glob-imported file-root item: a `fn` (other than a file-root one),
+`const`, `static`, `struct`, `enum`, `union`, type alias, trait, module or
+`use` binding of such a name, whether at module level or inside a pass-through
+invocation's own tokens; a glob import other than `super::*`; or any other
+item-position macro call, whose expansion is unseen (a sibling call to another
+identity macro is exempt only when it passes the same admission as the wrapper:
+no attribute, supported item context, definition in textual scope before it, no
+import of its name, no unseen item macro between). A local item spelled like
+the invocation's macro name (`fn suite`, `struct suite`) is refused too: the
+macro and value namespaces are separate, but the name collision is treated as a
+possible rebinding, which is a support restriction, not a Rust rule.
+
+Attribute boundary: every attribute on an item emitted by any identity
+invocation in the file, including a separate sibling invocation that carries no
+test, must be inert (`#[test]`, `#[ignore]`, `#[should_panic]`, `#[allow(..)]`,
+or an attribute the shared source-preserving authority admits). Any other
+attribute may rewrite the item into a different binding, so the file is
+refused. `#[should_panic]` and `#[ignore]` tests stay indexed but earn no
+oracle credit.
+
+Name comparison strips a raw-identifier prefix (`r#gate` binds `gate`). A
+`#[test]` function is exempt from binding collection only while no emitted
+token mentions its name beyond its own declaration; a `#[test] fn gate` beside a
+call to `gate` is a rebinding and the file is refused. Bindings scoped inside a
+function body are left to the expansion's own summary. The boundary is
+name-based and file-wide, not a resolver: it does not model visibility or
+`#[path]` or out-of-line modules beyond refusing across them, and it refuses
+legitimate nested-owner layouts. The expansion is the invocation's own text,
+indexed with the same pinning and assertion admission as a generated test; the
+refusal above is the only shadow authority for these tests, because the
+generated-test path does not provide one (#9967). Macros defined in
+another file, imported or `#[macro_use]` macros (`tokio`-style `cfg_*!`
+wrappers, `proptest!`, `rstest` macros) stay unindexed.
 
 ## Macro Definition Edits
 
@@ -340,6 +424,16 @@ end of the file, which is an approximation for an edit in progress.
    #7549) keeps the prior evidence, and no edge forms
    for an owner named only in a string literal, a caller that binds a local
    or parameter of the owner's name, or a second invocation site.
+8. **Same-file test table** (#6925): a file defines `macro_rules! edge_table`
+   with `$($name:ident($width:expr, $limit:expr, $want:expr))*` whose
+   transcriber emits one `#[test] fn $name` asserting `fits_edge($width,
+   $limit)` per row, and invokes it with rows under, on and over the limit.
+   The owner is reached through the generated tests and the boundary row
+   discriminates it, so it reads `exposed`, exactly as the same three tests
+   written by hand. Rows that never touch the boundary read `weakly_exposed`;
+   rows that discard the result read `reachable_unrevealed`; a row layout
+   outside the table form (`name => (..)`) registers no test and keeps
+   `no_static_path`.
 
 ## Required Evidence
 
@@ -389,10 +483,35 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_invocation_expands_one_test_per_row`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::separators_groups_and_plus_repetition_expand`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::tables_the_expander_cannot_split_exactly_refuse`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_local_macro_in_a_table_row_or_body_refuses`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_arm_follows_simple_arms_that_do_not_fit`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_trailing_comma_must_agree_between_matcher_and_invocation`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_row_group_ending_in_a_comma_does_not_fit_a_group_without_one`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::row_and_expansion_size_are_bounded`
+- `crates/ripr/tests/macro_generated_tests.rs::a_table_generated_test_reads_like_the_hand_written_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_table_the_expander_cannot_split_exactly_adds_no_test`
+- Verdict corpus cases `macro-table-boundary-rows`, `macro-table-semicolon-rows`, `macro-table-far-rows`, `macro-table-smoke-rows` and `macro-table-arrow-rows-refused`.
 - `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations`
 - `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
 - `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::literal_tests_in_an_identity_macro_are_expanded_to_their_own_text`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::a_macro_that_is_not_the_identity_expands_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::an_unseen_item_macro_between_definition_and_call_blocks_the_proof`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::unknown_imported_duplicate_late_and_pathed_macros_expand_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::rebinding_and_nested_module_variants_expand_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::a_local_fn_in_the_invocations_module_blocks_the_proof`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::binding_capable_tokens_keep_the_call_a_possible_binding_site`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::invocation_tokens_that_could_generate_gate_or_rename_items_expand_nothing`
+- `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::literal_tests_in_an_identity_macro_are_indexed_at_the_invocation`
+- `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_an_identity_macro_read_like_the_hand_written_tests`
+- `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_a_macro_that_is_not_the_identity_add_no_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand`
+- `crates/ripr/tests/macro_generated_tests.rs::an_import_alias_after_the_identity_definition_adds_no_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test`
 - `crates/ripr/tests/helper_wrapper_reach.rs::exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded`
 - `crates/ripr/tests/helper_wrapper_reach.rs::any_exact_oracle_on_a_macro_argument_caller_abstains`
 - `crates/ripr/tests/helper_wrapper_reach.rs::macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap`
@@ -418,6 +537,7 @@ end of the file, which is an approximation for an edit in progress.
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
 | Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Pass-through item macro expansion | `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs` |
 | Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |

@@ -1,0 +1,24 @@
+//! The map_or default is a local, not an input or a literal.
+
+pub fn dynamic_boundary_hit(input: &str, delim: char) -> bool {
+    let floor = input.len().min(1);
+    let end = input.rfind(delim).map_or(floor, |idx| idx);
+    let start = delim.len_utf8();
+    end == start
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_delimiter_lands_on_the_boundary_v_dynamic() {
+        assert!(dynamic_boundary_hit("ab", 'x'));
+    }
+
+    #[test]
+    fn present_delimiter_misses_the_boundary_v_dynamic() {
+        assert!(!dynamic_boundary_hit("xab", 'x'));
+        assert!(!dynamic_boundary_hit("abx", 'x'));
+    }
+}

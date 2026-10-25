@@ -29,14 +29,20 @@ fn detect_python_test_framework_reads_setup_cfg_and_tox_sections() -> Result<(),
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("setup.cfg"), "[tool:pytest]\naddopts = -q\n")
         .map_err(|err| format!("write setup.cfg: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("tox");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("tox.ini"), "[pytest]\naddopts = -q\n")
         .map_err(|err| format!("write tox.ini: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -47,7 +53,10 @@ fn detect_python_test_framework_reads_conftest_py() -> Result<(), String> {
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("conftest.py"), "import pytest\n")
         .map_err(|err| format!("write conftest.py: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -58,14 +67,20 @@ fn detect_python_test_framework_reads_pytest_ini_and_pyproject() -> Result<(), S
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pytest.ini"), "[pytest]\n")
         .map_err(|err| format!("write pytest.ini: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("pyproject");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
         .map_err(|err| format!("write pyproject.toml: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -79,7 +94,10 @@ fn detect_python_test_framework_recognizes_from_unittest_import() -> Result<(), 
         "from unittest import TestCase\n\nclass TestPricing(TestCase):\n    pass\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Unittest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -130,7 +148,10 @@ fn detect_python_test_framework_detects_pytest_from_test_file_import() -> Result
         "import pytest\n\n@pytest.mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -144,7 +165,10 @@ fn detect_python_test_framework_recognizes_from_pytest_import() -> Result<(), St
         "from pytest import mark\n\n@mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -164,7 +188,10 @@ fn detect_python_test_framework_prefers_config_markers_over_unittest_imports() -
         "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -187,9 +214,12 @@ fn detect_python_test_frameworks_reports_both_on_mixed_import_evidence() -> Resu
     .map_err(|err| format!("write unittest file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["pytest", "unittest"]
+        vec![PythonFramework::Pytest, PythonFramework::Unittest]
     );
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -209,7 +239,7 @@ fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["pytest", "unittest"]
+        vec![PythonFramework::Pytest, PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -227,7 +257,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import mock\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-and-testcase");
@@ -239,7 +272,7 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -253,7 +286,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import (mock)\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-paren-multiline");
@@ -265,7 +301,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import (\n    mock,\n)\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-paren-comment");
@@ -277,7 +316,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import (\n    mock,  # patching\n)\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-backslash");
@@ -289,7 +331,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import \\\n    mock\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("testcase-backslash");
@@ -301,7 +346,7 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -314,7 +359,7 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -336,7 +381,7 @@ fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Resul
         .map_err(|err| format!("write truncated lookalike: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -351,7 +396,7 @@ fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Resul
         .map_err(|err| format!("write newline-in-extra: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -368,7 +413,7 @@ fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Resul
         .map_err(|err| format!("write complete-at-bound: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -386,7 +431,7 @@ fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), Stri
         .map_err(|err| format!("write late file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -398,7 +443,7 @@ fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), Stri
         .map_err(|err| format!("write early file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -415,7 +460,7 @@ fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Re
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["pytest", "unittest"]
+        vec![PythonFramework::Pytest, PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -436,9 +481,12 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
-    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Unittest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     // `test.py` at the root on the same terms.
@@ -451,7 +499,7 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     .map_err(|err| format!("write test.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -461,7 +509,10 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     std::fs::create_dir_all(&shop).map_err(|err| format!("create shop dir: {err}"))?;
     std::fs::write(shop.join("test_pricing.py"), "import pytest\n")
         .map_err(|err| format!("write test_pricing.py: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     // A `*_test.py` sibling at the root is admitted as well.
@@ -469,7 +520,10 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pricing_test.py"), "import pytest\n")
         .map_err(|err| format!("write pricing_test.py: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -485,7 +539,7 @@ fn detect_python_test_frameworks_rejects_lookalike_imports_in_tests_py() -> Resu
         .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -495,7 +549,7 @@ fn detect_python_test_frameworks_rejects_lookalike_imports_in_tests_py() -> Resu
         .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -511,7 +565,10 @@ fn detect_python_test_framework_detects_unittest_from_code_evidence() -> Result<
         "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Unittest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -543,7 +600,7 @@ fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> 
         .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -557,7 +614,10 @@ fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> 
     }
     std::fs::write(tests_dir.join("test_core.py"), "import pytest\n")
         .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -577,7 +637,7 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -591,7 +651,7 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -606,7 +666,7 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -626,7 +686,10 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
         "# use \"\"\" for docstrings\nimport pytest\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     // A bare quoted delimiter in a comment alone is not evidence either.
@@ -636,7 +699,7 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
         .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -651,7 +714,7 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -680,7 +743,7 @@ fn detect_python_test_frameworks_pins_backslash_continuation_limitation() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new(),
+        Vec::<PythonFramework>::new(),
         "the backslash-continuation limitation is pinned: the phantom triple string hides the import"
     );
     // Positive control: the identical import counts when the string line
@@ -695,7 +758,7 @@ fn detect_python_test_frameworks_pins_backslash_continuation_limitation() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"],
+        vec![PythonFramework::Unittest],
         "without the continuation backslash the line-1 string closes and the import is code"
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -718,7 +781,10 @@ fn detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan()
     }
     std::fs::write(tests_dir.join("test_z.py"), "import pytest\n")
         .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -949,7 +1015,7 @@ class TestInherits(SharedMixin):
     );
     let collected: Vec<(&str, &str)> = tests
         .iter()
-        .map(|test| (test.qualified_name.as_str(), test.framework))
+        .map(|test| (test.qualified_name.as_str(), test.framework.as_str()))
         .collect();
     assert_eq!(
         collected,
@@ -1070,12 +1136,12 @@ class PriceTests(unittest.TestCase):
     assert!(tests[0].parametrized);
     assert_eq!(tests[0].fixtures, vec!["amount".to_string()]);
     assert_eq!(tests[0].qualified_name, "test_apply_discount");
-    assert_eq!(tests[0].framework, "pytest");
+    assert_eq!(tests[0].framework, PythonFramework::Pytest);
     assert_eq!(tests[1].fixtures, vec!["client".to_string()]);
     assert_eq!(tests[1].qualified_name, "TestPytestStyle.test_class_style");
-    assert_eq!(tests[1].framework, "pytest");
+    assert_eq!(tests[1].framework, PythonFramework::Pytest);
     assert_eq!(tests[2].qualified_name, "PriceTests.test_apply_method");
-    assert_eq!(tests[2].framework, "unittest");
+    assert_eq!(tests[2].framework, PythonFramework::Unittest);
     assert!(
         tests
             .iter()
@@ -4196,6 +4262,162 @@ fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result
     Ok(())
 }
 
+/// Classify the edit `old_return` -> `new_return` of `circle_area` under a
+/// one-line test, with the old line so an explicit `approx` band can be read.
+fn classify_band_edit(
+    owner_source: &str,
+    old_return: &str,
+    new_return: &str,
+    assertion: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change_with_old(
+        Path::new("src/geometry.py"),
+        owner_source.lines().count(),
+        &format!("    return {new_return}"),
+        Some(&format!("    return {old_return}")),
+        &extract_owners(Path::new("src/geometry.py"), owner_source),
+        &extract_tests(
+            Path::new("tests/test_geometry.py"),
+            &format!(
+                "import pytest\nfrom src.geometry import circle_area\n\n\
+                 def test_circle_area():\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "numeric edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const AREA_OWNER: &str = "def circle_area(radius):\n    return 3.14159 * radius * radius\n";
+
+#[test]
+fn approx_band_the_edit_leaves_is_credited_and_one_it_stays_inside_is_a_gap() -> Result<(), String>
+{
+    // RIPR-SPEC-0238 rule 21: the band is evaluated for a one-statement
+    // arithmetic owner under a literal-argument call.
+    let band = "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)";
+    assert_eq!(
+        classify_band_edit(
+            AREA_OWNER,
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            band
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    assert_eq!(
+        classify_band_edit(
+            AREA_OWNER,
+            "3.14159 * radius * radius",
+            "3.1416 * radius * radius",
+            band
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    // `abs=` alone, the swapped operand order and a parenthesized layout read the same.
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.566, abs=0.05)",
+        "assert pytest.approx(12.566, abs=0.05) == circle_area(2)",
+        "assert (circle_area(2) == pytest.approx(12.566, abs=0.05))",
+        "assert circle_area(radius=2) == pytest.approx(12.566, abs=0.05)",
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                AREA_OWNER,
+                "3.14159 * radius * radius",
+                "3.1416 * radius * radius",
+                assertion
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    // The old value was already outside the band, a non-literal argument, a
+    // positional band, an operator the evaluation does not model and a value on
+    // the band edge are not decided.
+    for (old, new, assertion) in [
+        (
+            "3.0 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(n) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
+        ),
+        (
+            "3.14159 * radius ** 2",
+            "3.2 * radius ** 2",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.14159 * radius * radius + 0.00964",
+            "assert circle_area(2) == pytest.approx(12.566, abs=0.01)",
+        ),
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                &AREA_OWNER.replace("3.14159 * radius * radius", old),
+                old,
+                new,
+                assertion
+            )?,
+            unread,
+            "{old} -> {new} under {assertion}"
+        );
+    }
+    // An integer beyond what `f64` holds exactly, a nested call as the asserted
+    // operand and `rel=None` with no `abs` (no band at all) are not decided.
+    for (new, assertion) in [
+        (
+            "9007199254740993 * radius",
+            "assert circle_area(2) == pytest.approx(18014398509481986, rel=1e-3)",
+        ),
+        (
+            "3.2 * radius * radius",
+            "assert circle_area(abs(2)) == pytest.approx(12.566, rel=1e-3)",
+        ),
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                &AREA_OWNER.replace("3.14159 * radius * radius", "9007199254740992 * radius"),
+                "9007199254740992 * radius",
+                new,
+                assertion
+            )?,
+            unread,
+            "{new} under {assertion}"
+        );
+    }
+    // A longer body or a method receiver is not the bounded shape either.
+    assert_eq!(
+        classify_band_edit(
+            "def circle_area(radius):\n    radius = abs(radius)\n    return 3.14159 * radius * radius\n",
+            "3.14159 * radius * radius",
+            "3.1416 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)"
+        )?,
+        unread
+    );
+    Ok(())
+}
+
 fn classify_log_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
     classify_log_edit_message("balance low: %s", assertion)
 }
@@ -4223,6 +4445,201 @@ fn classify_log_edit_message(
     )
     .ok_or_else(|| "log edit should classify".to_string())?;
     Ok((finding.class, finding.static_limit_kind))
+}
+
+const AUDIT_OWNER: &str = "import logging\nlog = logging.getLogger(\"audit\")\n\n\
+     def check_balance(balance):\n    if balance < 10:\n        log.warning(\"low balance: %s\", balance)\n        return False\n    return True\n";
+
+/// Classify the edit of the `log.warning` line of [`AUDIT_OWNER`] (or a
+/// variant of it) under `test_body`, with the old line and the owner source so
+/// the logged text can be evaluated.
+fn classify_log_text_edit(
+    owner_source: &str,
+    new_call: &str,
+    test_body: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change_with_source(
+        Path::new("src/audit.py"),
+        6,
+        &format!("        {new_call}"),
+        Some("        log.warning(\"low balance: %s\", balance)"),
+        &extract_owners(Path::new("src/audit.py"), owner_source),
+        &extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!("import logging\nfrom src.audit import check_balance\n\n{test_body}"),
+        ),
+        Some(owner_source),
+    )
+    .ok_or_else(|| "log edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const PINNED_TEST: &str = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n";
+
+#[test]
+fn caplog_text_the_edit_removes_is_credited_and_one_it_keeps_is_a_gap() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: the formatted message and the pinned capture
+    // level decide whether the asserted text is still logged.
+    for new_call in [
+        "log.warning(\"balance low: %s\", balance)",
+        "log.info(\"low balance: %s\", balance)",
+        "log.warning(\"low balance: %d units\", balance + 1)",
+    ] {
+        let expected = if new_call.contains("balance + 1") {
+            // An argument this evaluation cannot read keeps the abstention.
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax),
+            )
+        } else {
+            (ExposureClass::Exposed, None)
+        };
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, new_call, PINNED_TEST)?,
+            expected,
+            "{new_call}"
+        );
+    }
+    // The text survives: the edit changes only what follows it.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"low balance: %s (retry)\", balance)",
+            PINNED_TEST
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    // `set_level` before the call pins the level the same way.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.info(\"low balance: %s\", balance)",
+            "def test_low_balance(caplog):\n    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_text_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    // No pinned capture level: the ini level and the default are not read.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // Another call in the test may log the same text.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n        notify(5)\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // A single word could also be read from the record header.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // `exception` appends the traceback, which can still hold the asserted text.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log.warning", "log.exception"),
+            "log.exception(\"balance low: %s\", balance)",
+            &PINNED_TEST.replace("logging.WARNING", "logging.ERROR")
+        )?,
+        unread
+    );
+    // A rebound `caplog` makes the pin and the asserted text different objects.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    caplog = frozen\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // A detached `logging.Logger` does not propagate to the root capture handler.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("logging.getLogger(", "logging.Logger("),
+            removed,
+            PINNED_TEST
+        )?,
+        unread
+    );
+    // A receiver that is not a module-level logger binding is not recognized.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log = logging.getLogger(\"audit\")", "log = make_sink()"),
+            removed,
+            PINNED_TEST
+        )?,
+        unread
+    );
+    // An `or` can pass on the other literal when the edited one disappears.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"low balance: 5\" in caplog.text or \"balance low: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // The call sits outside the `with` block that pins the level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        pass\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // A module that configures its logger can change what is captured.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("\n\ndef", "\nlog.setLevel(logging.ERROR)\n\ndef"),
+            removed,
+            PINNED_TEST
+        )?,
+        unread
+    );
+    // An `else` arm, a loop or a non-literal argument are not read.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace(
+                "    if balance < 10:",
+                "    for _ in range(1):\n      if balance < 10:"
+            ),
+            removed,
+            PINNED_TEST
+        )
+        .map(|result| result.0),
+        Ok(ExposureClass::StaticUnknown)
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance, exc_info=True)",
+            PINNED_TEST
+        )?,
+        unread
+    );
+    Ok(())
 }
 
 #[test]
@@ -7507,6 +7924,42 @@ fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
 }
 
 #[test]
+fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() -> Result<(), String>
+{
+    for test_src in [
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len(r), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len( r ), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(max((r), 0), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+        // A membership test is not a binding, however many brackets wrap the name.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    assert ((r)) in items\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    for x in items:\n        assert ((r)) in items\n    assert list(reversed(r)) == []\n",
+        // A dict-value or annotation colon is not a compound-statement header.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"\"\" \" } \" \"\"\": (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {''' \" } \" ''': (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"\"\" \" } \" \"\"\": [r], \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"a\\\" }\": (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"#\": (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if \")\" in {\"k\": (r), \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if \"]\" in {\"k\": (r), \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if \"}\" in {\"k\": [r], \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\")\": (r), \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"(\": (r), \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"]\": [r], \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    d = {\"k\": (r), \"b\": 2}\n    e = {\"k\": [r], 1: 2}\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    for x in items: assert ((r)) in items\n    assert list(reversed(r)) == []\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_reads".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
         // Another dunder's entry point does not reach `__reversed__`.
@@ -7559,6 +8012,19 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_paren_target():\n    r = numeric_range(0)\n    (r) = [1]\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_for_paren():\n    r = numeric_range(0)\n    for (r) in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_with_list():\n    r = numeric_range(0)\n    with a as [r]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Non-first loop targets, one-line suites and brackets split across lines.
+        "from src.nr import numeric_range\n\n\ndef test_for_second_paren():\n    r = numeric_range(0)\n    for x, (r) in [(1, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_second_list():\n    r = numeric_range(0)\n    for _, [r] in [(1, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_paren_pair():\n    r = numeric_range(0)\n    for (x), (r) in [(1, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_spaced_enumerate():\n    r = numeric_range(0)\n    for i, ( r ) in enumerate([[1]]):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_one_line_suite():\n    r = numeric_range(0)\n    if c: (r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_semicolon():\n    r = numeric_range(0)\n    pass; (r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_split_brackets():\n    r = numeric_range(0)\n    (\n        r\n    ) = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_split_nested():\n    r = numeric_range(0)\n    ((\n        r\n    ), x) = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_quoted_closer_header():\n    r = numeric_range(0)\n    if \")\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_quoted_opener_header():\n    r = numeric_range(0)\n    if \"(\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_triple_quoted_header():\n    r = numeric_range(0)\n    if \"\"\" } \"\"\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_escaped_quote_header():\n    r = numeric_range(0)\n    if \"\\\" (\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         // Test-local shadowing of the entry or a wrapper by a tuple or annotated binding.
         "from src.nr import numeric_range\n\n\ndef test_tuple_entry():\n    a, reversed = 1, f\n    assert list(reversed(numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_annotated_wrapper():\n    list: Callable = f\n    assert list(reversed(numeric_range(0))) == []\n",
@@ -7573,6 +8039,15 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_paren_comma():\n    r = numeric_range(0)\n    (r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_list_comma():\n    r = numeric_range(0)\n    [r], x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_for_paren_comma():\n    r = numeric_range(0)\n    for (r), x in [([1], 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Spaced and nested bracketed targets also rebind the receiver (#9178).
+        "from src.nr import numeric_range\n\n\ndef test_spaced_paren_comma():\n    r = numeric_range(0)\n    ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_spaced_list_comma():\n    r = numeric_range(0)\n    [ r ], x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nested_paren_tuple():\n    r = numeric_range(0)\n    ((r), x) = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nested_list_tuple():\n    r = numeric_range(0)\n    [[r], x] = [[1], 2]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nested_double_paren():\n    r = numeric_range(0)\n    ((r)) = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_nested_paren_tuple():\n    r = numeric_range(0)\n    for ((r), x) in [(([1]), 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_spaced_paren_comma():\n    r = numeric_range(0)\n    for ( r), x in [([1], 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_double_paren():\n    r = numeric_range(0)\n    for (( r )) in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;
@@ -7992,14 +8467,16 @@ fn a_parametrized_list_argument_is_read_for_the_filter_bound() -> Result<(), Str
 const MONEY_SRC: &str = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __add__(self, other):\n        return Money(self.cents - other.cents)\n";
 
 #[test]
-fn dunder_operator_edit_with_constructed_operands_abstains_instead_of_gap() -> Result<(), String> {
-    // #9421: `Money(5) + Money(7) == Money(12)` relates only as `dunder_protocol`.
-    // The adapter cannot read that assertion against `__add__`, so it abstains.
+fn dunder_operator_edit_with_a_reflected_receiver_abstains_instead_of_gap() -> Result<(), String> {
+    // #9421: `5 + Money(7)` runs the reflected `__radd__`, so the receiver is not
+    // certain and the test relates only as `dunder_protocol`.
+    // The adapter cannot read that assertion against `__add__`, so it abstains
+    // (the certain `Money(5) + Money(7)` form is credited, see `dunder_entry_tests`).
     let file = Path::new("shapes/money.py");
     let owners = extract_owners(file, MONEY_SRC);
     let tests = extract_tests(
         Path::new("tests/test_money.py"),
-        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert Money(5) + Money(7) == Money(12)\n",
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert 5 + Money(7) == Money(12)\n",
     );
     assert_eq!(tests.len(), 1);
     let owner = flat_owner(&owners, "Money.__add__")?;
@@ -8084,4 +8561,433 @@ fn module_level_edit_without_importing_test_does_not_abstain() -> Result<(), Str
         ExposureClass::StaticUnknown | ExposureClass::Exposed
     ));
     Ok(())
+}
+
+/// #6466: a capped Python run reports typed selected/omitted/total counts and
+/// the shared working-set cap as the first limiting stage; an uncapped run
+/// reports a measured zero and no cap.
+#[test]
+fn analyze_repo_reports_typed_file_accounting_for_a_capped_run() -> Result<(), String> {
+    use crate::analysis::language::{RepoCapFired, RepoLimitingStage};
+    let root = unique_repo_test_root("accounting-capped");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+
+    let capped = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(2))?;
+    let uncapped = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let accounting = capped.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(2));
+    assert_eq!(accounting.skipped, Some(1), "vendor excluded by role");
+    assert_eq!(accounting.omitted, Some(1));
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_MAX_REPO_INDEX_FILES",
+            stage: RepoLimitingStage::Selection,
+            limit: 2,
+        })
+    );
+    let accounting = uncapped.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(3));
+    assert_eq!(accounting.omitted, Some(0));
+    assert_eq!(accounting.first_cap_fired, None);
+    Ok(())
+}
+
+/// #6466: at exactly the limit nothing is omitted; one past it omits one.
+#[test]
+fn analyze_repo_accounting_boundary_at_the_working_set_limit() -> Result<(), String> {
+    let limit = 3;
+    for (count, omitted) in [(limit - 1, 0), (limit, 0), (limit + 1, 1)] {
+        let root = unique_repo_test_root("accounting-boundary");
+        for index in 0..count {
+            write_repo_file(
+                &root.join(format!("m{index}.py")),
+                "def run():\n    return 1\n",
+            )?;
+        }
+        let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(limit));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        let accounting = result?.file_accounting;
+        assert_eq!(accounting.discovered, Some(count), "count {count}");
+        assert_eq!(accounting.selected, Some(count.min(limit)), "count {count}");
+        assert_eq!(accounting.omitted, Some(omitted), "count {count}");
+        assert_eq!(
+            accounting.first_cap_fired.is_some(),
+            omitted > 0,
+            "count {count}"
+        );
+    }
+    Ok(())
+}
+
+/// #6466: evidence (test) files share the combined cap; production wins.
+#[test]
+fn analyze_repo_accounting_counts_evidence_files_in_the_combined_cap() -> Result<(), String> {
+    let root = unique_repo_test_root("accounting-evidence");
+    for name in ["a.py", "b.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    for name in ["test_a.py", "test_b.py"] {
+        write_repo_file(
+            &root.join("tests").join(name),
+            "def test_run():\n    assert True\n",
+        )?;
+    }
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(3));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let result = result?;
+    let accounting = result.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(3), "two production plus one test");
+    assert_eq!(accounting.omitted, Some(1), "one test file beyond the cap");
+    assert_eq!(accounting.skipped, Some(0));
+    assert_eq!(result.production_files, 2);
+    Ok(())
+}
+
+/// #6466: unreadable subtrees make skipped and omitted lower bounds, so they
+/// are unknown, while the exact selected count survives.
+#[test]
+fn accounting_with_unreadable_subtrees_leaves_lower_bounds_unknown() -> Result<(), String> {
+    let root = unique_repo_test_root("accounting-unreadable");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+    let mut input = repo::select_repo_input_with_limit(&root, repo_working_set_limit(2));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let complete = repo::file_accounting(&input);
+    assert_eq!(complete.skipped, Some(1));
+    assert_eq!(complete.omitted, Some(1));
+
+    input.counts.unreadable_subtrees = 1;
+    let accounting = repo::file_accounting(&input);
+    assert_eq!(accounting.discovered, None);
+    assert_eq!(accounting.skipped, None);
+    assert_eq!(accounting.omitted, None);
+    assert_eq!(accounting.selected, Some(2));
+    assert!(accounting.first_cap_fired.is_some(), "cap still fired");
+    Ok(())
+}
+
+/// #6466: a real Python `analyze_repo` result flows into the outcome verbatim.
+#[test]
+fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), String> {
+    use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+    let root = unique_repo_test_root("accounting-outcome");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(2));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let result = result?;
+    let outcome = LanguageAnalysisOutcomeV1::from_repo_result(
+        crate::domain::LanguageId::Python,
+        &result,
+        None,
+    );
+    assert_eq!(outcome.resources.files, result.file_accounting);
+    assert_eq!(outcome.resources.files.omitted, Some(1));
+    Ok(())
+}
+
+fn captured_records_test(assertion: &str) -> String {
+    format!(
+        "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    {assertion}\n"
+    )
+}
+
+const MESSAGE_READS: [&str; 4] = [
+    "assert \"low balance: 5\" in caplog.messages",
+    "assert any(\"low balance\" in r.message for r in caplog.records)",
+    "assert any(r.getMessage() == \"low balance: 5\" for r in caplog.records)",
+    "assert \"low balance: 5\" in [r.message for r in caplog.records]",
+];
+
+#[test]
+fn caplog_messages_and_records_the_edit_removes_are_credited() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: a message read holds the formatted message
+    // alone, with no record header.
+    for assertion in MESSAGE_READS {
+        for new_call in [
+            "log.warning(\"balance low: %s\", balance)",
+            "log.info(\"low balance: %s\", balance)",
+        ] {
+            assert_eq!(
+                classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+                (ExposureClass::Exposed, None),
+                "{assertion} / {new_call}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_messages_equality_and_records_containment_differ_on_a_suffix() -> Result<(), String> {
+    let retry = "log.warning(\"low balance: %s (retry)\", balance)";
+    // A whole-message comparison no longer matches once text is appended.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            retry,
+            &captured_records_test("assert \"low balance: 5\" in caplog.messages")
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    // A substring read still finds the text the edit keeps.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            retry,
+            &captured_records_test(
+                "assert any(\"low balance\" in r.message for r in caplog.records)"
+            )
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_messages_and_records_outside_the_bounded_shape_keep_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    for assertion in [
+        // Not the message the call emitted (a substring of it is not an element).
+        "assert \"low\" in caplog.messages",
+        // Indexed and whole-list forms are not evaluated.
+        "assert caplog.records[0].message == \"low balance: 5\"",
+        "assert caplog.messages == [\"low balance: 5\"]",
+        // A string is never an element of the record list, so it is no message read.
+        "assert \"low balance: 5\" in caplog.records",
+        // A filtered generator reads only some records.
+        "assert any(\"low balance: 5\" in r.message for r in caplog.records if r.levelno == 30)",
+    ] {
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, removed, &captured_records_test(assertion))?,
+            unread,
+            "{assertion}"
+        );
+    }
+    // An `or` can pass on the other literal when the edited one disappears.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"low balance: 5\" in caplog.messages or \"balance low: 5\" in caplog.messages\n"
+        )?,
+        unread
+    );
+    let read = captured_records_test(MESSAGE_READS[0]);
+    // `exception` appends a traceback this reading does not evaluate.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log.warning", "log.exception"),
+            "log.exception(\"balance low: %s\", balance)",
+            &read.replace("logging.WARNING", "logging.ERROR")
+        )?,
+        unread
+    );
+    // A rebound `caplog` is not the object the level was pinned on.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            &read.replace(
+                "    assert \"low balance: 5\" in caplog.messages",
+                "    caplog = frozen\n    assert \"low balance: 5\" in caplog.messages"
+            )
+        )?,
+        unread
+    );
+    // A detached logger does not reach the root capture handler.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("logging.getLogger(", "logging.Logger("),
+            removed,
+            &read
+        )?,
+        unread
+    );
+    // An unrecognized receiver is not a captured logger.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log = logging.getLogger(\"audit\")", "log = make_sink()"),
+            removed,
+            &read
+        )?,
+        unread
+    );
+    // No pinned level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.messages\n"
+        )?,
+        unread
+    );
+    Ok(())
+}
+
+const ABSENCE_READS: [&str; 4] = [
+    "assert \"deprecated warning\" not in caplog.text",
+    "assert \"deprecated warning\" not in caplog.messages",
+    "assert not any(\"deprecated warning\" in r.message for r in caplog.records)",
+    "assert \"deprecated warning\" not in [r.message for r in caplog.records]",
+];
+
+#[test]
+fn caplog_absence_reads_the_edit_breaks_are_credited() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: an assertion that a text is absent passes on
+    // the old message and fails once the edit puts the text in it.
+    for assertion in ABSENCE_READS {
+        // A whole-message read needs the message to equal the text; a
+        // substring read needs only to contain it.
+        let new_call = if assertion.contains("caplog.text") || assertion.contains("any(") {
+            "log.warning(\"deprecated warning: %s\", balance)"
+        } else {
+            "log.warning(\"deprecated warning\")"
+        };
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_reads_the_edit_keeps_absent_stay_a_gap() -> Result<(), String> {
+    for assertion in ABSENCE_READS {
+        for new_call in [
+            // The text is still absent after the edit.
+            "log.warning(\"balance low: %s\", balance)",
+            // The text arrives below the pinned capture level, so no record
+            // holds it and the absence assertion keeps passing.
+            "log.info(\"deprecated warning: %s\", balance)",
+        ] {
+            assert_eq!(
+                classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+                (ExposureClass::WeaklyExposed, None),
+                "{assertion} / {new_call}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_with_a_whole_message_compares_the_whole_message() -> Result<(), String> {
+    // `not in caplog.messages` holds the text only when a whole message equals
+    // it, so a longer message that contains the text keeps the assertion green.
+    let test = captured_records_test("assert \"deprecated\" not in caplog.messages");
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"deprecated: %s\", balance)",
+            &test
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_inside_an_and_chain_is_required_and_inside_an_or_is_not() -> Result<(), String> {
+    let breaks = "log.warning(\"low balance: %s deprecated warning\", balance)";
+    // Both conjuncts must hold; the edit breaks the absence one.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            breaks,
+            &captured_records_test(
+                "assert \"deprecated warning\" not in caplog.text and \"low balance: 5\" in caplog.text"
+            )
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    // An `or` can pass on the other side, so nothing is credited or called a gap.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            breaks,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"deprecated warning\" not in caplog.text or \"low balance: 5\" in caplog.text\n"
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_that_already_fails_before_the_edit_is_not_evaluated() -> Result<(), String> {
+    // The old message contains the text, so the test cannot be reading the
+    // edit: it fails before and after.
+    let finding = classify_log_text_edit(
+        AUDIT_OWNER,
+        "log.warning(\"balance low: %s\", balance)",
+        &captured_records_test("assert \"low balance\" not in caplog.messages"),
+    )?;
+    assert_ne!(finding.0, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn not_any_over_other_output_keeps_its_assertion_shape() {
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_cli(result):\n    assert not any(\"low balance\" in line for line in result.stdout)\n",
+    );
+    let shapes: Vec<_> = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|a| a.oracle_shape))
+        .collect();
+    assert!(!shapes.is_empty(), "assertions must be extracted");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| *shape != PythonOracleShape::OutputAssertion),
+        "{shapes:?}"
+    );
+}
+
+#[test]
+fn comprehension_over_other_output_keeps_its_assertion_shape() {
+    // Only `caplog.records` comprehensions became output observations; a loop
+    // over a subprocess result's lines is still the broad smoke it was.
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_cli(result):\n    assert any(\"low balance\" in line for line in result.stdout)\n    assert \"low balance\" in [line for line in result.stdout]\n",
+    );
+    let shapes: Vec<_> = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|a| a.oracle_shape))
+        .collect();
+    assert!(!shapes.is_empty(), "assertions must be extracted");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| *shape != PythonOracleShape::OutputAssertion),
+        "{shapes:?}"
+    );
 }

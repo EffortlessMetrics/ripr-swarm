@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testdeep-restock-superhashof",
+  "subject_id": "authored-perl-testdeep-inventory",
+  "diff": "cases/perl-testdeep-restock-superhashof.diff",
+  "anchor": {
+    "file": "lib/Inventory.pm",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testdeep_superhashof_subset",
+  "hard_case": "superhashof() only requires the listed keys, so a wrong count is invisible; the test never reads count.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "$stock->{count} - $qty",
+        "mutated_line": "$next{count} = $stock->{count} - $qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: restocking subtracts"
+      },
+      {
+        "replacement": "$stock->{count}",
+        "mutated_line": "$next{count} = $stock->{count};",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the quantity is dropped"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "cmp_deeply(restock(...), superhashof({sku => 'A1'})) pins sku and ignores count, so wrong counts keep it green. Spec cells: RIPR-SPEC-0064 oracle strength (Test::Deep subset match).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testdeep-restock-superhashof.json",
+    "sha256": "2dca09ab3379661e734983382e02ecbeabf37d0666b76f802f37f054aafa5b77",
+    "provenance": "producer"
+  }
+}

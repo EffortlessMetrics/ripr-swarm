@@ -119,6 +119,23 @@ could label but none does yet stay uncovered rather than waived. A deleted
 ledger fails `check-all` and
 `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`.
 
+### Acceptance example keys (#9859)
+
+A spec's acceptance examples are keyed two ways, and a case cites either as
+`RIPR-SPEC-NNNN#<key>` in `spec_examples`. The existing hand-numbered items
+(`K. `) keep their numbers. A new example takes a slug instead of the next
+number: a line `- example `empty-table`: ...` under `## Acceptance Examples`,
+with lowercase hyphenated words starting with a letter, cited as
+`RIPR-SPEC-0243#empty-table`. Slug items are listed alphabetically and each
+slug appears once, so an example added in its sorted place sits away from
+every other PR's insertion: two PRs adding examples merge in either order
+without renumbering and without a shared end of list to conflict on. Both
+rules are enforced when the specs are scanned (`verdict-corpus check` and
+`validate` fail on an unordered or repeated slug), and a ledger waiver names
+either key (`example = 3` or `example = "equivalent-mutant"`). A PR adding an
+example need not raise a ledger `floor` or the xtask example-count lower bound.
+Decision numbers inside a spec are not keyed this way yet.
+
 ### Perl corpus
 
 ripr does not read Perl; it reads a `ripr-perl-facts-v1` packet
@@ -148,7 +165,7 @@ user gets now. Rows without a packet carry no provenance field. The Perl
 scoreboard metrics read the producer rates only.
 
 Subjects are authored Perl distributions (`authored-perl-<library>-<name>`)
-covering Test::More, Test2::V0 and Test::Exception. Truth is hand-written
+covering Test::More, Test2::V0, Test::Exception, Test::Deep, Moose, language idioms and hostile source shapes. Truth is hand-written
 mutants of the rewritten line run under `prove -l t`, because no Perl
 mutation tool drives all three libraries; each mutant names its mutated
 line, the failing test file and assertion, and carries an equivalence review.

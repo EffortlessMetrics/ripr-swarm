@@ -343,6 +343,16 @@ Probes the adapter must generate (syntax-first):
 
 - predicate probes for changed `if`/`else if`/ternary boundary conditions
 - return-value probes for changed `return` and tail expressions
+- return-value probes for a changed column-zero module scalar constant
+  (`[export ]const NAME[: Type] = <literal>;`, where the literal is a JavaScript
+  numeric literal (decimal with fraction and exponent, `0x`/`0o`/`0b`, `_`
+  separators, `n` suffix), `true`, `false`, `null` or one quoted
+  string without `${}` or a second unescaped quote). A computed, structured,
+  indented or multi-declarator initializer keeps the unrecognised shape.
+  Identifiers match tests by Unicode alphanumerics, not ASCII only
+  A related test whose assertion compares the bare constant to the very literal
+  the edit wrote passes on the edit, so the finding reads `weakly_exposed`
+  rather than `exposed` (quote style is ignored)
 - error-path probes for changed `throw` statements and `try`/`catch`/
   `Promise.reject` shapes
 - field probes for changed object-literal or class-field assignments
@@ -509,91 +519,91 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```ts
-export function applyDiscount(amount: number, threshold: number) {
-  if (amount >= threshold) {
-    return amount * 0.9;
-  }
-  return amount;
-}
-```
+   ```ts
+   export function applyDiscount(amount: number, threshold: number) {
+     if (amount >= threshold) {
+       return amount * 0.9;
+     }
+     return amount;
+   }
+   ```
 
-Existing tests:
+   Existing tests:
 
-```ts
-test('discount applies above threshold', () => {
-  expect(applyDiscount(100, 50)).toBe(90);
-});
+   ```ts
+   test('discount applies above threshold', () => {
+     expect(applyDiscount(100, 50)).toBe(90);
+   });
 
-test('no discount below threshold', () => {
-  expect(applyDiscount(10, 50)).toBe(10);
-});
-```
+   test('no discount below threshold', () => {
+     expect(applyDiscount(10, 50)).toBe(10);
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `applyDiscount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `.toBe(90)` and `.toBe(10)`
-- missing discriminator: `amount === threshold`
-- finding emits `language = "typescript"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `applyDiscount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `.toBe(90)` and `.toBe(10)`
+   - missing discriminator: `amount === threshold`
+   - finding emits `language = "typescript"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Snapshot oracle:
+2. Snapshot oracle:
 
-```ts
-test('renders header', () => {
-  expect(render(<Header user="ada"/>)).toMatchSnapshot();
-});
-```
+   ```ts
+   test('renders header', () => {
+     expect(render(<Header user="ada"/>)).toMatchSnapshot();
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `snapshot` (medium)
-- finding stays `weakly_exposed` and names
-  `typescript_snapshot_discriminator_unresolved`
+   - oracle: `snapshot` (medium)
+   - finding stays `weakly_exposed` and names
+     `typescript_snapshot_discriminator_unresolved`
 
-Dynamic dispatch limit:
+3. Dynamic dispatch limit:
 
-```ts
-function dispatch(actions: Record<string, () => void>, key: string) {
-  actions[key]();
-}
-```
+   ```ts
+   function dispatch(actions: Record<string, () => void>, key: string) {
+     actions[key]();
+   }
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
-  conservative.
+   - probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
+     conservative.
 
-Untested sibling owner in a tested module:
+4. Untested sibling owner in a tested module:
 
-```ts
-// src/pricing.ts
-export function discountedTotal(amount: number) { /* tested */ }
-export function loyaltyPrice(amount: number, years: number) {
-  if (years >= 5) {
-    return amount - Math.floor(amount / 20);
-  }
-  return amount;
-}
+   ```ts
+   // src/pricing.ts
+   export function discountedTotal(amount: number) { /* tested */ }
+   export function loyaltyPrice(amount: number, years: number) {
+     if (years >= 5) {
+       return amount - Math.floor(amount / 20);
+     }
+     return amount;
+   }
 
-// test/pricing.test.ts â€” never references loyaltyPrice
-import { discountedTotal } from "../src/pricing";
-it("no discount below threshold", () => {
-  expect(discountedTotal(5000)).toBe(5000);
-});
-```
+   // test/pricing.test.ts â€” never references loyaltyPrice
+   import { discountedTotal } from "../src/pricing";
+   it("no discount below threshold", () => {
+     expect(discountedTotal(5000)).toBe(5000);
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- changed `loyaltyPrice` lines classify `no_static_path` with
-  `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
-- no related test is listed, and the missing line names the absent
-  reference (`No test references \`loyaltyPrice(\``);
-- the same file still relates both tests to `discountedTotal`, which they call.
+   - changed `loyaltyPrice` lines classify `no_static_path` with
+     `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
+   - no related test is listed, and the missing line names the absent
+     reference (`No test references \`loyaltyPrice(\``);
+   - the same file still relates both tests to `discountedTotal`, which they call.
 
 ## Test Mapping
 

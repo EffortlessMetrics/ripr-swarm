@@ -1514,9 +1514,26 @@ fn identifier_segments(identifier: &str) -> impl Iterator<Item = String> + '_ {
     })
 }
 
+/// #10091: a turbofish call with no value arguments
+/// (`assert_send_sync::<Wrapper>();`) is a compile-time trait-bound check.
+/// Its generic parameters are types, so it passes no value to compare and
+/// observes nothing at runtime; its `assert_` name is not an oracle. A call
+/// with any argument, and a helper without a turbofish, keep the name-only
+/// recognition below.
+fn is_compile_time_marker_call(line: &str) -> bool {
+    let Some((callee, rest)) = line.split_once('(') else {
+        return false;
+    };
+    let callee = callee.trim_end();
+    callee.ends_with('>')
+        && callee.contains("::<")
+        && !callee.contains('!')
+        && rest.trim_start().starts_with(')')
+}
+
 pub(super) fn is_custom_assertion_helper(line: &str) -> bool {
     let trimmed = line.trim_start();
-    if !trimmed.contains('(') {
+    if !trimmed.contains('(') || is_compile_time_marker_call(trimmed) {
         return false;
     }
     if !trimmed.contains('!') {

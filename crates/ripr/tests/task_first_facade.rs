@@ -479,7 +479,7 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
         "refusal must name the seam:\n{stderr}"
     );
     assert!(
-        stderr.contains("not a headline repair target"),
+        stderr.contains("its class is not a repair target under the current policy"),
         "refusal must name the ineligibility reason:\n{stderr}"
     );
     assert_no_repair_attempt_side_effects(root);
@@ -1857,6 +1857,20 @@ fn repair_human_paths_preserve_literal_backslash_root_identity() -> Result<(), S
     repair_human_path_identity_journey(r"repo\literal", "repo/literal")
 }
 
+/// How the product spells a root it prints or persists: slash-unified on
+/// Windows, and a drive-letter verbatim prefix (`//?/D:/`) folded to its plain
+/// spelling (#9660). Elsewhere the text is unchanged.
+fn product_root_spelling(text: &str) -> String {
+    if !cfg!(windows) {
+        return text.to_string();
+    }
+    let unified = text.replace('\\', "/");
+    match unified.strip_prefix("//?/") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
+        _ => unified,
+    }
+}
+
 fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), String> {
     let parent = Fixture::dir("facade-human-path")?;
     let root = parent.root.join(name);
@@ -1889,11 +1903,7 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
             .map_err(|e| e.to_string())?,
         canonical
     );
-    let expected_persisted = if cfg!(windows) {
-        canonical.to_string_lossy().replace('\\', "/")
-    } else {
-        canonical.to_string_lossy().into_owned()
-    };
+    let expected_persisted = product_root_spelling(&canonical.to_string_lossy());
     assert_eq!(
         persisted_root, expected_persisted,
         "canonical identity spelling must stay unchanged"
@@ -2531,7 +2541,8 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
     );
     assert!(
         stderr.contains(&format!(
-            "ripr continue --root {root_arg} --attempt {}",
+            "ripr continue --root {} --attempt {}",
+            product_root_spelling(&root_arg),
             ids[0]
         )),
         "must print the continue command for the existing attempt:\n{stderr}"
