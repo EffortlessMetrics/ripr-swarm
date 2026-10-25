@@ -53,6 +53,7 @@ pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
+mod stray_files;
 
 #[cfg(test)]
 pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {

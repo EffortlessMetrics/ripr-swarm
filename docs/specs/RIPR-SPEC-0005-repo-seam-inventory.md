@@ -93,9 +93,12 @@ an independent supported local call can still establish the relation.
 Bare generic annotations retain function-pointer, associated-type and
 const-expression arguments; punctuation inside those arguments cannot truncate
 the type or hide a qualified trailing path.
-Owner-aware direct call paths keep their existing authority. This rule adds
-no general type resolution, factory-return inference, unique-name receiver
-proof or borrowed-helper context expansion.
+Owner-aware direct call paths keep their existing authority. Only the
+conventional constructors `Type::new(..)`, `Type::default()` and
+`Type::from(..)` read as that type; `new_*`, `from_*` and `with_*` spellings
+are a naming convention, not a return type, and stay unresolved (#8782). This
+rule adds no general type resolution, factory-return inference, unique-name
+receiver proof or borrowed-helper context expansion.
 
 When the analyzed root is the repository root, repo automation and fixture data
 are outside the product seam surface. The walker excludes `xtask/` and the
