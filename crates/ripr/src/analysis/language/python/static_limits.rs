@@ -6,7 +6,8 @@ use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::effect_alignment::ChangedEffect;
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
-    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    import_source_module_matches_owner, is_python_identifier_char,
+    line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
 use super::source_utils::SourceText;
@@ -165,7 +166,15 @@ pub(super) fn static_limit_for_focused_change(
         && related_candidates
             .iter()
             .filter(|candidate| candidate.relation.uses_oracle())
-            .any(|candidate| candidate.test.constant_rebinding.assigns_attribute(&object))
+            .any(|candidate| {
+                let test = candidate.test;
+                // Only a test that imports the object can read a stale one.
+                test.constant_rebinding.assigns_attribute(&object)
+                    && test.imports.iter().any(|import| {
+                        import.imported == object
+                            && import_source_module_matches_owner(import, owner, &test.file)
+                    })
+            })
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MockedModule,
