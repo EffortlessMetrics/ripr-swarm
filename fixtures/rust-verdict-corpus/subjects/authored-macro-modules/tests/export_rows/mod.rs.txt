@@ -1,0 +1,14 @@
+use macro_modules::{fits_exported, fits_shadowed};
+use crate::exported_table;
+use crate::shadowed_table;
+
+exported_table! {
+    export_under(3, 5, true)
+    export_at(5, 5, true)
+    export_over(6, 5, false)
+}
+
+shadowed_table! {
+    shadow_small(1, 5, true)
+    shadow_large(9, 5, false)
+}

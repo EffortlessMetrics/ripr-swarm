@@ -223,55 +223,11 @@ jobs:
         id: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Required Rust tests
-        id: rust-tests
-        run: |
-          mkdir -p target/nextest/ci
-          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt
-          checkout_sha="$(git rev-parse HEAD)"
-          {
-            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'profile=ci\ncommand=cargo nextest run --workspace --profile ci\n'
-            cargo nextest --version
-            rustc --version
-            cargo --version
-            printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml):\n'
-            git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml
-          } > target/nextest/ci/run-context.txt
-          set +e
-          cargo nextest run --workspace --profile ci
-          test_exit=$?
-          set -e
-          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
-          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
-            echo "::error::nextest succeeded without a fresh JUnit report naming at least one test"
-            exit 1
-          fi
-          exit "$test_exit"
-
-      # Retain the required run's small diagnostic packet, not another test run.
-      # A failed/aborted runner may have context only; it must not inherit XML.
-      - name: Upload required Rust test results
-        if: always() && steps.rust-tests.outcome != 'skipped'
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
-          path: |
-            target/nextest/ci/junit.xml
-            target/nextest/ci/run-context.txt
-            target/ripr/reports/discarded-matcher-cli-5713/
-            target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
-            target/ripr/reports/repair-card-usability.json
-            target/ripr/reports/repair-card-usability.md
-            target/ripr/reports/blind-journey-execute.json
-            target/ripr/reports/blind-journey-execute.md
-          if-no-files-found: warn
-          retention-days: 5
-
-      # Nextest does not execute Rust doctests; Cargo/rustdoc owns them (#3825).
-      - name: Required Rust doctests
-        run: cargo test --workspace --doc
-
+      # The gates below need only the `ripr` build, not the test run. They run before
+      # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
+      # inventory, verdict corpora) fails the required run within minutes instead of
+      # after the tests (#10341). A run that fails here reports no test results; the
+      # next run does.
       - name: Golden output contracts
         id: goldens
         run: cargo xtask goldens check
@@ -330,6 +286,80 @@ jobs:
       - name: Verdict corpora
         id: verdict_corpus
         run: cargo xtask verdict-corpus check-all
+
+      # `actions/checkout` tests GitHub's merge ref as it stood when the run was
+      # admitted. If the base has since moved and now conflicts with the PR head,
+      # the ~18-minute test run below cannot produce a mergeable result, so fail
+      # here with the reason instead of finishing it (#10341). Needs the full
+      # history the checkout above fetches; `merge-tree` writes nothing to the tree.
+      - name: Base still merges cleanly
+        id: base_still_merges
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if ! git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            echo "::warning title=Base fetch failed::could not re-read $BASE_REF; the conflict re-check is skipped."
+            exit 0
+          fi
+          rc=0
+          git merge-tree --write-tree --no-messages HEAD^2 "origin/$BASE_REF" > /dev/null || rc=$?
+          [ "$rc" -eq 0 ] && exit 0
+          if [ "$rc" -ne 1 ]; then
+            echo "::warning title=Conflict re-check unavailable::git merge-tree exited $rc; not blocking."
+            exit 0
+          fi
+          echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
+          exit 1
+
+      - name: Required Rust tests
+        id: rust-tests
+        run: |
+          mkdir -p target/nextest/ci
+          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt
+          checkout_sha="$(git rev-parse HEAD)"
+          {
+            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'profile=ci\ncommand=cargo nextest run --workspace --profile ci\n'
+            cargo nextest --version
+            rustc --version
+            cargo --version
+            printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml):\n'
+            git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml
+          } > target/nextest/ci/run-context.txt
+          set +e
+          cargo nextest run --workspace --profile ci
+          test_exit=$?
+          set -e
+          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
+          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+            echo "::error::nextest succeeded without a fresh JUnit report naming at least one test"
+            exit 1
+          fi
+          exit "$test_exit"
+
+      # Retain the required run's small diagnostic packet, not another test run.
+      # A failed/aborted runner may have context only; it must not inherit XML.
+      - name: Upload required Rust test results
+        if: always() && steps.rust-tests.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/run-context.txt
+            target/ripr/reports/discarded-matcher-cli-5713/
+            target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
+            target/ripr/reports/repair-card-usability.json
+            target/ripr/reports/repair-card-usability.md
+            target/ripr/reports/blind-journey-execute.json
+            target/ripr/reports/blind-journey-execute.md
+          if-no-files-found: warn
+          retention-days: 5
+
+      # Nextest does not execute Rust doctests; Cargo/rustdoc owns them (#3825).
+      - name: Required Rust doctests
+        run: cargo test --workspace --doc
 
       - name: PR evidence
         id: pr_evidence
@@ -448,6 +478,7 @@ jobs:
           CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
           CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
+          BASE_STILL_MERGES_RESULT: ${{ steps.base_still_merges.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
           SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
         run: |
@@ -474,6 +505,7 @@ jobs:
             printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
             printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
+            printf '| base_still_merges | %s |\n' "${BASE_STILL_MERGES_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"
             echo ""

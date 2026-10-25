@@ -625,3 +625,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_monorepo_package_local (32)
+
+Reason:
+RIPR-SPEC-0224 (#10040): the TypeScript row-owned MissedBoundary fact now emits missing_input with the hedged 'seen' wording instead of observation_unconfirmed
+
+Command:
+`cargo xtask goldens bless typescript_monorepo_package_local --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

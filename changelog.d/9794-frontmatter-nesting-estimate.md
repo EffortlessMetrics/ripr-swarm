@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A terminated leading frontmatter block (`---` fences around TOML, after an optional shebang) no longer counts toward the Rust nesting estimate (#9794). cargo's own `fence-too-many-dashes.rs` fixture opens with a 230-dash fence that was read as an operator chain, so ripr reported `rust_nesting_budget` and marked the whole analysis `partial_with_limitations`, which also kept the DX scoreboard's cargo samples `incomplete`. Fences the parser does not lex as frontmatter (indented, mismatched or unterminated) keep their old estimate and refusal.

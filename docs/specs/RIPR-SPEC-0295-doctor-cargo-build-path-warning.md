@@ -70,6 +70,12 @@ the warning.
 - The separate "PATH `ripr` is Cargo build output" warning is unchanged;
   a workspace build first on PATH is still named.
 - No schema or exit-code change; doctor warnings remain advisory.
+- #10347: when no `ripr` is on PATH and a project config (`.mcp.json`,
+  `.vscode/mcp.json`, `.cursor/mcp.json`) launches it with the bare
+  `"command": "ripr"`, doctor adds one advisory warning to `binary.warnings`
+  and prints it as a `~` line on the default screen (verbose keeps it, and
+  repeats it in the binary section). With `ripr` on PATH, no such config, a path-qualified
+  command, or malformed JSON, it stays quiet. The exit status is unchanged.
 
 ## Required Evidence
 
@@ -101,6 +107,12 @@ the warning.
   exactly the "not the running binary" warning.
 - Reject: any schema, exit-code, or identity-field change; suppressing
   the warning for a non-Cargo running binary.
+
+Tests for the #10347 behavior: `missing_path_ripr_with_launching_config_warns_advisory_only`,
+`launching_config_with_ripr_on_path_stays_quiet`,
+`missing_path_ripr_without_launching_config_stays_quiet` (in `doctor_binary.rs`)
+and `default_screen_warns_when_config_launches_ripr_missing_from_path` (in
+`cli/commands/doctor.rs`).
 
 ## Metrics
 
