@@ -11,11 +11,12 @@
 # accounted for, never covered. RIPR-SPEC-0238 example 10 is covered by
 # `authored-py-pytest-numpy`, whose tests need numpy to run (SPEC.md).
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. Raise
-# it when coverage grows; lowering it is a reviewed edit with a reason.
+# `spec-examples.lock` lists the covered examples `verdict-corpus check`
+# protects, one per line in sorted order. A locked example that loses its case
+# fails; covering a new one passes with a note naming the line to add.
+# Dropping a line is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 57
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note

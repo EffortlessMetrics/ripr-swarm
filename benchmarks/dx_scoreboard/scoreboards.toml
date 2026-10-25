@@ -355,7 +355,7 @@ unit = "ratio"
 direction = "higher_is_better"
 # Coverage, not correctness: the verdict rates above say whether ripr is
 # right on the covered cases. `verdict-corpus check` separately fails when
-# the covered count falls below the floor in spec-coverage.toml. Scoping in
+# a locked example loses its case (spec-examples.lock). Scoping in
 # a new spec lowers this displayed rate without lowering the count. The
 # committed `metrics/dx-scoreboard/baseline.json` snapshot does not yet
 # include this metric, so `--gate` reports it incomparable rather than as a
@@ -366,7 +366,7 @@ regression_pct = 0
 regression_floor = 0
 runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
-pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml"
+pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered examples against spec-examples.lock"
 
 # Python verdict corpus (RIPR-SPEC-0245). Every Python case is authored to
 # cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0238),
