@@ -788,7 +788,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     band: an old result already outside the band, a result within `1e-9`
     (relative) of the band edge, a non-literal argument, a positional
     band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode).
+    without the old line (repo mode). The `py-bands-*` cases pin the
+    abstentions: a positional band (an edit the band absorbs and one it
+    rejects, the latter a documented missed credit), a `**` spread,
+    named constants for the expected value and band, a two-statement
+    owner, a method owner and a decorated owner.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
