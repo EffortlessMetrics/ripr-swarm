@@ -226,6 +226,12 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
         ),
     ] {
         let finding = family_finding(&bulk_source(wrapper, tests), BULK_DIFF, "return_value")?;
+        // The refusal must come from the guard, not from a lost relation.
+        assert_eq!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{wrapper}\n{tests}\n{finding}"
+        );
         assert_ne!(
             finding["classification"], "exposed",
             "{wrapper}\n{tests}\n{finding}"

@@ -293,6 +293,7 @@ relation are out of scope.
 - `fixtures/predicate_pairing_newline_split_reassigned_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 - `crates/ripr/tests/helper_wrapper_reach.rs`
+- `fixtures/rust_wrapper_boolean_return_discarded`
 
 ## Implementation Mapping
 
@@ -302,6 +303,10 @@ relation are out of scope.
   and parameter-rebinding checks the wrapper-entry pairing uses.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs`: the `HelperLoan` facts
   (helper, plain parameters, eager lone-line call lines) pairing reads.
+- `crates/ripr/src/analysis/classify/reveal.rs`: the assertion-local
+  `wrapper_return_pin` admission for the whole-return twin.
+- `crates/ripr/src/analysis/classify/owner_pin.rs`:
+  `is_unconditional_boolean_tail`, the owner shape the wrapper pin admits.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: apply the pairing gate
   before `exposed`.
 - `crates/ripr/src/analysis/classify/decision.rs`: missing evidence names the
