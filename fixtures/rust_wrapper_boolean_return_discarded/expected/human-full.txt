@@ -12,13 +12,13 @@ Shared evidence and guidance
   E2 [findings 1, 2]: propagation unknown: Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)
   E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 1, 2]: local flow reaches returned value: 10 <= qty (line 2)
-  E5 [findings 1, 2]: related test src/lib.rs:15 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(10), 5);
-  E6 [findings 1, 2]: related test src/lib.rs:15 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(9), 0);
-  E7 [findings 1, 2]: source assertion argument value 10 at line 16
-  E8 [findings 1, 2]: source assertion argument value 5 at line 16
-  E9 [findings 1, 2]: source function argument value qty == 10 at line 16
-  E10 [findings 1, 2]: source assertion argument value 0 at line 17
-  E11 [findings 1, 2]: source assertion argument value 9 at line 17
+  E5 [findings 1, 2]: related test tests/api.rs:4 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(10), 5);
+  E6 [findings 1, 2]: related test tests/api.rs:4 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(9), 0);
+  E7 [findings 1, 2]: source assertion argument value 10 at line 5
+  E8 [findings 1, 2]: source assertion argument value 5 at line 5
+  E9 [findings 1, 2]: source function argument value qty == 10 at line 5
+  E10 [findings 1, 2]: source assertion argument value 0 at line 6
+  E11 [findings 1, 2]: source assertion argument value 9 at line 6
   N1 [findings 1, 2]: Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 
 Finding 1: NOTE ./src/lib.rs:2
@@ -44,6 +44,7 @@ Weakness
   - No clear propagation path from changed behavior to an observable sink
 Stop reasons:
   - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+    Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 Next step
   shared guidance: N1
 Drill in:
@@ -73,6 +74,7 @@ Weakness
   - No strong discriminator was detected
 Stop reasons:
   - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+    Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 Next step
   shared guidance: N1
 Drill in:

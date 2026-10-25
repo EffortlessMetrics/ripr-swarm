@@ -7,8 +7,11 @@ Helper result forwarding follows RIPR-SPEC-0159.
 ## Given
 
 A private boolean predicate changes from `qty >= 10` to `10 <= qty`. Its public
-wrapper calls it but discards the result, then recomputes the discount. One test
-pins the wrapper at 10 and 9.
+wrapper calls it but discards the result, then recomputes the discount. One
+integration test imports the wrapper (`use <lib>::order_discount`) and pins it at
+10 and 9. It lives under `tests/` rather than an in-file `mod tests` because
+main currently refuses the `use super::` route (#10279), which would hide the
+guard behind proximity-only reach.
 
 ## When
 

@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
   Changed behavior: 10 <= qty
   Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do…
-  Related test (1 of 2 matched rows): src/lib.rs:15 wrapper_recomputes_the_discount
+  Related test (1 of 2 matched rows): tests/api.rs:4 wrapper_recomputes_the_discount
   Next step: Trace the changed value to its output or effect, and inspect what the related test
     actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
     strengthen a test only if this inspection finds a gap. Compare the original and changed

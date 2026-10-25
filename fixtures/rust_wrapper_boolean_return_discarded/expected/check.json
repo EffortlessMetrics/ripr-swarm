@@ -41,41 +41,41 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach is_bulk: wrapper_recomputes_the_discount", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "local flow reaches returned value: 10 <= qty (line 2)", "related test src/lib.rs:15 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(10), 5);", "related test src/lib.rs:15 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(9), 0);", "source assertion argument value 10 at line 16", "source assertion argument value 5 at line 16", "source function argument value qty == 10 at line 16", "source assertion argument value 0 at line 17", "source assertion argument value 9 at line 17"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_bulk: wrapper_recomputes_the_discount", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "local flow reaches returned value: 10 <= qty (line 2)", "related test tests/api.rs:4 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(10), 5);", "related test tests/api.rs:4 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(9), 0);", "source assertion argument value 10 at line 5", "source assertion argument value 5 at line 5", "source function argument value qty == 10 at line 5", "source assertion argument value 0 at line 6", "source assertion argument value 9 at line 6"],
       "flow_sinks": [
         {"kind":"return_value","text":"10 <= qty","line":2}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "Related tests appear to reach is_bulk: wrapper_recomputes_the_discount"],
       "missing": ["Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "No clear propagation path from changed behavior to an observable sink"],
       "assertion_texts": {
-        "16": "assert_eq!(order_discount(10), 5);",
-        "17": "assert_eq!(order_discount(9), 0);"
+        "5": "assert_eq!(order_discount(10), 5);",
+        "6": "assert_eq!(order_discount(9), 0);"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 16,
+            "line": 5,
             "value": "10",
             "context": "assertion_argument"
           },
           {
-            "line": 16,
+            "line": 5,
             "value": "5",
             "context": "assertion_argument"
           },
           {
-            "line": 16,
+            "line": 5,
             "value": "qty == 10",
             "context": "function_argument",
             "provenance": "assert_eq!(order_discount(10), 5); | exact input qty = 10; literal operand 10 = 10"
           },
           {
-            "line": 17,
+            "line": 6,
             "value": "0",
             "context": "assertion_argument"
           },
           {
-            "line": 17,
+            "line": 6,
             "value": "9",
             "context": "assertion_argument"
           }
@@ -85,28 +85,28 @@
       },
       "observed_values": [
         {
-          "line": 16,
+          "line": 5,
           "value": "10",
           "context": "assertion_argument"
         },
         {
-          "line": 16,
+          "line": 5,
           "value": "5",
           "context": "assertion_argument"
         },
         {
-          "line": 16,
+          "line": 5,
           "value": "qty == 10",
           "context": "function_argument",
           "provenance": "assert_eq!(order_discount(10), 5); | exact input qty = 10; literal operand 10 = 10"
         },
         {
-          "line": 17,
+          "line": 6,
           "value": "0",
           "context": "assertion_argument"
         },
         {
-          "line": 17,
+          "line": 6,
           "value": "9",
           "context": "assertion_argument"
         }
@@ -117,8 +117,8 @@
       "related_tests": [
         {
           "name": "wrapper_recomputes_the_discount",
-          "file": "src/lib.rs",
-          "line": 15,
+          "file": "tests/api.rs",
+          "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(order_discount(10), 5);",
@@ -127,8 +127,8 @@
         },
         {
           "name": "wrapper_recomputes_the_discount",
-          "file": "src/lib.rs",
-          "line": 15,
+          "file": "tests/api.rs",
+          "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(order_discount(9), 0);",
@@ -176,41 +176,41 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach is_bulk: wrapper_recomputes_the_discount", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: 10 <= qty (line 2)", "related test src/lib.rs:15 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(10), 5);", "related test src/lib.rs:15 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(9), 0);", "source assertion argument value 10 at line 16", "source assertion argument value 5 at line 16", "source function argument value qty == 10 at line 16", "source assertion argument value 0 at line 17", "source assertion argument value 9 at line 17"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_bulk: wrapper_recomputes_the_discount", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: 10 <= qty (line 2)", "related test tests/api.rs:4 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(10), 5);", "related test tests/api.rs:4 wrapper_recomputes_the_discount uses strong exact value oracle: assert_eq!(order_discount(9), 0);", "source assertion argument value 10 at line 5", "source assertion argument value 5 at line 5", "source function argument value qty == 10 at line 5", "source assertion argument value 0 at line 6", "source assertion argument value 9 at line 6"],
       "flow_sinks": [
         {"kind":"return_value","text":"10 <= qty","line":2}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation unknown: the related tests reach `is_bulk` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach is_bulk: wrapper_recomputes_the_discount"],
       "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
-        "16": "assert_eq!(order_discount(10), 5);",
-        "17": "assert_eq!(order_discount(9), 0);"
+        "5": "assert_eq!(order_discount(10), 5);",
+        "6": "assert_eq!(order_discount(9), 0);"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 16,
+            "line": 5,
             "value": "10",
             "context": "assertion_argument"
           },
           {
-            "line": 16,
+            "line": 5,
             "value": "5",
             "context": "assertion_argument"
           },
           {
-            "line": 16,
+            "line": 5,
             "value": "qty == 10",
             "context": "function_argument",
             "provenance": "assert_eq!(order_discount(10), 5); | exact input qty = 10; literal operand 10 = 10"
           },
           {
-            "line": 17,
+            "line": 6,
             "value": "0",
             "context": "assertion_argument"
           },
           {
-            "line": 17,
+            "line": 6,
             "value": "9",
             "context": "assertion_argument"
           }
@@ -220,28 +220,28 @@
       },
       "observed_values": [
         {
-          "line": 16,
+          "line": 5,
           "value": "10",
           "context": "assertion_argument"
         },
         {
-          "line": 16,
+          "line": 5,
           "value": "5",
           "context": "assertion_argument"
         },
         {
-          "line": 16,
+          "line": 5,
           "value": "qty == 10",
           "context": "function_argument",
           "provenance": "assert_eq!(order_discount(10), 5); | exact input qty = 10; literal operand 10 = 10"
         },
         {
-          "line": 17,
+          "line": 6,
           "value": "0",
           "context": "assertion_argument"
         },
         {
-          "line": 17,
+          "line": 6,
           "value": "9",
           "context": "assertion_argument"
         }
@@ -252,8 +252,8 @@
       "related_tests": [
         {
           "name": "wrapper_recomputes_the_discount",
-          "file": "src/lib.rs",
-          "line": 15,
+          "file": "tests/api.rs",
+          "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(order_discount(10), 5);",
@@ -262,8 +262,8 @@
         },
         {
           "name": "wrapper_recomputes_the_discount",
-          "file": "src/lib.rs",
-          "line": 15,
+          "file": "tests/api.rs",
+          "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(order_discount(9), 0);",

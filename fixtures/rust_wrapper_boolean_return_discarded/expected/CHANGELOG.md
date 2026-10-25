@@ -51,3 +51,16 @@ JSON, human and human-full surfaces and the shared fixture cwd/LF normalization.
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_boolean_return_discarded (4)
+
+Reason:
+RIPR-SPEC-0186: test moved to tests/api.rs so the guard keeps helper-chain reach while #10279 is open; classification unchanged (2 propagation_unknown)
+
+Command:
+`cargo xtask goldens bless rust_wrapper_boolean_return_discarded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
