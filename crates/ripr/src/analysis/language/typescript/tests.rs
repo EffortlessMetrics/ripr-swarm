@@ -1664,9 +1664,17 @@ fn normalized_path_strips_dot_prefix_and_normalizes_separators() {
 
 #[test]
 fn normalized_path_eq_matches_plain_paths() {
-    assert!(normalized_path_eq(Path::new("src/a/b.ts"), "src/a/b.ts"));
-    assert!(normalized_path_eq(Path::new("./src/a.ts"), "src/a.ts"));
-    assert!(normalized_path_eq(Path::new("././x.ts"), "x.ts"));
+    // gemini-code-assist review on #10283: assert the allocating and
+    // alloc-free forms on the SAME corpus so the two cannot drift apart
+    // (normalized_path_eq must be exactly normalized_path(path) == n).
+    for (path, expected) in [
+        ("src/a/b.ts", "src/a/b.ts"),
+        ("./src/a.ts", "src/a.ts"),
+        ("././x.ts", "x.ts"),
+    ] {
+        assert!(normalized_path_eq(Path::new(path), expected), "{path:?}");
+        assert_eq!(normalized_path(Path::new(path)), expected, "{path:?}");
+    }
     assert!(!normalized_path_eq(Path::new("src/a.ts"), "src/b.ts"));
     assert!(!normalized_path_eq(Path::new("src/a.ts"), "other/a.ts"));
 }
