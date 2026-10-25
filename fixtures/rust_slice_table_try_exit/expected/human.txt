@@ -15,7 +15,9 @@ Start here:
   Why unknown: the change reaches a sink but infection could not be determined statically
   Canonical gap: gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established;…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: slice length `samples.len()`
+    is outside the bounded eager immutable literal table family; not every input cardinality is
+    established; activation/infection is unknown
   Related test (1 of 6 matched rows): src/lib.rs:57 mean_lies_between_min_and_max (has no assertion)
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
