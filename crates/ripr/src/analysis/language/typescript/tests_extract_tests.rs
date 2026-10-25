@@ -30,6 +30,62 @@ fn awaited_unwalked_root_keeps_the_partial_extraction_disclosure() {
 }
 
 #[test]
+fn a_parameter_named_like_the_runner_is_not_a_dropped_registration() {
+    let file = Path::new("test/helpers/with-performance.test.ts");
+    for (params, call) in [
+        ("{ test }", "await test();"),
+        ("test", "test('id', () => { expect(1).toBe(1); });"),
+        ("[test]", "await test('id', () => { expect(1).toBe(1); });"),
+        ("...test", "await test('id', () => { expect(1).toBe(1); });"),
+        ("...[test]", "test('id', () => { expect(1).toBe(1); });"),
+    ] {
+        let shadowed = format!(
+            "import {{ test }} from 'node:test';\nasync function run({params}) {{\n  {call}\n}}\n"
+        );
+        let tests = extract_tests(file, &shadowed);
+        assert!(
+            detect_partial_test_extraction(file, &shadowed, &tests).is_none(),
+            "a call through a parameter registers nothing: {shadowed}"
+        );
+        // Same body without the parameter is the dropped registration the
+        // disclosure exists for, so the exemption is the binding, not the shape.
+        let unshadowed =
+            format!("import {{ test }} from 'node:test';\nasync function run() {{\n  {call}\n}}\n");
+        let tests = extract_tests(file, &unshadowed);
+        assert!(
+            detect_partial_test_extraction(file, &unshadowed, &tests).is_some(),
+            "an unshadowed registration in a helper must stay disclosed: {unshadowed}"
+        );
+    }
+}
+
+#[test]
+fn callback_parameters_shadow_the_runner_and_inner_rebinds_do_not() {
+    let file = Path::new("test/helpers/register.test.ts");
+    let head = "import { test, test as runner } from 'node:test';\n";
+    // A callback parameter is not the runner.
+    let callback = format!("{head}register((test) => {{ test('case', () => {{}}); }});\n");
+    let tests = extract_tests(file, &callback);
+    assert!(detect_partial_test_extraction(file, &callback, &tests).is_none());
+    // An inner declaration that rebinds the name can be the runner again, so
+    // the unindexed registration stays disclosed.
+    for rebound in [
+        "const test = runner;",
+        "function test() {}",
+        "class test {}",
+    ] {
+        let source = format!(
+            "{head}function build(test) {{ {{ {rebound} test('actual', () => {{}}); }} }}\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
     let file = Path::new("test/nanoid.test.js");
     for source in [
