@@ -1485,6 +1485,13 @@ mod tests {
             &format!("impl W {{ {own} }}\nfn other(c: Cell<u32>) {{ c.get(); }}\n"),
             true
         ));
+        // Two impls with the same method name in one file: `B::get`'s body names
+        // `get` outside `A::get`'s body, so `A::get` keeps the allowance. With
+        // only `A::get` present (the first negative) it stays withdrawn.
+        assert!(verdicts(
+            "impl A { fn get(&self) -> u32 { self.inner.get() } }\nimpl B { fn get(&self) -> u32 { a.get() } }\n",
+            true
+        ));
         // External docs may call it.
         assert!(verdicts(
             &format!("#![doc = include_str!(\"../README.md\")]\nimpl W {{ {own} }}\n"),

@@ -7,4 +7,4 @@
   owner renamed to `read` already did. Any other naming (a caller, a same-named
   call on another receiver in a different function, a doc, a macro) still keeps
   reach undecided, and an owner without parser facts keeps the old reading
-  (#10160).
+  The body and total counts come from the same indexed source snapshot (#10160).
