@@ -65,6 +65,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod size_scaling;
 mod termination_qualification;
 mod types;
 mod work_adapter_identity;
@@ -19299,6 +19300,7 @@ fn check_count_policy(
     is_candidate: fn(&str) -> bool,
 ) -> Result<(), String> {
     let allowlist = read_count_policy_allowlist(allowlist_path)?;
+    let fragment_dir = normalize_path(&Path::new(allowlist_path).with_extension("d"));
     let mut counts = BTreeMap::<(String, String), usize>::new();
 
     for normalized in tracked_files()? {
@@ -19322,7 +19324,7 @@ fn check_count_policy(
             .unwrap_or(0);
         if *count > allowed {
             violations.push(format!(
-                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add to {allowlist_path}:\n  {path}|{pattern}|{count}|owner|reason"
+                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add a file under {fragment_dir}/ (named for this PR, e.g. <issue>-<slug>.txt) holding:\n  {path}|{pattern}|{count}|owner|reason"
             ));
         } else if *count < allowed {
             // Stale bound: the allowlist grants more budget than the code
@@ -21928,7 +21930,56 @@ fn strip_status_suffix(path: &str) -> &str {
 
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
     let text = read_text_lossy(Path::new(path))?;
-    parse_count_policy_allowlist(path, &text)
+    let mut allowed = parse_count_policy_allowlist(path, &text)?;
+    let mut declared_in = allowed
+        .keys()
+        .map(|key| (key.clone(), path.to_string()))
+        .collect::<BTreeMap<_, _>>();
+    for (fragment_path, fragment_text) in count_policy_fragments(path)? {
+        for (key, max_count) in parse_count_policy_allowlist(&fragment_path, &fragment_text)? {
+            if let Some(first) = declared_in.get(&key) {
+                return Err(format!(
+                    "{fragment_path}: path|pattern `{}|{}` is already declared in {first}",
+                    key.0, key.1
+                ));
+            }
+            declared_in.insert(key.clone(), fragment_path.clone());
+            allowed.insert(key, max_count);
+        }
+    }
+    Ok(allowed)
+}
+
+/// Per-PR rows beside a count-policy allowlist (`<allowlist stem>.d/*.txt`),
+/// so a PR that adds a spawn or network site adds a file instead of appending
+/// to the list tail every such PR edits (#9859). Only an absent directory is
+/// optional; a non-`.txt` entry or a read error fails, and fragments are read
+/// in file-name order.
+fn count_policy_fragments(allowlist_path: &str) -> Result<Vec<(String, String)>, String> {
+    let dir = Path::new(allowlist_path).with_extension("d");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?
+            .path();
+        if path.extension().is_none_or(|extension| extension != "txt") {
+            return Err(format!(
+                "{} is not a .txt allowlist fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| Ok((normalize_path(&path), read_text_lossy(&path)?)))
+        .collect()
 }
 
 fn parse_count_policy_allowlist(

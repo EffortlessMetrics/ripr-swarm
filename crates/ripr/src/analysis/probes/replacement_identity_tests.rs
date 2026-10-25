@@ -24,11 +24,18 @@ struct GitProbeFixture {
 
 fn git_probe_fixture(sources: &[(&str, &str, &str)]) -> Result<GitProbeFixture, String> {
     assert!(!sources.is_empty(), "a real Git fixture needs source files");
+    // Tests run concurrently and a nanosecond stamp alone can repeat, so two
+    // fixtures would `git init` the same directory.
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("ripr-replacement-{stamp}"));
+    let root = std::env::temp_dir().join(format!(
+        "ripr-replacement-{stamp}-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let result: Result<GitProbeFixture, String> = (|| {
         std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         for (path, before, _) in sources {
