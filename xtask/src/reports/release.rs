@@ -4117,6 +4117,9 @@ mod tests {
             }
             let workspace_root = base.join("workspace-install");
             install(&workspace, &workspace_root)?;
+            // The workspace record itself is well formed: it validates
+            // against its own source, so the refusal below is the root check.
+            check_install_provenance(&workspace_root, &workspace, "0.11.0")?;
             match check_install_provenance(&workspace_root, &package, "0.11.0") {
                 Err(err) if err.contains("not the extracted package root") => {}
                 other => return Err(format!("a workspace-path install must refuse: {other:?}")),
