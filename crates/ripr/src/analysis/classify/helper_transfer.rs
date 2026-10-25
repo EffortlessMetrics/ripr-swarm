@@ -2565,9 +2565,10 @@ fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> 
     const PREFIX_KEYWORDS: &[&str] = &["if", "while", "match", "return", "in", "break", "yield"];
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     masked.match_indices('!').any(|(at, _)| {
-        let is_invocation = masked
-            .get(at + 1..)
-            .is_some_and(|rest| rest.trim_start().starts_with(['(', '[', '{']));
+        let is_invocation = masked.get(at + 1..).is_some_and(|rest| {
+            rest.trim_start_matches(is_rust_whitespace)
+                .starts_with(['(', '[', '{'])
+        });
         if !is_invocation {
             return false;
         }
@@ -2588,16 +2589,37 @@ fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> 
     })
 }
 
+/// Rust's lexer whitespace (Pattern_White_Space). It includes U+200E and
+/// U+200F, which `str::trim` keeps; trimming with anything narrower lets
+/// `dep::\u{200E} println!` read as a bare `println!` or hides the `!` of
+/// `bail!\u{200E}(qty)` from the invocation check.
+fn is_rust_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\u{0B}'
+            | '\u{0C}'
+            | '\r'
+            | ' '
+            | '\u{85}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
 /// The macro path that ends `head`, read token by token from the end:
 /// identifier segments (a raw one keeps its `r#`) joined by `::`
 /// with any whitespace or masked comment between them. Returns the
 /// segments, root first, and whether the path starts with `::`.
 fn macro_path_before(head: &str) -> (Vec<&str>, bool) {
-    // Any non-ASCII character counts as identifier text, so `éprintln`
-    // stays one token instead of yielding its ASCII tail `println`.
-    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || !c.is_ascii();
+    // Any non-ASCII character other than whitespace counts as identifier
+    // text, so `éprintln` stays one token instead of yielding `println`.
+    let is_ident =
+        |c: char| c.is_alphanumeric() || c == '_' || (!c.is_ascii() && !is_rust_whitespace(c));
     let mut segments = Vec::new();
-    let mut rest = head.trim_end();
+    let mut rest = head.trim_end_matches(is_rust_whitespace);
     loop {
         let start = rest
             .char_indices()
@@ -2613,9 +2635,12 @@ fn macro_path_before(head: &str) -> (Vec<&str>, bool) {
             _ => start,
         };
         segments.push(rest.get(start..).unwrap_or_default());
-        rest = rest.get(..start).unwrap_or_default().trim_end();
+        rest = rest
+            .get(..start)
+            .unwrap_or_default()
+            .trim_end_matches(is_rust_whitespace);
         match rest.strip_suffix("::") {
-            Some(before) => rest = before.trim_end(),
+            Some(before) => rest = before.trim_end_matches(is_rust_whitespace),
             None => break,
         }
         if !rest.ends_with(is_ident) {
@@ -3895,6 +3920,12 @@ mod tests {
             "éprintln!(qty);",
             "r#éprintln!(qty);",
             "dep::éprintln!(qty);",
+            // #10351 review: U+200E/U+200F are Rust whitespace, so they
+            // neither cut a qualified path nor hide an invocation.
+            "dep::\u{200E} println!(qty);",
+            "dep\u{200F}::println!(qty);",
+            "bail_at_ten!\u{200E}(qty);",
+            "bail_at_ten\u{200F}!(qty);",
         ] {
             assert!(caller_invokes_opaque_macro(body, false), "{body}");
         }

@@ -262,6 +262,8 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
     for wrapper in [
         "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
         "    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+        // #10351 review: U+200E is Rust whitespace, so the bang still invokes.
+        "    bail_at_ten!\u{200E}(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
     ] {
         let source = bulk_source(wrapper, BOUNDARY_TESTS);
         for finding in [
