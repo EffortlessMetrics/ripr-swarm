@@ -333,7 +333,7 @@ fn a_conftest_client_fixture_over_the_owners_app_is_identified() -> Result<(), S
     );
     assert_eq!(fixture_relation(&returned)?, identified);
     let yielded = format!(
-        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef client():\n    with TestClient(app) as c:\n        yield c\n"
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef client():\n    with TestClient(app) as http:\n        yield http\n"
     );
     assert_eq!(fixture_relation(&yielded)?, identified);
     let bound = format!(
