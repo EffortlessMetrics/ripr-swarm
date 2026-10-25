@@ -409,15 +409,14 @@ fn delegates_to_other_config(text: &str) -> bool {
 /// by `,` or `}`) read as spaces, so a label such as `displayName: "projects"` is not
 /// taken for a key (#10295). A string that is a key, a computed key, or a
 /// bracket member keeps its text. Unchanged when the scan cannot be sure of
-/// string boundaries (unterminated string or comment, or a template or regex
-/// literal whose quote could desynchronise it), so the old refusal stands.
+/// string boundaries (unterminated string or comment, or a template literal or a `/`,
+/// which may open a regex whose quote could desynchronise it), so the old refusal stands.
 fn blank_value_strings(text: &str) -> String {
     let Some(clean) = blank_comments(text) else {
         return text.to_string();
     };
     let mut out = String::with_capacity(clean.len());
     let mut chars = clean.char_indices();
-    let mut last_significant = ' ';
     while let Some((open, ch)) = chars.next() {
         match ch {
             '"' | '\'' => {
@@ -440,34 +439,31 @@ fn blank_value_strings(text: &str) -> String {
                 let body = clean.get(open + 1..close).unwrap_or_default();
                 if skip_trivia(after).starts_with([',', '}']) {
                     out.extend(body.chars().flat_map(|c| {
-                        let fill = if is_line_terminator(c) { c } else { ' ' };
+                        let fill = if c.is_ascii() && is_line_terminator(c) {
+                            c
+                        } else {
+                            ' '
+                        };
                         std::iter::repeat_n(fill, c.len_utf8())
                     }));
                 } else {
                     out.push_str(body);
                 }
                 out.push(ch);
-                last_significant = ch;
             }
-            // A template can hold quotes this scan would misread as a string,
-            // and a regex literal likewise.
-            '`' => return text.to_string(),
-            '/' if matches!(
-                last_significant,
-                ':' | ',' | '(' | '=' | '[' | '!' | '&' | '|'
-            ) =>
-            {
-                return text.to_string();
-            }
-            c => {
-                if !c.is_whitespace() {
-                    last_significant = c;
-                }
-                out.push(c);
-            }
+            // A template can hold quotes this scan would misread as a string.
+            // So can a regex literal, and after comments are blanked a `/`
+            // is a regex or a division this scan cannot tell apart.
+            '`' | '/' => return text.to_string(),
+            c => out.push(c),
         }
     }
-    out
+    // Callers slice the result with offsets taken from `clean`.
+    if out.len() == clean.len() {
+        out
+    } else {
+        text.to_string()
+    }
 }
 
 /// `true` when a `preset` value in `text` is not a plain package name: a

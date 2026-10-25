@@ -106,7 +106,7 @@ runner's entry for it can be named and is committed:
   object literals with no `rootDir`, `roots`, `root`, `workspace` or
   `projects` key and no `preset` other than a `ts-jest` preset delegates to
   nothing and is read, whether the key is bare or quoted and wherever a
-  comment mentions the word, and a regex literal such as `globals: { tag: /a(b)/ }` is a value, not a call, #10139), no `package.json` passes a config, project list or root
+  comment mentions the word, and a regex literal such as `globals: { tag: /a(b)/ }` is a value, not a call, #10139), and a quoted string value followed by `,` or `}` (`displayName: "projects"`) is a value, not a key, while a config holding a template literal, a `/` (regex or division) or an unterminated string keeps the refusal (#10295), no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
