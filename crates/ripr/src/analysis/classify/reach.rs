@@ -306,7 +306,8 @@ pub(in crate::analysis) fn take_external_docs_parse_count() -> usize {
 
 /// Macro-derived documentation can produce unindexed doctest calls, including
 /// external files and names assembled by `concat!` or supplied by `env!`.
-pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
+#[cfg(test)]
+fn includes_external_docs(source: &str) -> bool {
     includes_external_docs_with(source, false)
 }
 
@@ -330,6 +331,13 @@ pub(in crate::analysis) fn includes_external_docs_with(source: &str, clean: bool
     )
 }
 
+/// Whitespace the gate skips between `doc` and `=`: Unicode `White_Space`
+/// plus the two marks Rust's lexer also treats as whitespace
+/// (`Pattern_White_Space`) that `char::is_whitespace` leaves out.
+fn rust_or_unicode_whitespace(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200E}' | '\u{200F}')
+}
+
 /// The cheap text gate in front of the parse: a source that never spells
 /// `doc` and `!` cannot include external docs. A source known to parse
 /// cleanly (`clean`: the file-fact producer already parsed it without
@@ -344,7 +352,7 @@ fn may_include_external_docs(source: &str, clean: bool) -> bool {
         && (!clean
             || source.match_indices("doc").any(|(at, name)| {
                 source[at + name.len()..]
-                    .trim_start()
+                    .trim_start_matches(rust_or_unicode_whitespace)
                     .starts_with(['=', '/'])
             }))
 }
@@ -1476,6 +1484,29 @@ mod tests {
             assert!(includes_external_docs_with(source, true), "{source}");
             assert_eq!(take_external_docs_parse_count(), 1, "{source}");
         }
+        // Rust's lexer skips the left-to-right and right-to-left marks too.
+        for mark in ["\u{200E}", "\u{200F}"] {
+            let source = format!("#![doc{mark}= concat!(\"a\")] fn f() {{}}");
+            assert!(
+                crate::analysis::syntax::parse_clean_source_file(&source).is_some(),
+                "{mark:?}"
+            );
+            assert!(includes_external_docs_with(&source, true), "{mark:?}");
+        }
+        // The batch form applies the flag per source, and keeps its answers
+        // aligned with the sources it did not parse.
+        let batch = [
+            (plain, true),
+            ("#![doc = include_str!(\"R.md\")]", true),
+            (plain, false),
+            ("fn broken( { doc !", false),
+        ];
+        let _ = take_external_docs_parse_count();
+        assert_eq!(
+            includes_external_docs_many(&batch),
+            vec![false, true, false, true]
+        );
+        assert_eq!(take_external_docs_parse_count(), 3);
         // An unparseable source is never gated out by the clean test: it
         // answers `true` when it cannot be parsed.
         assert!(includes_external_docs_with("fn broken( { doc !", false));
