@@ -550,6 +550,39 @@ mod tests {
     }
 
     #[test]
+    fn wiring_fails_a_missed_credit_row_that_has_no_entry_end_to_end() -> Result<(), String> {
+        let (dir, rows) = committed_rust_rows()?;
+        // The committed corpus is clean.
+        assert_eq!(apply_known_false_gate(&dir, false, &rows, None)?, None);
+        // The same rows against a ledger directory that accepts no missed
+        // credit fail through `apply_known_false_gate` and name a missed row.
+        let bare = crate::tests::temp_dir("missed-credit-bare-ledger");
+        std::fs::create_dir_all(&bare).map_err(|err| err.to_string())?;
+        std::fs::write(
+            bare.join(coverage::LEDGER_FILE),
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let missed = missed_credit(&rows);
+        let named = missed.iter().next().copied().ok_or("no missed credit")?;
+        let failure = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
+        assert!(
+            failure.contains("accepts no missed credit")
+                && failure.contains(&format!("  - {named}")),
+            "{failure}"
+        );
+        // Accepting every missed row through the file clears that failure.
+        let entries: String = missed
+            .iter()
+            .map(|case| format!("[[entry]]\ncase = \"{case}\"\nreason = \"accepted\"\n\n"))
+            .collect();
+        std::fs::write(bare.join(MISSED_CREDIT_FILE), entries).map_err(|err| err.to_string())?;
+        let accepted = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
+        assert!(!accepted.contains("accepts no missed credit"), "{accepted}");
+        Ok(())
+    }
+
+    #[test]
     fn structural_violations_need_no_scored_rows() -> Result<(), String> {
         let twice =
             format!("{ENTRY}{ENTRY}[[known_false]]\ncase = \"zz\"\nissue = 0\nreason = \"\"\n");

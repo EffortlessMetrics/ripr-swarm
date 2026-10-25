@@ -14,6 +14,7 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 220
 
+
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
 # `floor` is the fewest tagged cases `verdict-corpus validate` and `check`
@@ -917,10 +918,12 @@ id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
 
+
 [[spec]]
 id = "RIPR-SPEC-0300"
 scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
+
 
 [[spec]]
 id = "RIPR-SPEC-0309"
