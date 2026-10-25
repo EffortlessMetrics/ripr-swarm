@@ -91,3 +91,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_site_scoped_rest_limit (8)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — macro_site_scoped_rest_limit (9)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
