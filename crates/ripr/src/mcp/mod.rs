@@ -203,6 +203,20 @@ mod tests {
     }
 
     #[test]
+    fn help_tool_list_has_a_single_conjunction() {
+        // The tool sentence joins its last two names with one "and"; a second
+        // "and" before the final tool reads as a doubled conjunction.
+        assert!(
+            MCP_HELP.contains("`ripr_get_repair_card`, and `ripr_list_repair_attempts`"),
+            "{MCP_HELP}"
+        );
+        assert!(
+            !MCP_HELP.contains("`ripr_get_receipt_status`, and"),
+            "{MCP_HELP}"
+        );
+    }
+
+    #[test]
     fn terminal_hint_is_written_only_for_terminal_stdin() {
         let mut shown = Vec::new();
         write_terminal_hint(true, &mut shown);
