@@ -43,7 +43,7 @@ What are you trying to do?
                         # edit one focused test
                         ripr continue
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
-  Work in an editor     ripr lsp --stdio
+  Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
 
 More:
