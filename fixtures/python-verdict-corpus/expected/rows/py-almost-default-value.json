@@ -1,0 +1,22 @@
+{
+  "case_id": "py-almost-default-value",
+  "subject_id": "authored-py-unittest-almost",
+  "origin": "authored",
+  "anchor": "shop/fees.py:2",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_unittest_almost_default",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
