@@ -1483,6 +1483,28 @@ fn has_name_token(text: &str, name: &str) -> bool {
     })
 }
 
+/// Whether the text between two pipes can be a closure parameter list: its
+/// brackets balance and no `;` sits outside them. A destructured parameter
+/// (`|Foo { n }|`, `|(a, n): (u8, [u8; 2])|`) balances; the span between two
+/// unrelated pipes (a block body or statement) does not.
+fn closure_region_balanced(region: &str) -> bool {
+    let mut depth = 0usize;
+    for ch in region.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
 /// Token-level, fail-closed scan of the masked body before the declaration
 /// that reads `name` (#9774): the name appearing in any pattern position it
 /// cannot rule out counts as a rebinding. Covered positions: the pattern of
@@ -1542,7 +1564,7 @@ fn pattern_position_binds_before(
         .collect::<Vec<_>>();
     let closure_binds = pipes.windows(2).any(|pair| {
         let region = &prefix[pair[0] + 1..pair[1]];
-        !region.contains([';', '{', '}']) && has_name_token(region, name)
+        closure_region_balanced(region) && has_name_token(region, name)
     });
     // Match arm pattern regions: back from each `=>` to the match's own `{`,
     // a `;` or the previous arm's `=>`. Braces are balanced on the way back so
@@ -9245,6 +9267,14 @@ assert_eq!(input.amount, 100);"#
                 "let f = |(a, b)| a + b;\n    ",
             ),
             ("let f = |&n| n;\n    ", "let f = |&a| a;\n    "),
+            (
+                "let f = |Foo { n }| { n };\n    ",
+                "let f = |Foo { a }| { a };\n    ",
+            ),
+            (
+                "let f = |(b, n): (u8, [u8; 2])| b;\n    ",
+                "let f = |(b, a): (u8, [u8; 2])| b;\n    ",
+            ),
             ("let f = |n| n + 1;\n    ", "let f = |a| a + 1;\n    "),
             (
                 "match k {\n        Some(n)\n            => 1,\n        None => 2,\n    };\n    ",
