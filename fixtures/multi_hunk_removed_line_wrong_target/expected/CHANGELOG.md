@@ -571,3 +571,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (30)
+
+Reason:
+RIPR-SPEC-0357 stage 1: changed let reaching the returned expression adds binding_return_relation evidence only (#10259)
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
