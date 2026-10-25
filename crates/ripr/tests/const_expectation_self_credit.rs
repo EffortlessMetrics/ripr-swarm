@@ -6,7 +6,7 @@
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 
-const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn quota(n: u32) -> u32 {\n-    n + 1\n+    n + 2\n }\n";
+const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub const fn quota(n: u32) -> u32 {\n-    n + 1\n+    n + 2\n }\n";
 
 fn return_value_class(name: &str, declarations: &str, assertion: &str) -> Result<String, String> {
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
@@ -19,7 +19,7 @@ fn return_value_class(name: &str, declarations: &str, assertion: &str) -> Result
     )
     .map_err(|e| e.to_string())?;
     let source = format!(
-        "pub fn quota(n: u32) -> u32 {{\n    n + 2\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{declarations}\n    #[test]\n    fn quota_is_pinned() {{\n        {assertion}\n    }}\n}}\n"
+        "pub const fn quota(n: u32) -> u32 {{\n    n + 2\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{declarations}\n    #[test]\n    fn quota_is_pinned() {{\n        {assertion}\n    }}\n}}\n"
     );
     std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
     std::fs::write(root.join("diff.patch"), DIFF).map_err(|e| e.to_string())?;
