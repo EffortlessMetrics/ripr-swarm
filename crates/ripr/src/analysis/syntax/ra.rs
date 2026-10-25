@@ -40,11 +40,11 @@ use super::{
     rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion_in, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
-    extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
-    guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    FunctionFact, LocalDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
+    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
+    extract_return_facts, guarded_result_match_scan_with_shadow_authority,
+    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,8 +153,13 @@ fn parser_oracles_for_function_uncached(
         .find_map(ast::Fn::cast)?;
     let line_index = LineIndex::new(function_text);
     // The re-parse holds only this function, so no file scope is visible.
-    let mut oracles =
-        extract_parser_oracles(&function, function_text, &line_index, DropInScope::Unknown);
+    let mut oracles = extract_parser_oracles(
+        &function,
+        function_text,
+        &line_index,
+        DropInScope::Unknown,
+        &LocalDecls::from_source(function_text),
+    );
     let line_offset = function_start_line.saturating_sub(1);
     for oracle in &mut oracles {
         oracle.line += line_offset;
@@ -543,6 +548,9 @@ fn summarize_file_with_collectors(
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    // Built once per file: every test's assertions read the same declarations,
+    // and rebuilding per function masks the whole file again.
+    let file_decls = LocalDecls::from_source(text);
     // #5415 step 2: one allocation for the file; bodies and shape snippets
     // below share spans of it instead of copying substrings.
     let shared_source: Arc<str> = Arc::from(text);
@@ -653,6 +661,7 @@ fn summarize_file_with_collectors(
                     text,
                     &line_index,
                     DropInScope::WholeFile,
+                    &file_decls,
                 ),
                 literals,
                 attrs,
@@ -2287,6 +2296,7 @@ fn extract_parser_oracles(
     text: &str,
     line_index: &LineIndex,
     drop_in_scope: DropInScope,
+    decls: &LocalDecls,
 ) -> Vec<OracleFact> {
     // RIPR-SPEC-0106 (Part A): pre-scan the function body for `unwrap_err`/
     // `expect_err` variable bindings so assertions on those variables can be
@@ -2314,7 +2324,7 @@ fn extract_parser_oracles(
         }
         let range = macro_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let mut classification = classify_assertion_in(&assertion_text, text);
+        let mut classification = classify_assertion_with(&assertion_text, decls);
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
@@ -2445,7 +2455,7 @@ fn extract_parser_oracles(
         // call split across lines). That grade is a ceiling: a weaker
         // reading of the compared value (a tautology, a broad `is_err()`)
         // is kept, as the line scan keeps it.
-        let classification = classify_assertion_in(&assertion_text, text);
+        let classification = classify_assertion_with(&assertion_text, decls);
         let (kind, strength) = if matches!(
             classification.strength,
             OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None

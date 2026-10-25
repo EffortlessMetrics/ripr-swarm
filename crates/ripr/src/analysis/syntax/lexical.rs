@@ -27,6 +27,8 @@ impl RustSyntaxAdapter for LexicalRustSyntaxAdapter {
 
 pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts {
     let source: Arc<str> = Arc::from(text.as_str());
+    // Built once per file; every function's assertions read the same table.
+    let file_decls = crate::analysis::extract::LocalDecls::from_source(&text);
     let opaque = crate::analysis::extract::property_macros::opaque_property_macros(&text);
     let mut unresolved_property_macros = Vec::new();
     let mut previous_offset = 0;
@@ -159,7 +161,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     end_line,
                     body: linked_body.clone(),
                     calls,
-                    assertions: property_safe_lexical_assertions(&body, start_line, &text),
+                    assertions: property_safe_lexical_assertions(&body, start_line, &file_decls),
                     literals,
                     attrs: Vec::new(),
                     // Parser-only shadow facts (#3727 Slice A): empty under
@@ -215,11 +217,11 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
 fn property_safe_lexical_assertions(
     body: &str,
     start_line: usize,
-    decl_source: &str,
+    decls: &crate::analysis::extract::LocalDecls,
 ) -> Vec<crate::analysis::facts::OracleFact> {
     let macros = crate::analysis::extract::property_macros::opaque_property_macros(body);
     if macros.is_empty() {
-        return extract_assertions_in(body, start_line, decl_source);
+        return extract_assertions_in(body, start_line, decls);
     }
     let mut previous_offset = 0;
     let mut line = start_line;
@@ -232,7 +234,7 @@ fn property_safe_lexical_assertions(
             .filter(|byte| *byte == b'\n')
             .count();
         previous_offset = offset;
-        assertions.extend(extract_assertions_in(part, line, decl_source));
+        assertions.extend(extract_assertions_in(part, line, decls));
     }
     assertions
 }
