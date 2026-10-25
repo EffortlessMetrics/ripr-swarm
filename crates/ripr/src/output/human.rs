@@ -130,6 +130,17 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
+/// The selected subject and only the eligible rows inside the displayed
+/// Hidden window. The app resolves these before rendering, without inventing
+/// a second selection/currentness policy.
+pub(crate) fn stub_route_subjects<'a>(
+    output: &'a CheckOutput,
+    config: &RiprConfig,
+) -> (Option<&'a Finding>, Vec<&'a Finding>) {
+    let triage = triage::select_human_triage(output, config);
+    (triage.selected, triage::hidden_stub_route_findings(&triage))
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable

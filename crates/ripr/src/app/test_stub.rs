@@ -731,24 +731,37 @@ fn names_identifier(text: &str, name: &str) -> bool {
     })
 }
 
-/// The route decision for the one finding the default human `ripr check`
-/// selects. `check_config` drives that selection exactly as the renderer
-/// does. Resolution loads configuration the way `ripr agent stub` does for
-/// the same `root`, so the printed decision is that command's answer. It
-/// parses only the selected finding's file: no workspace index or evidence.
-pub(crate) fn check_stub_route(
+/// Resolve the selected route plus typed ambiguities for the eligible rows
+/// inside the same bounded Hidden window the default human report displays.
+/// Uses the stub command's root config, disk guard and resolver. A shared seam
+/// index is reused when it covers a file; alternating files may replace it.
+pub(crate) fn check_stub_routes(
     root: &Path,
     check_config: &RiprConfig,
     output: &CheckOutput,
     seam_index: &mut Option<analysis::FileSeamIndex>,
-) -> Option<StubRoute> {
-    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    let (file, line, _) = stub_route_location(finding, root)?;
-    if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
-        return None;
+) -> Vec<StubRoute> {
+    let (selected, hidden) = crate::output::human::stub_route_subjects(output, check_config);
+    if selected.is_none() && hidden.is_empty() {
+        return Vec::new();
     }
-    let config = crate::config::load_for_root(root).ok()?;
-    stub_route_for_finding(root, &config, finding, seam_index)
+    let Ok(config) = crate::config::load_for_root(root) else {
+        return Vec::new();
+    };
+    selected
+        .into_iter()
+        .map(|finding| (finding, true))
+        .chain(hidden.into_iter().map(|finding| (finding, false)))
+        .filter_map(|(finding, selected)| {
+            let (file, line, _) = stub_route_location(finding, root)?;
+            if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
+                return None;
+            }
+            let route = stub_route_for_finding(root, &config, finding, seam_index)?;
+            (selected || matches!(&route.decision, StubRouteDecision::Ambiguous { .. }))
+                .then_some(route)
+        })
+        .collect()
 }
 
 /// Whether the finding's expression is still on disk in the function the

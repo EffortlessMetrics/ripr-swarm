@@ -331,19 +331,7 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
-            let stub_eligible = finding.class != ExposureClass::Exposed
-                && finding.static_limit_kind
-                    != Some(StaticLimitKind::RustAssertionContextUnresolved)
-                && crate::output::next_step::unresolved_edge_guidance(finding).is_none()
-                && !super::sections::untraced_reach_weak_finding(finding)
-                && finding.probe.offers_stub_route()
-                && finding
-                    .probe
-                    .location
-                    .file
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    == Some("rs");
+            let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
             // when a runnable stub is actually rendered below.
             let stub_rendered = stub_eligible
@@ -425,13 +413,14 @@ pub(crate) fn render_human_triage(
                         super::push_powershell_variant(out, "  ", &command);
                     }
                     Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
-                        out.push_str(&format!("Choose a test-stub seam: {reason}\n"));
-                        out.push_str("  These syntax choices do not establish a repair binding or close a static limitation.\n");
-                        for seam_id in seam_ids {
-                            let command = navigation.stub_seam_command(seam_id);
-                            out.push_str(&format!("  {command}\n"));
-                            super::push_powershell_variant(out, "  ", &command);
-                        }
+                        push_ambiguous_stub_choices(
+                            out,
+                            navigation,
+                            &finding.id,
+                            reason,
+                            seam_ids,
+                            "",
+                        );
                     }
                     Some(StubRouteDecision::Refused { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
@@ -497,6 +486,20 @@ pub(crate) fn render_human_triage(
                 finding.probe.family.as_str(),
                 hidden_finding_reason(finding)
             ));
+            if offers_test_stub(finding)
+                && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+                && let Some(StubRouteDecision::Ambiguous { reason, seam_ids }) =
+                    navigation.stub_route_for(&finding.id)
+            {
+                push_ambiguous_stub_choices(
+                    out,
+                    navigation,
+                    &finding.id,
+                    reason,
+                    seam_ids,
+                    "      ",
+                );
+            }
         }
         let remaining = triage.omitted.len() - listed;
         if remaining > 0 {
@@ -514,6 +517,53 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// Share display eligibility across the selected row and hidden routing.
+fn offers_test_stub(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && finding.class != ExposureClass::Exposed
+        && finding.static_limit_kind != Some(StaticLimitKind::RustAssertionContextUnresolved)
+        && crate::output::next_step::unresolved_edge_guidance(finding).is_none()
+        && !super::sections::untraced_reach_weak_finding(finding)
+        && finding.probe.offers_stub_route()
+        && finding
+            .probe
+            .location
+            .file
+            .extension()
+            .and_then(|ext| ext.to_str())
+            == Some("rs")
+}
+
+pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
+    triage
+        .omitted
+        .iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .copied()
+        .filter(|finding| offers_test_stub(finding))
+        .collect()
+}
+
+fn push_ambiguous_stub_choices(
+    out: &mut String,
+    navigation: &crate::app::FindingNavigation,
+    finding_id: &str,
+    reason: &str,
+    seam_ids: &[String],
+    indent: &str,
+) {
+    out.push_str(&format!(
+        "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
+    ));
+    let child = format!("{indent}  ");
+    out.push_str(&format!("{child}These syntax choices do not establish a repair binding or close a static limitation.\n"));
+    for seam_id in seam_ids {
+        let command = navigation.stub_seam_command(seam_id);
+        out.push_str(&format!("{child}{command}\n"));
+        super::push_powershell_variant(out, &child, &command);
+    }
+}
 
 fn hidden_finding_reason(finding: &Finding) -> String {
     let reason = finding
@@ -1415,6 +1465,53 @@ mod tests {
                 && line.contains("reason: No detected boundary input")),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn limited_journey_hidden_stub_candidates_preserve_currentness_and_window() {
+        let mut rows = (0..21)
+            .map(|index| {
+                let mut finding = test_finding(&format!("hidden:{index}"));
+                finding.class = ExposureClass::WeaklyExposed;
+                finding.probe.family = ProbeFamily::Predicate;
+                finding.source_currentness = match index % 3 {
+                    0 => SourceCurrentness::BaseDeleted,
+                    1 => SourceCurrentness::MovedOrRenamed,
+                    _ => SourceCurrentness::UnresolvedSubject,
+                };
+                finding
+            })
+            .collect::<Vec<_>>();
+        rows[20].source_currentness = SourceCurrentness::CandidateCurrent;
+        let candidates = |rows: &[Finding]| {
+            let triage = HumanTriage {
+                state: HumanTriageState::NoActionableGap,
+                selected: None,
+                omitted: rows.iter().collect(),
+            };
+            hidden_stub_route_findings(&triage)
+                .iter()
+                .map(|finding| finding.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            candidates(&rows).is_empty(),
+            "take the displayed window before eligibility filtering"
+        );
+        rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
+        assert_eq!(candidates(&rows), vec!["hidden:0"]);
+        rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
+        assert!(candidates(&rows).is_empty());
+        rows[0].static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+        rows[0].recommended_next_step = Some("inspect".to_string());
+        rows[0].evidence =
+            vec!["limitation_first_unresolved_edge: entry `outer` -> owner `inner`".to_string()];
+        assert!(candidates(&rows).is_empty());
+        rows[0].static_limit_kind = None;
+        rows[0]
+            .stop_reasons
+            .push(crate::domain::StopReason::TransitiveReachUnresolved);
+        assert!(candidates(&rows).is_empty());
     }
 
     #[test]

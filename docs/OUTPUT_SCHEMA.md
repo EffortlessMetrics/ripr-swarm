@@ -740,7 +740,9 @@ count, and pointers to `--format human-full` and `--format json`.
 Each listed hidden finding includes its probe kind and bounded explanatory
 reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
-`ripr agent stub --seam-id ID` choices from that resolver. These syntax choices
+`ripr agent stub --seam-id ID` choices from that resolver. Choices also appear beside eligible hidden findings within the same first
+twenty-row window, keyed by finding ID. Base-side/unresolved subjects and
+stale source bytes receive no choices. These syntax choices
 do not establish a canonical finding-to-seam repair binding or repair eligibility.
 A named Rust transitive/public-API reach limitation with retained unresolved-edge
 evidence says tests cannot close that analysis limitation, names the edge and

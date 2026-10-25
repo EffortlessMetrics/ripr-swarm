@@ -165,9 +165,9 @@ pub(crate) struct FindingNavigation {
     list_prefix: String,
     stub_prefix: String,
     repair_suffix: String,
-    /// The `ripr agent stub` decision the check pipeline computed for its
-    /// selected finding (#5471). Absent means no route is printed.
-    stub_route: Option<StubRoute>,
+    /// Resolver decisions for the selected finding and typed ambiguities
+    /// within the displayed hidden window, each keyed by finding identity.
+    stub_routes: Vec<StubRoute>,
     /// The repair route the check pipeline computed for its selected
     /// finding (#8166 Slice C). Absent means no route is printed.
     repair_route: Option<RepairRoute>,
@@ -189,7 +189,7 @@ impl FindingNavigation {
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
             repair_suffix: String::new(),
-            stub_route: None,
+            stub_routes: Vec::new(),
             repair_route: None,
             gap_repair_route: None,
             repair_route_refusal: None,
@@ -197,8 +197,8 @@ impl FindingNavigation {
     }
 
     /// Carry the check pipeline's stub-route decision to the renderer.
-    pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
-        self.stub_route = stub_route;
+    pub(crate) fn with_stub_routes(mut self, stub_routes: Vec<StubRoute>) -> Self {
+        self.stub_routes = stub_routes;
         self
     }
 
@@ -257,9 +257,9 @@ impl FindingNavigation {
     /// The stub-route decision for `finding_id`, when one was computed for
     /// that finding.
     pub(crate) fn stub_route_for(&self, finding_id: &str) -> Option<&StubRouteDecision> {
-        self.stub_route
-            .as_ref()
-            .filter(|route| route.finding_id == finding_id)
+        self.stub_routes
+            .iter()
+            .find(|route| route.finding_id == finding_id)
             .map(|route| &route.decision)
     }
 
@@ -343,7 +343,7 @@ pub(crate) fn finding_navigation_with_worktree(
             " --root {}",
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
-        stub_route: None,
+        stub_routes: Vec::new(),
         repair_route: None,
         gap_repair_route: None,
         repair_route_refusal: None,

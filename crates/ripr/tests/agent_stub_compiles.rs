@@ -1329,6 +1329,136 @@ fn limited_journey_public_api_helper_boundary_stays_limited() -> Result<(), Stri
 }
 
 #[test]
+fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_bytes()
+-> Result<(), String> {
+    const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> bool {\n    a >= 10 && b > 20\n}\n";
+    let scratch = kind_refusal_crate(SOURCE)?;
+    let root = &scratch.directory;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    a > 10 && b > 20",
+        "    a >= 10 && b > 20",
+    )?;
+    let stdout = check_human(root, &diff)?;
+    assert!(
+        stdout.contains("--kind return_value") && stdout.contains("kind: predicate"),
+        "two-finding control: {stdout}"
+    );
+    let mut report_command = ripr_command();
+    report_command
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("--json");
+    let report = run_bounded(
+        report_command,
+        root,
+        "hidden-identity",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&report.stdout).map_err(|error| error.to_string())?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 2, "{report}");
+    let predicate = findings
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .ok_or("missing predicate")?;
+    let identity = predicate["id"]
+        .as_str()
+        .ok_or("missing predicate identity")?;
+    assert!(
+        stdout.contains(&format!("Choose a test-stub seam for {identity}:")),
+        "{stdout}"
+    );
+    let mut ids = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| {
+            line.split_once("--seam-id ")
+                .map(|(_, id)| id.trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2, "{stdout}");
+    assert_ne!(ids[0], ids[1]);
+    let selector = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "hidden-selector",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(selector.status.code(), Some(3));
+    let (envelope, _) = split_refusal_envelope(
+        &String::from_utf8_lossy(&selector.stdout),
+        &String::from_utf8_lossy(&selector.stderr),
+    )?;
+    assert_selector_refusal(&envelope, "selector_ambiguous");
+    let reason = envelope["refusal"]["reason"]
+        .as_str()
+        .ok_or("missing selector reason")?;
+    let mut expected = reason
+        .split("--seam-id ")
+        .skip(1)
+        .map(|tail| tail.split(',').next().unwrap_or(tail).trim().to_string())
+        .collect::<Vec<_>>();
+    ids.sort();
+    expected.sort();
+    assert_eq!(ids, expected);
+    for id in &ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", id, "--json"]);
+        let output = run_bounded(command, root, "hidden-choice", Duration::from_mins(2))?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["seam_id"], id.as_str());
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["written"], false);
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE
+    );
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!(
+            "{}\npub mod a;\n",
+            SOURCE.replace("a >= 10 && b > 20", "a >= 11 && b > 21")
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    // Keep a separate, correctly bound changed owner ahead of the stale
+    // predicate so the disk guard is exercised for an actual hidden row.
+    std::fs::write(root.join("src/a.rs"), "pub fn seen(n: u32) -> u32 {\n    n + 2\n}\n#[cfg(test)] mod tests { use super::*; #[test] fn calls_seen() { let _ = seen(1); } }\n").map_err(|error| error.to_string())?;
+    let previous = std::fs::read_to_string(&diff).map_err(|error| error.to_string())?;
+    std::fs::write(&diff, format!("{previous}diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -2 +2 @@\n-    n + 1\n+    n + 2\n")).map_err(|error| error.to_string())?;
+    let stale = check_human(root, &diff)?;
+    assert!(
+        stale.contains("kind: predicate"),
+        "the stale control must retain its hidden subject: {stale}"
+    );
+    assert!(
+        !stale.contains("Choose a test-stub seam"),
+        "stale bytes must not gain a route: {stale}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
 fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result<(), String> {
     let source = "pub fn pair(a: u32, b: u32) -> bool {\n    a > 10 && b > 20\n}\n";
     let scratch = kind_refusal_crate(source)?;
