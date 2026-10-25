@@ -255,4 +255,17 @@ mod tests {
         );
         assert!(lookup(&ctx, &probe(), &values()).is_none());
     }
+    #[test]
+    fn rebind_probe_follows_a_renamed_probe_and_drops_the_old_one() {
+        let mut ctx = context(vec![receipt("tests/a.py")]);
+        let before = probe();
+        let mut after = probe();
+        after.id = domain::ProbeId("p.2".into());
+        ctx.rebind_probe(&before, &after);
+        assert_eq!(
+            lookup(&ctx, &after, &values()).map(|files| files[0].as_deref()),
+            Some(Some(Path::new("tests/a.py")))
+        );
+        assert!(lookup(&ctx, &before, &values()).is_none());
+    }
 }
