@@ -1,0 +1,48 @@
+{
+  "case_id": "spec-b-0165-non-unique-nested-callee",
+  "subject_id": "authored-spec-b-match",
+  "diff": "cases/spec-b-0165-non-unique-nested-callee.diff",
+  "anchor": {
+    "file": "src/r_ambiguous.rs",
+    "line": 26
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "recursive_helper_non_unique_callee",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if final_label == \"beta\" {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "r_ambiguous::tests::the_root_resolver_is_alpha_r_ambiguous",
+        "equivalence_review": "the edit itself: comparing against beta moves the verdict for the pinned row"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The word arm calls resolve(x), a name defined at the root and in a module. The test pins word to word, zz to blank and the module's resolver to beta, so moving the compared constant to beta fails it. Spec cells: RIPR-SPEC-0165#5.",
+  "labeling_observation": {
+    "ripr_commit": "7cc4412c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0165#5"
+  ]
+}
