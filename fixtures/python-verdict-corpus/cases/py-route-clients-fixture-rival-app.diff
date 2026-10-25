@@ -1,0 +1,9 @@
+diff --git a/routeclients/archive.py b/routeclients/archive.py
+--- a/routeclients/archive.py
++++ b/routeclients/archive.py
+@@ -5,4 +5,4 @@ app = MiniApp()
+ 
+ @app.get("/orders")
+ def archived_orders():
+-    return {"count": 5}
++    return {"count": 6}

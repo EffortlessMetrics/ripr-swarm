@@ -1,0 +1,6 @@
+use spec0048_2::render_report;
+
+#[test]
+fn report_renders_something() {
+    assert!(!render_report().is_empty());
+}

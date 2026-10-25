@@ -9428,9 +9428,95 @@ where
         }),
     )
     .await?;
-    Ok(log_notification_messages(
-        &read_lsp_messages_for(reader, Duration::from_secs(3)).await?,
-    ))
+    read_save_digest_logs_until_settled(reader, writer).await
+}
+
+/// The test server handles notifications serially. Its barrier log therefore
+/// follows every log from the preceding didOpen/didSave handler, including
+/// terminal refresh outcomes. Waiting for it makes absence assertions depend
+/// on completed work rather than a quiet wall-clock window.
+async fn read_save_digest_logs_until_settled<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<Vec<String>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({"jsonrpc": "2.0", "method": SAVE_DIGEST_BARRIER_METHOD}),
+    )
+    .await?;
+    read_logs_until(reader, |message| message == SAVE_DIGEST_BARRIER_LOG).await
+}
+
+const SAVE_DIGEST_BARRIER_METHOD: &str = "test/saveDigestBarrier";
+const SAVE_DIGEST_BARRIER_LOG: &str = "test: save digest notifications settled";
+
+#[tokio::test(start_paused = true)]
+async fn save_digest_log_collection_waits_for_late_events_before_barrier() -> Result<(), String> {
+    let (client_io, mut server_io) = tokio::io::duplex(8192);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    write_lsp_message(
+        &mut server_io,
+        serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 3, "message": "ripr didSave deduplicated"}}),
+    )
+    .await?;
+    let producer = tokio::spawn(async move {
+        // Virtual time challenges both the former 3s window and an early
+        // return at the dedup log: a forbidden queue event arrives later.
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        for message in [
+            "ripr analysis refresh queued: generation=1",
+            SAVE_DIGEST_BARRIER_LOG,
+        ] {
+            write_lsp_message(
+                &mut server_io,
+                serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+                    "params": {"type": 3, "message": message}}),
+            )
+            .await?;
+        }
+        Ok::<(), String>(())
+    });
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let logs = save_and_collect_logs(&mut reader, &mut writer, &uri, "fn same() {}").await?;
+    producer
+        .await
+        .map_err(|error| format!("log producer: {error}"))??;
+    if !logs_contain(&logs, "refresh queued")
+        || logs.last().map(String::as_str) != Some(SAVE_DIGEST_BARRIER_LOG)
+    {
+        return Err(format!(
+            "collection returned before the settled event: {logs:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn save_digest_log_collection_rejects_dedup_without_barrier() -> Result<(), String> {
+    let (client_io, mut server_io) = tokio::io::duplex(8192);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    write_lsp_message(
+        &mut server_io,
+        serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 3, "message": "ripr didSave deduplicated"}}),
+    )
+    .await?;
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let Err(error) = save_and_collect_logs(&mut reader, &mut writer, &uri, "fn same() {}").await
+    else {
+        return Err("a dedup log without the settled event must hit the hang guard".to_string());
+    };
+    if !error.contains("timed out waiting for expected log")
+        || !error.contains("didSave deduplicated")
+    {
+        return Err(format!("missing barrier lost timeout/log context: {error}"));
+    }
+    Ok(())
 }
 
 fn logs_contain(logs: &[String], prefix: &str) -> bool {
@@ -9472,10 +9558,31 @@ fn failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire() -> Res
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
         let backend_root = root.path().to_path_buf();
-        let (service, socket) =
-            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let mut barrier_client = None;
+        let builder = LspService::build(|client| {
+            barrier_client = Some(client.clone());
+            Backend::new(client, backend_root)
+        });
+        let barrier_client = barrier_client.ok_or_else(|| "missing barrier client".to_string())?;
+        let (service, socket) = builder
+            .custom_method(SAVE_DIGEST_BARRIER_METHOD, move |_: &Backend| {
+                let client = barrier_client.clone();
+                async move {
+                    client
+                        .log_message(
+                            tower_lsp_server::ls_types::MessageType::INFO,
+                            SAVE_DIGEST_BARRIER_LOG,
+                        )
+                        .await;
+                }
+            })
+            .finish();
         let server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
+                // This witness tests sequential save-digest decisions. A
+                // test-only notification behind each save is a completion
+                // barrier only when handlers run in wire order.
+                .concurrency_level(1)
                 .serve(service)
                 .await;
         });
@@ -9510,7 +9617,11 @@ fn failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire() -> Res
             )
             .await?;
         }
-        read_lsp_messages_for(&mut client_read, Duration::from_secs(3)).await?;
+        let opened =
+            read_save_digest_logs_until_settled(&mut client_read, &mut client_write).await?;
+        if !logs_contain(&opened, "outcome=published") {
+            return Err(format!("setup opens did not publish: {opened:?}"));
+        }
 
         let a_first =
             save_and_collect_logs(&mut client_read, &mut client_write, &uri_a, a1).await?;
