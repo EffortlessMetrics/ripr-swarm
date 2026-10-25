@@ -509,10 +509,12 @@ ineligible seam — the drill-down prints one advisory line of the shape
 `no repair start offered: <state>; <recovery>`. Where the gate can
 still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
 full gate's answer``. A refusal whose gate answer would only repeat it names
-its own recovery instead (#9244): a finding with no canonical gap says it names
-no missing discriminator and sends the reader to the Next step above; an
-unreadable config names `ripr.toml` and the `ripr check` rerun; several binding
-seams route to `ripr pilot --root <root>`; a classification failure says the
+its own recovery instead (#9244): a finding with no canonical gap says there
+is no seam to start a repair from and sends the reader to the Next step above
+(it makes no claim about missing discriminators, which other languages can
+name without a Rust canonical gap); an unreadable config names `ripr.toml` and
+the `ripr check` rerun; several binding seams say `ripr repair` needs the ID of
+the chosen seam without promising a listing; a classification failure says the
 gate prints the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),
 but a refusal the pipeline did compute is still named there, so "the gate

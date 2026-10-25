@@ -99,19 +99,19 @@ pub(crate) enum RepairRouteRefusal {
 impl RepairRouteRefusal {
     /// The one-line advisory for the check triage screen (#8729).
     /// `full_gate_command` is the bound `ripr repair <finding-id>` command
-    /// for this navigation and `pilot_command` the bound `ripr pilot` seam
-    /// listing. The seam-budget arm names its own recovery instead: the full
+    /// for this navigation. The seam-budget arm names its own recovery instead: the full
     /// gate re-checks the same truncated authority, so pointing there would
     /// repeat the refusal. A finding with no canonical gap (#9244) never
     /// reaches a seam, so the gate would answer with the same refusal; it
     /// names the Next step already on the screen instead.
-    pub(crate) fn advisory(&self, full_gate_command: &str, pilot_command: &str) -> String {
+    pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
-            Self::NoCanonicalGap => "no repair start offered: this finding names no missing \
-                 discriminator (no canonical gap), so there is no seam to start a repair \
-                 from; follow the Next step above and check the related test by hand"
-                .to_string(),
+            Self::NoCanonicalGap => {
+                "no repair start offered: this finding has no canonical gap, so there is \
+                 no seam to start a repair from; follow the Next step above"
+                    .to_string()
+            }
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
                 super::task_first::no_seam_inventory_reason(language, file)
@@ -135,8 +135,7 @@ impl RepairRouteRefusal {
             ),
             Self::SeveralBindingSeams => format!(
                 "no repair start offered: several seams bind this finding and the check \
-                 screen never picks one; run `{pilot_command}` to list them, then start \
-                 `ripr repair` with the seam ID you choose"
+                 screen never picks one; `ripr repair` needs the ID of the seam you choose"
             ),
             Self::Ineligible { reason } => {
                 format!("no repair start offered: {reason}; {}", gate())
@@ -248,12 +247,6 @@ impl FindingNavigation {
             shell_arg(&route.base),
             self.repair_suffix
         )
-    }
-
-    /// The `ripr pilot` seam listing at the same root, for refusals whose
-    /// recovery is choosing a seam (#9244).
-    pub(crate) fn pilot_command(&self) -> String {
-        format!("ripr pilot{}", self.repair_suffix)
     }
 
     /// The `ripr repair` start for one seam identity. Repair reads the live
@@ -577,7 +570,6 @@ mod tests {
     #[test]
     fn repair_route_refusal_advisory_names_state_and_recovery() {
         let gate = "ripr repair probe:one --root repo";
-        let pilot = "ripr pilot --root repo";
         // Variants that still route to the full gate for its answer.
         for (refusal, expected) in [
             (
@@ -591,7 +583,7 @@ mod tests {
                 "not a headline repair target",
             ),
         ] {
-            let advisory = refusal.advisory(gate, pilot);
+            let advisory = refusal.advisory(gate);
             assert!(
                 advisory.starts_with("no repair start offered: ") && advisory.contains(expected),
                 "advisory must name the state ({expected}): {advisory}"
@@ -603,18 +595,17 @@ mod tests {
         }
         // #9244: a finding with no canonical gap would get the same refusal
         // from the full gate, so the advisory names its own recovery.
-        let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate, pilot);
+        let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate);
         assert_eq!(
             no_gap,
-            "no repair start offered: this finding names no missing discriminator (no \
-             canonical gap), so there is no seam to start a repair from; follow the Next \
-             step above and check the related test by hand"
+            "no repair start offered: this finding has no canonical gap, so there is no \
+             seam to start a repair from; follow the Next step above"
         );
         assert!(
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),
             "no-canonical-gap must not route back to the gate: {no_gap}"
         );
-        let config = RepairRouteRefusal::ConfigUnreadable.advisory(gate, pilot);
+        let config = RepairRouteRefusal::ConfigUnreadable.advisory(gate);
         assert!(
             config.starts_with("no repair start offered: ")
                 && config.contains("config could not be read")
@@ -623,19 +614,20 @@ mod tests {
                 && !config.contains("full gate's answer"),
             "config refusal must name the file and the rerun: {config}"
         );
-        let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate, pilot);
+        let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate);
         assert!(
             classification.contains("classifying the finding's seams failed")
                 && classification.contains(&format!("run `{gate}` to print the underlying error"))
                 && !classification.contains("full gate's answer"),
             "classification refusal must say what the gate yields: {classification}"
         );
-        let several = RepairRouteRefusal::SeveralBindingSeams.advisory(gate, pilot);
+        let several = RepairRouteRefusal::SeveralBindingSeams.advisory(gate);
         assert!(
             several.contains("several seams bind")
-                && several.contains(&format!("run `{pilot}` to list them"))
+                && several.contains("needs the ID of the seam you choose")
+                && !several.contains("ripr pilot")
                 && !several.contains("full gate's answer"),
-            "several-seams refusal must route to the seam listing: {several}"
+            "several-seams refusal must not promise a seam listing: {several}"
         );
         // #9102: a non-Rust finding has no seam to bind, so the full gate
         // would repeat the refusal; the advisory names the language, file
@@ -644,7 +636,7 @@ mod tests {
             language: "Python".to_string(),
             file: "pricing/core.py".to_string(),
         }
-        .advisory(gate, pilot);
+        .advisory(gate);
         assert!(
             terminal.starts_with("no repair start offered: ")
                 && terminal.contains("covers Rust files only")
@@ -653,7 +645,7 @@ mod tests {
                 && !terminal.contains("ripr repair probe:one"),
             "terminal reason must name language, file and manual route: {terminal}"
         );
-        let budget = RepairRouteRefusal::SeamLimit.advisory(gate, pilot);
+        let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
             budget.contains("seam budget") && budget.contains("wider seam budget"),
             "seam-budget refusal must name the budget recovery: {budget}"

@@ -400,10 +400,8 @@ pub(crate) fn render_human_triage(
                     }
                     None => {
                         if let Some(refusal) = navigation.repair_route_refusal() {
-                            let advisory = refusal.advisory(
-                                &navigation.repair_command(&finding.id),
-                                &navigation.pilot_command(),
-                            );
+                            let advisory =
+                                refusal.advisory(&navigation.repair_command(&finding.id));
                             out.push_str(&format!("  {advisory}\n"));
                         }
                     }
