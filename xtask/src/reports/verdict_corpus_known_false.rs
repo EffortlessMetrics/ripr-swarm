@@ -479,7 +479,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         std::fs::write(
             dir.join(coverage::LEDGER_FILE),
-            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\nmissed_credit_ceiling = 3\n",
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nmissed_credit_ceiling = 3\n",
         )
         .map_err(|err| err.to_string())?;
         let err = coverage::load_ledger(&dir).err().unwrap_or_default();
@@ -559,9 +559,10 @@ mod tests {
         std::fs::create_dir_all(&bare).map_err(|err| err.to_string())?;
         std::fs::write(
             bare.join(coverage::LEDGER_FILE),
-            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n",
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\n",
         )
         .map_err(|err| err.to_string())?;
+        std::fs::write(bare.join(coverage::LOCK_FILE), "").map_err(|err| err.to_string())?;
         let missed = missed_credit(&rows);
         let named = missed.iter().next().copied().ok_or("no missed credit")?;
         let failure = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
