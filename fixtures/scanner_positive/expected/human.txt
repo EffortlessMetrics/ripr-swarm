@@ -30,7 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/scanner_positive/input --diff <cwd>/fixtures/scanner_positive/diff.patch --mode fast probe:src_lib.rs:predicate:93752988
   ripr context --root <cwd>/fixtures/scanner_positive/input --diff <cwd>/fixtures/scanner_positive/diff.patch --mode fast --at probe:src_lib.rs:predicate:93752988
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:93752988 --root <cwd>/fixtures/scanner_positive/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 
 More:
   Full evidence: rerun with --format human-full
