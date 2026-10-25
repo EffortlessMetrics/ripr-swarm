@@ -20,19 +20,19 @@ Probe
   owner:  src/lib.rs::impl Iterator for WhileSome::size_hint
 
 Static exposure
-  static_unknown (note, confidence 0.66)
+  static_unknown (note, confidence 0.56)
 
 Evidence
   - reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))
-  - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator not established (static_unknown); related oracle: Strong oracle found: whole-object equality assertion
+  - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
+  - discriminator no: No assertion found on related tests
   - local flow reaches returned value: (0, Some(self.remaining)) (line 18)
-  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));
-  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);
-  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));
-  - related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3)); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3))); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3)); misses: no established call path to the changed code; linked by name only
   - source assertion argument value 3 at line 4
   - source assertion argument value 3 at line 5
   - source assertion argument value 3 at line 6

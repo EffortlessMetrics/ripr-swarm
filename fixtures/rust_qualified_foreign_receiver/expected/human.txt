@@ -11,18 +11,25 @@ Start here:
   State: limited by static analysis
   Safe next action: inspect the named static limitation before treating this as repair-ready
   File: ./src/lib.rs:18
-  Static exposure: unknown (severity: note, confidence 0.66)
+  Static exposure: unknown (severity: note, confidence 0.56)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: (0, Some(self.remaining))
   Analyzer limit: A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr…
-  Related test (1 of 4 matched rows): tests/size_hints.rs:2 foreign_size_hint_is_observed
+  Related test (1 of 4 matched rows): tests/size_hints.rs:2 foreign_size_hint_is_observed (no established call path to the changed code; linked by name only)
   Next step: `foreign_size_hint_is_observed` (tests/size_hints.rs:2),
     `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and
     uses it, and the language may call `size_hint` from an operator, a scope exit, a loop or an
     index, and ripr does not follow that call to `size_hint`, so it does not report a gap. Check
     that an assertion in that test would fail if `size_hint` returned the wrong value; add a test
     only if none does
-  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator not established
+  Evidence: reach weak · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 13 more detail line(s) in --format human-full

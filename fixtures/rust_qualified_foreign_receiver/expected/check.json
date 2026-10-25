@@ -13,7 +13,7 @@
       "id": "probe:src_lib.rs:return_value:c861ec7a",
       "classification": "static_unknown",
       "severity": "note",
-      "confidence": 0.66,
+      "confidence": 0.56,
       "probe": {
         "id": "probe:src_lib.rs:return_value:c861ec7a",
         "family": "return_value",
@@ -26,14 +26,14 @@
         "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: (0, Some(self.remaining))"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (static_unknown); related oracle: Strong oracle found: whole-object equality assertion", "local flow reaches returned value: (0, Some(self.remaining)) (line 18)", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));", "related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));", "source assertion argument value 3 at line 4", "source assertion argument value 3 at line 5", "source assertion argument value 3 at line 6", "source assertion argument value 3 at line 12", "source enum variant value ::WhileSome at line 12"],
+      "evidence_path": ["reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: (0, Some(self.remaining)) (line 18)", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));", "related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));", "source assertion argument value 3 at line 4", "source assertion argument value 3 at line 5", "source assertion argument value 3 at line 6", "source assertion argument value 3 at line 12", "source enum variant value ::WhileSome at line 12"],
       "flow_sinks": [
         {"kind":"return_value","text":"(0, Some(self.remaining))","line":18}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: (0, Some(self.remaining))", "No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "Reachable tests can plausibly activate this changed behavior", "Strong oracle found: whole-object equality assertion", "gap_withheld: weakly_exposed is not claimed; whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method (rust_implicit_call_unresolved)", "limitation_last_established_edge: reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "limitation_first_unresolved_edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "evidence": ["Complete propagation witness reaches returned value: (0, Some(self.remaining))", "No assertion found on related tests", "No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "gap_withheld: reachable_unrevealed is not claimed; whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method (rust_implicit_call_unresolved)", "limitation_last_established_edge: reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "limitation_first_unresolved_edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
       "missing": ["A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
       "assertion_texts": {
         "4": "assert_eq!(it.size_hint().1, Some(3));",
@@ -111,7 +111,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(it.size_hint().1, Some(3));",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "foreign_size_hint_is_observed",
@@ -121,7 +123,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(it.size_hint().0, 3);",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "foreign_size_hint_is_observed",
@@ -131,7 +135,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(it.size_hint(), (3, Some(3)));",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "unicode_module_receiver_is_not_the_local_type",
@@ -141,7 +147,9 @@
           "oracle_kind": "whole_object_equality",
           "oracle": "assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],

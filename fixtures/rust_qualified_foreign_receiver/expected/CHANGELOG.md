@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_qualified_foreign_receiver (3)
+
+Reason:
+RIPR-SPEC-0005: confidence on the static_unknown finding moved 0.66 to 0.56 with current main; class, stop reason and relation rows unchanged (#8782 item 1)
+
+Command:
+`cargo xtask goldens bless rust_qualified_foreign_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
