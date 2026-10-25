@@ -542,13 +542,57 @@ mod tests {
     assert_keeps_gap("same-named type in another crate", &finding)
 }
 
-/// Only a `std`/`core`-rooted path is withheld. A bare `assert_eq!` is decided
-/// by name, and the workspace's `fakestd` exports an `assert_eq!` of its own, so
-/// the bare-name refusal is not placement-dependent and stays in force.
+impl Workspace {
+    fn write_file(&self, path: &str, text: &str) -> Result<(), String> {
+        let file = self.root.join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(file, text).map_err(|error| error.to_string())
+    }
+}
+
+/// A bare `assert_eq!` is decided by name. A site in the test's own package
+/// (here a non-exported `macro_rules! assert_eq` in another module of the same
+/// crate, ahead of `shared` by `#[macro_use]`) reaches it whatever the
+/// placement, so that refusal is not placement-dependent and the gap stays.
 #[test]
-fn a_bare_assertion_beside_a_workspace_macro_of_the_same_name_keeps_its_gap() -> Result<(), String>
-{
-    let finding = Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?
-        .finding()?;
-    assert_keeps_gap("bare macro beside a workspace macro", &finding)
+fn an_own_crate_macro_in_another_module_keeps_the_bare_assertion_gap() -> Result<(), String> {
+    let workspace =
+        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+    workspace.write_file("a/src/lib.rs", "#[macro_use]\nmod noop;\nmod shared;\n")?;
+    workspace.write_file(
+        "a/src/noop.rs",
+        "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+    )?;
+    let finding = workspace.finding()?;
+    assert_keeps_gap("own-crate macro in another module", &finding)
+}
+
+/// The serde shape: another crate re-exports `core::*` (so `assert_eq!` is
+/// ambiguous workspace-wide) and the test crate asserts with a bare
+/// `assert_eq!`. That crate's file reaches the test only if mounted into its
+/// target, which unavailable placement cannot establish, so the bare assertion
+/// is a named limitation. The other crate here is `fakestd`, which also exports
+/// an `assert_eq!` of its own.
+#[test]
+fn another_crates_glob_reexport_is_part_of_the_unplaced_doubt() -> Result<(), String> {
+    let workspace =
+        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
+    workspace.write_file(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"g\"]\nresolver = \"2\"\n",
+    )?;
+    workspace.write_file(
+        "g/Cargo.toml",
+        "[package]\nname = \"g\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )?;
+    workspace.write_file("g/src/lib.rs", "#![no_std]\npub use core::*;\n")?;
+    let finding = workspace.finding()?;
+    assert_eq!(
+        limit(&finding),
+        Some(LIMIT),
+        "another crate's glob and exported macro are placement-dependent doubt: {finding}"
+    );
+    Ok(())
 }

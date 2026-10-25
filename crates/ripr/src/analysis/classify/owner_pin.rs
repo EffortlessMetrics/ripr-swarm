@@ -195,6 +195,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     fallible_dependencies:
         SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
+    /// RIPR-SPEC-0352: per package root, the names the package's own files
+    /// make ambiguous without a scope (the unplaced receiver limit reads
+    /// only these, never another package's sites).
+    own_package_macro_ambiguities: SyncMemo<BTreeMap<String, Arc<BTreeSet<String>>>>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: SyncMemo<Option<ScopedMacroBindings>>,
@@ -977,8 +981,27 @@ impl OwnerPinSyntax {
             }
             name
         };
+        let unplaced = trust_unplaced_standard_root && self.target_roots(index).disabled;
+        let own_package = unplaced
+            .then(|| self.own_package_ambiguities(test, index))
+            .flatten();
         self.targeted_source_provenance_is_admitted(test, index)
-            && !self.trusted_macro_ambiguities(index).contains(name)
+            && !match own_package {
+                // RIPR-SPEC-0352: with placement unavailable, a site in
+                // another package reaches this test only through a file
+                // mounted into its target, which unavailable placement can
+                // neither establish nor rule out; that class is the doubt
+                // this limit names. A site in the test's own package, and
+                // any withheld file, still refuses.
+                Some(names) => {
+                    // Populate the scoped and crate-local bindings below.
+                    self.trusted_macro_ambiguities(index);
+                    names.contains(name)
+                        || self.withheld.any_name
+                        || self.withheld.trusted.contains(name)
+                }
+                None => self.trusted_macro_ambiguities(index).contains(name),
+            }
             && !self
                 .scoped_names_for(test, line)
                 .iter()
@@ -987,6 +1010,48 @@ impl OwnerPinSyntax {
                 .crate_names_for(test, index)
                 .iter()
                 .any(|candidate| candidate == name)
+    }
+
+    /// The names the test's own package makes ambiguous without a scope,
+    /// from a scan of only that package's files. `None` when the test's
+    /// package cannot be named from its path (the caller keeps the
+    /// workspace-wide answer). A file whose package cannot be named counts
+    /// as the test's own.
+    fn own_package_ambiguities(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<Arc<BTreeSet<String>>> {
+        use crate::analysis::workspace::package_root;
+        let package = package_root(&test.file)?;
+        if let Some(names) = self.own_package_macro_ambiguities.borrow().get(&package) {
+            return Some(names.clone());
+        }
+        let files: Vec<MacroScanFile<'_>> = index
+            .files()
+            .iter()
+            .filter(|(path, _)| package_root(path).is_none_or(|root| root == package))
+            .map(|(path, facts)| {
+                let data = facts.data();
+                (path, data.source.as_ref(), data.macro_candidates.as_deref())
+            })
+            .collect();
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let sites = scan_macro_sites(&files, index, self.target_roots(index), &module_resolved);
+        let names: BTreeSet<String> = sites
+            .ambiguities
+            .into_iter()
+            .filter(|(_, _, site)| site.scope.is_none())
+            .map(|(_, name, _)| name)
+            .collect();
+        let names = Arc::new(names);
+        self.own_package_macro_ambiguities
+            .borrow_mut()
+            .insert(package, names.clone());
+        Some(names)
     }
 
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {

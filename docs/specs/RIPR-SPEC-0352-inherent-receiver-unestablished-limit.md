@@ -116,15 +116,23 @@ unchanged. Where that consumer reaches the same cause it already reads
 - Withholding a weak or medium oracle, or a mixed test where any assertion over
   the owner is not strong: the gap stands (a mixed test with a strong
   assertion also keeps today's gap, by the same doubt-keeps-the-gap rule).
-- Lifting any macro-binding refusal other than the placement input. Bare-name
-  ambiguity (`trusted_macro_ambiguities`), scoped and crate-local names
-  (`scoped_names_for`, `crate_names_for`), source provenance, the file's own
-  manifest, source-level rebinding of `std`/the macro and module declarations
-  stay in force. A visible `macro_rules! assert_eq` above the owner keeps its
-  gap. As a consequence a bare `assert_eq!` in a workspace whose placement is
-  unavailable and that holds another `assert_eq!` definition (for example a
-  `#[macro_export]` one) is still refused by the workspace ambiguity and keeps
-  its gap; only a `std`/`core`-rooted path is withheld.
+- Lifting any macro-binding refusal that does not depend on placement. Scoped
+  and crate-local names (`scoped_names_for`, `crate_names_for`), source
+  provenance, the file's own manifest, source-level rebinding of `std`/the
+  macro and module declarations stay in force. A visible `macro_rules!
+  assert_eq` above the owner keeps its gap, and so does a macro of that name in
+  any other module of the test's own package (`#[macro_use] mod noop;`).
+- Bare-name ambiguity is scoped, not lifted. With placement unavailable, the
+  workspace-wide ambiguity set (`trusted_macro_ambiguities`) is replaced by the
+  names the test's own package (path-derived package root) makes ambiguous
+  without a scope, scanned from only that package's files, plus every withheld
+  file's. A site in another package (a `pub use core::*` glob or an exported
+  `macro_rules!` in a sibling crate) reaches this test only if that crate's file
+  is mounted into the test's target, which unplaced placement can neither
+  establish nor rule out; it is part of the unplaced doubt, so a bare
+  `assert_eq!` in that workspace is withheld, not a gap. A file whose package
+  cannot be named from its path counts as the test's own, and a test whose
+  package cannot be named keeps the workspace-wide answer.
 - A new schema version or a new stop reason.
 
 ## Required Evidence
@@ -160,6 +168,9 @@ unchanged. Where that consumer reaches the same cause it already reads
   over the owner assertions, and dropping the strength requirement:
   `a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable`. Dropping
   the mention filter: `an_unrelated_weak_assertion_does_not_lift_the_withhold`.
+  Scoping off (the workspace-wide ambiguity set read as before):
+  `another_crates_glob_reexport_is_part_of_the_unplaced_doubt`. The own-package
+  scan seeing no file: `an_own_crate_macro_in_another_module_keeps_the_bare_assertion_gap`.
   Judging every indexed test instead of the finding's related tests:
   `a_same_named_type_in_another_crate_does_not_trigger_the_withhold`. Lifting
   the whole macro check instead of the placement input:
@@ -171,7 +182,9 @@ unchanged. Where that consumer reaches the same cause it already reads
   `test.body.contains(owner)` conjuncts were removed as subsumed by the
   assertion-text check. The removal of the post-pass itself and the
   receiver-negative mutations (dropping the comparison, dropping the placement
-  requirement) were not re-run for this revision.
+  requirement) were not re-run for this revision. Every mutation above was
+  re-run on this revision's final source and killed as named; the two
+  own-package mutations each also fail the same-file macro negative.
 - Cache generation decision: `CACHE_SCHEMA_VERSION` (1.99) and the sharded and
   compact generations (0.106) are not bumped. Every cache in `seam_cache.rs`
   (`SeamFacts`, `CompactClassifiedSeams`, sharded) stores `ClassifiedSeam`
@@ -185,17 +198,18 @@ unchanged. Where that consumer reaches the same cause it already reads
 - Boundary actually implemented (bind the text to this): withhold only for a
   `std`/`core`-rooted assertion path, when placement is unavailable, for a
   non-ignored related test whose owner-call resolves once only the placement
-  input is lifted and whose assertions naming the owner are all `strong`. The
+  input is lifted (bare-name ambiguity read from the test's own package only)
+  and whose assertions naming the owner are all `strong`. The
   qualifying positive is `std::assert_eq!(Widget::new().read(), 4)` behind the
   generated include; the `> 0` and `assert_ne!(.., 0)` controls sit beside it.
-- `cargo xtask verdict-corpus check-all` on this revision: the Rust rows
-  `serde-derive-rename-field-upper` and `serde-derive-rename-variant-lower`
-  read `gap` again (the previous revision moved them to `limited`). Their tests
-  assert through a bare `assert_eq!` inside a loop table, which is decided by
-  name; the bare-name refusal is not lifted by this rule (see Non-Goals), so
-  they are not covered. The corpus expectations and the Rust
-  `missed_credit_ceiling` are not changed here and are recomputed at
-  integration. They are not known-false rows.
+- Instrumented cause for the serde rows
+  `serde-derive-rename-field-upper` and `serde-derive-rename-variant-lower`:
+  their tests assert through a bare `assert_eq!`; of the three bare-name
+  refusals only the workspace-wide one fired, and its only `assert_eq` sites
+  were `serde_core/src/lib.rs` lines 111 and 113 (`pub use core::*;` and
+  `pub use std::*;`, `ForeignGlob`, not crate-local), a different package from
+  the test. With the scoping above both rows read `static_unknown` /
+  `rust_inherent_receiver_unestablished` again (`limited`).
 - Executed receipt: with `crates/ripr/src` checked out from the base
   `a45614b88` (no rule) and this revision's integration test, the same-file
   no-op `macro_rules! assert_eq` case
