@@ -242,7 +242,15 @@ fn user_read_methods_do_not_supply_recording_credit() -> Result<(), String> {
         format!("{SETUP}\n        assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);");
     let custom_clone = source("self.lines.push(line);", "&mut dyn Sink", &body)
         + "\ntrait Clone { fn clone(&self) -> Vec<String>; }\nimpl Clone for Vec<String> { fn clone(&self) -> Vec<String> { vec![\"n=3\".to_string()] } }\n";
-    assert_reading("constant user clone", &custom_clone, false)
+    assert_reading("borrowed user clone (source-only)", &custom_clone, false)?;
+    for name in ["clone", "r#clone"] {
+        let owned_clone = source("self.lines.push(line);", "&mut dyn Sink", &body)
+            + &format!(
+                "\ntrait ForgedClone {{ fn {name}(self) -> Vec<String>; }}\nimpl ForgedClone for Vec<String> {{ fn {name}(self) -> Vec<String> {{ vec![\"n=3\".to_string()] }} }}\n"
+            );
+        assert_reading(&format!("owned user {name}"), &owned_clone, false)?;
+    }
+    Ok(())
 }
 
 #[test]
