@@ -104,8 +104,8 @@ impl RepairRouteRefusal {
     /// repeat the refusal. A finding with no canonical gap (#9244) never
     /// reaches a seam, so the gate would answer with the same refusal; it
     /// names the Next step already on the screen instead. A finding no seam
-    /// binds to (#9244) gets the same recovery: `ripr repair <finding-id>`
-    /// resolves through the same seams and reports a stale or unmapped id.
+    /// binds to (#9244) gets the same recovery: with no binding seam the check
+    /// screen has nothing for the gate to start from, so it names the Next step.
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
@@ -598,8 +598,8 @@ mod tests {
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),
             "no-canonical-gap must not route back to the gate: {no_gap}"
         );
-        // #9244: with no binding seam the gate resolves the same finding id
-        // through the same seams, so the advisory names the Next step.
+        // #9244: with no binding seam the advisory names the Next step
+        // instead of routing back to the gate.
         let unbound = RepairRouteRefusal::NoBindingSeam.advisory(gate);
         assert_eq!(
             unbound,

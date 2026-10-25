@@ -514,8 +514,7 @@ is no seam to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
 name without a Rust canonical gap); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
-its file to bind it to and sends the reader to the Next step above (the gate
-resolves the same finding id through the same seams); several binding seams say `ripr repair` needs the ID of
+its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a classification failure says the
 gate may print the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),

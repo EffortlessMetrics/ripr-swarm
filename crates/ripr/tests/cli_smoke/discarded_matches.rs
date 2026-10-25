@@ -119,12 +119,6 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
-/// The independent contract is score(1) == 2. Original/wrong sources differ
-/// only in the returned offset; their patches each describe the actual source.
-/// Discarding a matcher accepts either value, while exact/guarded assertions
-/// distinguish them. This exercises the current binary, not constructed facts.
-/// Discarded-only subjects have no other observer: reach must survive while
-/// their finding and related test receive no oracle, including weak credit.
 /// Replace the repair-route advisory text with a fixed slot so the wording
 /// stays owned by `RepairRouteRefusal::advisory` (#9244).
 fn blank_repair_advisory(bytes: &[u8]) -> Vec<u8> {
@@ -141,6 +135,12 @@ fn blank_repair_advisory(bytes: &[u8]) -> Vec<u8> {
         .into_bytes()
 }
 
+/// The independent contract is score(1) == 2. Original/wrong sources differ
+/// only in the returned offset; their patches each describe the actual source.
+/// Discarding a matcher accepts either value, while exact/guarded assertions
+/// distinguish them. This exercises the current binary, not constructed facts.
+/// Discarded-only subjects have no other observer: reach must survive while
+/// their finding and related test receive no oracle, including weak credit.
 #[test]
 fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> Result<(), String> {
     let root = unique_temp_workspace("discarded-matcher-cli-5713");
