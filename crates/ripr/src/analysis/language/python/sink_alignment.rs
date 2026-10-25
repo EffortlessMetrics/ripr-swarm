@@ -438,7 +438,16 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
                 .map(|receiver| format!("{receiver}.{method}")),
         );
     }
-    let locals = owner_result_locals(test, &callees);
+    // The shared alias reader also accepts these materializers. Its result is
+    // not whole-owner identity when a test binding can replace any of them.
+    let locals = if ["list", "tuple", "set", "frozenset", "sorted"]
+        .iter()
+        .any(|name| super::related_tests::builtin_is_shadowed(test, name))
+    {
+        Vec::new()
+    } else {
+        owner_result_locals(test, &callees)
+    };
     observes(&expression, &callees, &locals, test)
 }
 

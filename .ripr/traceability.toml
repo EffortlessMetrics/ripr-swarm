@@ -16629,6 +16629,7 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_shadowed_materializer_alias_cannot_supply_whole_observation",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_shadowed_materializer_cannot_supply_whole_observation",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_method_whole_result_keeps_receiver_identity",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multiline_collection_comments_preserve_member_identity",

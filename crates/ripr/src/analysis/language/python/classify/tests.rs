@@ -3341,3 +3341,43 @@ fn multiline_collection_shadowed_materializer_cannot_supply_whole_observation() 
     }
     Ok(())
 }
+
+#[test]
+fn multiline_collection_shadowed_materializer_alias_cannot_supply_whole_observation()
+-> Result<(), String> {
+    let source = "def labels():\n    return [\n        2,\n        1,\n    ]\n";
+    for binding in ["result = labels()".to_string()].into_iter().chain(
+        ["list", "tuple", "set", "frozenset", "sorted"].map(|wrapper| {
+            format!("{wrapper} = lambda _: [2, 1]\n    result = {wrapper}(labels())")
+        }),
+    ) {
+        let shadowed = binding.contains("lambda");
+        let tests = format!(
+            "from src.subject import labels\ndef test_labels():\n    {binding}\n    assert result == [2, 1]\n"
+        );
+        let owners = extract_owners(Path::new("src/subject.py"), source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let finding = classify_change_with_source(
+            Path::new("src/subject.py"),
+            3,
+            "        2,",
+            Some("        1,"),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or_else(|| format!("missing alias finding: {binding}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong)
+        );
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            !shadowed,
+            "{binding}"
+        );
+    }
+    Ok(())
+}
