@@ -227,17 +227,28 @@ fn rejects_retry(
     } else {
         src.replace("  let lastError", &format!("{extra}\n  let lastError"))
     };
+    rejects_retry_source(check, old, new, &src, label)
+}
+
+fn rejects_retry_source(
+    check: &str,
+    old: &str,
+    new: &str,
+    src: &str,
+    label: &str,
+) -> Result<Finding, String> {
     let test = format!(
         "import {{ describe, it, mock }} from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ withRetry }} from \"../src/retry\";\n\ndescribe(\"withRetry\", () => {{\n  it(\"gives up\", async () => {{\n    const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n    await assert.rejects(withRetry(fn, 2), {check});\n  }});\n}});\n"
     );
     let line = src
         .lines()
         .position(|text| text.trim() == new.trim())
-        .map_or(0, |index| index + 1);
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("retry fixture lacks changed throw: {new}"))?;
     finding_for(
         label,
         NODE_TEST,
-        &[("src/retry.ts", &src), ("test/retry.test.ts", &test)],
+        &[("src/retry.ts", src), ("test/retry.test.ts", &test)],
         &replace_diff(
             "src/retry.ts",
             line,
@@ -246,6 +257,24 @@ fn rejects_retry(
         ),
         line,
     )
+}
+
+/// Confirm the error-path assertion was extracted and related before checking
+/// the guard's verdict; missing fixture evidence must not explain a weak result.
+fn assert_retry_class(finding: &Finding, expected: ExposureClass) {
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+    assert_eq!(
+        finding.related_tests[0].oracle_kind,
+        OracleKind::ExactErrorVariant,
+        "{finding:?}"
+    );
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "{finding:?}"
+    );
+    assert_eq!(finding.class, expected, "{finding:?}");
 }
 
 #[test]
@@ -258,21 +287,115 @@ fn rejects_substring_regex_credits_a_forwarded_throw_replaced_by_another_error()
         "",
         "rejects-forwarded",
     )?;
-    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_retry_class(&finding, ExposureClass::Exposed);
     Ok(())
 }
 
-/// Negative: a regex the new error still satisfies passes on the edit.
+/// Negative: differing from the forwarded error is insufficient. The pinned
+/// literal must be absent from all of String(err), including the class prefix.
 #[test]
 fn rejects_substring_regex_the_new_error_satisfies_stays_weak() -> Result<(), String> {
-    let finding = rejects_retry(
-        "/other/",
+    for (check, new) in [
+        ("/other/", r#"throw new Error("other");"#),
+        ("/down/", r#"throw new Error("down again");"#),
+        ("/Error/", r#"throw new Error("other");"#),
+    ] {
+        let finding = rejects_retry(check, "throw lastError;", new, "", "rejects-satisfied")?;
+        assert_retry_class(&finding, ExposureClass::WeaklyExposed);
+    }
+    Ok(())
+}
+
+/// The scan is deliberately lexical: an uncalled callback's unknown call
+/// withholds credit, while the same callback with no call preserves it.
+#[test]
+fn rejects_substring_regex_sole_throw_scans_nested_callback_calls() -> Result<(), String> {
+    for (body, expected) in [
+        ("void attempts;", ExposureClass::Exposed),
+        ("helper();", ExposureClass::WeaklyExposed),
+    ] {
+        let extra = format!("  const nested = () => {{ {body} }};");
+        let finding = rejects_retry(
+            "/down/",
+            "throw lastError;",
+            r#"throw new Error("other");"#,
+            &extra,
+            "rejects-nested-call",
+        )?;
+        assert_retry_class(&finding, expected);
+    }
+    Ok(())
+}
+
+/// Even a callback defined after the changed throw contributes a second
+/// lexical throw site; it must not be mistaken for another top-level owner.
+#[test]
+fn rejects_substring_regex_sole_throw_scans_later_nested_throws() -> Result<(), String> {
+    let new = r#"throw new Error("other");"#;
+    let src = RETRY_AFTER.replace(
+        "THROW",
+        &format!("{new}\n  const nested = () => {{ throw new Error(\"down\"); }};"),
+    );
+    let finding = rejects_retry_source(
+        "/down/",
         "throw lastError;",
-        r#"throw new Error("other");"#,
-        "",
-        "rejects-satisfied",
+        new,
+        &src,
+        "rejects-nested-throw",
     )?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_retry_class(&finding, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+/// The same parameter is safe inside the retry try/catch, but an additional
+/// call outside it can reject before reaching the changed throw.
+#[test]
+fn rejects_substring_regex_sole_throw_refuses_uncaught_parameter_callbacks() -> Result<(), String> {
+    for (extra, expected) in [
+        ("", ExposureClass::Exposed),
+        ("  await fn();", ExposureClass::WeaklyExposed),
+    ] {
+        let finding = rejects_retry(
+            "/down/",
+            "throw lastError;",
+            r#"throw new Error("other");"#,
+            extra,
+            "rejects-uncaught-parameter",
+        )?;
+        assert_retry_class(&finding, expected);
+    }
+    Ok(())
+}
+
+/// A neighbor's calls and throws cannot contaminate the changed owner's
+/// source span, and that neighbor cannot erase the changed owner's call.
+#[test]
+fn rejects_substring_regex_sole_throw_uses_only_the_changed_owner() -> Result<(), String> {
+    let neighbor = "export function unrelated() {\n  helper();\n  throw new Error(\"down\");\n}\n";
+    let new = r#"throw new Error("other");"#;
+    for neighbor_first in [true, false] {
+        for (extra, expected) in [
+            ("", ExposureClass::Exposed),
+            ("  await fn();\n", ExposureClass::WeaklyExposed),
+        ] {
+            let owner = RETRY_AFTER
+                .replace("THROW", new)
+                .replace("  let lastError", &format!("{extra}  let lastError"));
+            let src = if neighbor_first {
+                format!("{neighbor}{owner}")
+            } else {
+                format!("{owner}{neighbor}")
+            };
+            let finding = rejects_retry_source(
+                "/down/",
+                "throw lastError;",
+                new,
+                &src,
+                "rejects-owner-span",
+            )?;
+            assert_retry_class(&finding, expected);
+        }
+    }
     Ok(())
 }
 

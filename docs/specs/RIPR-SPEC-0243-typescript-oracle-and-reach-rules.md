@@ -1671,6 +1671,13 @@ keys); do not take the next number.
   with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
   `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
   `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
+- #10170: the same `assertion_form_tests.rs` pins rule 20's whole-owner
+  lexical scan: nested callback calls and later nested throws withhold credit,
+  an uncaught parameter callback withholds credit despite another caught call,
+  and a neighboring owner before or after the changed owner does not affect
+  its guard. Matched positive controls keep credit. The forwarded-local
+  controls require literal absence from the new `String(err)`, including its
+  class prefix; a different message still containing the literal stays weak.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.

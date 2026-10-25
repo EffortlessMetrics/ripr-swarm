@@ -17176,6 +17176,12 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_credits_a_forwarded_throw_replaced_by_another_error",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_the_new_error_satisfies_stays_weak",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_scans_nested_callback_calls",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_scans_later_nested_throws",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_refuses_uncaught_parameter_callbacks",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_uses_only_the_changed_owner",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",
