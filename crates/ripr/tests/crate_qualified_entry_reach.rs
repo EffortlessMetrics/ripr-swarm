@@ -1779,3 +1779,267 @@ fn conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused() ->
     );
     assert_refused(&member, "member crate's same-named module")
 }
+
+// ---- #10279: in-file `#[cfg(test)] mod tests { use super::entry; }` ----
+
+/// `src/lib.rs` holding `lib` and then `tests`: the default in-file layout.
+fn in_file(lib: &str, tests: &str) -> Package<'static> {
+    unit_package(
+        "src/lib.rs",
+        vec![("src/lib.rs", format!("{lib}\n{tests}"))],
+    )
+}
+
+/// An inline test module around `inner` (a test or further modules).
+fn tests_module(header: &str, inner: &str) -> String {
+    format!("#[cfg(test)]\nmod tests {{\n{header}\n{inner}\n}}\n")
+}
+
+#[test]
+fn an_in_file_test_module_import_resolves_from_its_own_scope() -> Result<(), String> {
+    let import = "use super::order_discount;";
+    assert_recovered(
+        &in_file(LIB, &tests_module(import, &test_file(BARE))),
+        "super from mod tests beside the entry",
+    )?;
+    // The use item's own attribute is not path text.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &tests_module(&format!("#[doc(hidden)]\n{import}"), &test_file(BARE)),
+        ),
+        "attributed use item",
+    )?;
+    // Two levels of inline module: `super::super` from `tests::deeper`.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &tests_module(
+                "",
+                &format!(
+                    "mod deeper {{\n    use super::super::order_discount;\n{}\n}}",
+                    test_file(BARE)
+                ),
+            ),
+        ),
+        "super::super from a nested inline module",
+    )?;
+    // The entry inside an inline module, its test module nested beside it.
+    let pricing = PUB_INLINE_LIB.trim_end().trim_end_matches('}').to_string();
+    assert_recovered(
+        &in_file(
+            &format!("{pricing}{}}}\n", tests_module(import, &test_file(BARE))),
+            "",
+        ),
+        "super inside an inline entry module",
+    )?;
+    // The in-file test module of a file module that holds the entry.
+    assert_recovered(
+        &unit_package(
+            "src/cmp.rs",
+            vec![
+                ("src/lib.rs", "pub mod cmp;\n".to_string()),
+                (
+                    "src/cmp.rs",
+                    format!("{LIB}\n{}", tests_module(import, &test_file(BARE))),
+                ),
+            ],
+        ),
+        "super from mod tests in a file module",
+    )?;
+    // A grouped import resolves like the plain one.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &tests_module("use super::{is_bulk, order_discount};", &test_file(BARE)),
+        ),
+        "grouped import",
+    )?;
+    // A raw-identifier module name is the same scope.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &tests_module("use super::order_discount;", &test_file(BARE))
+                .replace("mod tests", "mod r#tests"),
+        ),
+        "raw module name",
+    )?;
+    // A one-line module header and test signature: the `fn` token is not the
+    // line's first token, so the test is found by name and `fn` line.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &format!(
+                "#[cfg(test)] mod tests {{ use super::order_discount; #[test] fn discount_boundary() {{\n{BARE}\n}} }}\n"
+            ),
+        ),
+        "one-line module header",
+    )?;
+    // Regression guard (no named relative import, so the resolver is not
+    // consulted): the glob-only layout links.
+    assert_recovered(
+        &in_file(LIB, &tests_module("use super::*;", &test_file(BARE))),
+        "super glob only",
+    )
+}
+
+#[test]
+fn an_in_file_relative_import_of_another_scope_stays_refused() -> Result<(), String> {
+    let baseline = in_file(
+        LIB,
+        &tests_module("use super::order_discount;", &test_file(BARE)),
+    );
+    assert_recovered(&baseline, "baseline")?;
+    // `super` from `flat::tests` is `flat`, whose own `order_discount` the
+    // test calls; the changed helper's entry is the crate root's.
+    let flat = format!(
+        "pub mod flat {{\n    pub fn order_discount(qty: u32) -> u32 {{ qty / 2 }}\n{}}}\n",
+        tests_module("use super::order_discount;", &test_file(BARE))
+    );
+    assert_refused(&in_file(LIB, &flat), "super names a sibling inline module")?;
+    // The same scope re-exporting a foreign function under the entry's name:
+    // no second definition of the name exists, so only the scope decides.
+    let foreign = format!(
+        "pub mod flat {{\n    pub use std::convert::identity as order_discount;\n{}}}\n",
+        tests_module(
+            "use super::order_discount;",
+            &test_file(
+                "    assert_eq!(order_discount(10), 10);\n    assert_eq!(order_discount(9), 9);"
+            )
+        )
+    );
+    assert_refused(&in_file(LIB, &foreign), "super names a foreign re-export")?;
+    // `super::super` from `mod tests` at the crate root goes past it.
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module("use super::super::order_discount;", &test_file(BARE)),
+        ),
+        "super past the crate root",
+    )?;
+    // `self::` inside `mod tests` names the test module itself.
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module("use self::order_discount;", &test_file(BARE)),
+        ),
+        "self names the test module",
+    )?;
+    // Any spelling of the import that resolves elsewhere refuses the file,
+    // here beside a foreign re-export so no second definition decides.
+    let both = format!(
+        "{}pub mod flat {{\n    pub use std::convert::identity as order_discount;\n    mod checks {{\n        use super::order_discount;\n    }}\n}}\n",
+        tests_module("use super::order_discount;", &test_file(BARE))
+    );
+    assert_refused(&in_file(LIB, &both), "a second spelling in another scope")?;
+    // The import must share the test's own scope: one in a sibling module
+    // does not bind the test's bare call.
+    assert_refused(
+        &in_file(
+            LIB,
+            &format!(
+                "mod a {{\n    use super::order_discount;\n}}\n{}",
+                tests_module("", &test_file(BARE))
+            ),
+        ),
+        "import only in a sibling module",
+    )?;
+    // The same on one line: the sibling module's header comes first there.
+    assert_refused(
+        &in_file(
+            LIB,
+            &format!(
+                "mod a {{ use super::order_discount; }} #[cfg(test)] mod tests {{ #[test] fn discount_boundary() {{\n{BARE}\n}} }}\n"
+            ),
+        ),
+        "one-line header, import only in a sibling module",
+    )?;
+    // A nearer foreign binding in the test's scope beside a resolved import
+    // elsewhere (sibling and nested). End-to-end pins: the file-wide renamed-
+    // import veto (`test_call_is_shadowed`) decides these, not the scope check.
+    let identity =
+        test_file("    assert_eq!(order_discount(10), 10);\n    assert_eq!(order_discount(9), 9);");
+    assert_refused(
+        &in_file(
+            LIB,
+            &format!(
+                "{}mod other {{\n    use std::convert::identity as order_discount;\n{identity}\n}}\n",
+                tests_module("use super::order_discount;", "")
+            ),
+        ),
+        "foreign binding in a sibling test module",
+    )?;
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module(
+                "use super::order_discount;",
+                &format!(
+                    "mod deeper {{\n    use std::convert::identity as order_discount;\n{identity}\n}}"
+                ),
+            ),
+        ),
+        "foreign binding in a nested test module",
+    )?;
+    // Accepted conservative loss: `super` names a module that only
+    // re-exports the entry.
+    assert_refused(
+        &in_file(
+            LIB,
+            &format!(
+                "pub mod flat {{\n    pub use crate::order_discount;\n{}}}\n",
+                tests_module("use super::order_discount;", &test_file(BARE))
+            ),
+        ),
+        "re-exporting module",
+    )?;
+    // Accepted conservative loss: a test fn nested in another fn has no
+    // module scope this resolver reads.
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module(
+                "use super::order_discount;",
+                &format!(
+                    "fn outer() {{
+{}
+}}",
+                    test_file(BARE)
+                ),
+            ),
+        ),
+        "test fn nested in a fn",
+    )?;
+    // Guards that predate the in-file scope (glob, cfg-gated use, body
+    // binding) still refuse beside the in-file layout.
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module(
+                "use super::*;\nuse super::order_discount;",
+                &test_file(BARE),
+            ),
+        ),
+        "glob beside the import",
+    )?;
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module(
+                "#[cfg(feature = \"x\")]\nuse super::order_discount;",
+                &test_file(BARE),
+            ),
+        ),
+        "cfg-gated use",
+    )?;
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module(
+                "use super::order_discount;",
+                &test_file(&format!("    let order_discount = |qty: u32| qty;\n{BARE}")),
+            ),
+        ),
+        "nearer let binding",
+    )
+}

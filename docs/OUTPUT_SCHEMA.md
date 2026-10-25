@@ -434,7 +434,10 @@ capability without failing installed-binary analysis. An additive
 `generated_workflow` advisory check appears when
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
-the refresh command. The source-build profile
+the refresh command. When the root has a `.mcp.json`, an additive `mcp_config`
+check reports `pass` if its `ripr` server entry runs `ripr mcp --stdio` (what
+`ripr init --mcp` writes) and `advisory` otherwise, with `evidence` naming the
+problem; it never changes `status`, and no file means no check. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
 evidence names an install route (rustup or the OS package manager); a rustc
 below the build minimum still names `rustup update stable`. It reports its
@@ -460,7 +463,12 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `warnings`. Cargo build output means a binary beside Cargo's `deps/` and
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
-on PATH is a legitimate development setup.
+on PATH is a legitimate development setup. One warning (#10347) fires when no
+`ripr` is on PATH and a project config (`.mcp.json`, `.vscode/mcp.json`,
+`.cursor/mcp.json`) defines a server that launches it by bare name (`mcpServers`
+for `.mcp.json` and Cursor, `servers` for VS Code; JSONC comments are not
+parsed, so such a file is skipped); the default human screen prints the
+same text as a `~` line.
 
 ### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
 
@@ -18651,7 +18659,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.104",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.106",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19419,7 +19427,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.104",
+      "schema_version": "1.106",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

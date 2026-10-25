@@ -1,0 +1,12 @@
+diff --git a/guards/errors.py b/guards/errors.py
+--- a/guards/errors.py
++++ b/guards/errors.py
+@@ -12,7 +12,7 @@
+ 
+ def check_c(text, **_):
+     if not text:
+-        raise ValueError("empty")
++        raise ValueError("blank")
+     return text
+ 
+ 

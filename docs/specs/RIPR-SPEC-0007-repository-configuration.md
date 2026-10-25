@@ -102,6 +102,17 @@ artifact root not covered by git ignore rules, the artifact root tracked by
 git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
 
+When a repository has a `.mcp.json`, doctor also checks that it registers a
+`ripr` server whose command is `ripr` and whose args are exactly `mcp`,
+`--stdio` (what `ripr init --mcp` writes). A missing entry, a mismatched entry
+or an unparseable file is an advisory `~` line and an advisory `mcp_config`
+check in JSON; it never changes the exit status. The repair advice follows
+what `ripr init --mcp` can do: run it when the entry is missing (including a
+missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
+and fix or remove the file first when it is not a JSON object or `mcpServers`
+is not an object, which init refuses. A `.mcp.json` that is a symlink is not
+verified; one over 1 MiB is reported as unreadable.
+
 ### Suppression manifest declarations
 
 The configured suppression file and explicit `--suppression-policy` input share

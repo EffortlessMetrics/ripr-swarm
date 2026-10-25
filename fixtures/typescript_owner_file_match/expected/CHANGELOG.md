@@ -711,3 +711,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_file_match (29)
+
+Reason:
+RIPR-SPEC-0224 (#10040): the TypeScript row-owned MissedBoundary fact now emits missing_input with the hedged 'seen' wording instead of observation_unconfirmed
+
+Command:
+`cargo xtask goldens bless typescript_owner_file_match --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

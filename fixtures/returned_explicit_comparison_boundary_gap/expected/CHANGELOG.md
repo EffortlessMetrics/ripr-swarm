@@ -85,3 +85,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (8)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

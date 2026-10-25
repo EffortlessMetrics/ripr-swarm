@@ -1,0 +1,45 @@
+{
+  "case_id": "py-conjuncts-and-exact-owner",
+  "subject_id": "authored-py-pytest-conjuncts",
+  "diff": "cases/py-conjuncts-and-exact-owner.diff",
+  "anchor": {
+    "file": "rates/core.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_and_exact_owner_conjunct",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3 + 1",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_conjuncts.py::test_rate_a",
+        "equivalence_review": "not equivalent: the owner returns a different value (the exact conjunct on the owner fails when the value changes)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 15: the exact conjunct on the owner fails when the value changes.",
+  "labeling_observation": {
+    "ripr_commit": "cee4169a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
