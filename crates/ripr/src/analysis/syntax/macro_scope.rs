@@ -328,7 +328,11 @@ pub(crate) fn splice_imported_macros(source: &str, imported: &ImportedMacros) ->
             let blanked: String = source
                 .get(import.start..import.end)?
                 .chars()
-                .map(|c| if c == '\n' { '\n' } else { ' ' })
+                .flat_map(|c| {
+                    // One space per byte keeps every later byte range valid.
+                    let fill = if c == '\n' { '\n' } else { ' ' };
+                    std::iter::repeat_n(fill, c.len_utf8())
+                })
                 .collect();
             body.replace_range(import.start..import.end, &blanked);
         }
@@ -436,6 +440,25 @@ mod tests {
             "t"
         ));
         assert!(calls_only_at_top_level("use crate::t;\nu!(a);\n", "t"));
+    }
+
+    #[test]
+    fn blanking_a_path_import_keeps_byte_ranges_with_multibyte_text() {
+        let source = "use crate::t; // é\nuse crate::u; // ü€\nt!(a);\nu!(b);\n";
+        let imported = ImportedMacros {
+            definitions: "macro_rules! t { () => {} } macro_rules! u { () => {} }".to_string(),
+            path_imports: vec!["t".to_string(), "u".to_string()],
+        };
+        let spliced = splice_imported_macros(source, &imported);
+        let Some(spliced) = spliced else {
+            panic!("premise: the source parses and splices");
+        };
+        assert_eq!(
+            spliced.matches('\n').count(),
+            source.matches('\n').count() + 1
+        );
+        assert!(!spliced.contains("use crate"), "{spliced}");
+        assert!(spliced.ends_with("t!(a);\nu!(b);\n"), "{spliced}");
     }
 
     #[test]
