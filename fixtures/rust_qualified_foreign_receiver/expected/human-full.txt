@@ -1,0 +1,68 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_qualified_foreign_receiver/input
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+NOTE ./src/lib.rs:18
+  id: probe:src_lib.rs:return_value:c861ec7a
+
+Changed
+  before: (0, None)
+  after:  (0, Some(self.remaining))
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::impl Iterator for WhileSome::size_hint
+
+Static exposure
+  static_unknown (note, confidence 0.56)
+
+Evidence
+  - reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))
+  - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
+  - discriminator no: No assertion found on related tests
+  - local flow reaches returned value: (0, Some(self.remaining)) (line 18)
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3)); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3))); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3)); misses: no established call path to the changed code; linked by name only
+  - source assertion argument value 3 at line 4
+  - source assertion argument value 3 at line 5
+  - source assertion argument value 3 at line 6
+  - source assertion argument value 3 at line 12
+  - source enum variant value ::WhileSome at line 12
+
+Weakness
+  - A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim
+
+Stop reasons:
+  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+
+Static limitation
+  rust_implicit_call_unresolved — A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+
+Limitation detail
+  last established edge: reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
+  first unresolved edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+
+Next step
+  `foreign_size_hint_is_observed` (tests/size_hints.rs:2), `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and uses it, and the language may call `size_hint` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `size_hint`, so it does not report a gap. Check that an assertion in that test would fail if `size_hint` returned the wrong value; add a test only if none does
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
+  ripr context --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
+
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 1 changed expression(s), and
+  2 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

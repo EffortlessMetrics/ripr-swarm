@@ -5,8 +5,9 @@
 //! `crate::domain` / `crate::repair_card_budget`. This module owns entry
 //! resolution, policy omission checks, and the two output shapes: the
 //! versioned `RepairCardV1` JSON document (`--json`) and the compact human
-//! summary (default), which presents typed fields verbatim and never
-//! re-derives or enhances them.
+//! summary (default), which words the currentness, instruction and done-when
+//! enums in plain language (#9244) and never re-derives or enhances them; the
+//! wire spellings and `schema_version` stay in `--json`.
 //!
 //! #5007 (RIPR-SPEC-0202): the adapter also owns the typed-refusal envelope.
 //! Every deliberate named refusal of the handoff — seam-not-found,
@@ -25,7 +26,11 @@ use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
 use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
 use crate::config::load_for_root;
-use crate::domain::{AgentCardRefusalKind, RepairCardTarget, RepairCardV1};
+use crate::domain::{
+    AgentCardRefusalKind, CardCurrentnessGoal, EditCageGoal, FixInstructionState,
+    FocusedExecutionGoal, MutationConfirmationGoal, RepairCardDoneWhen,
+    RepairCardSnapshotCurrentness, RepairCardTarget, RepairCardV1, StaticMovementGoal,
+};
 use crate::output;
 
 use super::agent::{
@@ -253,7 +258,9 @@ pub(crate) fn agent_card_prose_lines(
 ) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Repair card {}", card.repair_card_id));
-    lines.push(format!("  schema: {}", card.schema_version));
+    // The `repair_card.v1` schema identity is a machine contract: `--json`
+    // carries it as `schema_version`. A newcomer cannot act on it, so the
+    // human summary leaves it out (#9244).
     let mut subject = format!("  seam: {}", card.subject.seam_id);
     if let Some(finding_id) = &card.subject.finding_id {
         subject.push_str(&format!(" (finding {finding_id})"));
@@ -263,11 +270,11 @@ pub(crate) fn agent_card_prose_lines(
         "  snapshot: {} @ {} ({})",
         card.snapshot.workspace_identity,
         card.snapshot.repository_head,
-        wire_name(&card.snapshot.currentness)
+        snapshot_currentness_words(card.snapshot.currentness)
     ));
     lines.push(format!(
         "  instruction: {} (fix site: {}, suggested assertion: {})",
-        wire_name(&card.instruction.state),
+        instruction_state_words(card.instruction.state),
         yes_no(card.instruction.has_fix_site),
         yes_no(card.instruction.has_suggested_assertion)
     ));
@@ -349,14 +356,7 @@ pub(crate) fn agent_card_prose_lines(
             card.forbidden_files.join(", ")
         ));
     }
-    lines.push(format!(
-        "  done when: static movement {}, focused test {}, edit cage {}, mutation {}, currentness {}",
-        wire_name(&card.done_when.static_movement),
-        wire_name(&card.done_when.focused_test_execution),
-        wire_name(&card.done_when.edit_cage),
-        wire_name(&card.done_when.mutation_confirmation),
-        wire_name(&card.done_when.currentness)
-    ));
+    lines.push(done_when_line(&card.done_when));
     for stop in &card.stop_conditions {
         lines.push(format!("  stop: {stop}"));
     }
@@ -411,6 +411,55 @@ pub(crate) fn agent_card_prose_lines(
         lines.push(format!("  (PowerShell) {form}"));
     }
     lines
+}
+
+/// Plain-language spelling of the snapshot currentness for the human summary.
+/// The wire value stays in `--json`; the match is exhaustive so a new variant
+/// must choose its wording.
+fn snapshot_currentness_words(value: RepairCardSnapshotCurrentness) -> &'static str {
+    match value {
+        RepairCardSnapshotCurrentness::Current => "committed HEAD",
+        RepairCardSnapshotCurrentness::AcceptedDirtyDraft => "your uncommitted working tree",
+    }
+}
+
+fn instruction_state_words(value: FixInstructionState) -> &'static str {
+    match value {
+        FixInstructionState::FixSiteReady => "fix site found, no exact edit ready",
+        FixInstructionState::StaticLimitation => "static limitation, no bounded repair route",
+        FixInstructionState::Stale => "stale, refresh the analysis first",
+        FixInstructionState::InspectOnly => "inspect only, nothing to fix",
+        FixInstructionState::Unavailable => "no witness available",
+    }
+}
+
+/// One sentence-fragment list per done-when axis, in plain words. The five
+/// axes stay separate (#3166); the wire spellings remain in `--json`.
+fn done_when_line(done: &RepairCardDoneWhen) -> String {
+    let static_movement = match done.static_movement {
+        StaticMovementGoal::ClosedBySelectedRoute => "the selected route closes the gap",
+        StaticMovementGoal::ImprovedAccordingToSelectedRoute => {
+            "the selected route improves the gap"
+        }
+    };
+    let focused = match done.focused_test_execution {
+        FocusedExecutionGoal::VerifiedPass => "the focused test passes",
+        FocusedExecutionGoal::ExplicitlyNotRun => "ripr does not run the focused test",
+    };
+    let cage = match done.edit_cage {
+        EditCageGoal::Compliant => "edits stay inside the edit cage",
+    };
+    let mutation = match done.mutation_confirmation {
+        MutationConfirmationGoal::NotRequested => "mutation testing is not requested",
+        MutationConfirmationGoal::OptionalSeparateConfirmation => {
+            "mutation confirmation is optional and separate"
+        }
+    };
+    let currentness = match done.currentness {
+        CardCurrentnessGoal::Current => "the snapshot is current",
+        CardCurrentnessGoal::AcceptedDirtyDraft => "the uncommitted draft snapshot is accepted",
+    };
+    format!("  done when: {static_movement}; {focused}; {cage}; {mutation}; {currentness}")
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -751,16 +800,60 @@ mod tests {
         if !text.contains("  next action: none (instruction fix_site_ready") {
             return Err(format!("legacy refusal line lost:\n{text}"));
         }
-        // #9604 follow-up: prose never prints a Debug spelling; every typed
-        // value renders at its wire spelling like the JSON card does.
+        Ok(())
+    }
+
+    /// #9244: the human summary words the currentness, instruction and
+    /// done-when enums for a newcomer and drops the schema line. The JSON card
+    /// keeps every wire value and `schema_version`.
+    #[test]
+    fn prose_words_enums_for_a_newcomer_and_omits_the_schema_line() -> Result<(), String> {
+        let card = prose_test_card();
+        let text =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None)
+                .join("\n");
         for expected in [
-            "  instruction: fix_site_ready (fix site: yes, suggested assertion: no)",
-            "  done when: static movement closed_by_selected_route, focused test verified_pass, edit cage compliant, mutation not_requested, currentness current",
+            "  snapshot: workspace:demo @ abc123 (committed HEAD)",
+            "  instruction: fix site found, no exact edit ready (fix site: yes, suggested assertion: no)",
+            "  done when: the selected route closes the gap; the focused test passes; edits stay inside the edit cage; mutation testing is not requested; the snapshot is current",
         ] {
             if !text.contains(expected) {
-                return Err(format!(
-                    "prose leaked a non-wire spelling; missing {expected:?}:\n{text}"
-                ));
+                return Err(format!("missing plain wording {expected:?}:\n{text}"));
+            }
+        }
+        // Discriminating negatives: no schema line, no raw snake_case enum
+        // spelling on the lines this change owns.
+        if text.contains("schema:") || text.contains("repair_card.v1") {
+            return Err(format!("the schema line must not print:\n{text}"));
+        }
+        for owned in ["  snapshot: ", "  instruction: ", "  done when: "] {
+            let line = text
+                .lines()
+                .find(|line| line.starts_with(owned))
+                .ok_or_else(|| format!("missing {owned:?} line:\n{text}"))?;
+            let words = line.split_whitespace().any(|word| {
+                word.contains('_') && word.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_')
+            });
+            if words {
+                return Err(format!("raw enum spelling on an owned line: {line}"));
+            }
+        }
+        // Another variant of each axis words differently, so the mapping is
+        // exercised and not one constant string.
+        let mut other = prose_test_card();
+        other.snapshot.currentness = RepairCardSnapshotCurrentness::AcceptedDirtyDraft;
+        other.done_when.focused_test_execution = FocusedExecutionGoal::ExplicitlyNotRun;
+        other.done_when.currentness = CardCurrentnessGoal::AcceptedDirtyDraft;
+        let text =
+            agent_card_prose_lines(&other, "ripr agent packet --seam-id seam:demo --json", None)
+                .join("\n");
+        for expected in [
+            "(your uncommitted working tree)",
+            "ripr does not run the focused test",
+            "the uncommitted draft snapshot is accepted",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!("missing alternate wording {expected:?}:\n{text}"));
             }
         }
         Ok(())
