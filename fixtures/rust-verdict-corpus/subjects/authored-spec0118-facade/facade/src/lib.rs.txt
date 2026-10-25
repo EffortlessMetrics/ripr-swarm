@@ -1,0 +1,12 @@
+pub use inner::*;
+
+pub trait Ext {
+    fn go(&mut self, byte: u8) -> usize;
+}
+
+impl Ext for Vec<u8> {
+    fn go(&mut self, byte: u8) -> usize {
+        self.push(byte);
+        self.len()
+    }
+}

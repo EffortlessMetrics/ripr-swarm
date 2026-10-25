@@ -1,0 +1,4 @@
+pub fn bump_counter(buf: &mut Vec<u8>, byte: u8) -> usize {
+    buf.push(byte);
+    buf.len()
+}

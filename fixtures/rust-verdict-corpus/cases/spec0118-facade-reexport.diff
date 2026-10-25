@@ -1,0 +1,9 @@
+diff --git a/inner/src/lib.rs b/inner/src/lib.rs
+--- a/inner/src/lib.rs
++++ b/inner/src/lib.rs
+@@ -1,4 +1,4 @@
+ pub fn bump_counter(buf: &mut Vec<u8>, byte: u8) -> usize {
+     buf.push(byte);
+-    buf.len()
++    buf.iter().count()
+ }

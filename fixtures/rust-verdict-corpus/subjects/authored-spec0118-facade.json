@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-spec0118-facade",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for RIPR-SPEC-0118 acceptance example 4 (facade re-export)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "1782db646a497b56bff1397773605d77017f81216bdf5a9361c5045c1ad2f6ed"
+    },
+    {
+      "path": "facade/Cargo.toml",
+      "sha256": "370beaa804c2fbc7eaeab3e2b0528c01c89a87537f5d4bb1d8b199e8078044dc"
+    },
+    {
+      "path": "facade/src/lib.rs",
+      "sha256": "c5cc0586067cc9fae0fd901b924bbe8878aca8811d97d497cf80927c8b4acac8"
+    },
+    {
+      "path": "facade/tests/t.rs",
+      "sha256": "7367799f53a72273adb0a970f559643188f7ae0677811a2244ee1b12d847e93a"
+    },
+    {
+      "path": "inner/Cargo.toml",
+      "sha256": "5b9c2f7ebe7fde2076cf6c37cd94098e34e73d136c731acd37329c17608f13b2"
+    },
+    {
+      "path": "inner/src/lib.rs",
+      "sha256": "fa36965915da3eba03a51129a41dc7934c63664b79dc88099593c3ba87cc734c"
+    }
+  ]
+}
