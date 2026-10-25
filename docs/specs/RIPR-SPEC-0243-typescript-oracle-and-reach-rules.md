@@ -30,6 +30,8 @@ Linked issues:
 - #9138 (assertion after an always-exiting try/finally)
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
+- #9496 (chai throw forms, anchored `assert.match`, substring rejection
+  regex)
 - #9181 (CommonJS function export reached through `require()`)
 - #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
@@ -546,8 +548,18 @@ an actionable `weakly_exposed`. These read `exact_error_variant` /
 strong:
 
 - chai BDD `throw`, `throws` or `Throw`, not under `not`, with exactly
-  one argument that is a string literal. chai matches it as a substring
-  of the message, as Jest matches `toThrow("...")`.
+  one argument that is a string literal (chai matches it as a substring
+  of the message, as Jest matches `toThrow("...")`), exactly one argument
+  that is a PascalCase class reference (as Jest's `toThrow(Class)`), or a
+  class reference followed by a string literal (both must match). chai tests `instanceof`, so a class change credits only when both sides construct distinct built-in sibling classes (`TypeError`, `RangeError`, `SyntaxError`, `EvalError`, `URIError`, `ReferenceError`) and the check names one; a subclass, alias, user class or `Error` credits only through the message. A regex,
+  an instance, a lowercase or computed reference, a non-literal message and
+  a third argument stay broad. (Amended 2026-10-22, #9496: the class forms.)
+- `node:assert` / `assert/strict` `match(value, regex)` whose regex is
+  anchored with `^` and `$`, has no flags but `u` and no metacharacter
+  between the anchors other than escapes. It matches one string, so it
+  reads `exact_value` / strong exactly as `strictEqual(value, "text")`
+  does. A wider regex, `doesNotMatch` and chai's `assert.match` stay
+  `relational_check` / weak. (Amended 2026-10-22, #9496.)
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
   with `^` and `$`, with no unescaped `|` outside a character class and
@@ -556,8 +568,10 @@ strong:
   whose top-level `message` is a string literal.
 
 Rule 4's message-only guard applies to all of them: on a message-only
-change, a chai string must be a substring of exactly one of the old and
-new messages (as rule 4 assembles them), an object `message` must equal
+change, a chai string (also the message of a chai class and message
+check) must be a substring of exactly one of the old and new messages (as
+rule 4 assembles them). A chai class and message check on `Error`, the
+ancestor of every thrown class, credits only through its message. An object `message` must equal
 exactly one of them, and an
 anchored regex credits only when ripr can match it as a plain literal
 (no flags other than `u`, no metacharacters between the anchors other
@@ -570,6 +584,18 @@ class may set any `name`, so it does not credit. Otherwise each reads
 `broad_error` / weak. A
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
+
+**Rule 20. A plain substring regex in `assert.throws` / `assert.rejects`
+pins the error only when the change separates it (2026-10-22, #9496).** A
+regex literal with no flags but `u` and no metacharacter or escape
+(`/down/`) reads `exact_error_variant` / strong at extraction and passes
+rule 4's guard in one of two cases. When both thrown messages are readable
+(as `String(err)`, rule 10), the text must occur in exactly one of them.
+When the old line only rethrows a local (`throw lastError;`), the new
+`String(err)` is readable, does not contain the text, and the changed line
+is the owner's only `throw` (no `reject`, no `new Promise`), so a test that
+passes on the old code reaches it and fails on the edit. Both cases need the changed line to be the owner's only `throw` and the owner to call nothing but its own parameters (any member call or other function may throw the pinned text); otherwise the check reads `broad_error` / weak. Otherwise it reads
+`broad_error` / weak. An anchored or wider regex follows rule 10.
 
 ### Aggregation
 
@@ -830,7 +856,7 @@ prove its condition costs an abstention or a gap, never a credit.
 
 **Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
 that imports `expect` and `test` from `@playwright/test` reads like its
-plain form in six places:
+plain form in seven places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -870,6 +896,11 @@ plain form in six places:
    pair. The base must be the owner call or a local alias of it; a field
    whose value is unchanged, another object's field and another owner keep
    the old reading.
+7. `test.describe(name, body)` (and `.describe.serial`, `.describe.parallel`
+   and `.only` on them) is a suite spelled as a member of the `test` root
+   (#10177). Its nested tests are extracted like those of a `describe`.
+   `.skip` and `.fixme` stay inactive, and a `test` that is not the runner
+   import is not a suite root.
 
 **Rule 17. `t.skip()` / `t.todo()` inside a test body withdraws the test
 (#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
@@ -902,6 +933,52 @@ be at the owner's own function level (no earlier arrow, `function` or
 method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
+
+The two versions must also differ on some probe input, so an equivalent
+rewrite is never reported as unexercised. Each numeric argument is probed at
+its asserted value, its neighbours, `0`, `1` and `-1`; when that does not
+separate them, the probe also tries each number literal the edit added or
+removed (at most three per side) and its neighbours, so a bound edited far from the
+asserted input (`Math.min(100, ...)` to `Math.min(200, ...)`, asserted at 40)
+still reads unexercised (#9436). An operator edit changes no number, so it
+keeps the boundary-witness reading.
+
+**Rule 19. A same-file assertion helper called with literals is its asserts
+(2026-10-22, #9636).** Extends decision 19(b) for literal-argument call-site
+rewrites of helpers that decision 19's pass leaves untouched (multi-statement
+bodies, string, boolean, `null` and negative-number arguments); decision 19's
+own pass runs first and a call it rewrites is never rewritten again. `function checkPass(score, want) { assert.equal(passes(score), want); }`
+called as `checkPass(50, true);` from a test reads as the helper's assertion
+statements with each parameter replaced by its literal argument, as if written
+out at that point (the rewrite keeps every line number). It is credit or
+unknown only: the rewritten assertions pass through the ordinary oracle
+admission, so a weak or unrecognised assertion is no stronger than when
+written inline; no new finding kind or repair rule is added and the ordinary
+classifier applies. It applies only when all
+of these hold, and otherwise the call reads as before:
+
+- the helper is a top-level, non-exported, non-async, non-generator function
+  declaration, declared once, whose parameters are plain identifiers (no
+  default, rest or destructuring, none named `assert` or `expect`) and whose
+  body is only call statements rooted at `assert` or `expect`, one per line,
+  with no `this` or `arguments`;
+- the file mentions the helper only at its declaration and at direct calls,
+  and holds no `eval`, `with` or `\u` escape;
+- the call is a top-level expression statement, alone on its line, of a
+  top-level `test`/`it` callback that is a synchronous function with no
+  parameters and holds only expression statements, with exactly one argument
+  per parameter, each a string, number, boolean or `null` literal (a negative
+  number is parenthesised);
+- a parameter is used in the assertions only as a plain value: not as a member
+  name, assigned (including `<<=` and `>>=`) or incremented, inside a string, template or comment, or as
+  the object of a member access or call when the argument is a number; the
+  assertions hold no closure, template or backslash, and no `{` (every one is
+  refused). A rewrite that does not parse is discarded and the original source
+  is read.
+
+A helper in another file, a call under a
+condition or loop, a nested `describe` test, a computed argument, or a helper
+with control flow stays `no_static_path` exactly as before.
 
 ### Static limits
 
@@ -1135,7 +1212,9 @@ rejected alternative. Any can be reversed later without touching the rest.
     renamed assertion then passes every ordinary gate (binding, oracle kind,
     pinned expected side, field-update rules). Rejected: helpers with more than
     one statement, defaults, async or generator helpers, aliases and exports,
-    computed arguments, strings, and calls inside expressions.
+    computed arguments, strings, and calls inside expressions. Rule 19 reads
+    the multi-statement, string and negative-argument shapes this list rejects,
+    as a literal-argument rewrite of helpers this pass leaves untouched.
 20. **Failures a handler rethrows (2026-10-22, #9685).** Adopted. (a) A
     `try` whose handler is exactly `catch (e) { throw e; }` (one statement,
     throwing the very binding it caught, no `finally` that can replace the
@@ -1173,6 +1252,18 @@ the masker.
     value is the declared function.
     Rejected: crediting `require()` of an ES module's default export
     (runtime namespace object) and an arbitrary `module.exports = expr`.
+22. **Mock call counts (2026-10-22, #9684).**
+    Adopted: for a changed side-effect call (a probe whose
+    change is to what the owner's call sends), an assertion whose observed
+    expression is a plain identifier path ending `.mock.callCount()` or
+    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
+    this; extraction still labels the equality `exact_value`). Rejected:
+    crediting the count as an exact value of the arguments the changed call
+    sends. Not demoted: a deleted call, an added call (a changed line with
+    no removed counterpart, which a count sees), or a value that decides
+    how many calls run (a count sees both), an aliased or optional-chained count,
+    and `mock.calls[0].arguments` pins, which keep their reading.
 
 ## Required Evidence
 
@@ -1183,11 +1274,11 @@ the masker.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7, 10 and 11 move a finding to a stronger class only for an
+- Rules 1, 7, 10, 11 and 20 move a finding to a stronger class only for an
   awaited root (rule 1), an alias-rename local (rule 7; via
   RIPR-SPEC-0251, also a renamed default import), a literal
-  chai or `node:assert` message check (rule 10) or an inline literal
-  table row (rule 11).
+  chai or `node:assert` message check (rule 10), a substring rejection regex the change separates (rule 20)
+  or an inline literal table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
 - No TypeScript finding has class `reachable_unrevealed`.
@@ -1219,6 +1310,10 @@ return amount - 10; } return amount; }`, the diff changes `amount - 10`
 to `amount - 20`, and `tests/lib.test.ts` has
 `import { price } from "../src/lib";` and one `test("price", () => { ...
 })` holding the snippet. `ripr.toml` enables `typescript`.
+
+New examples are written as `- example `slug`: ...` items listed
+alphabetically after the numbered ones (RIPR-SPEC-0245, acceptance example
+keys); do not take the next number.
 
 1. `expect(price(150)).toBe(130)`: `exact_value` / strong,
    `direct_owner_call`, `exposed` (unchanged).
@@ -1450,7 +1545,6 @@ to `amount - 20`, and `tests/lib.test.ts` has
     expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
     (today `weakly_exposed`: only the unchanged `area` term reached the
     changed-value check). With only the `d.area` assertion: unchanged.
-
 40. `src/rank.ts` `return score >= 90 ? "gold" : "silver";` changed to
     `"bronze"`; the only running test is `it("...", () => {
     expect(rank(90)).to.equal("gold"); })` and the silver assertion is
@@ -1469,6 +1563,31 @@ to `amount - 20`, and `tests/lib.test.ts` has
     withdraws the second test, rule 18 shows `describeAttempt(0)` agrees on
     both versions). Corpus cases `node-t-skip-inside-test` and
     `node-first-attempt-nonnegative-bound`.
+43. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
+    `const send = mock.fn(); mockedSend(4, { send });
+    assert.equal(send.mock.callCount(), 1)`: `mock_expectation` / weak,
+    `weakly_exposed` (the count does not see the argument; today
+    `exact_value` / strong, `exposed`). `assert.deepEqual(
+    send.mock.calls[0].arguments, [8])` keeps its reading.
+44. `describeRange` throws `new RangeError("lo above hi")` changed to
+    `new TypeError("lo above hi")` (corpus case `mocha-throw-class-changed`)
+    or to `new RangeError("lo is above hi")` (corpus case
+    `mocha-throw-message-reworded`); chai `expect(() => describeRange(4,
+    1)).to.throw(RangeError, "lo above hi")`: `exact_error_variant` /
+    strong, `exposed` (today `broad_error` / weak, `weakly_exposed`; rule
+    10). With `to.throw(RangeError, "above")` on the reword, or
+    `to.throw(Error, "lo above hi")` on the class change: `broad_error` /
+    weak by rule 4 (both versions pass).
+45. `slugify` changed from `.replace(/[^a-z0-9]+/g, "-")` to `"_"` (corpus
+    case `node-match-anchored-slug`); `assert.match(slugify("Hello
+    World"), /^hello-world$/)`: `exact_value` / strong, `exposed` (today
+    `relational_check` / weak). With `/hello-world/`, `/^hello.world$/` or
+    `/^HELLO-WORLD$/i`: `relational_check` / weak (unchanged).
+46. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
+    (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
+    2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
+    `broad_error` / weak). With `/other/`, or with a second `throw` in the
+    owner: `broad_error` / weak.
 
 ## Test Mapping
 
@@ -1481,6 +1600,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
   cell, a table read elsewhere, a `let` or late table, a row of the wrong
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
+
+- #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
+  reading and its controls. Corpus row `ts-trap-mocked-send` moves from
+  credited to gap.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
@@ -1542,6 +1665,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   unexpanded, and the snapshot count, partial-extraction disclosure and
   evidence pointer of an expanded call. The corpus case
   `jest-mined-suite-factory` reads `credited`.
+- #9496: `crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs`
+  pins rules 10 and 20 end to end (chai class and message, anchored
+  `assert.match`, substring `rejects` regex)
+  with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
+  `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
+  `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -1645,6 +1774,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/suite_factory.rs`
   (`expand_suite_factories`, rule 13) and the rerun in `tests_extract.rs`
   (`extract_tests_expanding_suite_factories`).
+- `crates/ripr/src/analysis/language/typescript/helper_inline.rs`
+  (`inline_test_helpers`, rule 19), reached from the same rerun.
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
   (`referenced_callback_function`, `function_used_only_as_test_callback`);
   rule 1 (`test_from_statement`, `describe_body_from_statement`) and the

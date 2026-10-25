@@ -1,0 +1,44 @@
+{
+  "case_id": "method-hop-unobserved-result",
+  "subject_id": "authored-method-hop",
+  "diff": "cases/method-hop-unobserved-result.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 154
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "false_credit_trap",
+  "hard_case": "The helper calls the method but its assertion never observes the call's result.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the helper drops the method's result, so no output is checked"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`check_unseen` calls `size.unseen_as(si)` as a statement and asserts only that its own `expected` argument is non-empty. The boundary row reaches the owner but nothing compares the owner's result, so ripr must not credit the assertion. 0 of 1 listed mutants fails cargo test; the extra mutant `bytes > unit`, run by hand, passes it too. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

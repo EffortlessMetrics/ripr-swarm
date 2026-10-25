@@ -2093,24 +2093,27 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    owner
-        .route_paths
-        .iter()
-        .any(|route| body_calls_api_client_route(&test.body_text, route))
+    owner.route_paths.iter().enumerate().any(|(index, route)| {
+        // An empty or missing verb list is an unknown verb, which keeps the
+        // path-only match; a known list must contain the verb the test called.
+        let verbs = owner.route_methods.get(index).map(Vec::as_slice);
+        body_calls_api_client_route(&test.body_text, route, verbs.unwrap_or_default())
+    })
 }
 
-fn body_calls_api_client_route(body_text: &str, route: &str) -> bool {
-    [
-        "client.get",
-        "client.post",
-        "client.put",
-        "client.patch",
-        "client.delete",
-        "client.options",
-        "client.head",
-    ]
-    .into_iter()
-    .any(|callee| contains_python_call_with_first_string_argument(body_text, callee, route))
+fn body_calls_api_client_route(body_text: &str, route: &str, route_verbs: &[String]) -> bool {
+    ["get", "post", "put", "patch", "delete", "options", "head"]
+        .into_iter()
+        .filter(|verb| {
+            route_verbs.is_empty() || route_verbs.iter().any(|accepted| accepted == verb)
+        })
+        .any(|verb| {
+            contains_python_call_with_first_string_argument(
+                body_text,
+                &format!("client.{verb}"),
+                route,
+            )
+        })
 }
 
 fn contains_python_call_with_first_string_argument(
@@ -2705,7 +2708,7 @@ pub(super) fn text_binds_name(text: &str, name: &str) -> bool {
 /// [`test_binds_local`] for an imported alias: the test body's own
 /// `import pkg.mod as alias` statement is the import being checked (#4567
 /// records it among the test's imports), not a rebinding of it.
-fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
+pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)

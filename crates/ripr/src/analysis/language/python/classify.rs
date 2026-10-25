@@ -5,6 +5,7 @@ use super::assertion_selection::{
     strength_only_assertion,
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
+use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
 use super::message_pin;
@@ -306,11 +307,38 @@ pub(super) fn classify_change_for_owner(
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
-    let alignment =
-        classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
+    // A write under an `if` guard counts as run only when every strong related
+    // call provably enters the guard (#9833); otherwise it reads no effect.
+    let guard_entered = owner_source.is_some_and(|source| {
+        guard_activation::python_guard_entered_by_every_call(
+            owner,
+            source,
+            line,
+            &related_candidates,
+            &focus,
+        )
+    });
+    let alignment = classify_sink_alignment_with_old(
+        owner,
+        line_text,
+        old_line_text,
+        &related,
+        all_tests,
+        guard_entered,
+    );
+    let log_evidence = python_log_evidence(
+        old_line_text,
+        line_text,
+        line,
+        owner,
+        owner_source,
+        &related_candidates,
+        &focus,
+    );
     let static_limit = static_limit_for_focused_change(
         line_text,
         old_line_text,
+        log_evidence.as_ref(),
         &focus,
         owner,
         &related_candidates,
@@ -624,6 +652,23 @@ pub(super) fn classify_change_for_owner(
             vec![format!(
                 "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
                 owner.name
+            )],
+        )
+    } else if let Some(credit) = log_evidence
+        .as_ref()
+        .filter(|evidence| evidence.verdict == PythonLogVerdict::Rejects)
+    {
+        // The test reads the formatted message of the changed logging call
+        // (`<text> in caplog.text`), and static evaluation shows the edit
+        // removes that text for every input it observes (#9546).
+        (
+            ExposureClass::Exposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            vec![format!(
+                "Related Python test reaches `{}` and reads the logged text through `caplog`: {}.",
+                owner.name, credit.reason
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1193,6 +1238,7 @@ pub(super) fn classify_change_for_owner(
             owner,
             line_text,
             old_line_text,
+            guard_entered,
             focus: &focus,
             boundary_fact: crate::domain::input_boundary_fact(
                 &missing_discriminators,

@@ -165,6 +165,20 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         {
             return (Vec::new(), None, Some(expansion));
         }
+        // A top-level test's call to a same-file assertion helper reads as
+        // the helper's assertions (#9636); rerun on the rewritten source.
+        if expand
+            && let Some(inlined) =
+                super::helper_inline::inline_test_helpers(&ret.program.body, source)
+            // Defence in depth: a rewrite that fails to parse degrades to the
+            // original source (unknown), never to a file with no tests.
+            && Parser::new(allocator, &inlined.source, source_type_for(file))
+                .parse()
+                .errors
+                .is_empty()
+        {
+            return (Vec::new(), None, Some(inlined));
+        }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
@@ -3673,6 +3687,29 @@ fn expression_is_active_declaration(
         Expression::StaticMemberExpression(member) => {
             is_active_declaration_modifier(member.property.name.as_str())
                 && expression_is_active_declaration(&member.object, root)
+                || is_playwright_describe_member(member, root)
+        }
+        _ => false,
+    }
+}
+
+/// Playwright Test registers a suite as `test.describe(...)`, with the
+/// `serial` / `parallel` / `only` modifiers (`test.describe.serial(...)`).
+/// Jest, Vitest and mocha have no `test.describe`, so the spelling is not a
+/// suite there. `.skip` / `.fixme` stay inactive like every other skip.
+fn is_playwright_describe_member(
+    member: &oxc_ast::ast::StaticMemberExpression<'_>,
+    root: TestDeclarationRoot,
+) -> bool {
+    if !matches!(root, TestDeclarationRoot::Describe) {
+        return false;
+    }
+    match (member.property.name.as_str(), &member.object) {
+        ("describe", Expression::Identifier(object)) => {
+            TestDeclarationRoot::Test.matches_identifier(object.name.as_str())
+        }
+        ("serial" | "parallel", Expression::StaticMemberExpression(object)) => {
+            is_playwright_describe_member(object, root)
         }
         _ => false,
     }

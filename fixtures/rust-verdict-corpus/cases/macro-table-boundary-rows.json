@@ -1,0 +1,56 @@
+{
+  "case_id": "macro-table-boundary-rows",
+  "subject_id": "authored-macro-table",
+  "diff": "cases/macro-table-boundary-rows.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_boundary",
+  "hard_case": "A `macro_rules!` table (itoa's `test!` shape) generates three tests; the middle row sits on the limit.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "limit > width",
+        "mutated_line": "limit > width",
+        "outcome": "tests_failed",
+        "failing_test": "edge_at",
+        "equivalence_review": "not equivalent: 5 against a limit of 5 no longer fits"
+      },
+      {
+        "replacement": "limit + 1 >= width",
+        "mutated_line": "limit + 1 >= width",
+        "outcome": "tests_failed",
+        "failing_test": "edge_over",
+        "equivalence_review": "not equivalent: 6 against a limit of 5 now fits"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Rows edge_under(3, 5, true), edge_at(5, 5, true) and edge_over(6, 5, false) sit under and on both sides of the limit, so `limit > width` fails edge_at and `limit + 1 >= width` fails edge_over. The table is the only test; ripr reads it as the three tests it expands to. Spec cell: RIPR-SPEC-0117 example 8 (#6925).",
+  "labeling_observation": {
+    "ripr_commit": "a7437dbc7 + #6925 table expansion",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#8"
+  ]
+}

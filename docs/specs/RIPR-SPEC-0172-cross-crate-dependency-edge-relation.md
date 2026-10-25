@@ -210,25 +210,25 @@ call.
 
 ## Acceptance Examples
 
-- `crate_a` and `crate_b` both define `score`; `crate_c` declares
-  `crate_a = { path = "../crate_a" }` and its test says
-  `use crate_a::score; score(7)`: a probe on `crate_a::score` reports
-  the `crate_c` test as related evidence; the same probe on
-  `crate_b::score` does not.
-- The same `crate_c` test importing `other_dep::score` instead: neither
-  owner is credited.
-- The same shape with `score(7)` appearing only in a `//` comment or a
-  string literal: not admitted, even with the import present.
-- Owner in the nested package `crates/outer/inner`, `crate_c` depending
-  only on `outer`: not admitted; an edge to `inner` admits.
-- A workspace with no captured edge between the packages, or a graph
-  that is `limited` or `unavailable`: the #2971 filter stands.
-- tracing: `tracing-core` changes `impl LevelFilter { fn current() }`;
-  a `tracing-subscriber` test with `use tracing_core::LevelFilter;` asserts
-  `LevelFilter::current()`. `tracing-subscriber` defines its own
-  `SpanStack::current`, which cannot be the target, so the test relates.
-  The original test imports `tracing_subscriber::filter::LevelFilter`, a
-  re-export, and stays unrelated.
+1. `crate_a` and `crate_b` both define `score`; `crate_c` declares
+   `crate_a = { path = "../crate_a" }` and its test says
+   `use crate_a::score; score(7)`: a probe on `crate_a::score` reports
+   the `crate_c` test as related evidence; the same probe on
+   `crate_b::score` does not.
+2. The same `crate_c` test importing `other_dep::score` instead: neither
+   owner is credited.
+3. The same shape with `score(7)` appearing only in a `//` comment or a
+   string literal: not admitted, even with the import present.
+4. Owner in the nested package `crates/outer/inner`, `crate_c` depending
+   only on `outer`: not admitted; an edge to `inner` admits.
+5. A workspace with no captured edge between the packages, or a graph
+   that is `limited` or `unavailable`: the #2971 filter stands.
+6. tracing: `tracing-core` changes `impl LevelFilter { fn current() }`;
+   a `tracing-subscriber` test with `use tracing_core::LevelFilter;` asserts
+   `LevelFilter::current()`. `tracing-subscriber` defines its own
+   `SpanStack::current`, which cannot be the target, so the test relates.
+   The original test imports `tracing_subscriber::filter::LevelFilter`, a
+   re-export, and stays unrelated.
 
 ## Test Mapping
 

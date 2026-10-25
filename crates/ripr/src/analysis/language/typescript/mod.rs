@@ -79,6 +79,9 @@ mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
+mod helper_inline;
+#[cfg(test)]
+mod helper_inline_tests;
 mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
@@ -107,6 +110,8 @@ mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
+#[cfg(test)]
+mod assertion_form_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
 mod loop_count_guard;

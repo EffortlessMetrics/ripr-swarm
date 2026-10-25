@@ -16,7 +16,7 @@ Updated:
 ## Pending — cross_crate_trait_impl_direct_owner_positive (2)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
