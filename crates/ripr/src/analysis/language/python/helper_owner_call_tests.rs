@@ -692,3 +692,68 @@ fn given_degenerate_string_text_then_the_call_lexer_never_panics() {
     assert!(sees_call("x = 'abc\nhelper(1)\n"));
     assert!(!sees_call("x = 'abc helper(1)"));
 }
+
+#[test]
+fn given_a_non_ascii_identifier_prefix_then_no_call_of_the_ascii_suffix_is_seen() {
+    for prefix in ["\u{e9}", "\u{3b4}", "e\u{301}"] {
+        for newline in ["\n", "\r\n"] {
+            let field = format!(
+                "assert f\"\"\"v{newline}{{{newline}{prefix}helper(0){newline}}}\"\"\" == x{newline}"
+            );
+            assert!(!sees_call(&field), "{field:?}");
+            let plain = format!("assert {prefix}helper(0) == x{newline}");
+            assert!(!sees_call(&plain), "{plain:?}");
+        }
+    }
+    // A real call in the same field, and a non-identifier neighbour, stay seen.
+    assert!(sees_call("assert f\"\"\"v\n{\nhelper(0)\n}\"\"\" == x\n"));
+    assert!(sees_call("assert (helper(0)) == x\n"));
+    assert!(sees_call("assert \u{e9} + helper(0) == x\n"));
+    assert!(!sees_call("assert other.helper(0) == x\n"));
+    assert!(!sees_call("assert nothelper(0) == x\n"));
+    assert!(!sees_call("assert helper\u{e9}(0) == x\n"));
+}
+
+#[test]
+fn given_a_non_ascii_identifier_prefix_then_the_classifier_credits_no_call() -> Result<(), String> {
+    for prefix in ["\u{e9}", "\u{3b4}"] {
+        for newline in ["\n", "\r\n"] {
+            for body in [
+                format!(
+                    "    assert f\"\"\"v{newline}    {{{newline}    {prefix}helper(0){newline}    }}\"\"\" == 'v'{newline}"
+                ),
+                format!("    assert {prefix}helper(0) == 'v'{newline}"),
+            ] {
+                let tests = format!(
+                    "from src.version import helper{newline}{newline}{newline}def test_x():{newline}{body}"
+                );
+                let finding = direct_call_finding(&tests)?;
+                assert!(!call_credit(&finding), "{body:?}: {finding:?}");
+                assert_eq!(finding.class, ExposureClass::NoStaticPath, "{body:?}");
+            }
+        }
+    }
+    let real = direct_call_finding(
+        "from src.version import helper\n\n\ndef test_x():\n    assert f\"\"\"v\n    {\n    helper(0)\n    }\"\"\" == 'v'\n",
+    )?;
+    assert!(call_credit(&real), "{real:?}");
+    Ok(())
+}
+
+#[test]
+fn given_a_non_ascii_prefixed_call_in_a_caller_then_no_helper_edge_is_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_x():\n    assert make() == 1\n";
+    for prefix in ["\u{e9}", "\u{3b4}"] {
+        for newline in ["\n", "\r\n"] {
+            let source = format!(
+                "def helper(x):{newline}    return x + 1{newline}{newline}{newline}def make():{newline}    return f\"\"\"v{newline}{{{newline}{prefix}helper(0){newline}}}\"\"\"{newline}"
+            );
+            let relations = helper_relations(&source, tests, "helper")?;
+            assert!(relations.is_empty(), "{prefix:?}: {relations:?}");
+        }
+    }
+    let source = "def helper(x):\n    return x + 1\n\n\ndef make():\n    return f\"\"\"v\n{\nhelper(0)\n}\"\"\"\n";
+    let relations = helper_relations(source, tests, "helper")?;
+    assert_eq!(relations, ["test_x via make as helper_owner_call"]);
+    Ok(())
+}

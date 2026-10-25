@@ -2589,8 +2589,12 @@ pub(super) fn has_unclosed_quote(prefix: &str) -> bool {
     in_single || in_double
 }
 
+/// Whether `ch` can be part of a Python identifier. Any non-ASCII character
+/// counts (identifiers may hold Unicode letters, digits and combining marks, and
+/// outside strings and comments nothing else non-ASCII is valid code), so a
+/// boundary check never splits an accented prefix from the ASCII name after it.
 pub(super) fn is_python_identifier_char(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
+    ch == '_' || ch.is_ascii_alphanumeric() || !ch.is_ascii()
 }
 
 /// Whether the test body references the changed owner, even when the reference
