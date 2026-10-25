@@ -275,6 +275,38 @@ fn a_table_of_one_row_stays_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn a_table_assertion_with_a_message_stays_unknown() -> Result<(), String> {
+    let body = "        assert_eq!(can_ship(paid, in_stock), want, \"row\");\n";
+    let findings = table_findings(&table_test(THREE_TABLE_ROWS, body))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_name_that_is_rebound_stays_unknown() -> Result<(), String> {
+    let test = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    let rows = [(true, true, true), (true, false, false), (false, true, false)];\n    let rows = [(true, true, true), (true, true, true)];\n    for (paid, in_stock, want) in rows {\n        assert_eq!(can_ship(paid, in_stock), want);\n    }\n}\n";
+    let findings = table_findings(test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_let_ahead_of_an_inline_table_stays_unknown() -> Result<(), String> {
+    let test = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    let _skip = [if cfg!(unix) { return } else { 0u8 }];\n    for (paid, in_stock, want) in [(true, true, true), (true, false, false), (false, true, false)] {\n        assert_eq!(can_ship(paid, in_stock), want);\n    }\n}\n";
+    let findings = table_findings(test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn code_after_the_table_loop_stays_unknown() -> Result<(), String> {
+    let test = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    for (paid, in_stock, want) in [(true, true, true), (true, false, false), (false, true, false)] {\n        assert_eq!(can_ship(paid, in_stock), want)\n    }\n    for (c, d) in [(1, 2)] {\n        assert_eq!(c, d);\n    }\n}\n";
+    let findings = table_findings(test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
 fn a_property_loop_over_inputs_stays_unknown() -> Result<(), String> {
     let property = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    for paid in [true, false] {\n        for in_stock in [true, false] {\n            assert_eq!(can_ship(paid, in_stock), in_stock && paid);\n        }\n    }\n}\n";
     let findings = table_findings(property)?;

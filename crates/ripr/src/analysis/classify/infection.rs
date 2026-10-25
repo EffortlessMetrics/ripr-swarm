@@ -223,11 +223,11 @@ fn boolean_truth_table_is_exercised(
 /// }
 /// ```
 ///
-/// (the `let` is optional; the table may be written inline). One run per
+/// (the `let` is optional; the table may be written inline, but a `let` must be
+/// the table the loop iterates). One run per
 /// row, in the owner's parameter order. `None` unless the test is a plain
 /// `#[test]` holding nothing else, every argument is a loop variable or a
-/// boolean literal, the expected value is a loop variable or a boolean
-/// literal, and every cell of every column read is a boolean literal. A
+/// boolean literal, the expected value is a loop variable, and every cell of every column read is a boolean literal. A
 /// table that `constant_table_column` cannot establish (a `continue`, an
 /// `if`, a non-constant row, a rebound name) declines.
 fn table_test_runs(
@@ -249,8 +249,14 @@ fn table_test_runs(
         return None;
     }
     let mut rest = masked.trim();
+    let mut bound_table = None;
     if let Some(after_let) = rest.strip_prefix("let ") {
-        let (_, table) = after_let.split_once('=')?;
+        let (name, table) = after_let.split_once('=')?;
+        let name = name.trim();
+        if !is_plain_identifier(name) {
+            return None;
+        }
+        bound_table = Some(name);
         let end = matching_close(table.trim_start(), '[', ']')?;
         let table = table.trim_start();
         rest = table[end + 1..]
@@ -270,10 +276,19 @@ fn table_test_runs(
         return None;
     }
     let after_in = after_in.trim_start();
-    let body_open = if after_in.starts_with('[') {
-        matching_close(after_in, '[', ']')? + 1
-    } else {
-        after_in.find(char::is_whitespace)?
+    // A `let` is read only as the table the loop iterates, so its
+    // initializer is validated as constant rows and cannot hide a `return`
+    // or a panic ahead of an inline table.
+    let body_open = match bound_table {
+        Some(name) => {
+            let iterable = &after_in[..after_in.find(char::is_whitespace)?];
+            if iterable != name {
+                return None;
+            }
+            iterable.len()
+        }
+        None if after_in.starts_with('[') => matching_close(after_in, '[', ']')? + 1,
+        None => return None,
     };
     let loop_body = after_in[body_open..]
         .trim_start()
@@ -286,8 +301,8 @@ fn table_test_runs(
         return None;
     }
     let arguments = statement.strip_prefix("assert_eq!(")?.strip_suffix(')')?;
-    let parts = split_top_level_commas(arguments);
-    if !(2..=3).contains(&parts.len()) {
+    let parts = split_top_level_commas(arguments)?;
+    if parts.len() != 2 {
         return None;
     }
     let call = parts[0].trim();
@@ -297,7 +312,7 @@ fn table_test_runs(
         .trim_start()
         .strip_prefix('(')?
         .strip_suffix(')')?;
-    let call_arguments = split_top_level_commas(call_arguments);
+    let call_arguments = split_top_level_commas(call_arguments)?;
     if call_arguments.len() != parameters.len() {
         return None;
     }
@@ -372,13 +387,13 @@ fn is_plain_identifier(text: &str) -> bool {
 }
 
 /// `text` split at its top-level commas (outside any bracket).
-fn split_top_level_commas(text: &str) -> Vec<&str> {
+fn split_top_level_commas(text: &str) -> Option<Vec<&str>> {
     let mut parts = Vec::new();
     let (mut depth, mut start) = (0usize, 0usize);
     for (at, character) in text.char_indices() {
         match character {
             '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
             ',' if depth == 0 => {
                 parts.push(&text[start..at]);
                 start = at + 1;
@@ -387,7 +402,7 @@ fn split_top_level_commas(text: &str) -> Vec<&str> {
         }
     }
     parts.push(&text[start..]);
-    parts
+    Some(parts)
 }
 
 /// `test` is a plain `#[test]` whose body is nothing but top-level
