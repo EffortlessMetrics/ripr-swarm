@@ -830,7 +830,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     and the test never rebinds `caplog`. `caplog` must be pytest's own
     fixture: the test requests it as a parameter and no `@pytest.fixture`
     in its module or a `conftest.py` up its directory chain defines a
-    fixture of that name (including `@pytest.fixture(name="caplog")`); otherwise the reading abstains. An assertion about
+    fixture of that name (including `@pytest.fixture(name="caplog")` and a decorator imported as an alias with
+    `from pytest import fixture as fx`); otherwise the reading abstains. An assertion about
     unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
@@ -914,7 +915,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     literal, `n * 3`, a name bound outside a loop) still pins, and so does a
     chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
     `assertEqual` and helper forms keep their strength
-    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594; the
+    `py-props-*` cases add the reversed order, a tuple loop target and a
+    loop identity scored as gaps, and a chain, a literal expected value and
+    a name bound outside the loop credited).
 
 ### Verdict ladder
 

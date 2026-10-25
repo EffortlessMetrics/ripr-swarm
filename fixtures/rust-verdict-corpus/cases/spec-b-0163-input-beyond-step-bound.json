@@ -1,0 +1,48 @@
+{
+  "case_id": "spec-b-0163-input-beyond-step-bound",
+  "subject_id": "authored-spec-b-scan",
+  "diff": "cases/spec-b-0163-input-beyond-step-bound.diff",
+  "anchor": {
+    "file": "src/s_bound.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "scanner_input_beyond_step_bound",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if final_state == \"text\" {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "s_bound::tests::classify_reads_the_last_state_s_bound",
+        "equivalence_review": "the edit itself: comparing against the text state inverts the verdict for both rows"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The only test row is 40 characters, beyond the 32-step unroll bound, so no row resolves. classify_reads_the_last_state pins that long word row, so comparing against the text state fails it. Spec cells: RIPR-SPEC-0163#7.",
+  "labeling_observation": {
+    "ripr_commit": "09711785",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0163#7"
+  ]
+}

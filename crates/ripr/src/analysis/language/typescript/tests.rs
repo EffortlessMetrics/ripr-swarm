@@ -6698,6 +6698,57 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
 }
 
 #[test]
+fn boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement() {
+    // `if (cond) return x;` is the same boundary as the braced form; the
+    // statement after the closing paren must not leak into the right operand.
+    for (line, boundary) in [
+        ("  if (total > 100) return total - 10;", "total == 100"),
+        ("  if (total >= 100) return total - 10;", "total == 100"),
+        ("  } else if (count <= 3) return 0;", "count == 3"),
+        ("  while (retries < 5) retries += 1;", "retries == 5"),
+        ("  if (total > 100) { return 1; }", "total == 100"),
+    ] {
+        assert_eq!(
+            typescript_boundary_discriminator(line).as_deref(),
+            Some(boundary),
+            "{line}"
+        );
+    }
+    // A call in the condition stays fail-closed, and a quoted paren stays an
+    // unsimple operand rather than ending the group early.
+    for line in [
+        "  if (limit(total) > 100) return 1;",
+        "  if (kind === \"a)\") return 1;",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A compound or arithmetic condition is not one comparison, so the inline
+    // form stays unparsed: a test at the threshold may skip the branch.
+    for line in [
+        "  if (enabled && total >= 100) return 1;",
+        "  if (total >= 100 || force) return 1;",
+        "  if (total + 1 > 100) return 1;",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A statement-only edit leaves the guard's condition unchanged.
+    assert_eq!(
+        inline_guard_condition("  if (total > 100) return total - 20;"),
+        inline_guard_condition("  if (total  > 100)  return total - 10;"),
+    );
+    assert_ne!(
+        inline_guard_condition("  if (total > 100) return total - 10;"),
+        inline_guard_condition("  if (total >= 100) return total - 10;"),
+    );
+    assert_eq!(inline_guard_condition("  if (total > 100) {"), None);
+    // The braced and wrapped forms keep their existing answer.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total > 100) {").as_deref(),
+        Some("total == 100")
+    );
+}
+
+#[test]
 fn classify_probe_shape_reads_a_declared_arrow_and_paren_ternary_as_its_condition_boundary() {
     // A concise arrow body and a parenthesized ternary are the same
     // conditional as `return cond ? a : b`: only `total == 100` flips them.

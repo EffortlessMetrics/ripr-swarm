@@ -132,7 +132,15 @@ it: an inner loop's unlabeled `break`, one in a closure or async block, or a lab
 (`std::process::exit`), through an imported module under any name (`use std::process;`,
 `use std::process as quit;`) or as an imported leaf (`use std::process::exit;`); a
 file-wide `use` is read, so an over-match only withholds credit. A boolean `assert!` /
-`debug_assert!` in a dead context still credits a `return_value` finding (#10389).
+`debug_assert!` takes the same admission for `return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
+context (after `return`, in an uncalled `fn` or closure, `if false`, `loop {}`,
+`cfg!(any())`) no longer credits (#10389). The one exception is an operand that
+nests only a known pure comparison macro (`approx_eq!` from `float_cmp`;
+`relative_eq!`, `abs_diff_eq!`, `ulps_eq!` from `approx`), imported by name, in a
+plain `#[test]` whose function has no other refusal: ripr does not expand
+third-party macros, so that nesting alone keeps the `return_value` credit. Any other
+nested macro, a local `macro_rules!` of that name, or an operand holding an exit
+token withholds it.
 
 Residual fail-open contexts. The admission is a syntactic reading, not a control
 flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as

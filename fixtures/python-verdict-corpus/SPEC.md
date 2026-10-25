@@ -94,6 +94,11 @@ this repository's license, one per test library or library feature:
   whether the test's read matches that channel (a read before the owner,
   stderr read as stdout, the other parameter's file, and weak or partial mock
   assertions are gaps; exact reads after the owner are credited).
+- `authored-py-pytest-properties`: RIPR-SPEC-0238 rule 25's property checks.
+  An idempotence assert (either order) and a loop identity over a `for`
+  variable (including a tuple target) pass on an edit that keeps the property,
+  so they are gaps; a chain with a literal, a literal expected value and a
+  name bound outside the loop pin the value and are credited.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
   abstentions (positional band within and outside the band, spread band,
   non-literal band, longer owner body, method owner, decorated owner). Every
