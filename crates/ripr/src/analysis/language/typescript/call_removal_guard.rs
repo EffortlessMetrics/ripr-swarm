@@ -439,7 +439,7 @@ fn sequence_pins(
         {
             return false;
         }
-        return matches!(&call.arguments[1], Argument::NumericLiteral(number) if number.value == 1.0)
+        return matches!(&call.arguments[1], Argument::NumericLiteral(number) if (number.value - 1.0).abs() < f64::EPSILON)
             && test.assertions.iter().any(|assertion| {
                 assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                     && matches!(assertion.oracle_kind, OracleKind::ExactValue)
