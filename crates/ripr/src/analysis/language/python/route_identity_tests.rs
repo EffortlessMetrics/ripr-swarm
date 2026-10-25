@@ -241,3 +241,16 @@ fn an_annotated_rebinding_does_not_leave_the_alias_a_client() -> Result<(), Stri
     assert!(related("app/a.py", OWN_APP, kept)?);
     Ok(())
 }
+
+#[test]
+fn a_one_line_suite_rebinding_withdraws_the_alias_like_its_multi_line_form() -> Result<(), String> {
+    let one_line = "def test_items(client):\n    api = client\n    if True: api = Store()\n    assert api.get(\"/items\")\n";
+    let multi_line = "def test_items(client):\n    api = client\n    if True:\n        api = Store()\n    assert api.get(\"/items\")\n";
+    let else_line = "def test_items(client):\n    api = client\n    if flag:\n        pass\n    else: api = Store()\n    assert api.get(\"/items\")\n";
+    let untouched = "def test_items(client):\n    api = client\n    if True: other = Store()\n    assert api.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, one_line)?);
+    assert!(!related("app/a.py", OWN_APP, multi_line)?);
+    assert!(!related("app/a.py", OWN_APP, else_line)?);
+    assert!(related("app/a.py", OWN_APP, untouched)?);
+    Ok(())
+}
