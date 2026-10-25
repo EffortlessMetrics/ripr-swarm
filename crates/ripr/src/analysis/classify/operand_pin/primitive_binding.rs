@@ -1,0 +1,215 @@
+//! Refusal premises for rule 7's primitive *type*, not value, namespace.
+//! This does not resolve arbitrary aliases, re-exports or qualified types.
+
+use super::{FunctionSummary, RustIndex, primitive_type_token};
+use crate::analysis::syntax::{UseBinding, name_scope_for_items, parse_clean_source_file};
+use ra_ap_syntax::{
+    AstNode, SyntaxKind, SyntaxNode,
+    ast::{self, HasName},
+};
+
+fn same_name(left: &str, right: &str) -> bool {
+    left.trim_start_matches("r#") == right.trim_start_matches("r#")
+}
+
+fn type_name(item: &ast::Item) -> Option<ast::Name> {
+    match item {
+        ast::Item::Struct(item) => item.name(),
+        ast::Item::Enum(item) => item.name(),
+        ast::Item::Union(item) => item.name(),
+        ast::Item::Trait(item) => item.name(),
+        ast::Item::TypeAlias(item) => item.name(),
+        ast::Item::Module(item) => item.name(),
+        // Functions, constants and statics do not bind the type namespace.
+        _ => None,
+    }
+}
+
+fn function(owner: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
+    let facts = index.files().get(&owner.file)?;
+    if facts.used_lexical_fallback {
+        return None;
+    }
+    let parse = parse_clean_source_file(&facts.source)?;
+    let mut matches = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| same_name(name.text(), &owner.name))
+                && function.fn_token().is_some_and(|token| {
+                    facts.source[..usize::from(token.text_range().start())]
+                        .matches('\n')
+                        .count()
+                        + 1
+                        == owner.start_line
+                })
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+/// Item scopes relevant to the signature, optionally including executable
+/// blocks of this function. Nested functions/modules never contaminate it.
+fn scopes(function: &ast::Fn, local: bool) -> Vec<SyntaxNode> {
+    let mut scopes = function
+        .syntax()
+        .ancestors()
+        .filter(|node| {
+            matches!(
+                node.kind(),
+                SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST | SyntaxKind::STMT_LIST
+            )
+        })
+        .collect::<Vec<_>>();
+    if local && let Some(body) = function.body() {
+        scopes.extend(body.syntax().descendants().filter(|node| {
+            ast::StmtList::can_cast(node.kind())
+                && node.ancestors().find_map(ast::Fn::cast).as_ref() == Some(function)
+                && node
+                    .ancestors()
+                    .take_while(|ancestor| ancestor != function.syntax())
+                    .all(|ancestor| !ast::Module::can_cast(ancestor.kind()))
+        }));
+    }
+    scopes
+}
+
+fn items(scope: &SyntaxNode) -> Vec<ast::Item> {
+    scope.children().filter_map(ast::Item::cast).collect()
+}
+
+fn closed_scope(scope: &SyntaxNode) -> bool {
+    let preserves = |attr: ast::Attr| {
+        let text = attr.syntax().text().to_string();
+        crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
+            || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+    };
+    scope.children().all(|node| {
+        if let Some(attr) = ast::Attr::cast(node.clone()) {
+            return preserves(attr);
+        }
+        if let Some(item) = ast::Item::cast(node.clone()) {
+            return !matches!(
+                item,
+                ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
+            ) && item
+                .syntax()
+                .children()
+                .filter_map(ast::Attr::cast)
+                .all(preserves);
+        }
+        // A statement macro may introduce a local type or value binding.
+        !node
+            .descendants()
+            .any(|node| ast::MacroCall::can_cast(node.kind()))
+    })
+}
+
+pub(super) fn context_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    function(owner, index).is_some_and(|function| scopes(&function, true).iter().all(closed_scope))
+}
+
+/// A bare primitive spelling is insufficient when a type declaration,
+/// generic binder, import, glob or opaque scope may take its type name.
+pub(super) fn type_is_primitive(
+    ty: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    local: bool,
+) -> bool {
+    if !primitive_type_token(ty) {
+        return false;
+    }
+    let ty = ty.trim().strip_prefix("&mut ").unwrap_or(ty.trim());
+    let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
+    let Some(function) = function(owner, index) else {
+        return false;
+    };
+    // Fn/impl/trait type parameters bind the type namespace. Const generics
+    // and value parameters of the same name do not.
+    if function.syntax().ancestors().any(|ancestor| {
+        ancestor
+            .children()
+            .filter_map(ast::GenericParamList::cast)
+            .any(|list| {
+                list.syntax()
+                    .children()
+                    .filter_map(ast::TypeParam::cast)
+                    .any(|parameter| {
+                        parameter
+                            .name()
+                            .is_some_and(|name| same_name(name.text(), ty))
+                    })
+            })
+    }) {
+        return false;
+    }
+    let scopes = scopes(&function, local);
+    if scopes.iter().any(|scope| !closed_scope(scope)) {
+        return false;
+    }
+    let scope_items = scopes.iter().map(items).collect::<Vec<_>>();
+    if scope_items
+        .iter()
+        .flatten()
+        .any(|item| type_name(item).is_some_and(|name| same_name(name.text(), ty)))
+    {
+        // Even an alias whose terminal happens to be primitive is unestablished
+        // here. No alias resolver is inferred from a primitive-looking name.
+        return false;
+    }
+    let standard_primitive = |path: &[String], glob: bool| {
+        let [root, namespace, rest @ ..] = path else {
+            return false;
+        };
+        if !matches!(root.as_str(), "std" | "core")
+            || namespace != "primitive"
+            || if glob {
+                !rest.is_empty()
+            } else {
+                !matches!(rest, [name] if primitive_type_token(name))
+            }
+            || !index
+                .drop_in_manifests
+                .unbound_standard_root(&owner.file, root)
+            || super::super::owner_pin::target_root(&owner.file, index, &Default::default())
+                .as_ref()
+                != Some(&owner.file)
+        {
+            return false;
+        }
+        // This is the existing closed manifest AND target-root proof plus
+        // source binding refusal, not a spelling exception. Out-of-line
+        // files cannot establish a Rust 2015 crate-root import's bindings.
+        // Absolute/opaque paths refuse too.
+        !scope_items.iter().any(|items| {
+            let scope = name_scope_for_items(items);
+            items.iter().any(|item| type_name(item).is_some_and(|name| same_name(name.text(), root)))
+                || scope.imports.iter().any(|import| same_name(&import.bound, root))
+                || scope.globs.iter().any(|glob| glob.as_ref().is_none_or(|path| {
+                    !matches!(path.as_slice(), [r, p] if matches!(r.as_str(), "std" | "core") && p == "primitive")
+                }))
+        })
+    };
+    scope_items.iter().all(|items| {
+        let scope = name_scope_for_items(items);
+        scope
+            .imports
+            .iter()
+            .filter(|import| same_name(&import.bound, ty))
+            .all(|import| match &import.binding {
+                UseBinding::Path(path) | UseBinding::Renamed(path) => {
+                    standard_primitive(path, false)
+                }
+                UseBinding::Opaque => false,
+            })
+            && scope.globs.iter().all(|glob| {
+                glob.as_ref()
+                    .is_some_and(|path| standard_primitive(path, true))
+            })
+    })
+}

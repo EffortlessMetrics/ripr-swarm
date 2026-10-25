@@ -888,6 +888,21 @@ wrong credits.
    and `as` casts to primitives, or a call whose every same-named
    function in the index is a free function without a self parameter and
    declares one bare primitive return (optionally behind one reference).
+   Primitive spelling alone is insufficient: the declaration's actual source
+   scope must not bind that type name through a generic parameter, nominal
+   type, alias or unresolved import. Value parameters, locals, functions,
+   constants and statics of the same name do not rebind the type namespace.
+   Nested function/module declarations do not contaminate the owner's scope.
+   Local annotations and casts conservatively include the owner's executable
+   block scopes; callee returns use the callee's declaring scope. Opaque macros
+   and attributes refuse this proof. A standard primitive import requires the
+   existing closed manifest proof for its standard root, established target-root
+   context in the declaring file, and source-scope refusal of root rebinding.
+   Out-of-line files cannot establish the crate-root bindings of Rust 2015
+   import paths and refuse this import proof. Arbitrary aliases (including genuine primitive
+   alias chains), re-exports, opaque absolute imports and qualified type
+   annotations remain unestablished; no alias-terminal or general type
+   resolution is claimed.
    An unqualified call must be a direct function-body let initializer.
    Parameters, preceding destructured/raw/declaration-only lets, hoisted
    local items and imports of its name (or globs) refuse primitive proof.

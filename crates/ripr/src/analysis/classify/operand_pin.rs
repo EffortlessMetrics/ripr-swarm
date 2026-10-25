@@ -11,6 +11,8 @@
 //! field is paired this way, the exact oracle does not discriminate the
 //! change.
 
+mod primitive_binding;
+
 use super::super::rust_index::{RustIndex, TestSummary};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary};
 use crate::analysis::syntax::{fn_call_has_local_binding, name_scopes_for_fn};
@@ -56,15 +58,17 @@ impl OperandOnlyPin {
 /// does anything else ripr cannot read, which leaves the finding as it was.
 pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
-    owner_name: &str,
-    owner_body: &str,
+    owner: &FunctionSummary,
     outer_imports: Option<&BTreeSet<String>>,
     tests: &[(&TestSummary, RelationReason)],
     index: &RustIndex,
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
-    if !operand_established_primitive(left, owner_body, outer_imports, index)
-        || !operand_established_primitive(right, owner_body, outer_imports, index)
+    let owner_name = owner.name.as_str();
+    let owner_body = owner.body.as_str();
+    if !primitive_binding::context_is_closed(owner, index)
+        || !operand_established_primitive(left, owner_body, outer_imports, index, owner)
+        || !operand_established_primitive(right, owner_body, outer_imports, index, owner)
     {
         return None;
     }
@@ -200,6 +204,7 @@ fn operand_established_primitive(
     owner_body: &str,
     outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
+    owner: &FunctionSummary,
 ) -> bool {
     // Comments are dropped first. A string, char literal or block comment
     // could hide a binding or a type this proof would misread, so such an
@@ -211,7 +216,7 @@ fn operand_established_primitive(
     let bindings = let_binding_expressions(&text);
     let primitive_params: Vec<String> = owner_param_types(&text)
         .into_iter()
-        .filter(|(_, ty)| primitive_type_token(ty))
+        .filter(|(_, ty)| primitive_binding::type_is_primitive(ty, owner, index, false))
         .map(|(name, _)| name)
         .collect();
     // A parameter that a `let` rebinds is not established up front: the
@@ -244,7 +249,7 @@ fn operand_established_primitive(
                 .iter()
                 .filter(|(bound, _, _, _)| bound == name)
                 .all(|(_, bound_expr, annotation, offset)| match annotation {
-                    Some(ty) => primitive_type_token(ty),
+                    Some(ty) => primitive_binding::type_is_primitive(ty, owner, index, true),
                     None => expression_established(
                         bound_expr,
                         *offset,
@@ -252,6 +257,7 @@ fn operand_established_primitive(
                         &text,
                         outer_imports,
                         index,
+                        owner,
                     ),
                 });
             if all {
@@ -275,6 +281,7 @@ fn expression_established(
     owner_body: &str,
     outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
+    owner: &FunctionSummary,
 ) -> bool {
     let expr = expr.trim();
     if is_identifier(expr) {
@@ -283,7 +290,7 @@ fn expression_established(
     if let Some(callee) = call_callee(expr) {
         return call_established_primitive(callee, offset, owner_body, outer_imports, index);
     }
-    arithmetic_established(expr, established)
+    arithmetic_established(expr, established, owner, index)
 }
 
 struct CallCallee<'a> {
@@ -385,12 +392,15 @@ fn call_established_primitive(
         let Some(returns) = declared_return_type(function.body.as_str()) else {
             return false;
         };
+        if !primitive_binding::type_is_primitive(returns, function, index, false) {
+            return false;
+        }
         match &seen {
             Some(previous) if previous != returns => return false,
             _ => seen = Some(returns.to_string()),
         }
     }
-    seen.is_some_and(|token| primitive_type_token(&token))
+    seen.is_some()
 }
 
 /// The declared return type text of a function whose `body` starts at its
@@ -523,7 +533,12 @@ fn strip_line_comments(text: &str) -> String {
 /// accepted operators (with unary `-`, `!`, `&`). A word directly followed
 /// by `(` is a call and proves nothing; any other character shape — a
 /// stray `.`, a path, an index, a macro — refuses.
-fn arithmetic_established(expr: &str, established: &[String]) -> bool {
+fn arithmetic_established(
+    expr: &str,
+    established: &[String],
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
     let bytes = expr.as_bytes();
     if !expr.is_ascii() {
         return false;
@@ -568,7 +583,7 @@ fn arithmetic_established(expr: &str, established: &[String]) -> bool {
                 }
                 let word = &expr[start..at];
                 if expecting_cast {
-                    if !primitive_type_token(word) {
+                    if !primitive_binding::type_is_primitive(word, owner, index, true) {
                         return false;
                     }
                     expecting_cast = false;
@@ -948,6 +963,38 @@ mod tests {
         let mut index = RustIndex::default();
         index.insert_file(path, facts, true);
         index
+    }
+
+    // Older focused rule fixtures supply owner text separately from their
+    // index. Materialize that owner through the real producer so primitive
+    // binding proof never gets a test-only missing-context exemption.
+    fn operand_only_pin(
+        expression: &str,
+        owner_name: &str,
+        owner_body: &str,
+        imports: Option<&BTreeSet<String>>,
+        tests: &[(&TestSummary, RelationReason)],
+        index: &RustIndex,
+    ) -> Option<OperandOnlyPin> {
+        if let Some(owner) = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == owner_name && owner.body.as_str() == owner_body)
+        {
+            return super::operand_only_pin(expression, owner, imports, tests, index);
+        }
+        let declarations = index
+            .files()
+            .values()
+            .map(|facts| facts.source.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let index = index_with(&[owner_body, &declarations]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == owner_name)?;
+        super::operand_only_pin(expression, owner, imports, tests, &index)
     }
 
     fn test_with(body_lines: &[&str]) -> TestSummary {

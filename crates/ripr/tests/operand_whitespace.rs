@@ -30,6 +30,16 @@ impl Drop for TempRepo {
 }
 
 fn field_finding(source: &str, expression: &str) -> Result<Finding, String> {
+    field_finding_at(source, expression, "src/lib.rs", "2024", &[])
+}
+
+fn field_finding_at(
+    source: &str,
+    expression: &str,
+    file: &str,
+    edition: &str,
+    extra_files: &[(&str, &str)],
+) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let repo = TempRepo(std::env::temp_dir().join(format!(
         "ripr-operand-whitespace-{}-{}",
@@ -39,10 +49,13 @@ fn field_finding(source: &str, expression: &str) -> Result<Finding, String> {
     std::fs::create_dir_all(repo.0.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
         repo.0.join("Cargo.toml"),
-        "[package]\nname = \"operand-whitespace\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        format!("[package]\nname = \"operand-whitespace\"\nversion = \"0.0.0\"\nedition = \"{edition}\"\n\n[workspace]\n"),
     )
     .map_err(|error| error.to_string())?;
-    std::fs::write(repo.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    std::fs::write(repo.0.join(file), source).map_err(|error| error.to_string())?;
+    for (path, text) in extra_files {
+        std::fs::write(repo.0.join(path), text).map_err(|error| error.to_string())?;
+    }
     let changed = source
         .lines()
         .enumerate()
@@ -54,7 +67,7 @@ fn field_finding(source: &str, expression: &str) -> Result<Finding, String> {
     let line = offset + 1;
     let removed = "        total_cents: subtotal,";
     let patch = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{removed}\n+{added}\n"
+        "diff --git a/{file} b/{file}\n--- a/{file}\n+++ b/{file}\n@@ -{line},1 +{line},1 @@\n-{removed}\n+{added}\n"
     );
     std::fs::write(repo.0.join("diff.patch"), patch).map_err(|error| error.to_string())?;
     let output = check_workspace(CheckInput {
@@ -241,6 +254,179 @@ fn compact_spelling_preserves_callee_identity_refusals() -> Result<(), String> {
             !finding.ripr.reveal.discriminate.summary.contains(MARKER),
             "an observed overloaded operator must retain credit: {finding:?}"
         );
+    }
+    Ok(())
+}
+
+fn assert_binding_class(source: &str, expected: ExposureClass) -> Result<(), String> {
+    for spelling in [
+        "subtotal + shipping",
+        "subtotal+shipping",
+        "subtotal +shipping",
+        "subtotal+ shipping",
+        "subtotal\t+\tshipping",
+    ] {
+        assert_eq!(source.matches("subtotal + shipping").count(), 1);
+        let source = source.replace("subtotal + shipping", spelling);
+        let finding = field_finding(&source, &format!("total_cents: {spelling}"))?;
+        assert_eq!(finding.class, expected, "{spelling}: {finding:?}");
+        assert_eq!(
+            finding.ripr.reveal.discriminate.summary.contains(MARKER),
+            expected == ExposureClass::WeaklyExposed,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), String> {
+    let sources = [
+        include_str!("fixtures/operand_whitespace/callee_shadow_annotation_alias.rs"),
+        include_str!("fixtures/operand_whitespace/local_annotation_alias.rs"),
+        include_str!("fixtures/operand_whitespace/module_param_alias.rs"),
+        include_str!("fixtures/operand_whitespace/module_return_alias.rs"),
+    ];
+    let mut findings = Vec::new();
+    for (case, source) in sources.into_iter().enumerate() {
+        assert_binding_class(source, ExposureClass::Exposed)?;
+        for spelling in ["subtotal + shipping", "subtotal+shipping"] {
+            let source = source.replace("subtotal + shipping", spelling);
+            let finding = field_finding(&source, &format!("total_cents: {spelling}"))?;
+            findings.push(serde_json::json!({
+                "id": format!("{case}:{spelling}"),
+                "classification": finding.class.as_str(),
+                "probe": { "family": "field_construction" },
+                "discriminate": finding.ripr.reveal.discriminate.state.as_str(),
+                "operand_pin": finding.ripr.reveal.discriminate.summary.contains(MARKER),
+            }));
+        }
+    }
+    // Expected contract projection, not a stored execution report. The native
+    // effect-removal witnesses establish why these pins retain their credit.
+    let projected = serde_json::json!({
+        "kind": "operand_binding_expected_test_projection",
+        "summary": { "findings": findings.len() },
+        "findings": findings,
+    });
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/evidence-promotion-honesty-corpus/reports/operand-binding.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    assert_eq!(projected, expected);
+    Ok(())
+}
+
+#[test]
+fn primitive_generic_nominal_and_import_bindings_refuse_the_downgrade() -> Result<(), String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs");
+    let without_alias =
+        source.replace("#[allow(non_camel_case_types)]\ntype u64 = Shipping;\n", "");
+    let generic = without_alias
+        .replace("fn quote(", "fn quote<u64>(")
+        .replace(
+            "shipping: u64) -> Quote {",
+            "shipping: u64) -> Quote where i64: std::ops::Add<u64, Output = i64> {",
+        );
+    assert_binding_class(&generic, ExposureClass::Exposed)?;
+    let nominal = without_alias.replace("Shipping", "u64");
+    assert_binding_class(&nominal, ExposureClass::Exposed)?;
+    let enumeration = nominal
+        .replace("pub struct u64;", "pub enum u64 { Value }")
+        .replace("    u64\n", "    u64::Value\n")
+        .replace("3, u64)", "3, u64::Value)");
+    assert_binding_class(&enumeration, ExposureClass::Exposed)?;
+    for binding in [
+        "use crate::Shipping as u64;",
+        "use crate::{Shipping as u64};",
+    ] {
+        let source = format!("{binding}\n{without_alias}");
+        assert_binding_class(&source, ExposureClass::Exposed)?;
+    }
+    let local = include_str!("fixtures/operand_whitespace/local_annotation_alias.rs");
+    let opaque = local.replace(
+        "type u64 = Shipping;",
+        "macro_rules! bind { () => { type u64 = Shipping; } } bind!();",
+    );
+    assert_binding_class(&opaque, ExposureClass::Exposed)
+}
+
+#[test]
+fn value_namespace_and_nested_test_type_bindings_keep_primitive_credit() -> Result<(), String> {
+    for addition in [
+        "const u64: u64 = 0;",
+        "fn u64() {}",
+        "static u64: u64 = 0;",
+        "mod unrelated { type u64 = (); }",
+        "#[cfg(test)] mod other_tests { type u64 = (); }",
+    ] {
+        assert_binding_class(
+            &format!("{addition}\n{SPACED}"),
+            ExposureClass::WeaklyExposed,
+        )?;
+    }
+    for addition in ["let u64 = 0;", "let u64 = || ();", "const u64: u64 = 0;"] {
+        let source = SPACED.replace("    Quote {", &format!("    {addition}\n    Quote {{"));
+        assert_binding_class(&source, ExposureClass::WeaklyExposed)?;
+    }
+    for import in [
+        "use std::primitive::u64;",
+        "use core::primitive::{u64};",
+        "use std::primitive::*;",
+        "use core::primitive::{u64 as u64};",
+    ] {
+        assert_binding_class(&format!("{import}\n{SPACED}"), ExposureClass::WeaklyExposed)?;
+    }
+    let parameter = SPACED
+        .replace("shipping: u64)", "shipping: u64, u64: u64)")
+        .replace("quote(9_000, 0)", "quote(9_000, 0, 0)");
+    assert_binding_class(&parameter, ExposureClass::WeaklyExposed)?;
+    Ok(())
+}
+
+#[test]
+fn unestablished_alias_terminals_and_standard_roots_stay_conservative() -> Result<(), String> {
+    for binding in [
+        "type u64 = core::primitive::u64;",
+        "type Word = core::primitive::u64; type u64 = Word;",
+        "use ::core::primitive::u64;",
+    ] {
+        assert_binding_class(&format!("{binding}\n{SPACED}"), ExposureClass::Exposed)?;
+    }
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs");
+    let without_alias =
+        source.replace("#[allow(non_camel_case_types)]\ntype u64 = Shipping;\n", "");
+    for binding in [
+        "mod core { pub mod primitive { pub use crate::Shipping as u64; } } use core::primitive::u64;",
+        "extern crate self as core; pub mod primitive { pub use crate::Shipping as u64; } use core::primitive::u64;",
+        "mod custom { pub use crate::Shipping as u64; } use custom::*;",
+    ] {
+        assert_binding_class(
+            &format!("{binding}\n{without_alias}"),
+            ExposureClass::Exposed,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn out_of_line_standard_imports_need_the_crate_root_context() -> Result<(), String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("#[allow(non_camel_case_types)]\ntype u64 = Shipping;\n", "")
+        .replace("std::", "::real_std::");
+    let source = format!("use std::primitive::u64;\n{source}");
+    let root = "#![no_std]\n#[macro_use] extern crate std as real_std;\nmod std { pub mod primitive { pub use pricing::Shipping as u64; } }\npub mod pricing;\n";
+    for spelling in ["subtotal + shipping", "subtotal+shipping"] {
+        let source = source.replace("subtotal + shipping", spelling);
+        let finding = field_finding_at(
+            &source,
+            &format!("total_cents: {spelling}"),
+            "src/pricing.rs",
+            "2015",
+            &[("src/lib.rs", root)],
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+        assert!(!finding.ripr.reveal.discriminate.summary.contains(MARKER));
     }
     Ok(())
 }

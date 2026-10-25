@@ -302,6 +302,17 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
     }
 }
 
+/// Reuse the scope producer for a consumer's already-selected item scope.
+/// Definitions retain their existing coarse namespace; consumers needing a
+/// type binding must inspect the declaration kind separately.
+pub(crate) fn name_scope_for_items(items: &[ast::Item]) -> NameScope {
+    let mut scope = NameScope::default();
+    for item in items {
+        record_item(item, &mut scope);
+    }
+    scope
+}
+
 /// The path's segments through the syntax tree, outermost first. `None`
 /// for a path the scan cannot read as plain module segments: a leading
 /// `::`, a generic argument list, a `<T as Tr>` anchor, or a segment with

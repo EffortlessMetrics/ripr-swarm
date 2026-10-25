@@ -19,6 +19,30 @@
       ]
     },
     {
+      "id": "rust_operand_primitive_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/operand-binding.json",
+      "vector": "primitive_looking_type_names_cannot_hide_an_observed_overloaded_operator",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 8
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_operand_callee_later_binding",
       "language": "rust",
       "tier": "pure",
