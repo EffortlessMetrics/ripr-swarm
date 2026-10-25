@@ -8,17 +8,19 @@ Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
 
 Shared evidence and guidance
-  E1 [findings 1, 3]: reach yes: Related tests appear to reach thr: at, high, low
+  E1 [findings 1, 3]: reach yes: Related tests appear to reach thr: at, high, local
   E2 [findings 1, 3]: infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
   E3 [findings 1, 3]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 1, 3]: discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
   E5 [findings 1, 3]: local flow reaches returned value: x > 101 (line 2)
   E6 [findings 1, 3]: related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));
   E7 [findings 1, 3]: related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));
-  E8 [findings 1, 3]: related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));
-  E9 [findings 1, 3]: source function argument value x = 50 at line 8
-  E10 [findings 1, 3]: source function argument value x = 500 at line 10
-  E11 [findings 1, 3]: source function argument value x = 101 at line 13
+  E8 [findings 1, 3]: related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));
+  E9 [findings 1, 3]: related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));
+  E10 [findings 1, 3]: source function argument value x = 50 at line 8
+  E11 [findings 1, 3]: source function argument value x = 500 at line 10
+  E12 [findings 1, 3]: source function argument value x = 101 at line 13
+  E13 [findings 1, 3]: source function argument value x = 101 at line 20
   N1 [findings 1, 3]: Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 
 Finding 1: WARNING ./src/lib.rs:2
@@ -36,7 +38,7 @@ Static exposure
 Evidence
   shared evidence: E1, E2
   - propagation yes: Changed behavior appears to influence returned value: x > 101
-  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11
+  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13
 Weakness
   - Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
   - No detected boundary input for the changed predicate
@@ -64,17 +66,19 @@ Probe
 Static exposure
   infection_unknown (note, confidence 0.66)
 Evidence
-  - reach yes: Related tests appear to reach thr: at, high, low
+  - reach yes: Related tests appear to reach thr: at, high, local
   - infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
   - related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));
   - related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));
+  - related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));
   - related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));
   - source function argument value x = 50 at line 8
   - source function argument value x = 500 at line 10
   - source function argument value x = 101 at line 13
+  - source function argument value x = 101 at line 20
 Weakness
   - Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
   - No detected boundary input for the changed predicate
@@ -103,7 +107,7 @@ Static exposure
 Evidence
   shared evidence: E1, E2
   - propagation yes: Complete propagation witness reaches returned value: x > 101
-  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11
+  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13
 Weakness
   - Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
   - No strong discriminator was detected

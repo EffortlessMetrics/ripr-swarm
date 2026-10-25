@@ -11,3 +11,12 @@ mod owner_tests {
 }
 #[test]
 fn at() { assert!(thr(101)); }
+
+mod callable_shadow {
+    use thr::thr;
+    #[test]
+    fn local() {
+        let thr: fn(i32) -> bool = |x| x > 0;
+        assert!(thr(101));
+    }
+}

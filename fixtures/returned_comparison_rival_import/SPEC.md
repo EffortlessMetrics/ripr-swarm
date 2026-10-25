@@ -8,7 +8,9 @@ Issue: #10046
 ## Given
 
 The changed owner moves `x > 100` to `x > 101`. Its tests call it at 50
-and 500. A separate test imports `rival::thr` and calls that rival at 101.
+and 500. A separate test imports `rival::thr` and calls that rival at 101. Another
+test locally shadows the imported owner with a function pointer and calls
+that unrelated callable at 101.
 
 ## When
 

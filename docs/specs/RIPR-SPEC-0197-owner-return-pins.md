@@ -2911,6 +2911,15 @@ the owner-alone identity still verifies the test's imports and workspace crate
 names. Qualified paths retain the existing module, crate-alias and verified
 owner re-export reading; type paths and methods retain their separate handling.
 
+Bare calls also consult memoized local pattern-binding facts at the captured
+call's file-absolute line. A local function pointer, closure, uninitialized
+binding later assigned a callable, or a loop/match/closure parameter cannot
+borrow an imported owner's identity. Raw identifiers share the normalized name.
+Bindings in another nested scope or on the same line as their initializer may
+conservatively withhold credit; this bounded scan does not model block lifetimes.
+A call before a later binding and a qualified owner call retain their reading.
+Withheld identity remains unknown, never a named missing-boundary gap.
+
 `computed_input_parameters` uses the same admission for direct owner calls and
 helper-entry calls, and its entry-row precondition uses `chain_entry_rows`.
 A refused call supplies neither an exact owner row nor a computed-owner

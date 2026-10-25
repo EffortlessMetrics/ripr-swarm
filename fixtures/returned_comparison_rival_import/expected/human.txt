@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:thr:predicate_boundary:predicate:x==101
   Changed behavior: x > 101
   Missing discriminator (1 of 3): Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-  Related test (1 of 3 matched rows): tests/it.rs:13 at
+  Related test (1 of 4 matched rows): tests/it.rs:13 at
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
     then name an input that would exercise the other side. ripr.toml does not support
@@ -32,9 +32,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-    - reach yes: Related tests appear to reach thr: at, high, low
+    - reach yes: Related tests appear to reach thr: at, high, local
     - infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-    - 10 more detail line(s) in --format human-full
+    - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast probe:src_lib.rs:predicate:2ea8a95f

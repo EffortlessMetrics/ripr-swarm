@@ -19,7 +19,7 @@ use ra_ap_syntax::{
     AstNode, SyntaxNode,
     ast::{self, HasGenericArgs, HasModuleItem, HasName},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The scopes around one function, innermost first: the function body (and
 /// any enclosing function bodies), then each enclosing inline module, then
@@ -35,6 +35,10 @@ pub(crate) struct NameScope {
     pub(crate) modules: Vec<String>,
     /// A function body rather than a module.
     pub(crate) fn_body: bool,
+    /// Earliest file-absolute line of each local pattern binding. Scope is
+    /// deliberately conservative: a binding in another nested block may
+    /// withhold a later bare call, but cannot lend it another owner's input.
+    pub(crate) local_bindings: BTreeMap<String, usize>,
     /// `use` and `extern crate` leaves in this scope, by the name each binds.
     pub(crate) imports: Vec<UseImport>,
     /// Path prefixes of glob imports (`use a::b::*` records `[a, b]`);
@@ -180,6 +184,20 @@ pub(crate) fn name_scopes_for_fn(
                 fn_body: true,
                 ..NameScope::default()
             };
+            for pattern in enclosing_fn
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+            {
+                if let Some(name) = pattern.name() {
+                    let line = line_index.line(pattern.syntax().text_range().start());
+                    scope
+                        .local_bindings
+                        .entry(name.text().trim_start_matches("r#").to_string())
+                        .and_modify(|earliest| *earliest = (*earliest).min(line))
+                        .or_insert(line);
+                }
+            }
             if let Some(body) = enclosing_fn.body() {
                 let top_level = body.stmt_list().map(|list| list.syntax().clone());
                 let inner = (ancestor != *function.syntax()).then(|| function.syntax());

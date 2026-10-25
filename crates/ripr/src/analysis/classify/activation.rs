@@ -2330,7 +2330,7 @@ fn unresolved_call_identity(
             test.body_calls().any(|call| {
                 call.name == target.name
                     && !super::call_identity::qualified_owner_calls_resolve(
-                        index, target, test, &call.text,
+                        index, target, test, &call.text, call.line,
                     )
             })
         })
@@ -3862,7 +3862,9 @@ fn call_values_for_owner(
         is_free(owner),
         &parameters,
         |test, call| {
-            super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
+            super::call_identity::qualified_owner_calls_resolve(
+                index, owner, test, &call.text, call.line,
+            )
         },
         &ReceiverParameters::none(),
     );
@@ -3985,7 +3987,7 @@ pub(in crate::analysis) fn computed_input_parameters(
             for call in test.body_calls() {
                 if call.name != target.name
                     || !super::call_identity::qualified_owner_calls_resolve(
-                        index, target, test, &call.text,
+                        index, target, test, &call.text, call.line,
                     )
                 {
                     continue;
@@ -4254,6 +4256,7 @@ fn chain_entry_rows(
                 &entry.caller,
                 test,
                 &call.text,
+                call.line,
             )
         },
         &receivers,

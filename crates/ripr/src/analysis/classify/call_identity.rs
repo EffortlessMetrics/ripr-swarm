@@ -1689,6 +1689,7 @@ pub(super) fn qualified_owner_calls_resolve(
     owner: &FunctionSummary,
     test: &TestSummary,
     call_text: &str,
+    call_line: usize,
 ) -> bool {
     if owner.item.container != FunctionContainer::Free {
         return true;
@@ -1697,6 +1698,22 @@ pub(super) fn qualified_owner_calls_resolve(
         .into_iter()
         .all(|qualifier| match qualifier {
             None => false,
+            Some(segments) if segments.is_empty() => {
+                shared_solo_owner_call_identity(index, owner).is_some_and(|identity| {
+                    identity
+                        .test_scope(test, index)
+                        .scopes
+                        .as_ref()
+                        .is_some_and(|scopes| {
+                            !scopes.scopes.iter().any(|scope| {
+                                scope
+                                    .local_bindings
+                                    .get(owner.name.trim_start_matches("r#"))
+                                    .is_some_and(|line| *line <= call_line)
+                            })
+                        })
+                }) && qualified_call_names_owner(index, owner, test, &segments)
+            }
             Some(segments) if names_a_type(&segments) => true,
             Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
         })
@@ -3473,7 +3490,7 @@ mod tests {
             return;
         };
         let resolves = |owner: &FunctionSummary, text: &str| {
-            qualified_owner_calls_resolve(&index, owner, test, text)
+            qualified_owner_calls_resolve(&index, owner, test, text, test.start_line)
         };
         // An unbound bare call declines; type paths keep their reading.
         assert!(!resolves(&thr, "assert!(thr(1));"));

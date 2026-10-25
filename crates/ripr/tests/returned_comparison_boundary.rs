@@ -975,3 +975,58 @@ fn returned_matches_keep_their_existing_infection_reading() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn local_callable_bindings_cannot_supply_imported_owner_inputs() -> Result<(), String> {
+    for (body, credited) in [
+        ("assert!(!thr(101));", true),
+        (
+            "let thr: fn(i32) -> bool = |x| x > 0;\nassert!(thr(101));",
+            false,
+        ),
+        ("let thr = |x: i32| x > 0;\nassert!(thr(101));", false),
+        ("let r#thr = |x: i32| x > 0;\nassert!(thr(101));", false),
+        (
+            "let thr: fn(i32) -> bool;\nthr = |x| x > 0;\nassert!(thr(101));",
+            false,
+        ),
+        ("for thr in [|x: i32| x > 0] { assert!(thr(101)); }", false),
+        (
+            "let picked: fn(i32) -> bool = |x| x > 0;\nmatch Some(picked) { Some(thr) => assert!(thr(101)), None => () }",
+            false,
+        ),
+        (
+            "let check = |thr: fn(i32) -> bool| { assert!(thr(101)); };\ncheck(|x| x > 0);",
+            false,
+        ),
+        (
+            "let thr = |x: i32| x > 0;\nlet base = 100;\nassert!(thr(base + 1));",
+            false,
+        ),
+        (
+            "assert!(!thr(101));\nlet thr = |x: i32| x > 0;\nassert!(thr(50));",
+            true,
+        ),
+    ] {
+        let results = findings(
+            NEW,
+            OLD,
+            &format!("use thr::thr;\n{IDENTITY_FAR}\n#[test]\nfn at() {{\n{body}\n}}\n"),
+        )?;
+        if credited {
+            assert_boundary_credited(&results)?;
+        } else {
+            assert_identity_unresolved(&results)?;
+        }
+    }
+    // A value binding does not shadow the module-qualified crate name.
+    let qualified = findings(
+        NEW,
+        OLD,
+        &format!(
+            "{IDENTITY_FAR}\n#[test]\nfn at() {{\nlet thr = |x: i32| x > 0;\nassert!(!thr::thr(101));\nassert!(thr(50));\n}}\n"
+        ),
+    )?;
+    assert_boundary_credited(&qualified)?;
+    Ok(())
+}
