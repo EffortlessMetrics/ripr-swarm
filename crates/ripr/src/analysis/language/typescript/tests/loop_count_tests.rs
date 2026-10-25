@@ -465,6 +465,22 @@ fn a_callback_parameter_named_like_the_mock_is_not_the_mock() -> Result<(), Stri
     let body = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(withRetry(async () => { const { a = fn } = {}; return a(); }, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
     let finding = run(label, RETRY, OLD, NEW, &retry_test(body))?;
     assert_abstains(label, &finding);
+    // A second declarator shadows the mock like the first.
+    let label = "loop-local-multi-declarator";
+    let callback = "async () => { const a = 1, fn = async () => \"ok\"; return fn(); }";
+    let body = format!(
+        "  const fn = mock.fn();\n  assert.equal(await withRetry({callback}, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);"
+    );
+    let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+    assert_gap(label, &finding);
+    // A block inside an expression-bodied arrow is the nested function's own.
+    let label = "loop-local-expression-arrow";
+    let callback = "(x: boolean) => x ? fn : async () => { const fn = 1; return fn; }";
+    let body = format!(
+        "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects(withRetry({callback}, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+    );
+    let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+    assert_abstains(label, &finding);
     // A declaration in a nested block or function, a type annotation or a
     // loop head does not rebind the callback's own `fn`.
     for (label, callback) in [

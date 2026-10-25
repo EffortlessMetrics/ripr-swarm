@@ -623,6 +623,31 @@ fn first_declaration(text: &str, name: &str) -> Option<usize> {
         .min()
 }
 
+/// Every name a `const`/`let`/`var` statement binds: `a = 1, fn = f` has two
+/// declarators, split at top-level commas before the statement ends.
+fn declarator_names(after_keyword: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let (mut depth, mut from) = (0usize, 0usize);
+    let mut end = after_keyword.len();
+    for (at, ch) in after_keyword.char_indices() {
+        match ch {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                names.extend(binding_names(&after_keyword[from..at]));
+                from = at + 1;
+            }
+            ';' | '\n' if depth == 0 => {
+                end = at;
+                break;
+            }
+            _ => {}
+        }
+    }
+    names.extend(binding_names(&after_keyword[from..end]));
+    names
+}
+
 /// The names a `const`/`let`/`var` pattern binds: `a`, `{ a, b: c = d }`
 /// (`c`, `a`; defaults and keys are not bindings), `[a, b]`.
 fn binding_names(after_keyword: &str) -> Vec<&str> {
@@ -637,7 +662,8 @@ fn binding_names(after_keyword: &str) -> Vec<&str> {
             .collect();
     }
     let group = &pattern[..group_end(pattern, 0)];
-    let inner = &group[1..group.len().saturating_sub(1)];
+    let inner = group.strip_prefix(['{', '[']).unwrap_or(group);
+    let inner = inner.strip_suffix(['}', ']']).unwrap_or(inner);
     let (mut depth, mut from) = (0usize, 0usize);
     let mut names = Vec::new();
     for (at, ch) in inner.char_indices() {
@@ -672,7 +698,27 @@ fn push_binding<'a>(names: &mut Vec<&'a str>, piece: &'a str) {
 /// closure that is a new binding, not the outer value. A declaration in a
 /// nested block or function, a loop head (`for (const name of …)`) and a type
 /// annotation are not.
-fn declares_local(body: &str, name: &str) -> bool {
+fn declares_local(function: &str, name: &str) -> bool {
+    // Only the function's own block holds its top-level declarations: an
+    // expression body has none, and a block inside it belongs to a nested
+    // function.
+    let params_end = if function.starts_with('(') {
+        group_end(function, 0)
+    } else {
+        function
+            .find(|c: char| !is_word(c))
+            .unwrap_or(function.len())
+    };
+    let rest = &function[params_end..];
+    let body = match (rest.find("=>"), rest.find('{')) {
+        (Some(arrow), Some(brace)) if brace > arrow => rest[arrow + 2..].trim_start(),
+        (Some(arrow), None) => rest[arrow + 2..].trim_start(),
+        (_, Some(brace)) => &rest[brace..],
+        (None, None) => "",
+    };
+    if !body.starts_with('{') {
+        return false;
+    }
     let (mut braces, mut parens) = (0usize, 0usize);
     for (at, ch) in body.char_indices() {
         match ch {
@@ -698,7 +744,7 @@ fn declares_local(body: &str, name: &str) -> bool {
         if !starts_statement {
             continue;
         }
-        if binding_names(&rest[keyword.len()..]).contains(&name) {
+        if declarator_names(&rest[keyword.len()..]).contains(&name) {
             return true;
         }
     }
@@ -791,6 +837,20 @@ fn first_assignment(text: &str) -> Option<usize> {
     None
 }
 
+/// The first `,` outside brackets, which separates declarators.
+fn first_top_level_comma(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, ch) in text.char_indices() {
+        match ch {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return Some(at),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn bindings(masked: &str) -> Vec<Binding<'_>> {
     let mut found = Vec::new();
     for keyword in ["const", "let", "var"] {
@@ -801,18 +861,24 @@ fn bindings(masked: &str) -> Vec<Binding<'_>> {
             {
                 continue;
             }
-            let declaration = &after[..declaration_end(after)];
-            let Some(eq) = first_assignment(declaration) else {
-                continue;
-            };
-            let (lhs, rhs) = (declaration[..eq].trim(), &declaration[eq + 1..]);
-            let mut words = lhs.split(|c: char| !is_word(c)).filter(|w| !w.is_empty());
-            let names: Vec<&str> = if lhs.starts_with(['{', '[']) {
-                words.collect()
-            } else {
-                words.next().into_iter().collect()
-            };
-            found.push(Binding { names, rhs });
+            // `const a = 1, b = f(a)` declares two bindings.
+            let mut declaration = &after[..declaration_end(after)];
+            while let Some(eq) = first_assignment(declaration) {
+                let (lhs, tail) = (declaration[..eq].trim(), &declaration[eq + 1..]);
+                let next = first_top_level_comma(tail);
+                let rhs = &tail[..next.unwrap_or(tail.len())];
+                let mut words = lhs.split(|c: char| !is_word(c)).filter(|w| !w.is_empty());
+                let names: Vec<&str> = if lhs.starts_with(['{', '[']) {
+                    words.collect()
+                } else {
+                    words.next().into_iter().collect()
+                };
+                found.push(Binding { names, rhs });
+                match next {
+                    Some(comma) => declaration = &tail[comma + 1..],
+                    None => break,
+                }
+            }
         }
     }
     for (at, _) in masked.match_indices("function") {
@@ -1043,6 +1109,8 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
             }
             Some(receiver) => {
                 let receiver = receiver.strip_suffix('?').unwrap_or(receiver).trim_end();
+                let unwrapped = without_receiver_casts(receiver);
+                let receiver = unwrapped.as_str();
                 let chain: String = receiver
                     .chars()
                     .rev()
@@ -1093,6 +1161,42 @@ fn declares_method(statement: &str, at: usize, len: usize) -> bool {
     };
     let close = group_end(after, open);
     after[close..].trim_start().starts_with(['{', ':'])
+}
+
+/// `(svc as any)`, `svc!`, `(svc as Svc)!` name the receiver `svc`.
+fn without_receiver_casts(receiver: &str) -> String {
+    let mut text = receiver.trim_end().to_string();
+    for _ in 0..8 {
+        let trimmed = text.trim_end();
+        if let Some(rest) = trimmed.strip_suffix('!') {
+            text = rest.to_string();
+            continue;
+        }
+        let Some(end) = trimmed.strip_suffix(')') else {
+            break;
+        };
+        let mut depth = 1usize;
+        let open = end.char_indices().rev().find_map(|(i, ch)| match ch {
+            ')' => {
+                depth += 1;
+                None
+            }
+            '(' => {
+                depth -= 1;
+                (depth == 0).then_some(i)
+            }
+            _ => None,
+        });
+        let Some(open) = open else { break };
+        let inner = &end[open + 1..];
+        match inner.find(" as ") {
+            Some(at) if !inner[at..].contains(['(', ')']) => {
+                text = format!("{}{}", &end[..open], &inner[..at]);
+            }
+            _ => break,
+        }
+    }
+    text
 }
 
 /// Receivers whose member calls only observe their arguments.
@@ -1871,6 +1975,51 @@ mod tests {
             Receivers::Bare,
             "fn"
         ));
+    }
+
+    #[test]
+    fn a_declaration_scan_reads_every_declarator_and_only_the_functions_own_block() {
+        assert_eq!(declarator_names(" a = 1, fn = f(x, y);\nz"), ["a", "fn"]);
+        assert_eq!(declarator_names(" { a, b } = o, c = 2"), ["a", "b", "c"]);
+        assert!(declares_local("() => { const a = 1, fn = 2; }", "fn"));
+        assert!(!declares_local(
+            "x => x ? fn : () => { const fn = 1; }",
+            "fn"
+        ));
+        assert!(!declares_local("() => fn(() => { const fn = 1; })", "fn"));
+        assert!(declares_local(
+            "function (a) { const fn = 1; return a; }",
+            "fn"
+        ));
+        assert!(declares_local(
+            "function (a) { a.map(b => b); const fn = 1; }",
+            "fn"
+        ));
+    }
+
+    #[test]
+    fn a_cast_receiver_is_still_the_receiver() {
+        let svc = ["svc".to_string()];
+        for call in [
+            "(svc as any).retry(fn, 2);",
+            "svc!.retry(fn, 2);",
+            "(svc as unknown as Svc)!.retry(fn, 2);",
+        ] {
+            assert!(
+                hands_mock_to_owner(call, &["retry"], Receivers::Members(&svc, "retry"), "fn"),
+                "{call}"
+            );
+        }
+        assert!(!hands_mock_to_owner(
+            "(other as any).retry(fn, 2);",
+            &["retry"],
+            Receivers::Members(&svc, "retry"),
+            "fn"
+        ));
+        for text in ["{", "[", "const {", "const [é", "{ é"] {
+            let _ = declares_local(&format!("() => {{ {text}"), "fn");
+            let _ = binding_names(text);
+        }
     }
 
     #[test]
