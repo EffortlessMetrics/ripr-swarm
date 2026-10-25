@@ -321,15 +321,58 @@ impl FileOwnerPlan {
     /// First owner whose span contains `line`, exactly as the pre-index
     /// extraction-order scan selected it: the binary-search index for a
     /// monotonic group, a linear scan over extraction order otherwise.
+    /// Test-only shorthand: production callers that resolve an owner also
+    /// need its plan index for the context memo, so they use
+    /// `owner_index_and_ref_for_line` directly.
+    #[cfg(test)]
     fn owner_for_line(&self, line: usize) -> Option<&TypeScriptOwner> {
+        self.owner_index_and_ref_for_line(line)
+            .map(|(_, owner)| owner)
+    }
+
+    /// Owner resolution plus the owner's index within this plan. The index
+    /// is unique per owner, so the changed-line classifier can memoize
+    /// per-owner line context by `usize` instead of cloning the owner's
+    /// file and name Strings for every HashMap key.
+    fn owner_index_and_ref_for_line(&self, line: usize) -> Option<(usize, &TypeScriptOwner)> {
         match self {
             Self::Indexed {
                 owners,
                 end_prefix_max,
-            } => owners.get(owner_index_for_line(owners, end_prefix_max, line)?),
+            } => {
+                let idx = owner_index_for_line(owners, end_prefix_max, line)?;
+                owners.get(idx).map(|owner| (idx, owner))
+            }
             Self::Linear(owners) => owners
                 .iter()
-                .find(|owner| owner.start_line <= line && line <= owner.end_line),
+                .position(|owner| owner.start_line <= line && line <= owner.end_line)
+                .and_then(|idx| owners.get(idx).map(|owner| (idx, owner))),
+        }
+    }
+
+    /// Index of the owner identified by `(name, start_line, end_line)`
+    /// within this plan, for callers that resolved the owner outside the
+    /// plan (the removed-lines pass scans the extraction-order workspace
+    /// vec). The plan holds the same filtered owner set, so the identity
+    /// resolves for exactly the owners that pass resolved. O(log n) plus
+    /// the equal-start group on the sorted variant; the `Linear` variant
+    /// stays an extraction-order scan. As with the old
+    /// `(file, name, start, end)` memo key, two owners sharing the whole
+    /// identity collapse to one memoized context — the same over-share the
+    /// tuple key produced.
+    fn owner_index_by_span(&self, name: &str, start_line: usize, end_line: usize) -> Option<usize> {
+        match self {
+            Self::Indexed { owners, .. } => {
+                let first = owners.partition_point(|owner| owner.start_line < start_line);
+                owners[first..]
+                    .iter()
+                    .take_while(|owner| owner.start_line == start_line)
+                    .position(|owner| owner.name == name && owner.end_line == end_line)
+                    .map(|offset| first + offset)
+            }
+            Self::Linear(owners) => owners.iter().position(|owner| {
+                owner.name == name && owner.start_line == start_line && owner.end_line == end_line
+            }),
         }
     }
 }
@@ -790,13 +833,14 @@ impl TypeScriptAdapter {
             let changed_norm = normalized_path(&changed.path);
             // #10021 (memoization half): the four per-owner `all_tests` scans
             // in the classifier depend on the owner, never on the changed
-            // line. Key them by the owner's identity (file, name, span) so a
-            // file with many changed lines — and the deleted-lines pass —
-            // computes each scan once per owner instead of once per line.
-            let mut owner_contexts: std::collections::HashMap<
-                (String, String, usize, usize),
-                OwnerLineContext<'_>,
-            > = std::collections::HashMap::new();
+            // line. Key them by the owner's index within this changed file's
+            // `FileOwnerPlan` — unique per owner within the file — so a file
+            // with many changed lines — and the deleted-lines pass —
+            // computes each scan once per owner instead of once per line,
+            // without cloning the owner's file and name Strings for every
+            // HashMap key.
+            let mut owner_contexts: std::collections::HashMap<usize, OwnerLineContext<'_>> =
+                std::collections::HashMap::new();
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
@@ -857,38 +901,37 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
-                let resolved_finding = owner_plan.owner_for_line(added.line).and_then(|owner| {
-                    let key = (
-                        changed_norm.clone(),
-                        owner.name.clone(),
-                        owner.start_line,
-                        owner.end_line,
-                    );
-                    let context = owner_contexts.entry(key).or_insert_with(|| {
-                        owner_line_context(
+                let resolved_finding = owner_plan
+                    .owner_index_and_ref_for_line(added.line)
+                    .and_then(|(owner_idx, owner)| {
+                        // Memoize per-owner line context by the owner's plan
+                        // index: unique within this changed file, so the key
+                        // needs no cloned Strings.
+                        let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
+                            owner_line_context(
+                                owner,
+                                &all_tests,
+                                Some(&options.root),
+                                &reexport_index,
+                                &relation_index,
+                                alias_map_ref,
+                            )
+                        });
+                        classify_resolved_owner(
+                            &changed.path,
+                            added.line,
+                            &added.text,
+                            old_line_text,
                             owner,
+                            owner_plan.owners(),
+                            context,
                             &all_tests,
                             Some(&options.root),
                             &reexport_index,
-                            &relation_index,
                             alias_map_ref,
+                            alias_load_gap.as_ref(),
                         )
                     });
-                    classify_resolved_owner(
-                        &changed.path,
-                        added.line,
-                        &added.text,
-                        old_line_text,
-                        owner,
-                        owner_plan.owners(),
-                        context,
-                        &all_tests,
-                        Some(&options.root),
-                        &reexport_index,
-                        alias_map_ref,
-                        alias_load_gap.as_ref(),
-                    )
-                });
                 if let Some(mut finding) = resolved_finding {
                     test_index_consumed = true;
                     finding.evidence.extend(discovery_evidence.clone());
@@ -961,17 +1004,21 @@ impl TypeScriptAdapter {
                     // receives (its file matched by normalized path), so a
                     // line outside the owner's span classified nothing. Keep
                     // that guard, then share the memoized per-owner context
-                    // with the added-lines pass above (#10021).
+                    // with the added-lines pass above (#10021). The plan
+                    // holds the same owner set this pass filtered by
+                    // normalized path (`normalized_path_eq` is exactly
+                    // `normalized_path(path) == normalized`), so the
+                    // (name, start, end) identity always resolves to the
+                    // plan's index for that owner — no cloned Strings.
                     if line < owner.start_line || line > owner.end_line {
                         return None;
                     }
-                    let key = (
-                        changed_norm.clone(),
-                        owner.name.clone(),
+                    let owner_idx = owner_plan.owner_index_by_span(
+                        &owner.name,
                         owner.start_line,
                         owner.end_line,
-                    );
-                    let context = owner_contexts.entry(key).or_insert_with(|| {
+                    )?;
+                    let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
                         owner_line_context(
                             owner,
                             &all_tests,
