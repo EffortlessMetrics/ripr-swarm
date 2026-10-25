@@ -326,3 +326,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (28)
+
+Reason:
+RIPR-SPEC-0224 (#10040): the TypeScript row-owned MissedBoundary fact now emits missing_input with the hedged 'seen' wording instead of observation_unconfirmed
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

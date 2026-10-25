@@ -1,0 +1,113 @@
+# Abstained rows whose tests do catch the change (missed credit) that are
+# accepted, one `[[entry]]` per row, sorted by case with a blank line between
+# blocks so PRs adding rows far apart merge cleanly; adjacent edits can still conflict (#10222). A row that newly
+# misses credit fails `verdict-corpus check` until it is fixed or accepted here
+# with a reason; an entry whose row credits again passes with a note to delete it.
+
+[[entry]]
+case = "perl-0235-ex12-static-unknown-hint"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-0235-ex24-framework-indirection"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-0235-ex25-dynamic-dispatch"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-bless-counter-inc"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-bless-counter-start"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-hostile-autoload-field"
+reason = "Tests catch the rewrite, but the changed sub is reached only through AUTOLOAD or a glob-assigned closure, so ripr abstains (limited) on purpose rather than credit a test it cannot attribute statically (#9483)."
+
+[[entry]]
+case = "perl-hostile-constant-tax"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-hostile-glob-double"
+reason = "Tests catch the rewrite, but the changed sub is reached only through AUTOLOAD or a glob-assigned closure, so ripr abstains (limited) on purpose rather than credit a test it cannot attribute statically (#9483)."
+
+[[entry]]
+case = "perl-hostile-line-directive-pad"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-hostile-string-eval-quad"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-hostile-unicode-sub-name"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-idiom-closure-counter"
+reason = "Catches the rewrite but ripr abstains (limited) rather than reporting a false gap (#9416)."
+
+[[entry]]
+case = "perl-idiom-local-separator"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-moose-builder-join"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-test2-net-change-imported"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-test2-withdraw-dies-like-message"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testdeep-adjust-exact-hash"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testexception-freeze-class"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testexception-transfer-boundary-pair"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testexception-withdraw-throws-message"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-bulk-subtest"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-bundle-helper-sub"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-cart-dynamic-dispatch"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-cart-method-total"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-discount-imported-boundary"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-quote-is-deeply-total"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-testmore-tax-table-loop"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."

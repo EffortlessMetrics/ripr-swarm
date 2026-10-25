@@ -180,19 +180,23 @@ decisive stages behind a remainder count (#4324):
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
 ```
 
-The seven-line legend immediately follows the compact line, once for the selected
+The ten-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
-The final two lines define the words the `Summary:` count line prints (probe,
+The `Summary terms` lines define the words the `Summary:` count line prints (probe,
 exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
-the `unknown` count is already defined by the `States` line (`unknown/opaque =
-analysis limited`). They claim no runtime mutation outcome.
+its last three lines also define `finding`, `unsuppressed`, the `unknown`
+bucket, `base-side` and the Counts line's `candidate line` (#9244 item 4
+leftovers). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-seven lines; it does not expand the per-stage detail window. Full human and
+ten lines; it does not expand the per-stage detail window. Full human and
 machine formats retain their existing contracts. This addresses item 1 and #9244
 item 4 only; the shared class vocabulary and per-class discoverability in items 2
 and 3 are unchanged.
@@ -515,7 +519,15 @@ is no seam to start a repair from and sends the reader to the Next step above
 name without a Rust canonical gap); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
-the chosen seam without promising a listing; a classification failure says the
+the chosen seam without promising a listing; a repair route that is not ready
+says ripr cannot build a repair packet for the finding yet, lists the
+producer-owned missing evidence (or says the static evidence is not complete
+enough to name a safe test target when the list is empty), and sends the reader
+to the Next step above and the `ripr check` rerun, carrying the refusal kind
+and missing list as typed fields rather than parsing the reason text (the
+shared `repair route not ready` label that `ripr repair`, `ripr continue` and
+the MCP detail print is unchanged); other ineligible refusals keep their
+reason and gate pointer; a classification failure says the
 gate may print the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),
 but a refusal the pipeline did compute is still named there, so "the gate

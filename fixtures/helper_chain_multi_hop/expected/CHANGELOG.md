@@ -301,3 +301,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_multi_hop (23)
+
+Reason:
+RIPR-SPEC-0357 stage 1: changed let reaching the returned expression adds binding_return_relation evidence only (#10259)
+
+Command:
+`cargo xtask goldens bless helper_chain_multi_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — helper_chain_multi_hop (24)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless helper_chain_multi_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
