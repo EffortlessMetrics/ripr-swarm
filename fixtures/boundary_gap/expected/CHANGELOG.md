@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+### Exported macro_rules! grouped-import classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.108 to 1.109 for
+grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — typed function-pointer composition (#9478, #9705)
 
 The bounded typed function-pointer owner proof composes with accepted shared-target
@@ -1174,12 +1181,12 @@ top-level `crate::name!` calls to `#[macro_export]` test generators
 (RIPR-SPEC-0117, #10298), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
-### Exported macro_rules! grouped-import classified-cache generation parity
+### `#[test_case]` literal rows classified-cache generation parity
 
 The same snapshots follow corpus cache generation 1.107 to 1.108 for
-grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
-(RIPR-SPEC-0117, #10298), with the same scope: generation, content
-commitment, dependent verify commitments and receipt byte hashes only.
+literal-row `#[test_case]` bodies (RIPR-SPEC-0120, #10190), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
 
 ## Pending — boundary_gap (25)
 

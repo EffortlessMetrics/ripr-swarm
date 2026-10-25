@@ -324,11 +324,11 @@ fn an_exported_generator_named_in_a_use_group_reads_like_the_hand_written_test()
 -> Result<(), String> {
     for import in [
         "use crate::{gate_table};\n",
-        "use crate::{gate_table, unrelated_helper};\n",
-        "use crate::{unrelated_helper, gate_table,};\n",
+        "use crate::{gate_table, UNRELATED};\n",
+        "use crate::{UNRELATED, gate_table,};\n",
     ] {
         let grouped = TempRepo::create(&layout(
-            "mod macros;\nmod cases;\n",
+            "mod macros;\nmod cases;\npub const UNRELATED: u8 = 0;\n",
             Some(&exported_table()),
             &format!("{import}{BOUNDARY_ROWS}"),
         ))?

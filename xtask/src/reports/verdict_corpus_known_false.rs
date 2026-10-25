@@ -242,23 +242,30 @@ fn missed_credit(rows: &[CaseRow]) -> BTreeSet<&str> {
 
 /// Gate the accepted missed-credit rows (`missed-credit.toml`). A
 /// missed-credit row without an entry is a regression and fails, naming it. An
-/// entry whose row no longer misses credit is an improvement that passes with
-/// a note to delete its entry: each entry is its own block, so two PRs moving
-/// different rows never conflict, and a fix never deadlocks main on a shared
-/// number. The count is derived from the entries, never stored (#10222).
+/// entry whose row no longer misses credit also fails, naming the entry to
+/// delete: the committed entries must equal the blessed missed rows, the same
+/// pin `committed_ceilings_equal_the_blessed_missed_credit` holds, enforced here
+/// minutes into the required run instead of after the full test step (#10341).
+/// Each entry is its own block, so two PRs moving different rows never
+/// conflict and a fix never deadlocks main on a shared number. The count is
+/// derived from the entries, never stored (#10222).
 fn missed_credit_gate(
     missed: &BTreeSet<&str>,
     ledger: &Ledger,
     ledger_label: &str,
-) -> Result<Option<String>, String> {
+) -> Result<(), String> {
     let accepted: BTreeSet<&str> = ledger
         .missed_credit
         .iter()
         .map(|e| e.case.as_str())
         .collect();
     let unlisted: Vec<&str> = missed.difference(&accepted).copied().collect();
+    let stale: Vec<&str> = accepted.difference(missed).copied().collect();
+    // Report both sides together so a count-preserving swap names the row to
+    // fix and the entry to delete in one run.
+    let mut failures = Vec::new();
     if !unlisted.is_empty() {
-        return Err(format!(
+        failures.push(format!(
             "verdict-corpus: {} abstained row(s) had tests that catch the change but {ledger_label} accepts no missed credit for them; a verdict stopped crediting a discriminating test. Fix the regression; accepting it adds an `[[entry]]` with a reason to {MISSED_CREDIT_FILE} and is a reviewed edit:\n{}",
             unlisted.len(),
             unlisted
@@ -268,14 +275,18 @@ fn missed_credit_gate(
                 .join("\n")
         ));
     }
-    let stale: Vec<&str> = accepted.difference(missed).copied().collect();
-    Ok((!stale.is_empty()).then(|| {
-        format!(
+    if !stale.is_empty() {
+        failures.push(format!(
             "verdict-corpus: {} accepted missed-credit row(s) in {ledger_label} no longer miss credit; delete its `[[entry]]` from {MISSED_CREDIT_FILE} so the improvement cannot regress: {}",
             stale.len(),
             stale.join(", ")
-        )
-    }))
+        ));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// Join the ledger gate's failure to `existing`. A case subset cannot see the
@@ -299,10 +310,8 @@ pub(crate) fn apply_known_false_gate(
         .err()
         .into_iter()
         .collect();
-    match missed_credit_gate(&missed_credit(rows), &ledger, &label) {
-        Ok(Some(note)) => println!("{note}"),
-        Ok(None) => {}
-        Err(failure) => failures.push(failure),
+    if let Err(failure) = missed_credit_gate(&missed_credit(rows), &ledger, &label) {
+        failures.push(failure);
     }
     if failures.is_empty() {
         return Ok(existing);
@@ -399,13 +408,10 @@ mod tests {
     }
 
     #[test]
-    fn a_new_missed_credit_fails_and_an_improvement_notes() -> Result<(), String> {
+    fn a_new_missed_credit_fails_and_a_stale_entry_fails() -> Result<(), String> {
         let accepted = accepting(&["a", "b"])?;
         // Exactly the accepted rows: clean.
-        assert_eq!(
-            missed_credit_gate(&set(&["a", "b"]), &accepted, "l.toml")?,
-            None
-        );
+        missed_credit_gate(&set(&["a", "b"]), &accepted, "l.toml")?;
         // Negative experiment: a row that newly misses credit has no entry, so
         // the gate fails and names it.
         let err = missed_credit_gate(&set(&["a", "b", "c"]), &accepted, "l.toml")
@@ -416,19 +422,23 @@ mod tests {
         let swapped = missed_credit_gate(&set(&["a", "c"]), &accepted, "l.toml")
             .err()
             .unwrap_or_default();
-        assert!(swapped.contains("  - c"), "{swapped}");
-        // An improvement passes with a note naming the entry to delete, so
-        // concurrent fix PRs do not collide.
-        let note = missed_credit_gate(&set(&["a"]), &accepted, "l.toml")?.unwrap_or_default();
+        assert!(
+            swapped.contains("  - c")
+                && swapped.contains("no longer miss credit")
+                && swapped.contains(": b"),
+            "{swapped}"
+        );
+        // An improvement leaves a stale entry: the entries must equal the
+        // blessed missed rows, so the gate fails and names the entry to delete.
+        let stale = missed_credit_gate(&set(&["a"]), &accepted, "l.toml")
+            .err()
+            .unwrap_or_default();
         assert_eq!(
-            note,
+            stale,
             "verdict-corpus: 1 accepted missed-credit row(s) in l.toml no longer miss credit; delete its `[[entry]]` from missed-credit.toml so the improvement cannot regress: b"
         );
         // Nothing accepted and nothing missed is clean.
-        assert_eq!(
-            missed_credit_gate(&set(&[]), &accepting(&[])?, "l.toml")?,
-            None
-        );
+        missed_credit_gate(&set(&[]), &accepting(&[])?, "l.toml")?;
         Ok(())
     }
 
@@ -447,11 +457,12 @@ mod tests {
         Ok(())
     }
 
-    /// Entries that outnumber the real missed credit would pass the gate with
-    /// only a note, so pin each committed entry set to its blessed rows. The
-    /// accepted count is derived from the entries, never stored on a shared
-    /// line. The name is kept from the retired numeric ceiling test (CI selects
-    /// it by name); it now pins the entry sets to the blessed missed rows.
+    /// Pin each committed entry set to its blessed rows. `check-all` now fails
+    /// a stale entry in the corpus step (#10341); this test is the second pin,
+    /// run with the full test step, so the equality survives if that wiring is
+    /// ever bypassed. The accepted count is derived from the entries, never
+    /// stored on a shared line. The name is kept from the retired numeric
+    /// ceiling test (CI selects it by name).
     #[test]
     fn committed_ceilings_equal_the_blessed_missed_credit() -> Result<(), String> {
         for language in ["rust", "typescript", "python", "perl"] {
@@ -585,6 +596,27 @@ mod tests {
         std::fs::write(bare.join(MISSED_CREDIT_FILE), entries).map_err(|err| err.to_string())?;
         let accepted = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
         assert!(!accepted.contains("accepts no missed credit"), "{accepted}");
+        // An extra entry for a row that does not miss credit is a stale
+        // improvement, and the same gate fails it, naming the entry to delete.
+        let healthy = rows
+            .iter()
+            .map(|row| row.case_id.as_str())
+            .find(|case| !missed.contains(case))
+            .ok_or("no row without missed credit")?;
+        let with_stale: String = missed
+            .iter()
+            .chain(std::iter::once(&healthy))
+            .copied()
+            .collect::<BTreeSet<&str>>()
+            .iter()
+            .map(|case| format!("[[entry]]\ncase = \"{case}\"\nreason = \"accepted\"\n\n"))
+            .collect();
+        std::fs::write(bare.join(MISSED_CREDIT_FILE), with_stale).map_err(|err| err.to_string())?;
+        let stale = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
+        assert!(
+            stale.contains("no longer miss credit") && stale.contains(healthy),
+            "{stale}"
+        );
         Ok(())
     }
 

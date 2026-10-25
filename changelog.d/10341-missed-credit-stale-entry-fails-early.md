@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `verdict-corpus check-all` now fails when a `missed-credit.toml` entry names a row that no longer misses credit, naming the entry to delete. The committed entries must equal the blessed missed rows, the pin `committed_ceilings_equal_the_blessed_missed_credit` already held after the full test step; the required run now reports a mismatch in the corpus step, minutes in (#10341).
