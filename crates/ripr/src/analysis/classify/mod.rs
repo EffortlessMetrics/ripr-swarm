@@ -90,7 +90,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::{
-    exercised_bool_chain_return_sink, infection_evidence_for_owner,
+    OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
 pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;

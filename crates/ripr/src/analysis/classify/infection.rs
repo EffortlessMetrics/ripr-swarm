@@ -450,8 +450,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
         related_tests,
         activation,
         unresolved_boundary,
-        None,
-        None,
+        OwnerInputs::default(),
         true,
         false,
     )
@@ -466,16 +465,28 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
 /// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
 /// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
 /// a shadowing `macro_rules!` compares nothing.
+/// The changed owner and the literal byte-length read of its boundary, which
+/// travel together: both come from the owner's own source.
+#[derive(Clone, Copy, Default)]
+pub(in crate::analysis) struct OwnerInputs<'a> {
+    pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
+    pub(in crate::analysis) literal_length_boundary:
+        Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
+}
+
 pub(in crate::analysis) fn infection_evidence_for_owner(
     probe: &Probe,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
     unresolved_boundary: Option<&str>,
-    owner: Option<&FunctionSummary>,
-    literal_length_boundary: Option<&super::literal_length_boundary::LiteralLengthBoundary>,
+    owner_inputs: OwnerInputs<'_>,
     owner_has_other_callers: bool,
     assertion_macros_rebound: bool,
 ) -> StageEvidence {
+    let OwnerInputs {
+        owner,
+        literal_length_boundary,
+    } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
     // only a `weak` result replaces the return-value reading, which is
@@ -489,8 +500,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             related_tests,
             activation,
             unresolved_boundary,
-            owner,
-            literal_length_boundary,
+            owner_inputs,
             owner_has_other_callers,
             assertion_macros_rebound,
         );

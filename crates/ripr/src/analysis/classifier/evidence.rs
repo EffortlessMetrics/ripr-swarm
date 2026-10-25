@@ -1,6 +1,6 @@
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
@@ -374,8 +374,10 @@ impl ClassifiedProbeEvidence {
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
-            context.owner_fn,
-            gathered.literal_length_boundary.as_ref(),
+            OwnerInputs {
+                owner: context.owner_fn,
+                literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+            },
             owner_has_other_callers,
             assertion_macros_rebound,
         );
