@@ -3242,6 +3242,9 @@ id = "RIPR-SPEC-0026"
 name = "Language adapter contract"
 spec = "docs/specs/RIPR-SPEC-0026-language-adapter-contract.md"
 tests = [
+  "xtask/src/policy/capability_producers/tests.rs::minimal_and_individual_builds_require_exact_producer_presence",
+  "xtask/src/policy/capability_producers/tests.rs::selected_features_and_manifest_defaults_match_cargo_arguments",
+  "xtask/src/policy/capability_producers/tests.rs::compiled_producers_fail_closed_on_missing_or_non_boolean_availability",
   "crates/ripr/src/app/tests/handwritten_recovery.rs::handwritten_files_diff_recovery_indexes_effective_test_without_renaming",
   "crates/ripr/src/app/tests/handwritten_recovery.rs::handwritten_files_recovery_serializes_bounded_ascii_and_unicode_paths",
   "crates/ripr/src/config.rs::tests::rust_handwritten_files_accepts_scoped_recovery_configuration",

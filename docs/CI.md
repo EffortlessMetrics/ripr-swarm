@@ -2389,7 +2389,8 @@ Release workflows handle extension publishing and server binary releases.
 
 ## Capability Producer Inventory
 
-`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+`cargo xtask check-capability-producers [--registry-json <path>]
+[--no-default-features] [--features <lang-*,...>]` compares the
 binary-resident language capability registry (`ripr capabilities --json`, #5531)
 with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
 and fails when:
@@ -2399,15 +2400,36 @@ and fails when:
 - a registered language has no cell, or a cell names an unregistered language;
 - a `lang-*` Cargo feature, a registry `required_feature` and an adapter
   directory under `analysis/language/` do not name the same producer set;
-- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`;
+- a language's `adapter_compiled` is absent, not boolean, or differs from the
+  selected Cargo language features (including a disabled adapter reported present).
 
 It is separate from `check-capabilities`, which validates
 `metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
 the registry. Limits: it does not check cell states, tier ceilings or docs text
 (in-crate tests and `check-support-tiers`), framework-level producers (the
 per-language disposition tests), the registry's relation to
-`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
-reads a saved registry without building and can be stale; the report says so.
+`metrics/capabilities.toml`. One selected feature combination is checked per
+invocation. Defaults come from the real `crates/ripr/Cargo.toml`; explicit
+`--features` are additive unless `--no-default-features` is supplied. Only declared
+`lang-*` names are accepted. JavaScript and TypeScript share `lang-typescript`.
+`--registry-json` reads a saved registry without building and can be stale; the
+report says so. The same feature flags specify its expected build, independently
+of the JSON's availability flags.
+
+Focused controls (run serially, after resource admission):
+
+```bash
+cargo xtask check-capability-producers --no-default-features
+cargo xtask check-capability-producers --no-default-features --features lang-perl
+```
+
+The first requires every language's producer to be absent; the second requires
+only Perl present. Substitute `lang-rust`, `lang-python`, or `lang-typescript`
+(the latter requires both TypeScript and JavaScript) for individual controls.
+These extra invocations are opt-in; the existing hosted default invocation does
+not run a feature matrix. Unit controls pin all four language-feature cases and
+reject either direction of a changed availability flag.
 It is not part of `precommit` or `check-pr` (it requires a `ripr` build, which
 `precommit` must not force). It is hosted: `rust-gates.yml` runs it as the
 unconditional `capability_producers` step after `fixtures` (the `ripr` build is

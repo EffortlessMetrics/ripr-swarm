@@ -701,7 +701,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-identity-registry",
         "check-doc-artifacts",
         "check-support-tiers",
-        "check-capability-producers [--registry-json <path>]",
+        "check-capability-producers [--registry-json <path>] [--no-default-features] [--features <lang-*,...>]",
         "capability-docs [--check | --write] [--markdown-file <path>]",
         "check-doc-index",
         "check-changelog-fragments [--release-cut]",
@@ -2222,12 +2222,12 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks support-tier claim proof mapping.",
         ),
         command_entry(
-            "check-capability-producers [--registry-json <path>]",
+            "check-capability-producers [--registry-json <path>] [--no-default-features] [--features <lang-*,...>]",
             "non_mutating_check",
             "target/ripr/reports/capability-producers.md",
             false,
             true,
-            "Checks the language capability registry (`ripr capabilities --json`) against the repository producer inventory: LanguageId variants, cells per language, lang-* features, adapter directories and proof-ref specs. Builds ripr; --registry-json reads a saved registry instead (offline, can be stale). Hosted: a rust-gates.yml step on non-docs-only PRs and a routed-rust.yml docs-gate step when docs/specs or SUPPORT_TIERS.md changed; not part of precommit.",
+            "Checks the language capability registry (`ripr capabilities --json`) against the repository producer inventory: LanguageId variants, cells per language, lang-* features, adapter directories, proof-ref specs and selected-build adapter_compiled flags. --no-default-features and --features select the ripr build; one combination per invocation. Builds ripr; --registry-json reads a saved registry instead (offline, can be stale). Hosted: a rust-gates.yml step on non-docs-only PRs and a routed-rust.yml docs-gate step when docs/specs or SUPPORT_TIERS.md changed; not part of precommit.",
         ),
         command_entry(
             "capability-docs [--check | --write] [--markdown-file <path>]",

@@ -20,19 +20,25 @@
 //!   the adapter directories under `analysis/language/` name the same
 //!   producer set, so a new adapter or feature cannot land without a
 //!   registered language (and so a cell);
-//! - every cell `proof_refs` entry resolves to a spec file.
+//! - every cell `proof_refs` entry resolves to a spec file;
+//! - adapter_compiled matches the selected Cargo language features, including
+//!   minimal and individual language builds (JavaScript shares TypeScript).
 //!
 //! Limits (not enforced here): cell state, tier ceilings and docs text
 //! (in-crate tests and `check-support-tiers`); finer producers inside an
 //! adapter such as framework detectors (per-language disposition tests); the
-//! relation to `metrics/capabilities.toml` (bound by decision, not checked);
-//! a build with non-default features. The registry is the default build's.
+//! relation to `metrics/capabilities.toml` (bound by decision, not checked).
+//! One selected build is checked per invocation; this is not a matrix runner.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use crate::{FixKind, PolicyDisclosure, PolicyReportSpec, read_text_lossy};
+
+mod features;
+
+use features::{BuildSelection, compiled_feature_violations};
 
 #[cfg(test)]
 mod tests;
@@ -57,8 +63,11 @@ pub(super) struct Inventory {
 }
 
 pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> {
-    let registry_file = parse_args(args)?;
-    let (registry_text, source_note) = match &registry_file {
+    let options = parse_args(args)?;
+    let inventory = read_inventory(Path::new("."))?;
+    let cargo_text = read_text_lossy(Path::new(RIPR_CARGO_TOML))?;
+    let enabled = options.build.enabled_features(&cargo_text)?;
+    let (registry_text, source_note) = match &options.registry_file {
         Some(path) => (
             read_text_lossy(path)?,
             format!(
@@ -67,25 +76,25 @@ pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> 
             ),
         ),
         None => (
-            registry_from_binary()?,
+            registry_from_binary(&options.build)?,
             "registry read from `ripr capabilities --json` of a binary built from this tree"
                 .to_string(),
         ),
     };
     let registry: Value = serde_json::from_str(&registry_text)
         .map_err(|err| format!("capability registry output is not JSON: {err}"))?;
-    let inventory = read_inventory(Path::new("."))?;
-    let violations = capability_violations(&registry, &inventory);
+    let mut violations = capability_violations(&registry, &inventory);
+    violations.extend(compiled_feature_violations(&registry, &enabled));
     let digest = registry
         .get("semantic_digest")
         .and_then(Value::as_str)
         .unwrap_or("<missing>");
     let disclosures = vec![PolicyDisclosure {
         heading: "Scope and limits".to_string(),
-        intro: format!("{source_note}. Registry digest: `{digest}`."),
+        intro: format!("{source_note}. Registry digest: `{digest}`. Expected compiled language features: `{enabled:?}`."),
         items: vec![
-            "Enforced: LanguageId variants vs registry languages; cells per language; lang-* features vs required_feature vs adapter directories; proof_refs resolve to spec files.".to_string(),
-            "Not enforced here: cell states and tiers (in-crate tests), docs text (check-support-tiers and the drift test), framework-level producers (per-language disposition tests), metrics/capabilities.toml, non-default feature builds.".to_string(),
+            "Enforced: LanguageId variants vs registry languages; cells per language; lang-* features vs required_feature vs adapter directories; proof_refs resolve to spec files; adapter_compiled matches selected Cargo language features.".to_string(),
+            "Not enforced here: cell states and tiers (in-crate tests), docs text (check-support-tiers and the drift test), framework-level producers (per-language disposition tests), metrics/capabilities.toml. Only the selected build is checked; other feature combinations require separate invocations.".to_string(),
         ],
     }];
     crate::finish_policy_report_with_disclosures(
@@ -107,19 +116,52 @@ pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> 
     )
 }
 
-fn parse_args(args: &[String]) -> Result<Option<PathBuf>, String> {
-    match args {
-        [] => Ok(None),
-        [flag, path] if flag == "--registry-json" => Ok(Some(PathBuf::from(path))),
-        _ => Err(
-            "usage: cargo xtask check-capability-producers [--registry-json <path>]".to_string(),
-        ),
-    }
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Options {
+    registry_file: Option<PathBuf>,
+    build: BuildSelection,
 }
 
-fn registry_from_binary() -> Result<String, String> {
+fn parse_args(args: &[String]) -> Result<Options, String> {
+    let mut options = Options::default();
+    let mut args = args.iter();
+    let mut features_seen = false;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--registry-json" if options.registry_file.is_none() => {
+                options.registry_file = Some(PathBuf::from(
+                    args.next().ok_or("--registry-json needs a path")?,
+                ));
+            }
+            "--no-default-features" if !options.build.no_default_features => {
+                options.build.no_default_features = true;
+            }
+            "--features" if !features_seen => {
+                features_seen = true;
+                let names = args
+                    .next()
+                    .ok_or("--features needs comma-separated lang-* names")?;
+                for name in names.split(',') {
+                    if !name.starts_with("lang-")
+                        || !options.build.features.insert(name.to_string())
+                    {
+                        return Err(format!("invalid or duplicate language feature `{name}`"));
+                    }
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "unknown or repeated argument `{flag}`; usage: cargo xtask check-capability-producers [--registry-json <path>] [--no-default-features] [--features <lang-*,...>]"
+                ));
+            }
+        }
+    }
+    Ok(options)
+}
+
+fn registry_from_binary(build: &BuildSelection) -> Result<String, String> {
     let timeout = crate::tool_build_timeout()?;
-    let build_args = ["build", "-p", "ripr", "--quiet"].map(String::from);
+    let build_args = build.cargo_args();
     crate::run_output_owned_with_timeout(
         "cargo",
         &build_args,
