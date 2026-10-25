@@ -582,8 +582,8 @@ pub(super) fn client_app_name(body_text: &str, receiver: &str) -> Option<String>
 pub(super) fn fixture_client_app_name(fixture_body: &str) -> Option<String> {
     let lines = logical_lines(fixture_body);
     let mut found: Option<String> = None;
-    for line in &lines {
-        let line = line.trim();
+    for line in lines.iter().flat_map(|line| line.split(';')) {
+        let line = exit_statement(line.trim());
         let Some(value) = line
             .strip_prefix("return ")
             .or_else(|| line.strip_prefix("yield "))
@@ -606,6 +606,27 @@ pub(super) fn fixture_client_app_name(fixture_body: &str) -> Option<String> {
         }
     }
     found
+}
+
+/// The `return`/`yield` statement a line ends in, so that a one-line compound
+/// suite (`if flag: return TestClient(other_app)`) counts as an exit of the
+/// fixture rather than being skipped.
+fn exit_statement(line: &str) -> &str {
+    if line.starts_with("return ") || line.starts_with("yield ") {
+        return line;
+    }
+    ["return ", "yield "]
+        .iter()
+        .filter_map(|keyword| {
+            line.match_indices(keyword).map(|(at, _)| at).find(|at| {
+                line[..*at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|before| before == ':' || before.is_whitespace())
+            })
+        })
+        .min()
+        .map_or(line, |at| &line[at..])
 }
 
 #[cfg(test)]

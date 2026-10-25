@@ -369,6 +369,15 @@ fn an_unreadable_client_fixture_reaches_the_route_without_oracle_credit() -> Res
         "{CLIENT_IMPORTS}\n@pytest.fixture\ndef client(app):\n    return TestClient(app)\n"
     );
     assert_eq!(fixture_relation(&nested)?, unidentified);
+    // A one-line compound suite is still an exit over a different application.
+    let one_line = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef client(request):\n    if request.param: return TestClient(other_app)\n    return TestClient(app)\n"
+    );
+    assert_eq!(fixture_relation(&one_line)?, unidentified);
+    let semicolon = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef client(request):\n    if request.param:\n        x = 1; return TestClient(other_app)\n    return TestClient(app)\n"
+    );
+    assert_eq!(fixture_relation(&semicolon)?, unidentified);
     // Two exits over different applications.
     let split = format!(
         "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef client(request):\n    if request.param:\n        return TestClient(app)\n    return TestClient(other)\n"
