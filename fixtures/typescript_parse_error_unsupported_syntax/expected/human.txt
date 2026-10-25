@@ -20,7 +20,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: const next = ;
-  Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the…
+  Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented
+    syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate
+    the unsupported syntax before relying on repair guidance
   Next step — TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or
     isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is
     emitted
