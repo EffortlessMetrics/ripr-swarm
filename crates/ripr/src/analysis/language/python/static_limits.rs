@@ -1171,6 +1171,7 @@ mod tests {
             imports,
             cli_receiver_names: Vec::new(),
             route_paths: Vec::new(),
+            route_methods: Vec::new(),
             dynamic_route_decorators: Vec::new(),
             unplain_decorators: Vec::new(),
             decorator_lines: None,

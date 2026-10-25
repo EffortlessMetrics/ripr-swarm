@@ -238,6 +238,9 @@ struct PythonOwner {
     imports: Vec<PythonImport>,
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
+    /// Lowercase HTTP verbs each `route_paths` entry accepts, index-aligned;
+    /// an empty entry means the verb is not statically known.
+    route_methods: Vec<Vec<String>>,
     dynamic_route_decorators: Vec<String>,
     /// Decorator names whose binding is not the plain name they spell: a
     /// decorator written as a call (`@final(wrapper)`) or one whose first
