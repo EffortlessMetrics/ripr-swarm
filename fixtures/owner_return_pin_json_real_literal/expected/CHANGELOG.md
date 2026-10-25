@@ -145,3 +145,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_real_literal (13)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_real_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
