@@ -239,6 +239,8 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_reversed_expression_operands_then_boundary_is_credited",
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_empty_input_for_counted_local_then_zero_boundary_is_observed",
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_identical_initializer_text_with_rebinding_between_then_boundary_is_not_credited",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_pattern_position_rebinding_of_parameter_then_boundary_is_not_credited",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_identical_initializer_text_without_rebinding_then_boundary_is_credited",
   "crates/ripr/src/analysis/classify/infection.rs::tests::unresolved_boundary_input_is_unknown_not_weak",
   "crates/ripr/src/analysis/classify/infection.rs::tests::computed_comparison_operand_is_not_its_contained_literal",
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset",
@@ -1084,6 +1086,8 @@ tests = [
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry",
   "crates/ripr/tests/chaos_interrupted_runs.rs::doctor_says_when_the_cache_cannot_be_written",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advises_the_whole_target_dir_for_a_cargo_project",
+  "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_advises_the_whole_target_dir_for_a_cargo_project",
   "crates/ripr/src/cli/commands/doctor.rs::tests::probe_creatable_dir_reports_a_directory_that_denies_creation",
   "crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories",
   "crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories",
@@ -2024,6 +2028,7 @@ tests = [
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_owner_attribution_runs_under_the_run_token",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_budget_spent_in_owner_attribution_records_timeout",
+  "crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::registration_observes_an_expired_budget_per_file",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_ordinary_canonical_analysis_failure_records_failed",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",
   "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
@@ -11721,6 +11726,7 @@ spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
   "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::empty_closure_head_is_not_a_predicate",
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
   "crates/ripr/src/analysis/classify/activation.rs::tests::an_equality_fact_names_the_integer_a_local_evaluated_to",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line",
@@ -12147,6 +12153,7 @@ tests = [
   "crates/ripr/tests/broken_manifest_limitation.rs::unfollowed_workspace_redirect_is_limited_without_a_parse_claim",
   "crates/ripr/tests/broken_manifest_limitation.rs::instant_mode_adds_no_path_dependency_limitation",
   "crates/ripr/tests/broken_manifest_limitation.rs::inlining_the_inherited_dependency_clears_the_redirect_limitation",
+  "crates/ripr/tests/broken_manifest_limitation.rs::non_utf8_manifest_path_is_limited_with_a_utf8_path_next_step",
   "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots",
   "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection",
   "crates/ripr/src/analysis/workspace/select.rs::tests::empty_dependent_roots_reproduce_the_unchanged_selection",
@@ -12987,6 +12994,9 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::forwarding_wrapper_oracle_pairs_with_the_helper_boundary",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::wrapper_oracle_off_the_boundary_line_does_not_pair",
   "crates/ripr/tests/helper_wrapper_reach.rs::forwarding_wrapper_relates_and_pairs_its_boundary_pin",
+  "crates/ripr/tests/helper_wrapper_reach.rs::boolean_return_twin_is_pinned_by_a_forwarding_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed",
+  "crates/ripr/tests/helper_wrapper_reach.rs::boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_tests_that_miss_the_boundary_still_report_the_gap",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_drops_the_helper_result_keeps_pairing_missing",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_transforms_the_argument_transfers_no_boundary_value",
@@ -13019,6 +13029,7 @@ tests = [
 fixtures = [
   "fixtures/split_test_boundary_oracle",
   "fixtures/strong_boundary_oracle",
+  "fixtures/rust_wrapper_boolean_return_discarded",
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
@@ -13027,11 +13038,15 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classify/decision.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md",
+  "fixtures/rust_wrapper_boolean_return_discarded/expected/check.json",
+  "fixtures/rust_wrapper_boolean_return_discarded/expected/human.txt",
   "fixtures/split_test_boundary_oracle/expected/check.json",
   "fixtures/split_test_boundary_oracle/expected/human.txt"
 ]
@@ -19026,6 +19041,40 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0310-check-findings-artifact-verifies-by-gap-id.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0353"
+name = "A pure bool && or || owner is infected when its directly-called literal rows tell the changed chain from each one-step mutation"
+spec = "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::truth_table_rows_must_separate_every_one_step_mutant",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_separate_the_chain_from_every_one_step_mutant_credit_infection",
+  "crates/ripr/tests/bool_truth_table_infection.rs::an_or_chain_pinned_on_its_own_table_credits_infection",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_cannot_tell_the_connectives_apart_stay_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_single_row_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::another_caller_of_the_owner_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_fed_through_a_table_stay_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_body_with_a_leading_statement_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::exercised_rows_complete_the_returned_tail_and_read_exposed",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_loop_fed_argument_never_completes_the_returned_tail",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_macro_that_names_the_owner_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_do_not_run_or_cannot_fail_are_not_counted",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_in_separate_test_files_on_the_same_line_are_both_read",
+  "crates/ripr/tests/short_circuit_operand.rs::a_test_that_aliases_the_owner_still_evaluates_the_changed_operand",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/grid-bool-exact.json",
+]
+code = [
+  "crates/ripr/src/analysis/classify/infection.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md",
 ]
 metrics = [
   "unit_test_pass_rate",
