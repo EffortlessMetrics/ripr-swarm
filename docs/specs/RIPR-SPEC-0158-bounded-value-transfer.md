@@ -78,6 +78,41 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Literal byte-length boundary (#9637): diff analysis also reads one closed
+  owner shape, `fn f(text: &str, width: usize) -> bool { let end =
+  text.as_bytes().len(); end <= width }`, with immutable parameters and local,
+  no other statement, attributes or generic parameters, and established
+  primitive type names. Parameter and local names are read from the AST.
+  Every admitted direct call has two whole literals: a Rust string decoded
+  by the parser and a plain decimal `usize` input. At most 64 call rows and
+  512 source bytes per string literal are read. Other expressions, aliases,
+  explicit hidden references and unresolved owner or primitive bindings keep the ordinary
+  unknown reading. The existing owner-reference counter must account for
+  exactly the declaration and admitted literal call sites in the owner file
+  and every indexed file the native free-function reach scan marks as
+  explicitly naming the owner. Function references, aliases and owner-naming
+  macros in any indexed source cannot hide another explicit input. External
+  or macro-derived documentation refuses the witness globally, and primitive
+  shadow checks still cover every indexed file. The counter's closed source
+  grammar permits only `use super::*` imports in owner-referencing files, so
+  even a direct `std::primitive::usize` import there is unsupported. This
+  inherits the native free-function reach limits around generated identifiers
+  and calls; it does not establish universal macro-expansion completeness.
+  This is a diff-only refinement; the general evaluator,
+  repo-seam/test-grip path and persistent fact/classification generations are
+  unchanged.
+  Each typed row retains its test identity, owner identity and exact source
+  call range. An equality between that row's UTF-8 byte length and its width
+  establishes infection. Credit also requires the existing admitted
+  owner-return pin on that same source call; another row, same-line call,
+  assertion message or foreign owner cannot supply it. The owner AST
+  establishes the comparison as the returned value, supplied to the existing
+  propagation authority as an owner-bound return sink. Derived local values
+  are rendered as assignment facts; rendered `==` text grants no authority.
+  No new missing-input gap is inferred from distant or unsupported inputs.
+  The changed-binding causal relation remains visible. Its syntax-only
+  unresolved-value disclosure is omitted after the actual infection stage
+  establishes the operand from input evidence; unknown operands retain it.
 - Flag-selected locals (#9276): `if flag { A } else { B }` and
   `if !flag { A } else { B }` evaluate to the arm an exact boolean input
   selects, and the other arm is never read. A local's initializer may
@@ -170,6 +205,12 @@ exercised boundary from a missing one.
 
 ## Required Evidence
 
+- The complete retained `authored-tokens` subject's six Rust sources,
+  `tokens-fits-binding-predicate` row and public
+  `literal_length_boundary` integration target cover the byte-length leaf,
+  UTF-8/escape decoding, boundary distance, crossed rows, same-line and
+  assertion-message calls, unsupported expressions/bodies, foreign owners,
+  weak oracles and primitive-name shadowing.
 - The #3215 reproduction flip (`observed end values: unknown` →
   `infection yes: Detected related test input at the changed boundary`,
   `end == start` observed) and the removal experiment: without the

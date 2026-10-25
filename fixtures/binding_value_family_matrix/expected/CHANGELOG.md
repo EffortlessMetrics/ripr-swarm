@@ -385,3 +385,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_family_matrix (26)
+
+Reason:
+RIPR-SPEC-0158: a literal byte-length boundary row resolves the operand, so the stale binding_predicate_value_unresolved disclosure is omitted on infection-Yes findings (#9637)
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

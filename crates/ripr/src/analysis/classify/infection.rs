@@ -449,6 +449,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
         activation,
         unresolved_boundary,
         None,
+        None,
         true,
     )
 }
@@ -465,6 +466,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     activation: &ActivationEvidence,
     unresolved_boundary: Option<&str>,
     owner: Option<&FunctionSummary>,
+    literal_length_boundary: Option<&super::literal_length_boundary::LiteralLengthBoundary>,
     owner_has_other_callers: bool,
 ) -> StageEvidence {
     // A returned bare comparison with a resolved missing boundary
@@ -481,11 +483,18 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             activation,
             unresolved_boundary,
             owner,
+            literal_length_boundary,
             owner_has_other_callers,
         );
         if matches!(evidence.state, StageState::Weak) {
             return evidence;
         }
+    }
+    if let Some(evidence) = literal_length_boundary
+        .zip(owner)
+        .and_then(|(boundary, owner)| boundary.infection(probe, owner))
+    {
+        return evidence;
     }
     match probe.family {
         ProbeFamily::Predicate => {

@@ -9705,6 +9705,27 @@ fn type_declared_in_workspace(name: &str, index: &RustIndex) -> bool {
     })
 }
 
+/// A bounded intrinsic operand must name the primitive, including through
+/// enclosing imports and macro output. Reuse the pin's declaration/binding
+/// authorities; an unresolved shadow refuses the new evidence.
+pub(super) fn builtin_type_unshadowed(
+    name: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    [name.to_string(), format!("r#{name}")]
+        .iter()
+        .all(|spelling| {
+            !type_declared_in_workspace(spelling, index)
+                && !workspace_declares_trait(index, spelling)
+                && !syntax.macro_may_declare(spelling, index)
+                && index.files().values().all(|facts| {
+                    !facts.used_lexical_fallback
+                        && !declaring_file_rebinds(&facts.source, spelling, false, index)
+                })
+        })
+}
+
 /// The type the test binds `receiver` to: every `let` that binds the name
 /// is a simple `let [mut] receiver [: T] = ..;` whose type ripr can read,
 /// and all of them agree. Other uses of the binding (borrows, arguments,
