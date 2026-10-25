@@ -1242,6 +1242,7 @@ impl TypeScriptAdapter {
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
         dedup_typescript_probe_ids(&mut findings);
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,

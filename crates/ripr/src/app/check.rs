@@ -526,6 +526,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
     output_builder::check_output_from_analysis(
         input,
         AnalysisResult {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             analysis_outcome: None,
             summary: Summary::default(),
@@ -1417,6 +1418,7 @@ mod tests {
 
     fn minimal_result_with_effective_base(effective_base: Option<String>) -> AnalysisResult {
         AnalysisResult {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             analysis_outcome: None,
             summary: Summary::default(),

@@ -250,11 +250,11 @@ fn option_shaped_base_is_rejected_without_side_effects() -> Result<(), String> {
 fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
     let scratch = Scratch::new("meta")?;
     let marker = "PWNED";
-    // `|` cannot appear in a Windows file name (os error 123), so Windows
-    // carries the cmd/PowerShell metacharacters it does allow instead; the
-    // injection oracle is the same marker check on both hosts.
+    // Windows forbids `|` in a file name, so its root swaps it for the cmd.exe
+    // metacharacters `^`, `%` and `!` and uses `mkdir`, which cmd.exe and
+    // PowerShell both run if the name ever reaches a shell (#9272).
     let name = if cfg!(windows) {
-        "d$(touch PWNED)`touch PWNED`;touch PWNED&%COMSPEC%"
+        "d$(mkdir PWNED)`mkdir PWNED`;mkdir PWNED&mkdir PWNED^ %CD% !CD!"
     } else {
         "d$(touch PWNED)`touch PWNED`;touch PWNED&|"
     };
