@@ -21,21 +21,21 @@
         "mutated_line": "x * 3",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `2 * x` with `x * 3`, which changes the result, but `v > 0` / `inc(1) > 0` still holds"
+        "equivalence_review": "not equivalent: replaces `2 * x` with `x * 3`, which changes the result, but the only assertion, `v > 0` on `block_on(scale(2))`, still holds"
       },
       {
         "replacement": "x + 2",
         "mutated_line": "x + 2",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `2 * x` with `x + 2`, which changes the result, but `v > 0` / `inc(1) > 0` still holds"
+        "equivalence_review": "not equivalent: replaces `2 * x` with `x + 2`, which changes the result, but the only assertion, `v > 0` on `block_on(scale(2))`, still holds"
       },
       {
         "replacement": "x / 2",
         "mutated_line": "x / 2",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `2 * x` with `x / 2`, which changes the result, but `v > 0` / `inc(1) > 0` still holds"
+        "equivalence_review": "not equivalent: replaces `2 * x` with `x / 2`, which changes the result, but the only assertion, `v > 0` on `block_on(scale(2))`, still holds"
       }
     ]
   },
