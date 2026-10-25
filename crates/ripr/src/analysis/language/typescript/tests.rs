@@ -16533,6 +16533,90 @@ fn analyze_diff_withholds_extraction_partial_when_no_typescript_owner_changed() 
     Ok(())
 }
 
+/// #10436: a dropped registration in a test file that cannot reach the changed
+/// code does not make the analysis partial; one that can (directly, through a
+/// helper, or through a barrel) still does, and so does any file whose loading
+/// the import scan cannot follow.
+#[test]
+fn analyze_diff_scopes_extraction_partial_to_test_files_that_reach_the_diff() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("extract-reach")?;
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function tier(amount: number): string {\n  if (amount >= 150) {\n    return 'premium';\n  }\n  return 'standard';\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("src/other.ts"),
+        "export function other(): number {\n  return 1;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("src/index.ts"),
+        "export * from './pricing';\nexport * from './other';\n",
+    )?;
+    let dropped =
+        "if (process.env.CI) {\n  it(`adds ${1}`, () => {\n    expect(1).toBe(1);\n  });\n}\n";
+    // Reaches only `other.ts`.
+    ts_write_file(
+        &root.join("tests/unrelated.test.ts"),
+        &format!("import {{ other }} from '../src/other';\n{dropped}"),
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let diff = [changed_with_lines(
+        "src/pricing.ts",
+        &[(2, "  if (amount >= 150) {")],
+    )];
+    let partial_files = |root: &Path| -> Result<Option<_>, String> {
+        let result = adapter.analyze_diff(
+            &ts_analysis_options(root.to_path_buf()),
+            &OraclePolicy::default(),
+            &diff,
+        )?;
+        Ok(result
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+            })
+            .and_then(|limitation| limitation.affected_items))
+    };
+    let _ = &options;
+    assert_eq!(
+        partial_files(&root)?,
+        None,
+        "a gap file that cannot reach the changed file must not mark the analysis partial"
+    );
+    // Reaches the changed file through a barrel and a helper.
+    ts_write_file(
+        &root.join("tests/helper.ts"),
+        "export { tier } from '../src';\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/related.test.ts"),
+        &format!("import {{ tier }} from './helper';\n{dropped}"),
+    )?;
+    assert_eq!(
+        partial_files(&root)?,
+        Some(1),
+        "only the gap file that reaches the diff is disclosed"
+    );
+    // A computed import cannot be followed, so it keeps the disclosure.
+    ts_write_file(
+        &root.join("tests/related.test.ts"),
+        "import { x } from './other-helper';\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/computed.test.ts"),
+        &format!("const m = await import(process.env.MOD);\n{dropped}"),
+    )?;
+    assert_eq!(partial_files(&root)?, Some(1));
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// (c) Negative control: a normal, fully extracted test file (plain titles,
 /// describe nesting, array-form `.each`) must NOT emit the new limitation.
 #[test]
