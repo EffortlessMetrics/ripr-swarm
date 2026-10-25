@@ -1,0 +1,45 @@
+{
+  "kind": "result_map_callback_candidate_current_projection",
+  "producer_commit": "87959d4777943b011189c6c61f31cea82865e166",
+  "selection": "exact candidate_current return_value map-tail finding; base_deleted findings excluded",
+  "summary": {
+    "findings": 1
+  },
+  "findings": [
+    {
+      "classification": "weakly_exposed",
+      "source_currentness": "candidate_current",
+      "probe": {
+        "family": "return_value",
+        "expression": "self.try_get_uint(nbytes).map(|v| sign_extend(v, nbytes))"
+      },
+      "ripr": {
+        "reach": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Related tests appear to reach try_get_int: error_plus_unrelated_transform"
+        },
+        "infect": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Reachable tests can plausibly activate this changed behavior"
+        },
+        "propagate": {
+          "state": "yes",
+          "confidence": "high",
+          "summary": "Complete propagation witness reaches returned value: self.try_get_uint(nbytes).map(|v| sign_extend(v, nbytes))"
+        },
+        "observe": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "A related test observes a value or effect near the changed behavior"
+        },
+        "discriminate": {
+          "state": "weak",
+          "confidence": "medium",
+          "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        }
+      }
+    }
+  ]
+}

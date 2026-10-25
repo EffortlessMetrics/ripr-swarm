@@ -1,0 +1,43 @@
+{
+  "case_id": "trap-result-map-recomputed-payload",
+  "subject_id": "authored-result-map-callback",
+  "diff": "cases/trap-result-map-recomputed-payload.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "ok_payload_value",
+  "test_shape": "trait_default_slice_impl_exact_ok",
+  "hard_case": "The callback evaluates sign_extend but discards that value and returns an independently expected constant.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --offline",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.try_get_uint(nbytes).map(|v| { let _ = sign_extend(v, nbytes); sign_extend(0xffffff, 3) })",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent to original: callback always returns -1, including when the actual input is zero; existing all-ff test still passes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The behavior-changing edit itself survives the original exact-Ok test because it returns -1 independently of the computed payload. A matching expected constant must not stand in for callback-payload forwarding (#9870).",
+  "labeling_observation": {
+    "ripr_commit": "87959d4777943b011189c6c61f31cea82865e166",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,1 +15,1 @@
+-        Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))
++        self.try_get_uint(nbytes).map(|v| { let _ = sign_extend(v, nbytes); sign_extend(0xffffff, 3) })

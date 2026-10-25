@@ -1,0 +1,52 @@
+{
+  "case_id": "spec0197-ex01-map-combinator",
+  "subject_id": "authored-result-map-callback",
+  "diff": "cases/spec0197-ex01-map-combinator.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_payload_value",
+  "test_shape": "trait_default_slice_impl_exact_ok",
+  "hard_case": "Result.map must forward its callback result; an Ok assertion establishes callback execution in its own test only.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --offline",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.try_get_uint(nbytes).map(|v| sign_extend(0, nbytes))",
+        "mutated_line": "self.try_get_uint(nbytes).map(|v| sign_extend(0, nbytes))",
+        "outcome": "tests_failed",
+        "failing_test": "tests::three_ff_bytes_are_minus_one",
+        "equivalence_review": "not equivalent: zero payload returns Ok(0) instead of Ok(-1)"
+      },
+      {
+        "replacement": "self.try_get_uint(nbytes).map(|v| sign_extend(v, nbytes * 2))",
+        "mutated_line": "self.try_get_uint(nbytes).map(|v| sign_extend(v, nbytes * 2))",
+        "outcome": "tests_failed",
+        "failing_test": "tests::three_ff_bytes_are_minus_one",
+        "equivalence_review": "not equivalent: width 6 leaves 0xffffff positive instead of sign extending width 3 to -1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Bounded #9870 follow-up to RIPR-SPEC-0197: the retained std-only Buf subject from #9869 is preserved under a distinct subject identity; original canonical cases and observations are unchanged. Runtime cargo tests were freshly executed for this map shape and its explicit wrong payloads.",
+  "labeling_observation": {
+    "ripr_commit": "87959d4777943b011189c6c61f31cea82865e166",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
