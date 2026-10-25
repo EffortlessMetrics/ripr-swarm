@@ -1398,6 +1398,9 @@ fn extract_imports_from_statements_inner(
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
+    // `const lib = require('./y')` namespace bindings, so a member picked off
+    // `lib` later reads as that module's member (#10447).
+    let mut namespaces: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
         if let Statement::ImportDeclaration(import) = stmt {
@@ -1520,7 +1523,7 @@ fn extract_imports_from_statements_inner(
                 // the twin of `const { f } = require('./y')`, so it records the
                 // same named import. A call on the member or a computed key
                 // other than a string literal is not read.
-                if let Some((member_source, member)) = require_member_source(init)
+                if let Some((member_source, member)) = require_member_source(init, &namespaces)
                     && let Some(name) = binding_identifier_name(&declarator.id)
                 {
                     if written(name) {
@@ -1537,14 +1540,22 @@ fn extract_imports_from_statements_inner(
                     );
                     continue;
                 }
-                let source_str = require_string_literal_source(init);
-                let Some(source_str) = source_str else {
+                let direct_source = require_string_literal_source(init);
+                // `const { f } = lib` destructures a `const lib = require(...)`
+                // namespace like `require(...)` itself (#10447).
+                let Some(source_str) = direct_source
+                    .clone()
+                    .or_else(|| namespace_source(init, &namespaces))
+                else {
                     continue;
                 };
                 // Simple binding: `const x = require('./y')`
                 if let Some(name) = binding_identifier_name(&declarator.id) {
-                    if written(name) {
+                    if direct_source.is_none() || written(name) {
                         continue;
+                    }
+                    if !mutable {
+                        namespaces.insert(name.to_string(), source_str.clone());
                     }
                     push_unique_import(
                         &mut out,
@@ -1612,21 +1623,30 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
 /// literal spelling `require("<literal>")["member"]`), for `const f =
 /// require("./y").f` (#9188). `None` for any other initializer, so a call on
 /// the member, a computed key and a dynamic `require` argument stay unread.
-fn require_member_source(expr: &Expression<'_>) -> Option<(String, String)> {
-    let read = require_member_parts(expr)?;
+fn require_member_source(
+    expr: &Expression<'_>,
+    namespaces: &std::collections::HashMap<String, String>,
+) -> Option<(String, String)> {
+    let read = require_member_parts(expr, namespaces)?;
     // `.default` is an ES default only for a transpiled module; a native
     // CommonJS module has no such property, so it is not read as the import.
     (read.1 != "default").then_some(read)
 }
 
-fn require_member_parts(expr: &Expression<'_>) -> Option<(String, String)> {
+fn require_member_parts(
+    expr: &Expression<'_>,
+    namespaces: &std::collections::HashMap<String, String>,
+) -> Option<(String, String)> {
+    let module_of = |object: &Expression<'_>| {
+        require_string_literal_source(object).or_else(|| namespace_source(object, namespaces))
+    };
     match expr {
         Expression::StaticMemberExpression(member) if !member.optional => {
-            let source = require_string_literal_source(&member.object)?;
+            let source = module_of(&member.object)?;
             Some((source, member.property.name.as_str().to_string()))
         }
         Expression::ComputedMemberExpression(member) if !member.optional => {
-            let source = require_string_literal_source(&member.object)?;
+            let source = module_of(&member.object)?;
             let Expression::StringLiteral(key) = &member.expression else {
                 return None;
             };
@@ -1634,6 +1654,18 @@ fn require_member_parts(expr: &Expression<'_>) -> Option<(String, String)> {
         }
         _ => None,
     }
+}
+
+/// The module of a plain identifier naming a `const x = require("<literal>")`
+/// namespace binding.
+fn namespace_source(
+    expr: &Expression<'_>,
+    namespaces: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let Expression::Identifier(id) = expr else {
+        return None;
+    };
+    namespaces.get(id.name.as_str()).cloned()
 }
 
 /// Extract the key name from an object-pattern binding property.

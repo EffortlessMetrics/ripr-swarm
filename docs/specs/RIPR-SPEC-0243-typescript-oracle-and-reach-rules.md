@@ -1109,6 +1109,13 @@ imported name must be the owner's name, a shadow or a mock blocks it), and a
 member read off a function export (rule 19) is a property of the function, not
 the owner.
 
+A member picked off a `const` namespace binding is the same import (#10447):
+after `const lib = require("<module>")`, `const f = lib.f`, `const f = lib["f"]`
+and `const { f } = lib` record source `<module>`, imported `f`. The namespace
+must be a `const` declared earlier; a `let`/`var` namespace, an alias of the
+namespace (`const again = lib`), a call on the member, an optional chain and a
+deeper member record nothing.
+
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
 `function require() {}`, also a block-level function, which hoists in sloppy
