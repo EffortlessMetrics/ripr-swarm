@@ -38,7 +38,9 @@ case "$all" in
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*)
     # A `.later.json` fixture answers every look after the first (delayed run visibility).
-    if [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
+    if [ -f "$FAKE_DIR/runs.later.fail" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
+      echo "HTTP 502" >&2; exit 1
+    elif [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
       serve "$FAKE_DIR/runs.later.json" '{"workflow_runs":[]}'
     else
       touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}'
@@ -63,6 +65,7 @@ struct Pr {
     completed_run: bool,
     fresh: bool,
     late_run: Option<&'static str>,
+    late_fail: bool,
 }
 
 impl Pr {
@@ -82,6 +85,7 @@ impl Pr {
             completed_run: false,
             fresh: false,
             late_run: None,
+            late_fail: false,
         }
     }
     fn sha(&self) -> String {
@@ -188,6 +192,9 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 r#"{"workflow_runs":[{"status":"completed","display_title":"Merge-ready request abc"}]}"#,
             )
             .map_err(|e| e.to_string())?;
+        }
+        if pr.late_fail {
+            fs::write(dir.join("runs.later.fail"), "").map_err(|e| e.to_string())?;
         }
         if let Some(status) = pr.late_run {
             fs::write(
@@ -626,5 +633,25 @@ fn a_run_that_becomes_visible_before_the_notice_is_left_alone() -> Result<(), St
             outcome.summary
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_failed_lookup_before_the_notice_posts_nothing_and_is_reported() -> Result<(), String> {
+    // The second run lookup errors: an unknown run state must not read as "no run", or a
+    // request that just started would be told to restart.
+    let failing = Pr {
+        state: "clean",
+        late_fail: true,
+        ..Pr::dirty(31)
+    };
+    let outcome = run(&[failing], "late-fail")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    assert!(
+        outcome.summary.contains("re-apply notice failed")
+            && outcome.summary.contains("re-apply notices: 0"),
+        "{}",
+        outcome.summary
+    );
     Ok(())
 }

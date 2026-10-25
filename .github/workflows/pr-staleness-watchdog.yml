@@ -131,7 +131,9 @@ jobs:
             marker="<!-- merge-ready-conflict:$2:$3 -->"
             # Match the marker as a fixed string; it embeds a branch name, which must
             # never be spliced into a jq filter.
-            known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
+            # A failed lookup is not "no notice yet" or "no run": stop and let the next sweep retry.
+            bodies="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body')" || return 1
+            known="$(grep -cF -- "$marker" <<<"$bodies" || true)"
             if [ "$known" = "0" ]; then
               gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
           \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$3\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null || return 1
@@ -144,13 +146,16 @@ jobs:
           # head, with the remedy, instead of only warning in the job log.
           notify_dark() {
             marker="<!-- merge-ready-dark:$2 -->"
-            known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
+            # A failed lookup is not "no notice yet" or "no run": stop and let the next sweep retry.
+            bodies="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body')" || return 1
+            known="$(grep -cF -- "$marker" <<<"$bodies" || true)"
             [ "$known" = "0" ] || return 2
             # The run may have become visible since the sweep's first look: an active request
             # must be left alone (re-applying the label cancels it). A request that finished
             # without the required check (admission refused, cancelled) is a different cause
             # from a push after the label.
-            read -r active ran < <(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2&per_page=100" --jq '[.workflow_runs[] | select(.display_title | startswith("Merge-ready request "))] | "\([.[] | select(.status != "completed")] | length) \(length)"' | awk '{a+=$1; t+=$2} END{print a+0, t+0}')
+            counts="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2&per_page=100" --jq '[.workflow_runs[] | select(.display_title | startswith("Merge-ready request "))] | "\([.[] | select(.status != "completed")] | length) \(length)"')" || return 1
+            read -r active ran < <(awk '{a+=$1; t+=$2} END{print a+0, t+0}' <<<"$counts")
             [ "$active" = "0" ] || return 3
             if [ "$ran" = "0" ]; then
               cause="no qualification run exists for head \`${2:0:8}\`: it was pushed after the label was applied, or the label event was dropped"
