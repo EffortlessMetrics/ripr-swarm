@@ -3344,18 +3344,19 @@ fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), St
         ));
     };
 
-    // Independent of the coverage function: the ledger floor is the covered
-    // count `verdict-corpus check` protects, so a live board reading must
-    // report that numerator rather than `not_measured`.
-    let ledger = fs::read_to_string(root.join(dir).join("spec-coverage.toml"))
+    // Independent of the coverage function: the lock lists the covered
+    // examples `verdict-corpus check` protects, so a live board reading must
+    // report that count as its numerator rather than `not_measured`.
+    let lock = fs::read_to_string(root.join(dir).join("spec-examples.lock"))
         .map_err(|err| err.to_string())?;
-    let floor: usize = ledger
+    let floor = lock
         .lines()
-        .find_map(|line| line.trim().strip_prefix("floor = ")?.parse().ok())
-        .ok_or("spec-coverage.toml has no floor")?;
+        .filter(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
+        .count();
+    assert!(floor > 0, "spec-examples.lock lists no example");
     assert!(
         sample.detail.contains(&format!("{pointer}: {floor}/")),
-        "board must report the ledger floor as the covered count: {}",
+        "board must report the locked examples as the covered count: {}",
         sample.detail
     );
     assert!(
@@ -4507,5 +4508,75 @@ fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
         "unknown_verdicts not listed for review: {}",
         regressed["gate"]["review"]
     );
+    Ok(())
+}
+
+/// The no-Rust rows exist so the common docs-or-CI commit has its own warm
+/// check trend (#10329). They stay meaningful only while the pinned diff
+/// touches no Rust, so each is a distinct commit from its Rust-editing
+/// sibling and, for the merge commit, names the first parent as its base.
+#[test]
+fn corpus_pins_no_rust_commits() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let entry = |id: &str| {
+        config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))
+    };
+    let serde = entry("serde")?;
+    let serde_no_rust = entry("serde-no-rust")?;
+    let cargo = entry("cargo")?;
+    let cargo_no_rust = entry("cargo-no-rust")?;
+    for (rust_editing, no_rust) in [(serde, serde_no_rust), (cargo, cargo_no_rust)] {
+        if rust_editing.url != no_rust.url {
+            return Err(format!("{} must pin the same upstream", no_rust.id));
+        }
+        if rust_editing.sha == no_rust.sha {
+            return Err(format!(
+                "{} pins the Rust-editing commit, so it would not track a no-Rust diff",
+                no_rust.id
+            ));
+        }
+        if !no_rust.note.contains("no Rust") {
+            return Err(format!("{} note must say the diff has no Rust", no_rust.id));
+        }
+    }
+    // The config cannot prove offline that a commit touches no Rust, so the
+    // two commits checked against upstream (serde: only the CI workflow;
+    // cargo: only the book changelog, diffed against the first parent) are
+    // pinned here too. Moving either pin is then a deliberate two-place edit
+    // that re-asks that question, not a drift this test waves through.
+    for (id, sha) in [
+        ("serde-no-rust", "576e2ef9d8b985cb9399fa3a35913ef86503bad4"),
+        ("cargo-no-rust", "523e530d77cce92813eebbf6ac009a04f2df2ac2"),
+    ] {
+        if entry(id)?.sha != sha {
+            return Err(format!(
+                "{id} moved off the commit verified to change no Rust; re-verify the diff before updating this test"
+            ));
+        }
+    }
+    if cargo_no_rust.base_sha.as_deref() != Some("04d22dbe795476cf89d1dc2599cec98e4b227bc3") {
+        return Err("cargo-no-rust base_sha must stay the verified first parent".to_string());
+    }
+    // A merge commit diffed against HEAD~1 would compare with its second
+    // parent, which carries Rust changes; the base must be pinned.
+    let base = cargo_no_rust
+        .base_sha
+        .as_deref()
+        .ok_or("cargo-no-rust must pin the first parent as base_sha")?;
+    if base == cargo_no_rust.sha {
+        return Err("cargo-no-rust base_sha must differ from sha".to_string());
+    }
+    // The cargo row is heavy like the Rust-editing cargo row; the serde row
+    // stays in the light tier so the default run covers a no-Rust diff.
+    if serde_no_rust.heavy || !cargo_no_rust.heavy {
+        return Err("serde-no-rust is light and cargo-no-rust is heavy".to_string());
+    }
     Ok(())
 }

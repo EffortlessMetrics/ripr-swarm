@@ -62,7 +62,9 @@ heavy = true
 # One run each so far: a commit with no product Rust ran in well under a
 # second, cargo's Rust-editing pin in about 3 s, and a Rust-editing commit in
 # this repository in 49 to 87 s. The two rows below are a fast and a slow
-# Rust-editing case; no row tracks the no-Rust diff.
+# Rust-editing case; the `*-no-rust` entries after them pin commits that touch
+# no `.rs` file (a CI workflow, a changelog), so the common docs-or-CI edit has
+# its own row, trend and gate (#10329).
 [[corpus]]
 id = "cargo"
 url = "https://github.com/rust-lang/cargo"
@@ -76,6 +78,24 @@ id = "ripr-swarm-2026-10"
 url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
 note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
+heavy = true
+
+# No-Rust diffs. The pinned change touches no `.rs` file, so the warm check
+# should finish without analyzing the workspace. `cargo xtask dx-scoreboard`
+# reports each as its own repository row set; `corpus_pins_no_rust_commits`
+# keeps these two from drifting to a Rust-editing commit.
+[[corpus]]
+id = "serde-no-rust"
+url = "https://github.com/serde-rs/serde"
+sha = "576e2ef9d8b985cb9399fa3a35913ef86503bad4"
+note = "serde commit that changes only .github/workflows/ci.yml (no Rust)"
+
+[[corpus]]
+id = "cargo-no-rust"
+url = "https://github.com/rust-lang/cargo"
+sha = "523e530d77cce92813eebbf6ac009a04f2df2ac2"
+base_sha = "04d22dbe795476cf89d1dc2599cec98e4b227bc3"
+note = "cargo merge commit whose diff against its first parent changes only doc/book/src/CHANGELOG.md (no Rust); ~1400 .rs files stay untouched"
 heavy = true
 
 # ---------------------------------------------------------------- speed ----
@@ -355,7 +375,7 @@ unit = "ratio"
 direction = "higher_is_better"
 # Coverage, not correctness: the verdict rates above say whether ripr is
 # right on the covered cases. `verdict-corpus check` separately fails when
-# the covered count falls below the floor in spec-coverage.toml. Scoping in
+# a locked example loses its case (spec-examples.lock). Scoping in
 # a new spec lowers this displayed rate without lowering the count. The
 # committed `metrics/dx-scoreboard/baseline.json` snapshot does not yet
 # include this metric, so `--gate` reports it incomparable rather than as a
@@ -366,7 +386,7 @@ regression_pct = 0
 regression_floor = 0
 runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
-pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml"
+pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered examples against spec-examples.lock"
 
 # Python verdict corpus (RIPR-SPEC-0245). Every Python case is authored to
 # cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0238),

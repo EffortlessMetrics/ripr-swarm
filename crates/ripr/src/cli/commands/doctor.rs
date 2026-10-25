@@ -2765,11 +2765,47 @@ fn ripr_artifact_ignore(
     if present.is_empty() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let Some(uncovered) = uncovered_artifact_roots(root, &present) else {
+    // A Cargo project's repair preflight needs the whole build directory
+    // `target/` ignored (a child-only `/target/ripr/` rule is insufficient),
+    // so coverage of the default root is judged by `target/` itself and the
+    // advice names `/target/` (#9006).
+    let cargo_project = root.join("Cargo.toml").is_file();
+    let probe_roots = if cargo_project {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for relative in &present {
+            let probe = if analysis::artifact_root_pathspec(relative) == "target/ripr" {
+                PathBuf::from("target")
+            } else {
+                relative.clone()
+            };
+            if !roots.contains(&probe) {
+                roots.push(probe);
+            }
+        }
+        roots
+    } else {
+        present
+    };
+    let Some(uncovered) = uncovered_artifact_roots(root, &probe_roots) else {
         return DoctorArtifactIgnore::NotChecked;
     };
     if uncovered.is_empty() {
         return DoctorArtifactIgnore::Ignored;
+    }
+    // Only the repair prerequisite is unmet when a child-only rule already
+    // ignores ripr's own reports: do not claim `git add -A` would commit them.
+    if cargo_project
+        && uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])
+            .is_some_and(|child| child.is_empty())
+    {
+        return DoctorArtifactIgnore::Unignored {
+            warning: format!(
+                "~ ripr's own reports under target/ripr are ignored, but Rust repair \
+                 requires Cargo's whole build directory `target/` to be Git-ignored. \
+                 Add this line to .gitignore: {}",
+                artifact_gitignore_entries(&uncovered),
+            ),
+        };
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
@@ -5027,6 +5063,72 @@ mod tests {
             ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::Ignored
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_ignore_advises_the_whole_target_dir_for_a_cargo_project() -> Result<(), String>
+    {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-cargo-target");
+        std::fs::create_dir_all(root.join("target/ripr/pilot"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // The repair preflight needs `target/` itself ignored, so the advice
+        // for a Cargo project is `/target/`, not the child-only `/target/ripr/`.
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, "/target/", "{warning}");
+        // A child-only `/target/ripr/` rule (the old advice) does not satisfy
+        // the preflight, so doctor still flags it and names `/target/`.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored for a child-only rule".to_string());
+        };
+        assert!(warning.ends_with("/target/"), "{warning}");
+        assert!(!warning.contains("would commit"), "{warning}");
+        assert!(warning.contains("Rust repair requires"), "{warning}");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let build_output = crate::git::run_git_output_with_deadline(
+            &root,
+            &["check-ignore", "--no-index", "-q", "--", "target"],
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(build_output.status.code(), Some(0), "{build_output:?}");
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
