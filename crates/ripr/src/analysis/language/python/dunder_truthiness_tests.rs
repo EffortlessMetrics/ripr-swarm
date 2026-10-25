@@ -52,11 +52,10 @@ fn classify_with_committed_writer(
             .map_err(|error| error.to_string())?;
         std::fs::write(absolute, text).map_err(|error| error.to_string())?;
     }
+    if let Some(path) = committed_writer.filter(|path| path.ends_with("__init__.py")) {
+        std::fs::write(workspace.0.join(path), "").map_err(|error| error.to_string())?;
+    }
     let overlay = committed_writer.map(|path| {
-        if path.ends_with("__init__.py") {
-            std::fs::write(workspace.0.join(path), "")
-                .expect("empty initializer in test workspace");
-        }
         std::sync::Arc::new(
             crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
                 &workspace.0,
