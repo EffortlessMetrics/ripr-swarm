@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod equality_dispatch;
+mod operator_dispatch;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
@@ -367,6 +368,11 @@ impl RelatedTestCandidateIndex {
         }
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
+        }
+        // Operator syntax has no token worth indexing; same-file tests of an
+        // operator-trait impl are scanned in full.
+        if owner_fn.is_some_and(operator_dispatch::has_operator_shape) {
+            scan_all = true;
         }
 
         if owner_fn.is_none() {
@@ -860,6 +866,8 @@ fn find_related_tests_with_candidates<'a>(
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
+    // #9567: a user operator-trait method that operator syntax runs unnamed.
+    let operator_owner = owner_fn.and_then(|owner| operator_dispatch::operator_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -1073,17 +1081,31 @@ fn find_related_tests_with_candidates<'a>(
         // guards below, so only an in-package, same-file test can use it.
         // Evaluated independently of `calls_owner`: a name-only `Other::eq`
         // call elsewhere in the test must not hide a real macro dispatch.
+        let test_source = || {
+            index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref())
+        };
+        // Operator syntax (#9567) is the same kind of unnamed owner call as
+        // an equality macro (#8999), so it shares the signal.
         let equality_asserts_owner = !property_only_owner_call
-            && match (owner_fn, equality_owner.as_ref()) {
-                (Some(owner), Some(equality)) => {
+            && match (owner_fn, equality_owner.as_ref(), operator_owner.as_ref()) {
+                (Some(owner), Some(equality), _) => {
                     equality_dispatch::test_asserts_equality_through_owner(
                         test,
                         owner,
                         equality,
-                        index
-                            .files()
-                            .get(&test.file)
-                            .map(|facts| facts.data().source.as_ref()),
+                        test_source(),
+                        index,
+                    )
+                }
+                (Some(owner), None, Some(operator)) => {
+                    operator_dispatch::test_applies_operator_to_owner(
+                        test,
+                        owner,
+                        operator,
+                        test_source(),
                         index,
                     )
                 }
@@ -2118,6 +2140,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                             && super::call_identity::unit_test_relative_import_names_entry(
                                 index,
                                 &test.file,
+                                &test.name,
+                                test.start_line,
                                 &import.path,
                                 caller,
                             )))
@@ -5946,6 +5970,76 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
         assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    // #9567: operator syntax names no call, so the candidate index scans every
+    // test for an operator-trait owner; it must find what the full scan finds.
+    #[test]
+    fn indexed_and_full_scan_match_for_an_operator_impl_owner() -> Result<(), String> {
+        let source = "pub struct Money(pub i64);\n\nimpl std::ops::Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Money(self.0 + other.0)\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn adds_through_the_operator() {\n        assert_eq!(Money(1) + Money(2), Money(3));\n    }\n\n    #[test]\n    fn adds_integers() {\n        assert_eq!(1 + 2, 3);\n    }\n}\n";
+        let file_facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("src/lib.rs"),
+            source,
+        )
+        .map_err(|error| error.to_string())?;
+        let owner = file_facts
+            .functions
+            .iter()
+            .find(|function| function.name == "add")
+            .cloned()
+            .ok_or("premise: the parser found the add impl method")?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: file_facts.functions.clone(),
+            tests: file_facts.tests.clone(),
+            files: std::iter::once((PathBuf::from("src/lib.rs"), file_facts)).collect(),
+            ..Default::default()
+        });
+        assert_eq!(index.tests().len(), 2, "the parser summarized both tests");
+        let probe = probe("src/lib.rs", "Money(self.0 + other.0)");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+
+        let indexed = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        let full_scan = find_related_tests_with_candidates(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            RelatedTestCandidates::FullScan,
+        );
+
+        let names = |found: &[(&TestSummary, RelationReason)]| -> Vec<(String, RelationReason)> {
+            found
+                .iter()
+                .map(|(test, reason)| (test.name.clone(), *reason))
+                .collect()
+        };
+        let direct = (
+            "adds_through_the_operator".to_string(),
+            RelationReason::DirectOwnerCall,
+        );
+        assert!(
+            names(&full_scan).contains(&direct),
+            "{:?}",
+            names(&full_scan)
+        );
+        assert!(
+            !names(&full_scan)
+                .contains(&("adds_integers".to_string(), RelationReason::DirectOwnerCall)),
+            "{:?}",
+            names(&full_scan)
+        );
+        assert_eq!(names(&indexed), names(&full_scan));
+        Ok(())
     }
 
     // #6780 Devin review: parser-backed facts from a real test file. A

@@ -1374,6 +1374,30 @@ fn extract_imports_from_statements_inner(
     include_reexports: bool,
 ) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
+    // A file that binds its own `require` (`const require = ...`,
+    // `function require()`) is not calling Node's loader, so a `require()`
+    // call there says nothing about which module a local comes from (#10401).
+    // The ambient-`require` contract of `createRequire(import.meta.url)` keeps
+    // its reading.
+    let mut top_level_names = Vec::new();
+    // A block-level `function require()` hoists in sloppy CommonJS, so count it
+    // as a file-level binding (the conservative reading).
+    super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, false);
+    // ES imports hoist, so the loader predicate sees all of them whatever their
+    // position relative to `const require = createRequire(...)`.
+    let require_is_ambient = !top_level_names.iter().any(|name| name == "require") || {
+        let es_imports: Vec<TypeScriptImport> = statements
+            .iter()
+            .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+            .flat_map(|statement| {
+                extract_imports_from_statements_inner(std::slice::from_ref(statement), false)
+            })
+            .collect();
+        super::admission::program_require_is_known(statements, &es_imports, false)
+    };
+    // Names the file assigns to anywhere (computed on the first mutable
+    // `require()` binding).
+    let mut written_names: Option<std::collections::HashSet<String>> = None;
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
         if let Statement::ImportDeclaration(import) = stmt {
@@ -1478,12 +1502,50 @@ fn extract_imports_from_statements_inner(
                 let Some(init) = &declarator.init else {
                     continue;
                 };
+                if !require_is_ambient {
+                    continue;
+                }
+                // A `let`/`var` binding the file assigns to again may no longer
+                // hold the module's export, so it is not an import (#10401). A
+                // `const` cannot be reassigned.
+                let mutable = var_decl.kind != oxc_ast::ast::VariableDeclarationKind::Const;
+                let mut written = |name: &str| {
+                    mutable
+                        && written_names
+                            .get_or_insert_with(|| identifier_writes(statements))
+                            .contains(name)
+                };
+                // One member of a literal require: `const f = require('./y').f`
+                // picks the named export `f` out of the module (#9188). It is
+                // the twin of `const { f } = require('./y')`, so it records the
+                // same named import. A call on the member or a computed key
+                // other than a string literal is not read.
+                if let Some((member_source, member)) = require_member_source(init)
+                    && let Some(name) = binding_identifier_name(&declarator.id)
+                {
+                    if written(name) {
+                        continue;
+                    }
+                    push_unique_import(
+                        &mut out,
+                        TypeScriptImport {
+                            source: member_source,
+                            imported: Some(member),
+                            local: name.to_string(),
+                            namespace: false,
+                        },
+                    );
+                    continue;
+                }
                 let source_str = require_string_literal_source(init);
                 let Some(source_str) = source_str else {
                     continue;
                 };
                 // Simple binding: `const x = require('./y')`
                 if let Some(name) = binding_identifier_name(&declarator.id) {
+                    if written(name) {
+                        continue;
+                    }
                     push_unique_import(
                         &mut out,
                         TypeScriptImport {
@@ -1504,6 +1566,9 @@ fn extract_imports_from_statements_inner(
                         let local_name = binding_identifier_name(&prop.value)
                             .unwrap_or(key_name)
                             .to_string();
+                        if written(&local_name) {
+                            continue;
+                        }
                         push_unique_import(
                             &mut out,
                             TypeScriptImport {
@@ -1541,6 +1606,34 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
         return None;
     };
     Some(literal.value.to_string())
+}
+
+/// The source and member of `require("<literal>").member` (or the string
+/// literal spelling `require("<literal>")["member"]`), for `const f =
+/// require("./y").f` (#9188). `None` for any other initializer, so a call on
+/// the member, a computed key and a dynamic `require` argument stay unread.
+fn require_member_source(expr: &Expression<'_>) -> Option<(String, String)> {
+    let read = require_member_parts(expr)?;
+    // `.default` is an ES default only for a transpiled module; a native
+    // CommonJS module has no such property, so it is not read as the import.
+    (read.1 != "default").then_some(read)
+}
+
+fn require_member_parts(expr: &Expression<'_>) -> Option<(String, String)> {
+    match expr {
+        Expression::StaticMemberExpression(member) if !member.optional => {
+            let source = require_string_literal_source(&member.object)?;
+            Some((source, member.property.name.as_str().to_string()))
+        }
+        Expression::ComputedMemberExpression(member) if !member.optional => {
+            let source = require_string_literal_source(&member.object)?;
+            let Expression::StringLiteral(key) = &member.expression else {
+                return None;
+            };
+            Some((source, key.value.to_string()))
+        }
+        _ => None,
+    }
 }
 
 /// Extract the key name from an object-pattern binding property.
@@ -1991,4 +2084,59 @@ fn collect_ambient_ranges(
             ));
         }
     }
+}
+
+/// Every identifier the statements assign to: plain and destructuring
+/// assignment targets, `++`/`--`, `for (x of ...)` heads, and an identifier
+/// under a TypeScript wrapper (`(x as T) = v`). Member writes (`x.p = v`) do
+/// not rebind `x` and are not counted.
+fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+    #[derive(Default)]
+    struct Writes {
+        names: std::collections::HashSet<String>,
+        wrapped: bool,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Writes {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            use oxc_ast::ast::SimpleAssignmentTarget as Target;
+            match target {
+                Target::AssignmentTargetIdentifier(id) => {
+                    self.names.insert(id.name.to_string());
+                }
+                Target::TSAsExpression(_)
+                | Target::TSSatisfiesExpression(_)
+                | Target::TSNonNullExpression(_)
+                | Target::TSTypeAssertion(_) => {
+                    let outer = std::mem::replace(&mut self.wrapped, true);
+                    oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+                    self.wrapped = outer;
+                    return;
+                }
+                _ => {}
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.names.insert(property.binding.name.to_string());
+            oxc_ast_visit::walk::walk_assignment_target_property_identifier(self, property);
+        }
+
+        fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
+            if self.wrapped {
+                self.names.insert(id.name.to_string());
+            }
+        }
+    }
+    let mut writes = Writes::default();
+    for statement in statements {
+        oxc_ast_visit::walk::walk_statement(&mut writes, statement);
+    }
+    writes.names
 }

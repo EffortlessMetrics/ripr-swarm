@@ -165,7 +165,7 @@ use super::{
     mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
     next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
-    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
+    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
@@ -12316,6 +12316,78 @@ fn sorted_allowlist_content_preserves_header_and_sorts_entries() {
         sorted,
         "# Header\n# More\n\na|kind|owner|reason\nz|kind|owner|reason\n"
     );
+}
+
+#[test]
+fn count_policy_fragments_merge_rows_and_reject_a_row_declared_in_both_files() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments", |root| {
+        let list = "policy/process_allowlist.txt";
+        write(
+            &root.join(list),
+            "# header\na.rs|ExampleMarker|1|owner|main row\n",
+        );
+        // Without a fragment directory the main list is the whole allowlist.
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(rows.len(), 1);
+
+        write(
+            &root.join("policy/process_allowlist.d/b.txt"),
+            "b.rs|ExampleMarker|2|owner|fragment row\n",
+        );
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(
+            rows.get(&("b.rs".to_string(), "ExampleMarker".to_string())),
+            Some(&2)
+        );
+        assert_eq!(rows.len(), 2);
+
+        write(
+            &root.join("policy/process_allowlist.d/dup.txt"),
+            "a.rs|ExampleMarker|9|owner|silently wider bound\n",
+        );
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("policy/process_allowlist.d/dup.txt")
+                && error.contains("already declared in policy/process_allowlist.txt"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn count_policy_fragments_fail_closed_on_a_non_txt_entry_and_a_malformed_row() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments-closed", |root| {
+        let list = "policy/network_allowlist.txt";
+        write(&root.join(list), "# header\n");
+        let dir = root.join("policy/network_allowlist.d");
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("is not a .txt allowlist fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("bad.txt"), "only|three|fields\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains(
+                "policy/network_allowlist.d/bad.txt:1 expected path|pattern|max_count|owner|reason"
+            ),
+            "{error}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -25529,6 +25601,115 @@ owner = "repo-infra"
             violations
                 .iter()
                 .any(|violation| violation.contains("duplicate artifact id `RIPR-PROP-0001`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+const DOC_ARTIFACT_FRAGMENT_DIR: &str = "policy/doc-artifacts.d";
+
+fn doc_artifact_main_ledger() -> &'static str {
+    r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#
+}
+
+fn doc_artifact_fragment(id: &str) -> String {
+    format!(
+        "[[artifact]]\nid = \"{id}\"\nkind = \"proposal\"\npath = \"docs/proposals/{id}-beta.md\"\nstatus = \"proposed\"\nowner = \"repo-infra\"\n"
+    )
+}
+
+#[test]
+fn doc_artifact_fragments_register_entries_and_report_their_own_file_and_line() -> Result<(), String>
+{
+    with_temp_cwd("doc-artifacts-fragments", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0002-beta.md",
+            "RIPR-PROP-0002",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0002.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0002"),
+        );
+        let ledger = parse_doc_artifact_ledger(&root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(ledger.artifacts.len(), 2);
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+
+        // A fragment entry that points at a missing file names the fragment, not the main ledger.
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0003.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0003"),
+        );
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("policy/doc-artifacts.d/0003.toml:1 artifact `RIPR-PROP-0003` points at missing file")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifact_fragments_fail_closed_and_catch_cross_file_duplicates() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-fragments-closed", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        let ledger = root.join(DOC_ARTIFACT_LEDGER);
+        let dir = root.join(DOC_ARTIFACT_FRAGMENT_DIR);
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(
+            error.contains("is not a .toml artifact fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("empty.toml"), "# nothing\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("has no [[artifact]] entries"), "{error}");
+
+        write(
+            &dir.join("empty.toml"),
+            &format!(
+                "schema_version = \"1.0\"\n{}",
+                doc_artifact_fragment("RIPR-PROP-0002")
+            ),
+        );
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("must not set schema_version"), "{error}");
+        fs::remove_file(dir.join("empty.toml")).map_err(|e| e.to_string())?;
+
+        write(
+            &dir.join("dup.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0001"),
+        );
+        let violations = doc_artifact_violations(root, &ledger)?;
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "policy/doc-artifacts.d/dup.toml:1 duplicate artifact id `RIPR-PROP-0001`; first defined at policy/doc-artifacts.toml:"
+            )),
             "{violations:#?}"
         );
         Ok(())

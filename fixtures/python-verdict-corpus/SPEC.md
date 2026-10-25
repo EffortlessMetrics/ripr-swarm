@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Twenty small authored Python projects under `subjects/`, our own code under
+Small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -76,6 +76,29 @@ this repository's license, one per test library or library feature:
   fixture. Each test only asserts the response is not `None`, so every mutant
   survives and the cases score how the client's application is read, not the
   oracle (run under Python 3.13.16 and pytest 9.1.1).
+- `authored-py-pytest-literals`, `authored-py-pytest-imports`,
+  `authored-py-unittest-almost`, `authored-py-unittest-raises` and
+  `authored-py-pytest-conjuncts`: one RIPR-SPEC-0238 rule family each (literal
+  comparisons; rival imports and `mocker.patch`; `assertAlmostEqual`; callable
+  and bound exception assertions; `and`/`or`/`not` chains). Cases are
+  one-line edits or rewrites labeled by real pytest runs (Python 3.13.16,
+  pytest 9.1.1, pytest-mock 3.17.0).
+- `authored-py-pytest-offsets`: RIPR-SPEC-0238 rule 16's constant offset
+  operand (`LIMIT - 1`, `LIMIT + 1`, `threshold - 1` from a parametrize row).
+  Where a test calls the owner at the offset boundary value and pins the
+  result, the case is credited; where its inputs miss that value, it is a
+  gap.
+- `authored-py-pytest-channels`: RIPR-SPEC-0238 rule 17's written-channel
+  forms: `capsys`/`capfd` output, `write_text` on an owner parameter, and a
+  mock parameter's call. Each owner is one channel write; the cases vary
+  whether the test's read matches that channel (a read before the owner,
+  stderr read as stdout, the other parameter's file, and weak or partial mock
+  assertions are gaps; exact reads after the owner are credited).
+- `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
+  abstentions (positional band within and outside the band, spread band,
+  non-literal band, longer owner body, method owner, decorated owner). Every
+  case reads `static_unknown`; the outside-band edit is the one case whose
+  test catches the change.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's

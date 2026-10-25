@@ -96,7 +96,7 @@ configuration, not workload or fleet qualification.
 
 The Rust adapter executes the selected actual blocks from `rust-gates.yml`:
 formatting, policy, dependency preparation, evidence honesty, dependency/process/
-network policy, workspace/all-target and all-feature compilation, strict Clippy,
+network policy, all-feature compilation, strict Clippy (the workspace/all-target check was dropped in #10341; Clippy builds the same units),
 nextest, doctests, goldens, fixtures, verdict corpora and integration-diff evidence.
 The ten PR-evidence commands retain their producer/check distinction. It keeps
 step command, exit and elapsed-time rows in native logs and stops on the first
@@ -204,7 +204,7 @@ later members are expected to be absent and cannot turn the native failure green
 Central packaging must reject links/escapes/stale files and bind member digests,
 command receipt, current run/attempt, actual native producer and defining pin.
 Before a consumer result importer treats this as complete, it must authenticate
-the native successful producer, all 17 rows and mandatory membership without
+the native successful producer, all 16 rows and mandatory membership without
 rebuilding the portfolio or converting transport success into domain evidence.
 This RIPR-specific contract is distinct from both Perl's ten-file canonical packet
 and `em-ci#229`'s unsafe-review nonfatal diagnostic packet. Central implementation and generated publication are now merged. Native
@@ -245,7 +245,7 @@ must succeed; its selected proof envelope alone is insufficient.
 
 The source compatibility preflight reads genuine immutable Git objects through
 the exact decoded public transport: the existing contract resolves 19 core
-members and all 17 command blocks, and its adapter/contract/source checks pass.
+members and all 16 command blocks, and its adapter/contract/source checks pass.
 This is source compatibility, not a real product packet or runtime qualification.
 The former retained-preflight receipt publication was cancelled by the user; it
 remains excluded. Current source and sanitized new proof use only this authorized
@@ -269,7 +269,7 @@ replacement coverage and rollback generation are accepted together.
 | Current source owner | Replacement / release condition |
 | --- | --- |
 | `routed-rust.yml` hosted inventory, cx43/cpx42/cx53 selection and hosted scratch-tempfail recovery | #4986 supplies explicit reviewed H admission; #4836 binds coherent H/Bq/Iq/Tq and native selected results. The reviewed central standard caller queues on qualified capability with no ordinary hosted chooser/fallback. No Ready/push/synchronize qualification. Remove inventory/token references only after rederiving genuine consumers; do not remove a credential live. |
-| `rust-gates.yml` shared command and native artifact owners | Preserve these 17 commands, policy-preflight/ci-policy composition, separate strict Clippy, fresh nonempty JUnit, doctests and real corpus/PR outcomes. Transfer actual retention through the distinct product contract above. Keep the command owner; provider migration does not fork or copy the product portfolio. |
+| `rust-gates.yml` shared command and native artifact owners | Preserve these 16 commands, policy-preflight/ci-policy composition, separate strict Clippy, fresh nonempty JUnit, doctests and real corpus/PR outcomes. Transfer actual retention through the distinct product contract above. Keep the command owner; provider migration does not fork or copy the product portfolio. |
 | `Ripr Rust Small Result`, docs/no-heavy result and `pr-staleness-watchdog.yml` | #4836 binds selected required children/attempt/source and truthful no-heavy finalization; #4986 supplies review/request revocation. Update actual workflow/event/head lookups and policy fixtures together. Missing/cancelled/stale evidence cannot become pass. Independent control capacity remains a #7164 proof obligation. |
 | `.github/actions/ci-scratch-lease`, inline legacy scratch and `scratch-gc.yml` | Remain exclusively legacy `/mnt/ci-scratch` lease owners and `/mnt/ci-cache/sccache` users. GC retains `em-ci-small` and its old label matrix; **never relabel it onto Contabo**. After no new legacy allocations, inventory exact in-flight jobs/leases and let the existing owner settle them. Only after verified ownership/coverage transfer may a reviewed source change remove the obsolete schedule/action/policy entries. No age-based or foreign-tree deletion. |
 | `ci-lane-whitelist`, repo-policy routing/Ready/fallback checks, scratch behavior tests, command-count and watchdog fixtures, `docs/CI.md` | Reconcile with the same admitted generation and tested rollback. A literal label replacement cannot transfer admission, result, artifacts, cache-writer continuity or cleanup coverage. #7827 owns main-cache writer/reader continuity; #4838 owns controlled activation/readback. |

@@ -1,0 +1,12 @@
+diff --git a/offsets/core.py b/offsets/core.py
+--- a/offsets/core.py
++++ b/offsets/core.py
+@@ -20,7 +20,7 @@
+ 
+ 
+ def tier_d(n, threshold):
+-    if n > threshold - 1:
++    if n >= threshold - 1:
+         return "high"
+     return "low"
+ 

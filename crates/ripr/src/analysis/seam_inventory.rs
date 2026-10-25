@@ -9407,6 +9407,21 @@ marker = "libtest_mimic::Trial"
         let (report, failures) = run_collect_with_family_failures(&fresh)?;
         assert!(!report.classified.is_empty(), "analysis must still run");
         let rows = file_fact_store_failure_rows(&failures);
+        // The fingerprint store exists only where a stat signature has a
+        // content-change witness (unix ctime, #3848). Elsewhere
+        // `corpus_fingerprint` is `None`, the store is never reached, and the
+        // honest result is no row at all, not a fabricated one (#10344).
+        let fingerprinted =
+            crate::analysis::seam_cache::corpus_fingerprint(&fresh, &[PathBuf::from("src/foo.rs")])
+                .is_some();
+        assert_eq!(fingerprinted, cfg!(unix), "platform rule changed");
+        if !fingerprinted {
+            assert!(rows.is_empty(), "{rows:?}");
+            assert_eq!(failures.store_errors, 0);
+            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&fresh);
+            return Ok(());
+        }
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0]["path"], "repo-corpus-fingerprint");
         assert_eq!(rows[0]["stage"], "corpus_fingerprint_store");
