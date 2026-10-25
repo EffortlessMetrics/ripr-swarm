@@ -49,12 +49,17 @@ use super::related_tests::{
     owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use std::collections::BTreeMap;
 
 /// One strong related call to the owner with the literal value each bound
 /// parameter takes (an explicit argument or a literal default).
 pub(super) struct PythonOwnerCallValues {
+    /// Test file the call was read from (#8389).
+    pub(super) file: std::path::PathBuf,
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) values: BTreeMap<String, String>,
@@ -79,6 +84,7 @@ pub(super) fn strong_owner_call_values(
     let rows = rows
         .into_iter()
         .map(|row| PythonOwnerCallValues {
+            file: row.file,
             line: row.line,
             text: row.text,
             values: row
@@ -224,7 +230,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -307,7 +313,7 @@ pub(super) fn python_boundary_evidence(
         }) {
             observed_new = true;
             observed_values.push(ValueFact {
-                file: None,
+                file: Some(row.file.clone()),
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
@@ -330,7 +336,7 @@ pub(super) fn python_boundary_evidence(
             {
                 observed_old = true;
                 observed_values.push(ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: format!(
                         "{} | {}; {}",
@@ -345,13 +351,9 @@ pub(super) fn python_boundary_evidence(
         }
     }
     let observed = observed_new || observed_old;
-    observed_values.sort_by(|a, b| {
-        a.line
-            .cmp(&b.line)
-            .then(a.value.cmp(&b.value))
-            .then(a.text.cmp(&b.text))
-    });
-    observed_values.dedup();
+    // Preserve distinct source files while collapsing exact duplicate facts
+    // and ordering tied rows deterministically (#8389).
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     // An operand that no strong call resolves (`item.on_hand`, a test local)
     // leaves the boundary unknown rather than missed: the test input may sit
@@ -1176,6 +1178,8 @@ pub(super) struct Binding {
 /// One analyzable call to the owner from a strong related test.
 #[derive(Clone, Debug)]
 pub(super) struct CallRow {
+    /// Test file the call was read from (#8389).
+    pub(super) file: std::path::PathBuf,
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) bindings: BTreeMap<String, Binding>,
@@ -1304,6 +1308,7 @@ fn candidate_call_rows(
                     (Some(parametrize), false) => {
                         rows.extend(parametrize.cases.iter().map(|case| {
                             parametrize_case_row(
+                                &candidate.test.file,
                                 line,
                                 &text,
                                 &bindings,
@@ -1314,6 +1319,7 @@ fn candidate_call_rows(
                         }));
                     }
                     _ => rows.push(CallRow {
+                        file: candidate.test.file.clone(),
                         line,
                         text,
                         bindings,
@@ -1544,6 +1550,7 @@ fn literal_elements(text: &str) -> Option<Vec<String>> {
 /// One call row per parametrize case: each paired owner parameter binds the
 /// case's argvalue when it is a literal and stays unresolved otherwise.
 fn parametrize_case_row(
+    file: &std::path::Path,
     line: usize,
     text: &str,
     bindings: &BTreeMap<String, Binding>,
@@ -1573,6 +1580,7 @@ fn parametrize_case_row(
         }
     }
     CallRow {
+        file: file.to_path_buf(),
         line,
         text: format!("{text} [parametrize {}]", shown.join(", ")),
         bindings,

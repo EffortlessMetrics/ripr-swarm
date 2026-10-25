@@ -11,9 +11,12 @@ use crate::analysis::syntax::{
     constant_table_call_column, direct_literal_call_column, owner_reference_count,
     parse_clean_source_file,
 };
-use crate::domain::{
-    FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
-    ValueContext, ValueFact,
+use crate::{
+    domain::{
+        FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
+        ValueContext,
+    },
+    value_origins::LocatedValueFact as ValueFact,
 };
 use ra_ap_syntax::{
     AstNode,
@@ -25,7 +28,7 @@ struct BoundaryValues {
     boundary: String,
     target: usize,
     lengths: Vec<usize>,
-    witness: Option<(usize, String)>,
+    witness: Option<(std::path::PathBuf, usize, String)>,
 }
 
 pub(in crate::analysis) fn refine_slice_boundary(
@@ -42,9 +45,9 @@ pub(in crate::analysis) fn refine_slice_boundary(
         Ok(values) => {
             gathered.unresolved_boundary = None;
             let equality = format!("{} == {}", values.operand, values.boundary);
-            if let Some((line, source)) = values.witness {
+            if let Some((file, line, source)) = values.witness {
                 gathered.activation.observed_values.push(ValueFact {
-                    file: None,
+                    file: Some(file),
                     line,
                     text: format!(
                         "{source} | {} = {} via immutable literal slice table cardinality",
@@ -198,7 +201,7 @@ fn boundary_values(
                 return Some(Err(unresolved()));
             };
             if length == target && witness.is_none() {
-                witness = Some((line, source));
+                witness = Some((test.file.clone(), line, source));
             }
             lengths.push(length);
         }
