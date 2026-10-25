@@ -1020,4 +1020,15 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn diff_report_root_renders_through_display_path() {
+        // #9806: `ripr_diff.root` uses the check-JSON renderer, which escapes
+        // `%` on every host, so the raw `display()` spelling fails here.
+        let report = report_for(
+            PathBuf::from("repo%41"),
+            PathBuf::from("repo%41/src/lib.rs"),
+        );
+        assert_eq!(report.root, "repo%2541");
+    }
 }
