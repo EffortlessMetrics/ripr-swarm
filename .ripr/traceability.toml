@@ -2401,6 +2401,7 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::analysis_coverage_is_verified_against_the_exact_record_set",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::repo_exposure_coverage_requires_a_complete_run_with_a_corpus_identity",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::a_hand_written_minimal_repo_exposure_document_earns_no_coverage",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::the_top_level_analysis_inputs_are_the_only_source_of_the_input_identity",
   "crates/ripr/src/output/gate/tests.rs::e2e_real_markdown_lists_parser_declined_files",
   "crates/ripr/src/output/gap_source_subject/corpus.rs::tests::production_membership_is_sorted_deduplicated_and_fails_closed",
   "crates/ripr/src/output/gate/tests.rs::e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs",

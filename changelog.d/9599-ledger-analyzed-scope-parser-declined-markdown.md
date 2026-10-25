@@ -14,5 +14,7 @@
   manifests, lockfile, toolchain, analyzer build) as well as corpus content; the
   manifest identity is bound to the checkout path, so gate in the producing
   checkout (path-bound follow-up: #10166), and a refusal names the differing
-  classes in `coverage_refused`. The review-comments Markdown summary now lists
+  classes in `coverage_refused`. The repo-exposure artifact gained an additive
+  top-level `analysis_inputs` object (outside `source_subject`), and the
+  `boundary_gap` unchanged-after-attempt fixtures were re-blessed additively. The review-comments Markdown summary now lists
   parser-declined files as a limitation (#9734).

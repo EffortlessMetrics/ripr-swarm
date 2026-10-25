@@ -8107,6 +8107,28 @@ mod tests {
     }
 
     #[test]
+    fn the_top_level_analysis_inputs_are_the_only_source_of_the_input_identity() {
+        let records = vec![record_with_id("gap:a")];
+        // Valid identity only inside source_subject.corpus, no top-level field.
+        let mut nested_only = complete_source(1);
+        if let Some(object) = nested_only.as_object_mut() {
+            object.remove("analysis_inputs");
+        }
+        nested_only["source_subject"]["corpus"]["analysis_inputs"] = test_inputs();
+        assert!(repo_exposure_analysis_coverage(Some(&nested_only), true, &records).is_none());
+        // Both present and conflicting: the top-level value wins.
+        let mut conflicting = complete_source(1);
+        let mut nested = test_inputs();
+        nested["config_hash"] = serde_json::json!("nested-loses");
+        conflicting["source_subject"]["corpus"]["analysis_inputs"] = nested;
+        let coverage = repo_exposure_analysis_coverage(Some(&conflicting), true, &records);
+        assert_eq!(
+            coverage.and_then(|coverage| coverage.pointer("/corpus/analysis_inputs").cloned()),
+            Some(test_inputs())
+        );
+    }
+
+    #[test]
     fn a_hand_written_minimal_repo_exposure_document_earns_no_coverage() {
         let forged = serde_json::json!({
             "schema_version": "0.3",

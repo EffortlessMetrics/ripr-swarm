@@ -242,7 +242,9 @@ Gate admission also recomputes the non-Rust analysis inputs (classified config
 including raw `ripr.toml` bytes, `.ripr/test_intent.toml`, the suppressions
 file, `RIPR_CFG_FEATURES`, Cargo workspace manifests/configuration,
 `Cargo.lock`, the toolchain label and the ripr build) and requires them to equal
-the ledger's `corpus.analysis_inputs`. A ledger produced under different inputs
+the ledger's `analysis_coverage.corpus.analysis_inputs` (copied from the
+repo-exposure artifact's top-level `analysis_inputs`, not from
+`source_subject.corpus`). A ledger produced under different inputs
 stays `not_evaluated`, so run the gate under the same inputs: a byte-different
 `ripr.toml` (comments, whitespace, CRLF) refuses coverage, `RIPR_CFG_FEATURES`
 and the toolchain must match the producer's, and the Cargo manifest identity is

@@ -295,7 +295,9 @@ bucket:
   `gate evaluate` emits the `rust_workspace_complete` scope only on the
   gap-ledger path, only while that digest still matches the ledger's records,
   and only while the disclosed corpus hash, production-file membership and
-  non-Rust analysis-input identity (`corpus.analysis_inputs`: the classified
+  non-Rust analysis-input identity (the ledger's
+  `analysis_coverage.corpus.analysis_inputs`, copied from the repo-exposure
+  artifact's top-level `analysis_inputs`, not `source_subject.corpus`: the classified
   configuration including its raw `ripr.toml` bytes, `.ripr/test_intent.toml`,
   the suppressions file, `RIPR_CFG_FEATURES`, the Cargo workspace-manifest and
   configuration identity, `Cargo.lock`, the toolchain label and the analyzer
