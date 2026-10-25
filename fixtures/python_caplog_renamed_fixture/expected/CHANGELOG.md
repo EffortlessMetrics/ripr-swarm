@@ -16,7 +16,7 @@ Updated:
 ## Pending — python_caplog_renamed_fixture (2)
 
 Reason:
-RIPR-SPEC-0243: re-bless for the #10426 evidence legend line, main drift after #10444
+RIPR-SPEC-0238 inherited main drift: #10444 fixture predates the #10426 evidence legend
 
 Command:
 `cargo xtask goldens bless python_caplog_renamed_fixture --reason "..."`
