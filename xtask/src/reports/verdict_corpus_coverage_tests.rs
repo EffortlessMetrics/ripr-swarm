@@ -39,7 +39,6 @@ fn ledger(text: &str) -> Result<Ledger, String> {
 
 const LEDGER: &str = r#"
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 2
 
 [[spec]]
 id = "RIPR-SPEC-0900"
@@ -69,7 +68,6 @@ fn fixture_specs() -> SpecExamples {
 
 const AXIS_LEDGER: &str = r#"
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 0
 
 [[axis]]
 id = "language_shape"
@@ -134,7 +132,7 @@ fn coverage_violations_enforce_axis_floors_and_stay_quiet_without_axes() -> Resu
 
 #[test]
 fn a_blank_axis_id_is_rejected() -> Result<(), String> {
-    let text = "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n[[axis]]\nid = \" \"\ndescription = \"d\"\nfloor = 0\n";
+    let text = "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\n[[axis]]\nid = \" \"\ndescription = \"d\"\nfloor = 0\n";
     let violations = axis_violations(&bare_corpus()?, &ledger(text)?);
     assert!(
         violations.iter().any(|v| v.contains("axis without an id")),
@@ -377,16 +375,22 @@ fn coverage_counts_cited_in_scope_examples_over_the_unwaived_ones() -> Result<()
     Ok(())
 }
 
+fn locked(ids: &[&str]) -> Result<BTreeSet<(String, ExampleKey)>, String> {
+    ids.iter()
+        .map(|id| parse_example_id(id).ok_or_else(|| format!("bad lock id {id}")))
+        .collect()
+}
+
 #[test]
-fn floor_gate_fails_below_passes_at_and_invites_a_raise_above() -> Result<(), String> {
-    let ledger = ledger(LEDGER)?;
+fn lock_gate_fails_on_a_lost_example_and_invites_a_line_for_a_new_one() -> Result<(), String> {
+    let mut ledger = ledger(LEDGER)?;
+    ledger.locked = locked(&["RIPR-SPEC-0900#1", "RIPR-SPEC-0900#2"])?;
     let mut corpus = bare_corpus()?;
     cite(&mut corpus, 0, &["RIPR-SPEC-0900#1"]);
-    let below = spec_example_coverage(&corpus, &ledger, &fixture_specs());
-    let err = floor_gate(&below)
-        .err()
-        .ok_or("1 covered under floor 2 passed")?;
-    assert!(err.contains("fell to 1/3 below the floor 2"), "{err}");
+    let lost = spec_example_coverage(&corpus, &ledger, &fixture_specs());
+    let err = floor_gate(&lost).err().ok_or("a lost example passed")?;
+    assert!(err.contains("RIPR-SPEC-0900#2"), "{err}");
+    assert!(!err.contains("RIPR-SPEC-0900#1,"), "{err}");
     assert!(err.contains("spec_examples"), "{err}");
 
     cite(&mut corpus, 1, &["RIPR-SPEC-0900#2"]);
@@ -395,23 +399,62 @@ fn floor_gate_fails_below_passes_at_and_invites_a_raise_above() -> Result<(), St
 
     cite(&mut corpus, 2, &["RIPR-SPEC-0900#4"]);
     let above = spec_example_coverage(&corpus, &ledger, &fixture_specs());
-    let note = floor_gate(&above)?.ok_or("no raise note above the floor")?;
-    assert!(note.contains("raise `floor`"), "{note}");
-    assert!(note.contains("to 3"), "{note}");
+    let note = floor_gate(&above)?.ok_or("no lock note for a new example")?;
+    assert!(note.contains("RIPR-SPEC-0900#4"), "{note}");
+    assert!(note.contains(LOCK_FILE), "{note}");
+    assert_eq!(above.locked_examples, 2);
 
-    let too_high = LEDGER.replace("floor = 2", "floor = 4");
-    let violations = coverage_violations(&corpus, &self::ledger(&too_high)?, &fixture_specs());
+    // A count cannot hide a swap: locking #1 and #2 while #2 loses its case
+    // and #4 gains one is still a loss.
+    let mut swapped = bare_corpus()?;
+    cite(&mut swapped, 0, &["RIPR-SPEC-0900#1"]);
+    cite(&mut swapped, 1, &["RIPR-SPEC-0900#4"]);
+    let swap = spec_example_coverage(&swapped, &ledger, &fixture_specs());
+    let swap_err = floor_gate(&swap)
+        .err()
+        .ok_or("a swap kept the count and passed")?;
+    assert!(swap_err.contains("RIPR-SPEC-0900#2"), "{swap_err}");
+
+    let mut stale = ledger.clone();
+    stale.locked = locked(&["RIPR-SPEC-0900#9"])?;
+    let violations = coverage_violations(&corpus, &stale, &fixture_specs());
     assert!(
         violations
             .iter()
-            .any(|v| v.contains("floor 4 exceeds the 3 coverable examples")),
+            .any(|v| v.contains("locks `RIPR-SPEC-0900#9`")),
         "{violations:#?}"
     );
     Ok(())
 }
 
 #[test]
-fn committed_ledger_is_valid_and_meets_its_floor() -> Result<(), String> {
+fn lock_files_parse_sorted_unique_entries_and_reject_the_rest() -> Result<(), String> {
+    let ok = "# comment\n\nRIPR-SPEC-0243#9\nRIPR-SPEC-0243#10\nRIPR-SPEC-0243#empty-table\nRIPR-SPEC-0245#1\n";
+    assert_eq!(parse_lock(ok, "lock")?.len(), 4);
+    let twice = parse_lock("RIPR-SPEC-0243#9\nRIPR-SPEC-0243#9\n", "lock")
+        .err()
+        .ok_or("duplicate accepted")?;
+    assert!(
+        twice.contains("lock:2") && twice.contains("twice"),
+        "{twice}"
+    );
+    let unordered = parse_lock("RIPR-SPEC-0243#10\nRIPR-SPEC-0243#9\n", "lock")
+        .err()
+        .ok_or("unordered accepted")?;
+    assert!(unordered.contains("out of order"), "{unordered}");
+    let slug_first = parse_lock("RIPR-SPEC-0243#a-b\nRIPR-SPEC-0243#9\n", "lock")
+        .err()
+        .ok_or("slug before number accepted")?;
+    assert!(slug_first.contains("out of order"), "{slug_first}");
+    let junk = parse_lock("RIPR-SPEC-0243\n", "lock")
+        .err()
+        .ok_or("junk accepted")?;
+    assert!(junk.contains("not `RIPR-SPEC-NNNN#"), "{junk}");
+    Ok(())
+}
+
+#[test]
+fn committed_ledger_is_valid_and_locks_every_covered_example() -> Result<(), String> {
     let corpus = load_corpus(&repo_path(CORPUS_DIR))?;
     let ledger = load_ledger(&repo_path(CORPUS_DIR))?;
     let specs = scan_specs(&repo_path(SPECS_DIR))?;
@@ -421,7 +464,7 @@ fn committed_ledger_is_valid_and_meets_its_floor() -> Result<(), String> {
     assert_eq!(
         floor_gate(&coverage)?,
         None,
-        "floor is not the covered count"
+        "{LOCK_FILE} does not list every covered example"
     );
     // The backfilled spec cases: RIPR-SPEC-0227 examples 10 and 11 come from
     // the older checkout and accounts cases.
@@ -467,9 +510,9 @@ fn spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs() -> Result<
     crate::tests::write(
         &dir.join(LEDGER_FILE),
         r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 0
 "#,
     );
+    crate::tests::write(&dir.join(LOCK_FILE), "");
     let err = spec_example_coverage_for_corpus(&dir)
         .err()
         .ok_or("a tempdir corpus must not pick up this repository's docs/specs")?;
@@ -506,9 +549,9 @@ fn spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec(
     crate::tests::write(
         &corpus_dir.join(LEDGER_FILE),
         r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 0
 "#,
     );
+    crate::tests::write(&corpus_dir.join(LOCK_FILE), "");
     crate::tests::write(
         &root.join("docs/specs/RIPR-SPEC-0900-omitted.md"),
         "# Omitted\n\n## Acceptance Examples\n\n1. A numbered example.\n",
@@ -525,7 +568,6 @@ floor = 0
     crate::tests::write(
         &corpus_dir.join(LEDGER_FILE),
         r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 0
 
 [[unmeasured]]
 id = "RIPR-SPEC-0900"
@@ -597,13 +639,13 @@ fn spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject() 
     crate::tests::write(
         &corpus_dir.join(LEDGER_FILE),
         r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 0
 
 [[spec]]
 id = "RIPR-SPEC-0900"
 scope = "in"
 "#,
     );
+    crate::tests::write(&corpus_dir.join(LOCK_FILE), "");
     crate::tests::write(
         &root.join("docs/specs/RIPR-SPEC-0900-unknown-subject.md"),
         "# Unknown subject\n\n## Acceptance Examples\n\n1. A numbered example.\n",
@@ -722,7 +764,6 @@ fn slug_examples_count_cite_waive_and_report_like_numbered_ones() -> Result<(), 
     let ledger = ledger(
         r#"
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 1
 
 [[spec]]
 id = "RIPR-SPEC-0900"

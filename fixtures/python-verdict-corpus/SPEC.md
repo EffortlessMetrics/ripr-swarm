@@ -126,7 +126,7 @@ the `py-spec0233-exNN-` prefix and the subject keeps its
 `authored-py-pytest-spec0233` name, because RIPR-SPEC-0238 cites
 `py-spec0233-ex21-exc-value` by id and the subject sources are pinned by
 digest. Each such case cites its example in `spec_examples`, and
-`spec-coverage.toml` gates those citations on a floor; example 34, added at
+`spec-coverage.toml` gates those citations through `spec-examples.lock`; example 34, added at
 merge, has its cases under the same prefix.
 
 ## Refreshing
