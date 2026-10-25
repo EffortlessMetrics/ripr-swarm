@@ -118,6 +118,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped `FmtContext` memo by owner slot (#9260).
+    fmt_contexts: fmt_dispatch::FmtContextMemo,
     /// Source-expansion facts for this immutable classification run.
     implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
@@ -311,6 +313,10 @@ impl RelatedTestCandidateIndex {
         &self,
     ) -> &super::super::classifier::OwnerCallerNames {
         &self.owner_caller_names
+    }
+
+    fn fmt_contexts(&self) -> &fmt_dispatch::FmtContextMemo {
+        &self.fmt_contexts
     }
 
     fn candidate_indices(
@@ -952,8 +958,20 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
-    let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
+    // #9260: the context depends only on (index, owner); the run-level memo
+    // shares one build across every probe of the owner.
+    let fmt_context: std::cell::OnceCell<std::sync::Arc<Option<fmt_dispatch::FmtContext>>> =
         std::cell::OnceCell::new();
+    #[cfg(test)]
+    let local_fmt_contexts;
+    let fmt_contexts = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.fmt_contexts(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => {
+            local_fmt_contexts = fmt_dispatch::FmtContextMemo::default();
+            &local_fmt_contexts
+        }
+    };
     // #9329: a free-function owner reached through a method-hop chain cannot be
     // the target of a receiver call. A call fact whose only mention of the
     // owner's name is `x.name(..)` (a std `expected.to_string()` inside a test
@@ -993,17 +1011,10 @@ fn find_related_tests_with_candidates<'a>(
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
-            fmt_context
-                .get_or_init(|| fmt_dispatch::FmtContext::new(index, owner))
-                .as_ref()
-                .is_some_and(|context| {
-                    fmt_dispatch::test_dispatches_to_fmt(
-                        test,
-                        owner,
-                        &indexed_same_name_ids,
-                        context,
-                    )
-                })
+            let context = fmt_context.get_or_init(|| fmt_contexts.context(index, owner));
+            Option::as_ref(context).is_some_and(|context| {
+                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids, context)
+            })
         });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
@@ -4179,6 +4190,22 @@ fn method_call_resolves_to_impl_in(
                 false,
             )
     })
+}
+
+/// Whether the last call of `method` in `prefix` (masked test source cut at
+/// the end of one statement, with earlier calls of the same name blanked by
+/// the caller) has a receiver bound to `impl_type`, under the same receiver
+/// rules as [`method_call_resolves_to_impl`].
+pub(in crate::analysis) fn resolves_method_in_prefix(
+    prefix: &str,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+) -> bool {
+    if method.is_empty() || impl_type.is_empty() {
+        return false;
+    }
+    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
 }
 
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index aca460d..f539dab 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -124,7 +124,7 @@ impl std::fmt::Display for Size {
+ 
+ pub fn pretty(bytes: u64, si: bool) -> String {
+     let unit = if si { KIB } else { KB };
+-    if bytes < unit {
++    if bytes <= unit {
+         format!("{bytes} B")
+     } else {
+         format!("{} big", bytes / unit)

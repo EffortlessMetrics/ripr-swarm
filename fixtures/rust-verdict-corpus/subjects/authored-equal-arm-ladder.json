@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-equal-arm-ladder",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for #9843 (a branch condition whose arms return the same value)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "c57e243006a11ad79cad90755a24758c95f8607c1ba0aa561c0107afe3c8ef14"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "8ba36b3c016efb2ad9326a8c68489fd7e77442c406af22acfed7995b688e2fdf"
+    }
+  ]
+}
