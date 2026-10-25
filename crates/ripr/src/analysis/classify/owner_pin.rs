@@ -211,10 +211,20 @@ fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
                 if whole_word_offsets(tree, name).is_empty() {
                     continue;
                 }
-                let clean = !gated
-                    && tree.trim_start().starts_with(&format!("{krate}::"))
-                    && !tree.contains('*')
-                    && !tree.contains(" as ");
+                // The name must be a direct item of the crate's path: `krate::name`
+                // or one entry of `krate::{.., name, ..}`.
+                let direct = tree
+                    .trim()
+                    .strip_prefix(&format!("{krate}::"))
+                    .is_some_and(|rest| {
+                        let rest = rest.trim();
+                        rest.strip_prefix('{')
+                            .and_then(|group| group.strip_suffix('}'))
+                            .map_or(vec![rest], |group| group.split(',').collect())
+                            .iter()
+                            .any(|item| item.trim() == *name)
+                    });
+                let clean = !gated && direct && !tree.contains('*') && !tree.contains(" as ");
                 if !clean {
                     return false;
                 }
