@@ -102,8 +102,9 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
-The same execution/macro-context admission applies to `assert_eq!` and `assert!`
-oracles for `side_effect` and `call_deletion` probes (#8927). Calling the changed
+The same execution/macro-context admission applies to `assert_eq!`, `assert_ne!`,
+`assert!` and their `debug_` twins (bare or `std::`/`core::` qualified) for
+`side_effect` and `call_deletion` probes (#8927, #8983). Calling the changed
 owner before `return`, a literal-false block or an uncalled closure establishes
 reach without establishing that an assertion inside the skipped context runs.
 Refuse that assertion through the shared admission decision and retain the
@@ -125,13 +126,14 @@ More generally an effect oracle is ungated only when its text starts with an
 `!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
 assertion macro in its tail. A root `loop` with no `break` and a root
 `std::process::exit` / `abort` call end the test like an earlier `return`, for every
-family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
-(#8983), and `process::exit` reached through a `use` alias.
+family that reads this admission. Not covered: `process::exit` reached through a
+`use` alias, and a boolean `assert!` / `debug_assert!` in a dead context still
+credits a `return_value` finding (#10389).
 
 Residual fail-open contexts. The admission is a syntactic reading, not a control
 flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 `exposed` for `side_effect` and `call_deletion` (non-blocking, disclosed by
-review of #8934; tracked with the #8983 follow-up unless a separate issue says
+review of #8934; tracked with #8983 unless a separate issue says
 otherwise):
 
 - An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
