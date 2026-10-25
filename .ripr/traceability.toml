@@ -19207,3 +19207,21 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0357"
+name = "A changed value-default binding that reaches the returned text"
+spec = "docs/specs/RIPR-SPEC-0357-binding-default-reaches-return.md"
+tests = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/default-flow-unpinned.json",
+  "fixtures/rust-verdict-corpus/cases/default-flow-rebound.json",
+  "fixtures/rust-verdict-corpus/cases/default-flow-smoked.json",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0357-binding-default-reaches-return.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
