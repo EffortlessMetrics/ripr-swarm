@@ -112,6 +112,24 @@ effect assertion in the same test still supplies its existing observation and
 discriminator; a refused sibling does not remove it. This does not change effect
 identity, propagation or observer matching.
 
+Return/error `assert!(matches!(..))` oracles also take the shared execution
+and macro-context admission before token or variant matching can credit them.
+Ignored tests, including reason-bearing ignores, and expected-panic tests with
+an additional fallback panic cannot lend strong evidence. A provably inactive
+`cfg_attr` keeps the matches assertion's execution available. A sole bare
+`assert!(matches!(..))` under `should_panic` keeps its conservative reading when
+the actual free owner directly returns a unit error variant, its inputs are
+literal strings, its matches pattern is an unguarded unit error variant, and
+the returned enum passes the existing declared-variant and expansion admission
+and has no non-plain
+destructor. Its inverted success condition
+can distinguish two results. Other owners, arguments or destructors may supply
+an independent expected panic; unresolved cases withhold credit as an analyzer
+limit. The attribute alone does not establish a missing discriminator. This
+execution admission
+does not grant a new value pin or resolve the existing undercredit of inverse
+expected-panic variant checks. The existing `assert_eq!` outcomes are unchanged.
+
 An effect oracle whose fact text is a compound statement rather than the macro
 invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
 body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the

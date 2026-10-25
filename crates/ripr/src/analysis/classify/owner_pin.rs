@@ -75,14 +75,14 @@ use crate::analysis::syntax::{
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites,
+    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
+    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
+    source_declares_value_name, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextRange,
-    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
 use std::cell::{Cell, OnceCell};
@@ -146,6 +146,7 @@ pub(in crate::analysis) struct OwnerReturnPin {
 #[derive(Clone, Debug, Default)]
 struct StdRootedCalls {
     calls: BTreeSet<String>,
+    matches_calls: BTreeSet<String>,
     unrebound: BTreeSet<String>,
 }
 
@@ -170,6 +171,7 @@ impl StdRootedCalls {
         let root = file.tree().syntax().clone();
         Self {
             calls: std_rooted_assert_eq_calls(&root),
+            matches_calls: qualified_matches_paths(&root),
             unrebound: STD_ROOTED_ASSERT_EQ
                 .iter()
                 .filter(|path| {
@@ -219,6 +221,15 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// made the entry depend on which probe reached the file first, which
     /// with workers is scheduling (#8797).
     by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// Same shared syntax authority with the bounded matches! outcome policy.
+    matches_by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// Existing expansion authority excludes opaque generated panic sources.
+    matches_panic_expansions: super::implicit_effect::ImplicitExpansionMemo,
+    /// Whether every matches-binding candidate is this file's verified
+    /// standard assertion argument, rather than a real or opaque binding.
+    matches_arguments_clear: SyncMemo<BTreeMap<PathBuf, bool>>,
+    /// All sites, including opaque imports that never spell the bound name.
+    matches_binding_sites: OnceLock<Vec<(PathBuf, MacroBindingSite)>>,
     /// Per module-parent file, read with the plain trusted-macro list.
     module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
@@ -605,6 +616,35 @@ impl OwnerPinSyntax {
         index: &RustIndex,
     ) -> bool {
         self.admits_assertion_family(probe.family.clone(), test, assertion, index)
+            && self
+                .matches_expected_panic_refusal(probe, test, assertion, index)
+                .is_none()
+    }
+
+    fn matches_expected_panic_refusal(
+        &self,
+        probe: &Probe,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        if !matches_return_assertion(&probe.family, assertion)
+            || !test.attrs.iter().any(|attr| {
+                parse_clean_source_file(&format!("{attr}\nfn t() {{}}")).is_some_and(|parse| {
+                    parse
+                        .tree()
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::Attr::cast)
+                        .any(|attr| attr.simple_name().as_deref() == Some("should_panic"))
+                })
+            })
+        {
+            return None;
+        }
+        bounded_matches_panic_owner(probe, test, assertion, index, self)
+            .is_none()
+            .then_some(AssertionRefusal::ExpectedPanicUnresolved)
     }
 
     /// Collection seam consumers share the effect admission, including the
@@ -626,6 +666,7 @@ impl OwnerPinSyntax {
         index: &RustIndex,
     ) -> bool {
         let outer = Self::assertion_macro_name(&assertion.text);
+        let matches_context = matches_return_assertion(&family, assertion);
         // An oracle whose text is a compound statement (`loop { break;
         // assert_eq!(..); }`, `'a: { .. }`, a `macro_rules!` body, a
         // cfg-dropped `let`) names no invocation the admission can identify:
@@ -659,16 +700,23 @@ impl OwnerPinSyntax {
                     | ProbeFamily::SideEffect
                     | ProbeFamily::CallDeletion
             ),
-            Some("assert") => matches!(
-                family,
-                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
-            ),
+            Some("assert") => {
+                matches!(
+                    family,
+                    ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) || matches_context
+            }
             _ => false,
         };
         if !gated {
             return true;
         }
-        match self.refusal(test, assertion, index) {
+        let refusal = if matches_context {
+            self.context_refusal(test, assertion, index, true)
+        } else {
+            self.refusal(test, assertion, index)
+        };
+        match refusal {
             None => true,
             // Identical spellings on one line, one of which provably runs
             // (`A; return; A;`): the effect oracle is that same check, so it
@@ -700,11 +748,15 @@ impl OwnerPinSyntax {
         if self.admits_equality_assertion(probe, test, assertion, index) {
             return None;
         }
-        let refusal = self
-            .refusal(test, assertion, index)
-            .unwrap_or(AssertionRefusal::Syntax(
-                AssertionContextRefusal::UnidentifiedTest,
-            ));
+        let refusal = if matches_return_assertion(&probe.family, assertion) {
+            self.context_refusal(test, assertion, index, true)
+        } else {
+            self.refusal(test, assertion, index)
+        }
+        .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
+        .unwrap_or(AssertionRefusal::Syntax(
+            AssertionContextRefusal::UnidentifiedTest,
+        ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
                 let resolved_modules = self.resolved_module_declarations(index);
@@ -1267,7 +1319,7 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
-        Some(match self.context_refusal(test, assertion, index)? {
+        Some(match self.context_refusal(test, assertion, index, false)? {
             AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
                 match value_guard_subject(&condition, &assertion.text) {
                     Some(subject) => AssertionRefusal::ValueGuard {
@@ -1288,8 +1340,9 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
+        matches_context: bool,
     ) -> Option<AssertionRefusal> {
-        let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
+        let mut ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
         };
@@ -1312,11 +1365,17 @@ impl OwnerPinSyntax {
         let rooted = self
             .std_rooted
             .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
-        let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
+        let mut qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
             .chain(std_rooted_macro_path(&assertion.text, "assert"))
             .chain(rooted.calls.iter().cloned())
             .collect();
+        if matches_context {
+            qualified.extend(rooted.matches_calls.iter().filter_map(|path| {
+                path.strip_suffix("matches")
+                    .map(|root| format!("{root}assert"))
+            }));
+        }
         if let Some(path) = qualified.into_iter().find(|path| {
             !(rooted.unrebound.contains(path)
                 && self.targeted_macro_binding_is_unambiguous(test, assertion.line, path, index))
@@ -1325,14 +1384,84 @@ impl OwnerPinSyntax {
                 AssertionContextRefusal::OpaqueMacro(path),
             ));
         }
+        if matches_context && ambiguous.contains("matches") {
+            let withheld = &self.withheld;
+            let clear = !withheld.any_name
+                && !withheld.root_any_name
+                && !withheld.trusted.contains("matches")
+                && !withheld.sites.contains_key("matches")
+                && !withheld
+                    .by_root
+                    .values()
+                    .any(|names| names.contains("matches"))
+                && !withheld
+                    .root_sites
+                    .keys()
+                    .any(|(name, _)| name == "matches")
+                && *self
+                    .matches_arguments_clear
+                    .borrow_mut()
+                    .entry(test.file.clone())
+                    .or_insert_with(|| {
+                        // Check every site, not only the earliest disclosure site:
+                        // a later definition must not hide behind std::assert!.
+                        self.matches_binding_sites
+                            .get_or_init(|| {
+                                index
+                                    .files()
+                                    .iter()
+                                    .flat_map(|(file, facts)| {
+                                        trusted_macro_binding_sites(
+                                            &facts.source,
+                                            index.macro_scope_crates(),
+                                            &assertion_context_macros(),
+                                            &|_, _| false,
+                                            &|_| false,
+                                        )
+                                        .into_iter()
+                                        .filter(|(name, _)| name == "matches")
+                                        .map(|(_, site)| (file.clone(), site))
+                                        .collect::<Vec<_>>()
+                                    })
+                                    .collect()
+                            })
+                            .iter()
+                            .all(|(file, site)| {
+                                let MacroBindingKind::MacroArgument(path) = &site.kind else {
+                                    return false;
+                                };
+                                let path: String = path.split_whitespace().collect();
+                                file == &test.file
+                                    && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                                    && rooted.unrebound.contains(&path)
+                                    && self.targeted_macro_binding_is_unambiguous(
+                                        test,
+                                        assertion.line,
+                                        &path,
+                                        index,
+                                    )
+                            })
+                    });
+            if clear {
+                ambiguous.remove("matches");
+            }
+        }
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
         let guard_key = err_return_guard_twin(&assertion.text)
             .map(|(condition, _)| err_return_guard_key(condition));
-        let file_refusal = self
-            .by_file
+        let admissions = if matches_context {
+            &self.matches_by_file
+        } else {
+            &self.by_file
+        };
+        let file_refusal = admissions
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                if matches_context {
+                    owner_pin_matches_assertions(&facts.source, &assertion_context_macros())
+                } else {
+                    owner_pin_assertions(&facts.source, &assertion_context_macros())
+                }
             })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
@@ -1390,8 +1519,7 @@ impl OwnerPinSyntax {
         if !generated_verdicts.is_empty() {
             // #6749: a generated test's module is not in the file's text, so
             // its expansion cannot show a rebound `test`; the file answers.
-            if self
-                .by_file
+            if admissions
                 .borrow()
                 .get(&test.file)
                 .is_some_and(|assertions| assertions.file_binds_test())
@@ -1800,6 +1928,9 @@ pub(in crate::analysis) enum AssertionRefusal {
     /// expects: the assertion runs for that value, and whether it runs for
     /// another depends on a value ripr does not evaluate.
     ValueGuard { condition: String, subject: String },
+    /// A sole expected-panic matches assertion can invert its check, but
+    /// another panic in its owner, arguments or destructor is unresolved.
+    ExpectedPanicUnresolved,
 }
 
 impl AssertionRefusal {
@@ -1823,7 +1954,7 @@ impl AssertionRefusal {
             Self::LexicalFallback | Self::UnresolvedModule(_) | Self::IncludedFile { .. } => true,
             // trap-tally-reached-assert-control: the guard spares the
             // expected value, so the assertion's reach is value-dependent.
-            Self::ValueGuard { .. } => true,
+            Self::ValueGuard { .. } | Self::ExpectedPanicUnresolved => true,
             // A gated `mod` declaration may be `cfg(any())`, which never runs.
             Self::ModuleDeclaration { .. } => false,
             Self::Syntax(refusal) => match refusal {
@@ -1932,6 +2063,7 @@ impl AssertionRefusal {
             Self::ValueGuard { condition, subject } => format!(
                 "an earlier `if {condition} {{ return; }}` spares the value the assertion expects, so whether the assertion runs depends on the value of `{subject}`, which ripr does not evaluate"
             ),
+            Self::ExpectedPanicUnresolved => "the expected-panic matches check may pass through another panic in its owner, arguments or returned value, which ripr cannot exclude".into(),
             Self::MacroBinding { name, site } => match site {
                 None => format!("`{name}!` may be redefined somewhere in the workspace"),
                 Some((path, site)) => {
@@ -13431,6 +13563,123 @@ fn top_level_semicolon(masked: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The invocation identity that needs return/error matches! execution admission.
+fn matches_return_assertion(family: &ProbeFamily, assertion: &OracleFact) -> bool {
+    matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)
+        && OwnerPinSyntax::assertion_macro_name(&assertion.text).as_deref() == Some("assert")
+        && macro_invocations(&mask_comments_and_strings(&assertion.text))
+            .iter()
+            .any(|(name, _)| *name == "matches")
+}
+
+/// A bounded exception to the expected-panic refusal, not a general panic
+/// evaluator. Reuse owner identity and Drop authority; only a direct unit
+/// error return, literal string inputs and an unguarded unit error pattern
+/// leave the assertion as the possible source of the expected panic.
+fn bounded_matches_panic_owner(
+    probe: &Probe,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<()> {
+    let owner_id = probe.owner.as_ref()?;
+    let mut owners = index
+        .functions()
+        .iter()
+        .filter(|owner| &owner.id == owner_id);
+    let (Some(owner), None) = (owners.next(), owners.next()) else {
+        return None;
+    };
+    let pin = OwnerReturnPin::establish(probe, owner, index)?;
+    let test_source = &index.files().get(&test.file)?.source;
+    if pin.call.kind() != CallKind::Bare
+        || !pin.bare_call_reaches_owner(test, test_source, index, syntax)
+        || source_binds_value_name(&index.files().get(&owner.file)?.source, "Err")
+        || source_binds_value_name(test_source, "Err")
+    {
+        return None;
+    }
+    let parse = parse_clean_source_file(&owner.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if !owner.attrs.is_empty()
+        || function.attrs().next().is_some()
+        || function.async_token().is_some()
+        || function.generic_param_list().is_some()
+    {
+        return None;
+    }
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(returned) = list.tail_expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(head) = returned.expr()? else {
+        return None;
+    };
+    if head.syntax().text() != "Err" {
+        return None;
+    }
+    let mut values = returned.arg_list()?.args();
+    let (Some(ast::Expr::PathExpr(value)), None) = (values.next(), values.next()) else {
+        return None;
+    };
+    let value = value.syntax().text().to_string();
+    let (type_name, _) = local_variant_path(&value)?;
+    if !owner_builds_declared_error_variant(&value, owner, index)
+        || !syntax.matches_panic_expansions.admits(index, &type_name)
+        || !super::element_field_pin::drop_is_plain(index, &type_name)
+    {
+        return None;
+    }
+    let condition = outer_assertion_condition(&assertion.text)?;
+    let arguments = condition.trim().strip_prefix("matches!")?.trim();
+    let arguments = arguments.strip_prefix('(')?.strip_suffix(')')?;
+    let operands = split_top_level_arguments(arguments)?;
+    let [subject, pattern] = operands.as_slice() else {
+        return None;
+    };
+    let (pattern_type, pattern_variant) = error_variant_key(pattern)?;
+    let compact_pattern: String = pattern.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact_pattern != format!("Err({pattern_type}::{pattern_variant})")
+        || pattern_type != type_name
+        || !workspace_enum_declares_variant(&pattern_type, &pattern_variant, index)
+    {
+        return None;
+    }
+    if !matches!(
+        owner_call_shape(subject, &owner.name),
+        Some(CallShape::Bare)
+    ) {
+        return None;
+    }
+    let expression = parse_clean_source_file(&format!("fn t() {{ {subject} }}"))?;
+    let call = expression
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::CallExpr::cast)?;
+    let arguments: Vec<_> = call.arg_list()?.args().collect();
+    let params: Vec<_> = function.param_list()?.params().collect();
+    if arguments.len() != params.len()
+        || !arguments.iter().zip(params.iter()).all(|(argument, param)| {
+            matches!(argument, ast::Expr::Literal(literal) if matches!(literal.kind(), ast::LiteralKind::String(_)))
+                && param.ty().is_some_and(|ty| {
+                    ty.syntax().text().to_string().chars().filter(|ch| !ch.is_whitespace()).collect::<String>() == "&str"
+                })
+        })
+    {
+        return None;
+    }
+    Some(())
 }
 
 /// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads

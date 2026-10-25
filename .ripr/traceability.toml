@@ -13514,6 +13514,13 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/matches_eligibility.rs::matches_return_and_error_assertions_require_execution_context",
+  "crates/ripr/tests/matches_eligibility.rs::equality_outcomes_are_the_current_source_baseline",
+  "crates/ripr/tests/matches_eligibility.rs::inverse_panic_matches_does_not_require_equality_derives",
+  "crates/ripr/tests/matches_eligibility.rs::matches_honesty_projection_matches_public_analysis",
+  "crates/ripr/tests/matches_eligibility.rs::qualified_matches_require_the_actual_standard_root",
+  "crates/ripr/tests/matches_eligibility.rs::qualified_assertion_does_not_hide_a_real_matches_binding",
+  "crates/ripr/tests/matches_eligibility.rs::expected_panic_matches_cannot_credit_an_unresolved_panic_source",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",
