@@ -959,8 +959,15 @@ pub(crate) fn check_repair_route(
     if bound.next().is_some() {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
-    if let Some(reason) = repair_refusal_reason(entry, policy) {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible { reason });
+    if let Some((kind, reason)) = repair_refusal(entry, policy) {
+        // #9244: carry the typed kind and the producer-owned missing list so
+        // the check screen words a not-ready route without parsing `reason`.
+        let missing = repair_packet_eligibility(entry).readiness.missing_evidence;
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible {
+            reason,
+            kind,
+            missing,
+        });
     }
     if static_limited {
         // F3: no runnable line for a static-limited finding. The refusal
