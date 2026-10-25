@@ -496,9 +496,10 @@ impl PathDependencyScopeExpansion {
                  parsed or followed, so reverse-dependency scope expansion used a partial edge inventory \
                  and may have missed crates that depend on the changed packages, along with \
                  their tests.",
-                "Fix the Cargo.toml that fails to parse (run `cargo metadata` to see which), or \
-                 make any `workspace` redirect point at a manifest ripr can follow, then re-run \
-                 the analysis.",
+                "Fix any Cargo.toml that fails to parse (run `cargo metadata` to see which). ripr does \
+                 not follow `[package] workspace = ...` redirects, so declare the path \
+                 dependencies of such a package directly in its manifest, and use UTF-8 \
+                 manifest paths. Then re-run the analysis.",
             ),
             PathDependencyGraphStatus::Unavailable => (
                 "The path-dependency graph is unavailable: no local Cargo.toml manifest was \
@@ -1670,6 +1671,7 @@ mod tests {
         let detail = limited.bounded_detail.unwrap_or_default();
         assert!(detail.contains("is limited") && !detail.contains("unavailable"));
         assert!(limited.recovery.detail.contains("fails to parse"));
+        assert!(limited.recovery.detail.contains("does not follow"));
 
         let complete_root = unique_dir("limitation-complete");
         let _ = std::fs::remove_dir_all(&complete_root);

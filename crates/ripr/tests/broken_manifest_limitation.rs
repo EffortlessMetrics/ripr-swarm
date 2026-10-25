@@ -196,7 +196,7 @@ fn human_report_does_not_read_as_plain_complete() -> Result<(), String> {
     );
     assert!(
         stdout.contains("analysis incomplete")
-            && stdout.contains("Fix the Cargo.toml that fails to parse"),
+            && stdout.contains("Fix any Cargo.toml that fails to parse"),
         "human report must name the limitation and its next step:\n{stdout}"
     );
     Ok(())
@@ -229,8 +229,8 @@ fn unfollowed_workspace_redirect_is_limited_without_a_parse_claim() -> Result<()
     assert!(
         limitation["recovery"]["detail"]
             .as_str()
-            .is_some_and(|d| d.contains("redirect")),
-        "recovery must cover a redirect, not only a parse failure: {limitation}"
+            .is_some_and(|d| d.contains("does not follow") && !d.contains("point at")),
+        "recovery must say redirects are not followed and offer a supported workaround: {limitation}"
     );
     Ok(())
 }
