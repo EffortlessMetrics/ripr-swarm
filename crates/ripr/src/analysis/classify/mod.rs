@@ -43,7 +43,7 @@ mod variant_field_pattern;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, signature_parameters, sort_value_facts,
+    local_boundary, macro_names_rebound, signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -89,7 +89,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::{
-    exercised_bool_chain_return_sink, infection_evidence_for_owner,
+    exercised_bool_chain_return_sink, infection_evidence_for_owner, is_bool_chain_owner,
 };
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};

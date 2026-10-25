@@ -19068,6 +19068,8 @@ tests = [
   "crates/ripr/tests/bool_truth_table_infection.rs::a_table_with_a_short_row_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_table_of_one_row_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_property_loop_over_inputs_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_shadowed_assert_eq_hides_table_rows",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_shadowed_assert_eq_hides_direct_rows",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_table_assertion_with_a_plain_message_still_reads_the_rows",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_table_assertion_with_a_message_argument_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_table_name_that_is_rebound_stays_unknown",
@@ -19088,6 +19090,8 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/infection.rs",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md",

@@ -101,6 +101,12 @@ statement declines). Each tuple is one run, in the owner's parameter order,
 and joins the direct-call runs under rule 5. A property loop over inputs
 (`for paid in [true, false]`) is not a table and keeps its reading.
 
+Assertion macros are trusted by name for every row, direct or table. When any
+indexed file defines, imports or may glob in a macro under `assert`,
+`assert_eq` or `assert_ne`, the owner counts as having other callers (the same
+refusal as rule 3), because the rows may never be compared (#10386). A no-op
+`macro_rules! assert_eq` ahead of the tests keeps `infection_unknown`.
+
 Conditions the code adds to rule 3: a bare-name mention of the owner in any
 non-test function, or in a `macro_rules!` body, counts as another caller (the
 `macro_rules!` scan now also runs for `return_value` probes); a literal

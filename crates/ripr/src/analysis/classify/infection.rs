@@ -474,6 +474,12 @@ fn only_bare_row_assertions(test: &TestSummary, owner: &str) -> bool {
     })
 }
 
+/// Whether `owner`'s whole body is the `&&`/`||` chain `probe` changed, the
+/// shape the truth-table reading (RIPR-SPEC-0353) applies to.
+pub(in crate::analysis) fn is_bool_chain_owner(probe: &Probe, owner: &FunctionSummary) -> bool {
+    ShortCircuitTail::parse(&owner.body, &probe.expression).is_some()
+}
+
 /// RIPR-SPEC-0353: the returned-value sink of an all-bool `&&`/`||` owner
 /// body whose related tests exercise its truth table, for the
 /// `return_value` probe on that chain. `None` for anything else, so the

@@ -1,2 +1,3 @@
 <!-- section: Fixed -->
 - A pure bool `&&`/`||` owner now reads its infection from the rows of a constant bool-tuple `for` table (`for (a, b, want) in rows { assert_eq!(owner(a, b), want); }`) the same way it does from direct calls, so `grid-bool-table` reads credited; a table that can skip a row, an unasserted call, a computed or short row, a one-row table and a property loop over inputs keep the unknown reading (#9619).
+- A pure bool `&&`/`||` owner's truth-table reading (direct rows and table rows) now declines when any indexed file rebinds `assert`, `assert_eq` or `assert_ne`, since a no-op macro under that name compares nothing (#10386).

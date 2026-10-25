@@ -315,6 +315,36 @@ fn code_after_the_table_loop_stays_unknown() -> Result<(), String> {
     Ok(())
 }
 
+/// A test-file macro that evaluates the call and compares nothing, so a
+/// wrong bool implementation passes every row.
+const NOOP_ASSERT_EQ: &str = "macro_rules! assert_eq {\n    ($actual:expr, $want:expr) => {{\n        let _ = $actual;\n    }};\n}\n\n";
+
+#[test]
+fn a_shadowed_assert_eq_hides_table_rows() -> Result<(), String> {
+    let test = format!(
+        "{NOOP_ASSERT_EQ}{}",
+        table_test(THREE_TABLE_ROWS, TABLE_ASSERT)
+    );
+    let findings = table_findings(&test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    let returned = return_value_findings(&lib_with("    in_stock && paid\n", ""), &test)?;
+    assert!(
+        returned
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{returned:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_assert_eq_hides_direct_rows() -> Result<(), String> {
+    let test = format!("{NOOP_ASSERT_EQ}{}", test(THREE_ROWS));
+    let findings = predicate_findings(&lib_with("    in_stock && paid\n", ""), &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
 #[test]
 fn a_property_loop_over_inputs_stays_unknown() -> Result<(), String> {
     let property = "use truth_table::can_ship;\n\n#[test]\nfn ships() {\n    for paid in [true, false] {\n        for in_stock in [true, false] {\n            assert_eq!(can_ship(paid, in_stock), in_stock && paid);\n        }\n    }\n}\n";
