@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_module_formatted_generator_test (4)
+
+Reason:
+RIPR-SPEC-0319 / #9438: the human-full view now prints a next step under static limitations and stop reasons (#9449); fixture was added or last blessed before that change landed, so main's combined tree drifted. Only the new Next: lines change; classes, stages and findings are unchanged.
+
+Command:
+`cargo xtask goldens bless python_module_formatted_generator_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
