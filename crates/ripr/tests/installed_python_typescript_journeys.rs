@@ -463,6 +463,13 @@ fn python_refused_variant_is_offered_no_gap_bound_start() -> Result<(), String> 
         "no repair attempt was started",
         "refusal states no attempt",
     )?;
+    // Pin the reason: the static-limited guard refuses it, not a later step
+    // that happens to share the "not ready" prefix.
+    need(
+        &start,
+        "the finding is static-limited",
+        "refusal names the static limit",
+    )?;
     if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
         return Err(format!(
             "the refused start left an attempt behind:\n{start}"
