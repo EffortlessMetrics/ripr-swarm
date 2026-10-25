@@ -178,7 +178,7 @@ fn check_source(case: &Case, source: &str) -> Result<[ExposureClass; 2], String>
     }
     classes
         .try_into()
-        .map_err(|_| "missing paired findings".to_string())
+        .map_err(|classes: Vec<_>| format!("missing paired findings: {classes:?}"))
 }
 #[test]
 fn matches_return_and_error_assertions_require_execution_context() -> Result<(), String> {
