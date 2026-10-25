@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ //! The edge value reaches the assertion through a named local, so the same test pins it.
+ 
+-pub fn gate(input: u32) -> bool { input >= 10 }
++pub fn gate(input: u32) -> bool { 10 <= input }
+ 
+ #[cfg(test)]
+ mod tests {
