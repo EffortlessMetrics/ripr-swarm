@@ -59,7 +59,14 @@ exercised boundary from a missing one.
   A computed or call-result argument, a generic or slice receiver and a
   rebound parameter stay unknown, and a local initializer that reads a
   parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
-  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  `while let`/`match`/closure earlier (`let x = x + 10;`) is unresolved.
+  The rebinding scan is token-level and fail-closed (#9774): the name as a
+  whole token in the pattern of any earlier `let` (plain, destructuring
+  `let (n, _)`/`let Foo { n, .. }`/`let &n`, `let Some(n) = .. else {..}`,
+  `if let`, `while let`, or on the declaration's own line), in a `for`
+  pattern, in any closure parameter list (`|(n, m)|`, `|&n|`), or in a
+  `match` arm pattern region (even when the `=>` is on another line), or in a
+  nested block's `let`, counts as a rebinding. Over-declining is accepted. A direct
   closed-form operand is known only when every related call row
   evaluates it; a computed local keeps its existing any-row semantics
   (#3295), where one evaluable row suffices. The difference is
