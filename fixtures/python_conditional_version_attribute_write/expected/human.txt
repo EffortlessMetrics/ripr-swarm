@@ -19,7 +19,10 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return 'newer'
-  Analyzer limit: Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the…
+  Analyzer limit: Static limit `missing_import_graph`: the changed line is a module-level statement
+    (a constant, decorator argument or conditional definition) that runs when a test imports the
+    module; related tests are linked only by a name heuristic and the preview adapter does not
+    follow top-level values into their use sites, so it does not grade this edit as a gap
   Related test: tests/test_versioned.py:3 test_it
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

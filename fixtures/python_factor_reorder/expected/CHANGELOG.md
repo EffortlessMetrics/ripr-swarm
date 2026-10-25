@@ -24,3 +24,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_factor_reorder (3)
+
+Reason:
+RIPR-SPEC-0238 #9815 with landed #10258: retain the complete order-sensitive repair guidance in the compact digest. Independently derived wrap-only correction; JSON and human-full remain unchanged.
+
+Command:
+Manually reconcile the independently reviewed compact Missing discriminator block, then verify with `cargo xtask fixtures python_factor_reorder`.
+
+Updated:
+- `expected/human.txt`
