@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,1 +15,1 @@
+-        self.items.iter().map(|(_, p)| p).sum()
++        self.items.iter().map(|(_, price)| price).sum()

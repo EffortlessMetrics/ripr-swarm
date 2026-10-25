@@ -17755,6 +17755,7 @@ tests = [
   "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
 ]
 fixtures = [
+  "fixtures/fixture_receiver_extension_iter",
   "fixtures/proximity_unrelated_oracle_not_credited",
   "fixtures/macro_site_scoped_rest_limit",
   "fixtures/parser_formatted_input_provenance",

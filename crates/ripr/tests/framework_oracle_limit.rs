@@ -1298,6 +1298,20 @@ fn fixture_receiver_credit_requires_readable_carried_data() -> Result<(), String
     let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
     for (label, source) in [
         ("empty field", direct.replace(data, "vec![]")),
+        (
+            "extension iter discards literal data",
+            format!(
+                "{direct}\ntrait EmptyIter {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; }}\nimpl EmptyIter for Vec<(String, u32)> {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }}"
+            ),
+        ),
+        (
+            "foreign extension trait is unread",
+            format!("use external::VectorTools;\n{direct}"),
+        ),
+        (
+            "implicit iterator prelude disabled",
+            format!("#![no_implicit_prelude]\n{direct}"),
+        ),
         ("computed field", direct.replace(data, "unknown_items()")),
         (
             "computed element",

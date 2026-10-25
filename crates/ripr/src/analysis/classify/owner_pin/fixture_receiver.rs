@@ -32,7 +32,10 @@ impl FixtureReceiver {
         let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
             return None;
         };
-        if !is_plain_identifier(self_ty) || super::declared_return_type(&owner.body)? != "u32" {
+        if !is_plain_identifier(self_ty)
+            || super::declared_return_type(&owner.body)? != "u32"
+            || !pipeline_dispatch_is_closed(owner, index)
+        {
             return None;
         }
         let function = function(&owner.body)?;
@@ -238,7 +241,11 @@ impl FixtureReceiver {
         let (Some(helper), None) = (helpers.next(), helpers.next()) else {
             return None;
         };
-        if helper.file != test.file || helper.item.container != FunctionContainer::Free {
+        if helper.file != test.file
+            || helper.item.container != FunctionContainer::Free
+            || !helper.attrs.is_empty()
+            || !helper.impl_attrs.is_empty()
+        {
             return None;
         }
         let source = &index.files().get(&test.file)?.source;
@@ -383,5 +390,53 @@ fn source_declares_type(source: &str, name: &str) -> bool {
             .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|item| item.name()))
             .or_else(|| ast::Trait::cast(node).and_then(|item| item.name()));
         named.is_some_and(|declared| declared.text() == name)
+    })
+}
+
+/// A Vec reaches slice::iter through deref, so a workspace extension trait
+/// can take that call before the standard method. Imported traits and item
+/// macros can supply unread implementations too. This bounded admission
+/// requires the ordinary implicit prelude and no such competing surface;
+/// it does not attempt general Rust method resolution.
+fn pipeline_dispatch_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    if !owner.attrs.is_empty()
+        || !owner.impl_attrs.is_empty()
+        || index.functions().iter().any(|function| {
+            function.item.has_self_param && matches!(function.name.as_str(), "iter" | "map" | "sum")
+        })
+        || index.files().values().any(|facts| {
+            crate::analysis::extract::mask_comments_and_strings(&facts.source)
+                .contains("no_implicit_prelude")
+        })
+    {
+        return false;
+    }
+    let Some(source) = index.files().get(&owner.file).map(|facts| &*facts.source) else {
+        return false;
+    };
+    let Some(scope) = super::item_nesting_with_impl(source, &owner.name, owner.start_line, true)
+    else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    !parse.tree().syntax().descendants().any(|node| {
+        if !(ast::Use::can_cast(node.kind())
+            || ast::ExternCrate::can_cast(node.kind())
+            || ast::MacroCall::can_cast(node.kind()))
+            || !node.parent().is_some_and(|parent| {
+                ast::ItemList::can_cast(parent.kind()) || ast::SourceFile::can_cast(parent.kind())
+            })
+        {
+            return false;
+        }
+        let mut modules: Vec<_> = node
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .filter_map(|module| module.name().map(|name| name.text().to_string()))
+            .collect();
+        modules.reverse();
+        scope.modules.starts_with(&modules)
     })
 }

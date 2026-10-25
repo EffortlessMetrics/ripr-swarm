@@ -419,7 +419,13 @@ non-ignored related test matches one of these shapes:
   projected component is `u32`. A unique, unattributed zero-argument helper
   in the test's own file and module returns only that record literal, with a
   nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
-  Each numeric component must be literal. The test contains only the eager
+  Each numeric component must be literal. Pipeline dispatch also fails closed
+  for indexed receiver methods named `iter`, `map` or `sum`, an indexed
+  `no_implicit_prelude` declaration, or imports, extern crates and item macro
+  invocations in the owner module or its same-file ancestors. This can withhold
+  unrelated imports or methods; general method resolution is not claimed.
+  Declaration attributes come from the indexed declaration facts, not the
+  function-body substring. The test contains only the eager
   assertion and its optional immutable fixture binding. Existing assertion
   execution, macro binding, receiver/type/import identity and plain-drop gates
   still apply. Only a pin credited through these gates can supply the
