@@ -781,8 +781,8 @@ fn file_url_path(url: &str) -> Result<String, String> {
             index += 1;
         }
     }
-    let path =
-        String::from_utf8(decoded).map_err(|_| format!("install source `{url}` is not UTF-8"))?;
+    let path = String::from_utf8(decoded)
+        .map_err(|err| format!("install source `{url}` is not UTF-8: {err}"))?;
     let drive = path.as_bytes();
     if drive.len() >= 3 && drive[0] == b'/' && drive[1].is_ascii_alphabetic() && drive[2] == b':' {
         return Ok(path[1..].to_string());
