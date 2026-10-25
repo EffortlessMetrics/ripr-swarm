@@ -15,7 +15,9 @@ Start here:
   Why unknown: the change reaches a sink but infection could not be determined statically
   Canonical gap: gap:rust:src/lib.rs:thr:predicate_boundary:predicate:x==101
   Changed behavior: x > 101
-  Missing discriminator (1 of 3): Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+  Missing discriminator (1 of 3): Changed boundary input is unresolved: call identity does not
+    resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is
+    unknown
   Related test (1 of 4 matched rows): tests/it.rs:13 at
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,

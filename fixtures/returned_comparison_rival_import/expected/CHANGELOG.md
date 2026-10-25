@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (5)
+
+Reason:
+RIPR-SPEC-0122: integrate landed #10258 digest wrapping into the owned #10046 fixture; only human whitespace changes, JSON and human-full remain byte-identical and unresolved call identity stays infection_unknown
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
