@@ -94,16 +94,19 @@ impl StaticLimitKind {
                  the changed behavior; adding a same-language test does not settle this."
             }
             StaticLimitKind::RustTransitiveReachUnresolved => {
-                "Call the changed owner directly from a test, or shorten the helper chain to \
-                 five calls or fewer, so ripr can trace the test to the change."
+                "Call the changed owner directly from a test if tests can name it; if it is a \
+                 private helper, ripr cannot finish the call chain, so this limitation can \
+                 remain even when an assertion through the public API is exact."
             }
             StaticLimitKind::RustIntegrationPublicApiPathUnresolved => {
-                "Call the changed owner directly from a test, or assert on its result through \
-                 the public API in the same test body so the path is visible."
+                "Call the changed owner directly from a test if tests can name it; if it is a \
+                 private helper reached only through the public API, ripr cannot trace that \
+                 edge, so it stays unresolved even when the public-API assertion is exact."
             }
             StaticLimitKind::RustMacroReachUnresolved => {
-                "Call the changed owner directly from a plain `#[test]` body instead of through \
-                 the macro, and assert on its result."
+                "Call the changed owner directly from a plain `#[test]` body if tests can name \
+                 it; if it sits behind a macro ripr does not expand, the edge can stay \
+                 unresolved even with an exact assertion."
             }
             StaticLimitKind::RustMacroWrappedTestCallUnresolved => {
                 "Call the changed owner from the `#[test]` body itself, outside the macro, and \
@@ -202,8 +205,9 @@ impl StopReason {
     pub(crate) fn next_step(&self) -> &'static str {
         match self {
             StopReason::MaxDepthReached => {
-                "Call the changed owner directly from a test so ripr does not have to walk a \
-                 deep call chain."
+                "Call the changed owner directly from a test if tests can name it; a deep call \
+                 chain to a private helper stays beyond ripr's depth limit even with an exact \
+                 assertion."
             }
             StopReason::ExternalCrateBoundary => {
                 "Test the changed behavior at a function inside this workspace, and assert on \
@@ -245,12 +249,14 @@ impl StopReason {
                 "Add a test that calls the changed code and asserts an exact result."
             }
             StopReason::TransitiveReachUnresolved => {
-                "Call the changed owner directly from a test so the path needs no name-matched \
-                 hops."
+                "Call the changed owner directly from a test if tests can name it; if the path \
+                 runs through private helpers ripr only matched by name, the edge can stay \
+                 unresolved even with an exact assertion."
             }
             StopReason::MacroReachUnresolved => {
-                "Call the changed owner directly from a plain `#[test]` body instead of through \
-                 the macro."
+                "Call the changed owner directly from a plain `#[test]` body if tests can name \
+                 it; if it sits behind a macro ripr does not expand, the edge stays \
+                 unresolved even with an exact assertion."
             }
             StopReason::GapEvidenceUnresolved => {
                 "Make the related test's assertion a plain `assert_eq!` on the changed value in \
@@ -275,7 +281,7 @@ mod tests {
             "Pin", "Split", "Make", "Run", "Await", "Rename", "Pass",
         ];
         step.ends_with('.')
-            && step.len() <= 260
+            && step.len() <= 300
             && VERBS.iter().any(|verb| {
                 step.strip_prefix(verb)
                     .is_some_and(|rest| rest.starts_with(' '))
@@ -396,6 +402,35 @@ mod tests {
                 "{} repeats another stop reason's next step",
                 reason.as_str()
             );
+        }
+    }
+
+    /// An unresolved reach edge may sit behind a private helper no test can
+    /// name, so these steps must say when a test shape cannot close the edge
+    /// instead of promising that one will.
+    #[test]
+    fn unresolved_edge_next_steps_are_conditional_and_name_the_limit() {
+        let kinds = [
+            StaticLimitKind::RustTransitiveReachUnresolved,
+            StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+            StaticLimitKind::RustMacroReachUnresolved,
+        ];
+        let stops = [
+            StopReason::MaxDepthReached,
+            StopReason::TransitiveReachUnresolved,
+            StopReason::MacroReachUnresolved,
+        ];
+        let steps = kinds
+            .iter()
+            .map(StaticLimitKind::next_step)
+            .chain(stops.iter().map(StopReason::next_step));
+        for step in steps {
+            assert!(step.contains("if tests can name it"), "{step}");
+            assert!(
+                step.contains("even with an exact") || step.contains("even when"),
+                "{step}"
+            );
+            assert!(!step.contains("so the path is visible"), "{step}");
         }
     }
 

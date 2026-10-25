@@ -34,10 +34,10 @@ Weakness
   - No detected boundary input for the changed predicate
 Stop reasons:
   - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name
-    Next: Call the changed owner directly from a test so the path needs no name-matched hops.
+    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
 Static limitation
   rust_integration_public_api_path_unresolved — An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
-  Next: Call the changed owner directly from a test, or assert on its result through the public API in the same test body so the path is visible.
+  Next: Call the changed owner directly from a test if tests can name it; if it is a private helper reached only through the public API, ripr cannot trace that edge, so it stays unresolved even when the public-API assertion is exact.
 Where to look
   For example, the test `greater_than_patch_examples` (tests/version_req.rs:18) calls `assert_public_api_accepts`, an entry point that may lead here. Inspect it to judge whether this change is observed.
 Limitation detail
@@ -69,10 +69,10 @@ Evidence
   shared evidence: E2, E3, E4
 Stop reasons:
   - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name
-    Next: Call the changed owner directly from a test so the path needs no name-matched hops.
+    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
 Static limitation
   rust_integration_public_api_path_unresolved — An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
-  Next: Call the changed owner directly from a test, or assert on its result through the public API in the same test body so the path is visible.
+  Next: Call the changed owner directly from a test if tests can name it; if it is a private helper reached only through the public API, ripr cannot trace that edge, so it stays unresolved even when the public-API assertion is exact.
 Where to look
   For example, the test `greater_than_patch_examples` (tests/version_req.rs:18) calls `assert_public_api_accepts`, an entry point that may lead here. Inspect it to judge whether this change is observed.
 Limitation detail

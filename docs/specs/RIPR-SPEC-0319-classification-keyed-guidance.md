@@ -27,7 +27,7 @@ guidance can be keyed to it.
 
 Every `StaticLimitKind` and every `StopReason` maps to one `next_step()`: a
 single imperative sentence naming the concrete test shape, input or setting
-that lets ripr settle the limitation. Both mappings are exhaustive `match`
+that can let ripr settle the limitation. Where the limitation is an unresolved reach edge that may sit behind a private helper no test can name, the step is conditional ("if tests can name it") and says the edge can stay unresolved even with an exact assertion; it never promises that a test shape closes the edge. Both mappings are exhaustive `match`
 expressions with no wildcard arm, so adding a variant does not compile until
 it has guidance.
 
@@ -65,6 +65,7 @@ the job of the evidence-specific producers.
 
 - `domain::limit_guidance::tests::every_static_limit_names_an_actionable_next_step`
 - `domain::limit_guidance::tests::every_stop_reason_names_an_actionable_next_step`
+- `domain::limit_guidance::tests::unresolved_edge_next_steps_are_conditional_and_name_the_limit`
 - `domain::limit_guidance::tests::next_steps_are_distinct_per_kind`
 - `domain::limit_guidance::tests::next_steps_make_no_runtime_or_coverage_claim`
 - `domain::limit_guidance::tests::static_limit_kinds_all_is_a_gap_free_ordinal_sequence`

@@ -35,7 +35,7 @@ Weakness
 
 Stop reasons:
   - macro_reach_unresolved — a candidate test path stops at a same-repo macro ripr does not expand
-    Next: Call the changed owner directly from a plain `#[test]` body instead of through the macro.
+    Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge stays unresolved even with an exact assertion.
 
 Static limitation
   rust_macro_wrapped_test_call_unresolved — A test directly invokes a Rust macro whose definition mentions this change, but ripr cannot expand the macro to confirm the path. This is a named limitation, not a coverage claim.
