@@ -125,7 +125,12 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
    rejects duplicate object keys (issue #2277): `serde_json`'s last-wins rule
    would silently drop a spliced case's pin while the file still parses, so a
    duplicate key anywhere in the corpus fails the gate closed with a parse
-   error naming the repeated key.
+   error naming the repeated key. Cases also load from
+   `fixtures/evidence-promotion-honesty-corpus/cases/*.json`, one case object
+   per file appended after the `corpus.json` cases in file-name order, so a PR
+   adds its case as a file of its own instead of editing the shared `cases`
+   tail. A case file without an `id`, or an `id` already present, fails the
+   load.
 2. For each pure case, reads exactly one byte-pinned source artifact:
    - `source_fixture` -> the fixture's `expected/check.json` (covered by
      `goldens check`);

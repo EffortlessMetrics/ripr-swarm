@@ -393,13 +393,62 @@ fn run_evidence_promotion_pinned_external_cases(
     Ok(runs)
 }
 
+/// Directory beside `corpus.json` whose files are one case object each. A PR
+/// adds its cases here instead of appending to the shared `cases` array, which
+/// every corpus PR otherwise edits at the same tail and so conflicts.
+const EVIDENCE_PROMOTION_CASE_DIR: &str = "cases";
+
+/// `corpus.json` with every `cases/*.json` file appended to its `cases` array
+/// in file-name order. Each file is a single case object; a non-object, a
+/// duplicate key, or an id already present (in `corpus.json` or another file)
+/// fails closed rather than shadowing a pinned case.
+pub(crate) fn read_evidence_promotion_corpus(corpus_path: &Path) -> Result<Value, String> {
+    let corpus_text = read_text_lossy(corpus_path)?;
+    let mut corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
+        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let case_dir = corpus_path
+        .parent()
+        .map(|parent| parent.join(EVIDENCE_PROMOTION_CASE_DIR));
+    let Some(case_dir) = case_dir.filter(|dir| dir.is_dir()) else {
+        return Ok(corpus_value);
+    };
+    let mut files: Vec<PathBuf> = fs::read_dir(&case_dir)
+        .map_err(|err| format!("failed to read {}: {err}", normalize_path(&case_dir)))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    let Some(cases) = corpus_value.get_mut("cases").and_then(Value::as_array_mut) else {
+        return Ok(corpus_value);
+    };
+    let mut ids: BTreeSet<String> = cases
+        .iter()
+        .filter_map(|case| case.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    for file in files {
+        let text = read_text_lossy(&file)?;
+        let case = parse_json_rejecting_duplicate_keys(&text)
+            .map_err(|err| format!("failed to parse {}: {err}", normalize_path(&file)))?;
+        let Some(id) = case.get("id").and_then(Value::as_str) else {
+            return Err(format!(
+                "{} must hold one case object with an `id`",
+                normalize_path(&file)
+            ));
+        };
+        if !ids.insert(id.to_string()) {
+            return Err(format!("{} repeats case id `{id}`", normalize_path(&file)));
+        }
+        cases.push(case);
+    }
+    Ok(corpus_value)
+}
+
 fn load_evidence_promotion_pinned_external_cases(
     corpus_path: &Path,
     options: &EvidencePromotionHonestyOptions,
 ) -> Result<Vec<EvidencePromotionExternalCase>, String> {
-    let corpus_text = read_text_lossy(corpus_path)?;
-    let corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
-        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         return Err(format!(
             "{} has no `cases` array",
@@ -3638,9 +3687,7 @@ pub(crate) fn write_evidence_promotion_external_report(
 fn load_evidence_promotion_corpus_case_metadata(
     corpus_path: &Path,
 ) -> Result<Vec<EvidencePromotionCorpusCaseMeta>, String> {
-    let corpus_text = read_text_lossy(corpus_path)?;
-    let corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
-        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         return Err(format!(
             "{} has no `cases` array",
@@ -4006,8 +4053,8 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
              3. If a scope-guard case lost report-level scope fields, restore the \
                golden's schema_version/tool/mode/root/base header or remove the scope \
                guard only after updating the governing spec.\n\
-             4. To register a new fake-clean, add a `must_not_promote` assertion to \
-               fixtures/evidence-promotion-honesty-corpus/corpus.json.\n",
+             4. To register a new fake-clean, add a case file with a `must_not_promote` assertion as \
+               fixtures/evidence-promotion-honesty-corpus/cases/<id>.json.\n",
         );
     }
     body.push_str(&format!("\n## Detail\n\n{report}\n\n"));
@@ -4338,9 +4385,7 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
         return Ok(());
     }
 
-    let corpus_text = read_text_lossy(corpus_path)?;
-    let corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
-        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
 
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         violations.push(format!(

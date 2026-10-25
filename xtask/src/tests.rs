@@ -3425,6 +3425,34 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
 }
 
 #[test]
+fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> Result<(), String> {
+    let dir = temp_dir("promotion-case-files");
+    let corpus = dir.join("corpus.json");
+    write(
+        &corpus,
+        r#"{"schema_version":"1","cases":[{"id":"base_case"}]}"#,
+    );
+    write(&dir.join("cases/b_case.json"), r#"{"id":"b_case"}"#);
+    write(&dir.join("cases/a_case.json"), r#"{"id":"a_case"}"#);
+
+    let folded = super::read_evidence_promotion_corpus(&corpus)?;
+    let ids: Vec<&str> = folded["cases"]
+        .as_array()
+        .ok_or("no cases array")?
+        .iter()
+        .filter_map(|case| case["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["base_case", "a_case", "b_case"]);
+
+    write(&dir.join("cases/dup.json"), r#"{"id":"base_case"}"#);
+    let error = super::read_evidence_promotion_corpus(&corpus)
+        .err()
+        .ok_or("a repeated case id was accepted")?;
+    assert!(error.contains("repeats case id `base_case`"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cases()
 -> Result<(), String> {
     with_temp_cwd("evidence-promotion-corpus-summary", |root| {
