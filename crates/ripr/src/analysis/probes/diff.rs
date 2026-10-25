@@ -17,7 +17,7 @@ use super::classify::{
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::diff_probe_id;
+use super::ids::{collision_rank_key, diff_probe_id};
 use super::lexical::{
     classify_changed_line, classify_changed_line_against, is_accumulator_rewrite_of,
 };
@@ -830,16 +830,35 @@ fn parser_span_for_canonical_shape(
     ParserByteSpan::same_line(shape.text, shape.start_byte)
 }
 
-/// Scan `probes` in order; for any id that appears more than once, rewrite the
-/// 2nd+ occurrences to append `.2`, `.3`, … (ordinal-based collision suffix).
+/// For any id that appears more than once, rewrite the 2nd+ occurrences to
+/// append `.2`, `.3`, … (ordinal-based collision suffix).
+///
+/// Occurrences of one expression keep encounter order, so repeated identical
+/// lines get the ordinals they always did. Distinct expressions that share an
+/// eight-hex fingerprint (#8838) rank by their full payload digest instead:
+/// the same pair gets the same two ids whichever the diff lists first.
 fn dedup_probe_ids(probes: &mut [SeededProbe]) {
     use std::collections::HashMap;
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    for seeded in probes.iter_mut() {
-        let count = seen.entry(seeded.probe.id.0.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            seeded.probe.id.0 = format!("{}.{}", seeded.probe.id.0, count);
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, seeded) in probes.iter().enumerate() {
+        groups
+            .entry(seeded.probe.id.0.clone())
+            .or_default()
+            .push(index);
+    }
+    for (base, indices) in groups.into_iter().filter(|(_, indices)| indices.len() > 1) {
+        let mut ranked = indices
+            .into_iter()
+            .map(|index| {
+                let probe = &probes[index].probe;
+                let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
+                let key = collision_rank_key(&base, owner, &probe.expression);
+                (key, index)
+            })
+            .collect::<Vec<_>>();
+        ranked.sort();
+        for (rank, (_, index)) in ranked.into_iter().enumerate().skip(1) {
+            probes[index].probe.id.0 = format!("{base}.{}", rank + 1);
         }
     }
 }
@@ -6022,6 +6041,89 @@ mod source_currentness_tests {
         };
         assert_ne!(probe.id.0, other_probe.id.0);
         Ok(())
+    }
+
+    /// #8838: `x >= 34804` and `x >= 44638` share the eight-hex fingerprint
+    /// `10e1cf10` at one owner. Which of the two takes the `.2` suffix must
+    /// not depend on the order the diff presents them in, and exact
+    /// duplicates of one expression keep their encounter-order ordinals.
+    fn collision_probe(expression: &str) -> SeededProbe {
+        let path = PathBuf::from("src/lib.rs");
+        let owner = SymbolId("src/lib.rs::collision".to_string());
+        SeededProbe::from_probe(Probe {
+            id: diff_probe_id(&path, &ProbeFamily::Predicate, Some(&owner), expression, 1),
+            location: SourceLocation::new(path, 1, 1),
+            owner: Some(owner),
+            family: ProbeFamily::Predicate,
+            delta: super::super::family::delta_for_family(&ProbeFamily::Predicate),
+            before: None,
+            after: Some(expression.to_string()),
+            expression: expression.to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        })
+    }
+
+    fn ids_by_expression(probes: &[SeededProbe]) -> Vec<(String, String)> {
+        let mut pairs = probes
+            .iter()
+            .map(|seeded| (seeded.probe.expression.clone(), seeded.probe.id.0.clone()))
+            .collect::<Vec<_>>();
+        pairs.sort();
+        pairs
+    }
+
+    #[test]
+    fn colliding_distinct_expressions_keep_their_ids_under_reorder() -> Result<(), String> {
+        let first = "x >= 34804";
+        let second = "x >= 44638";
+        let mut ab = vec![collision_probe(first), collision_probe(second)];
+        let mut ba = vec![collision_probe(second), collision_probe(first)];
+        assert_eq!(
+            ab[0].probe.id.0, ab[1].probe.id.0,
+            "fixture must be an actual fp8 collision"
+        );
+        dedup_probe_ids(&mut ab);
+        dedup_probe_ids(&mut ba);
+        assert_ne!(ab[0].probe.id.0, ab[1].probe.id.0);
+        assert_eq!(
+            ids_by_expression(&ab),
+            ids_by_expression(&ba),
+            "expression-to-id association must not follow encounter order"
+        );
+        // The real payload digests begin `10e1cf105ca4` (first) and
+        // `10e1cf10d8ef` (second): the first keeps the bare id it has always
+        // had in the order the diff listed it, so an existing suppression
+        // for it still names it.
+        let base = "probe:src_lib.rs:predicate:10e1cf10";
+        assert_eq!(
+            ids_by_expression(&ab),
+            vec![
+                (first.to_string(), base.to_string()),
+                (second.to_string(), format!("{base}.2"))
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn exact_duplicate_expressions_keep_encounter_order_ordinals() {
+        let line = "x >= 34804";
+        let mut probes = vec![
+            collision_probe(line),
+            collision_probe(line),
+            collision_probe(line),
+        ];
+        let base = probes[0].probe.id.0.clone();
+        dedup_probe_ids(&mut probes);
+        let ids = probes
+            .iter()
+            .map(|seeded| seeded.probe.id.0.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![base.clone(), format!("{base}.2"), format!("{base}.3")]
+        );
     }
 
     #[test]

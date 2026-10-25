@@ -1082,6 +1082,8 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/src/cli/commands/doctor.rs::tests::mcp_config_verdict_accepts_what_init_writes_and_names_each_problem",
+  "crates/ripr/tests/cli_smoke.rs::doctor_verifies_mcp_json_in_human_and_json_without_changing_exit",
   "crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry",
@@ -6802,6 +6804,8 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/cli/commands.rs::tests::lsp_terminal_hint_is_written_only_for_terminal_stdin",
+  "crates/ripr/src/cli/commands.rs::tests::lsp_terminal_hint_survives_an_unwritable_stderr",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_after_end_delivery_does_not_duplicate",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_end_retains_retry_custody",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_queued_drain_retains_retry_custody",
@@ -12156,6 +12160,8 @@ tests = [
   "crates/ripr/tests/broken_manifest_limitation.rs::instant_mode_adds_no_path_dependency_limitation",
   "crates/ripr/tests/broken_manifest_limitation.rs::inlining_the_inherited_dependency_clears_the_redirect_limitation",
   "crates/ripr/tests/broken_manifest_limitation.rs::non_utf8_manifest_path_is_limited_with_a_utf8_path_next_step",
+  "crates/ripr/tests/no_rust_diff_reads_no_rust.rs::docs_only_diff_does_not_scan_workspace_rust_in_interactive_modes",
+  "crates/ripr/tests/no_rust_diff_reads_no_rust.rs::rust_diff_does_reach_the_sentinel_in_draft_mode",
   "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots",
   "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection",
   "crates/ripr/src/analysis/workspace/select.rs::tests::empty_dependent_roots_reproduce_the_unchanged_selection",
@@ -18937,10 +18943,16 @@ spec = "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md"
 tests = [
   "crates/ripr/src/output/doctor_binary.rs::tests::cargo_build_output_running_binary_suppresses_path_mismatch_warning",
   "crates/ripr/src/output/doctor_binary.rs::tests::different_installed_ripr_on_path_warns_without_build_output_claim",
+  "crates/ripr/src/output/doctor_binary.rs::tests::missing_path_ripr_with_launching_config_warns_advisory_only",
+  "crates/ripr/src/output/doctor_binary.rs::tests::only_server_definitions_count_as_launching_configs",
+  "crates/ripr/src/output/doctor_binary.rs::tests::launching_config_with_ripr_on_path_stays_quiet",
+  "crates/ripr/src/output/doctor_binary.rs::tests::missing_path_ripr_without_launching_config_stays_quiet",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::default_screen_warns_when_config_launches_ripr_missing_from_path",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/output/doctor_binary.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md",

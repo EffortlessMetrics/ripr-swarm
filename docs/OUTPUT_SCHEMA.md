@@ -434,7 +434,10 @@ capability without failing installed-binary analysis. An additive
 `generated_workflow` advisory check appears when
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
-the refresh command. The source-build profile
+the refresh command. When the root has a `.mcp.json`, an additive `mcp_config`
+check reports `pass` if its `ripr` server entry runs `ripr mcp --stdio` (what
+`ripr init --mcp` writes) and `advisory` otherwise, with `evidence` naming the
+problem; it never changes `status`, and no file means no check. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
 evidence names an install route (rustup or the OS package manager); a rustc
 below the build minimum still names `rustup update stable`. It reports its
@@ -460,7 +463,10 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `warnings`. Cargo build output means a binary beside Cargo's `deps/` and
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
-on PATH is a legitimate development setup.
+on PATH is a legitimate development setup. One warning (#10347) fires when no
+`ripr` is on PATH and a project config (`.mcp.json`, `.vscode/mcp.json`,
+`.cursor/mcp.json`) launches it by bare name; the default human screen prints the
+same text as a `~` line.
 
 ### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
 
@@ -1344,7 +1350,7 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ## Finding
 
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. The actual distinct-payload fp8 collision in #8838 remains a known violation of the material-input/order identity requirements, not a waiver of them.
+The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. When distinct expressions at one owner share an `<fp8>`, the `.<n>` suffix is assigned by a full-width digest of each payload, so the same pair gets the same two IDs in either diff order; repeated copies of one expression keep encounter-order suffixes (#8838). A single changed expression whose `<fp8>` equals that of a different earlier expression at the same owner (a 32-bit collision with no sibling in the run to disambiguate it) still keeps the shared ID; that remainder of #8838 is a known violation of the material-input identity requirement, not a waiver of it.
 
 A finding contains:
 
