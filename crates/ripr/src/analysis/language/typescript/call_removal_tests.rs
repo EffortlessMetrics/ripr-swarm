@@ -111,6 +111,13 @@ fn counted_removal_receiver_identity_controls() -> Result<(), String> {
         true,
     )?;
     control(
+        "sibling-js-module-same-stem",
+        MODULE,
+        &format!("{SPY} record('a'); {PIN}"),
+        "import { record, sink } from '../src/audit.js';",
+        false,
+    )?;
+    control(
         "different-module",
         MODULE,
         &format!("{SPY} sink.write('test-side'); record('a'); {PIN}"),
@@ -310,4 +317,34 @@ fn counted_removal_refuses_registration_argument_effects() -> Result<(), String>
     )?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
+}
+
+#[test]
+fn counted_removal_refuses_arguments_that_can_throw() {
+    let new = "void event;";
+    let read = |old: &str| super::call_removal_guard::removed_method_call(new, Some(old));
+    for old in [
+        "sink.write(event);",
+        "sink.write(event, 'a', 1, true, null);",
+        "sink.write(`line`);",
+        "sink.write();",
+    ] {
+        assert_eq!(
+            read(old),
+            Some(("sink".to_string(), "write".to_string())),
+            "{old}"
+        );
+    }
+    // Arguments are evaluated before the callee: a throw there stops the old
+    // test before its count assertion, so neither version discriminates.
+    for old in [
+        "sink.write((() => { throw new Error('boom'); })());",
+        "sink.write(load());",
+        "sink.write(a.b);",
+        "sink.write(...rest);",
+        "sink.write(`line ${event}`);",
+        "sink.write(await later);",
+    ] {
+        assert_eq!(read(old), None, "{old}");
+    }
 }

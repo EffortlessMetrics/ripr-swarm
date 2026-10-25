@@ -43,11 +43,64 @@ pub(crate) fn removed_method_call(new: &str, old: Option<&str>) -> Option<(Strin
             if call.optional || member.optional {
                 return None;
             }
+            // Arguments run before the callee: one that can throw would stop the
+            // old test before its count assertion, so neither side discriminates.
+            if !call.arguments.iter().all(|argument| {
+                argument.as_expression().is_some_and(|expression| {
+                    matches!(
+                        expression,
+                        Expression::Identifier(_)
+                            | Expression::StringLiteral(_)
+                            | Expression::NumericLiteral(_)
+                            | Expression::BooleanLiteral(_)
+                            | Expression::NullLiteral(_)
+                    ) || matches!(expression, Expression::TemplateLiteral(template)
+                        if template.expressions.is_empty())
+                })
+            }) {
+                return None;
+            }
             Some((receiver.name.to_string(), member.property.name.to_string()))
         },
     )
     .ok()
     .flatten()
+}
+
+/// The shared resolver compares module stems, so `./audit.js` reaches the owner
+/// `audit.ts`. Under node's type stripping the specifier names the real file, so
+/// a written extension must be the owner's own or a sibling module is spied.
+fn owner_import_matches(
+    import: &TypeScriptImport,
+    test_file: &Path,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let written = import
+        .source
+        .rsplit('/')
+        .next()
+        .and_then(|segment| segment.rsplit_once('.'))
+        .map(|(_, extension)| extension)
+        .filter(|extension| {
+            matches!(
+                *extension,
+                "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs"
+            )
+        });
+    if let Some(written) = written
+        && owner.file.extension().and_then(|value| value.to_str()) != Some(written)
+    {
+        return false;
+    }
+    super::related_tests::import_source_matches_owner(
+        import,
+        test_file,
+        owner,
+        alias_map,
+        workspace_root,
+    )
 }
 
 fn statement_call<'s, 'a>(
@@ -115,7 +168,7 @@ pub(crate) fn call_count_pins_removed_call(
                 || !test.imports_in_file.iter().any(|import| {
                     import.local == owner.name
                         && import.imported.as_deref() == Some(owner.name.as_str())
-                        && super::related_tests::import_source_matches_owner(
+                        && owner_import_matches(
                             import,
                             &test.file,
                             owner,
@@ -152,7 +205,7 @@ pub(crate) fn call_count_pins_removed_call(
                             && module != "node:assert/strict"
                             && !test.imports_in_file.iter().any(|fact| {
                                 fact.source == module
-                                    && super::related_tests::import_source_matches_owner(
+                                    && owner_import_matches(
                                         fact,
                                         &test.file,
                                         &owned_owner,
@@ -301,7 +354,7 @@ fn sequence_pins(
                             !import.namespace
                                 && import.local == receiver
                                 && import.imported.as_deref() == Some(receiver)
-                                && super::related_tests::import_source_matches_owner(
+                                && owner_import_matches(
                                     import,
                                     &test.file,
                                     owner,
