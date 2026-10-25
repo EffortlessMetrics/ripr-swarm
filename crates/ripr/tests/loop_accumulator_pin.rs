@@ -102,6 +102,21 @@ const OWNER: &str = "pub fn total(items: &[u32]) -> u32 {
 /// `OWNER` with `test_body` as the one test, and the finding on line 4
 /// where `sum = sum + w;` became `sum += w;`.
 fn accumulator_finding(owner: &str, test_body: &str) -> Result<Finding, String> {
+    accumulator_finding_from(
+        owner,
+        "        sum = sum + w;",
+        "        sum += w;",
+        test_body,
+    )
+}
+
+/// `accumulator_finding` for an update line 4 that became `new` from `old`.
+fn accumulator_finding_from(
+    owner: &str,
+    old: &str,
+    new: &str,
+    test_body: &str,
+) -> Result<Finding, String> {
     let lib = format!(
         "{owner}
 #[cfg(test)]
@@ -115,13 +130,7 @@ mod tests {{
 }}
 "
     );
-    finding(
-        &lib,
-        4,
-        "        sum = sum + w;",
-        "        sum += w;",
-        ProbeFamily::ReturnValue,
-    )
+    finding(&lib, 4, old, new, ProbeFamily::ReturnValue)
 }
 
 #[test]
@@ -135,9 +144,52 @@ fn a_nonempty_literal_input_and_a_nonzero_total_credit_the_update() -> Result<()
 fn a_negative_total_from_a_subtracting_update_credits_it() -> Result<(), String> {
     let owner = OWNER
         .replace("-> u32", "-> i32")
-        .replace("&[u32]", "&[i32]");
-    let found = accumulator_finding(&owner, "assert_eq!(total(&[2, 3]), -5);")?;
+        .replace("&[u32]", "&[i32]")
+        .replace("sum += w;", "sum -= w;");
+    let found = accumulator_finding_from(
+        &owner,
+        "        sum = sum + w;",
+        "        sum -= w;",
+        "assert_eq!(total(&[2, 3]), -5);",
+    )?;
     assert_eq!(found.class, ExposureClass::Exposed, "{found:?}");
+    Ok(())
+}
+
+#[test]
+fn a_zero_element_does_not_make_the_pin_degenerate() -> Result<(), String> {
+    // The pinned input walks the loop even though one element is zero, so a
+    // computed expectation is withheld like any other unreadable exact pin.
+    let found = accumulator_finding(
+        OWNER,
+        "let want = 3 + 2;
+        assert_eq!(total(&[0, 3, 2]), want);",
+    )?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown, "{found:?}");
+    assert_eq!(limit(&found), Some("rust_pinned_shape_unresolved"));
+    Ok(())
+}
+
+#[test]
+fn a_cancelling_run_keeps_the_zero_pin_gap() -> Result<(), String> {
+    let owner = OWNER
+        .replace("-> u32", "-> i32")
+        .replace("&[u32]", "&[i32]");
+    let found = accumulator_finding(&owner, "assert_eq!(total(&[2, -2]), 0);")?;
+    assert_eq!(found.class, ExposureClass::WeaklyExposed, "{found:?}");
+    assert_eq!(limit(&found), None);
+    Ok(())
+}
+
+#[test]
+fn a_mutable_slice_parameter_is_the_shape_but_its_pin_is_not_read() -> Result<(), String> {
+    // The parameter qualifies, so the update keeps its `return_value` probe;
+    // the literal reader does not read `&mut [..]` as a run, so the exact pin
+    // is withheld instead of called a gap or credited.
+    let owner = OWNER.replace("&[u32]", "&mut [u32]");
+    let found = accumulator_finding(&owner, "assert_eq!(total(&mut [3, 4, 5]), 12);")?;
+    assert_ne!(found.class, ExposureClass::WeaklyExposed, "{found:?}");
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:?}");
     Ok(())
 }
 
@@ -258,6 +310,26 @@ fn a_nonzero_start_conditional_update_or_extra_use_is_not_the_shape() -> Result<
         OWNER.replace("sum += w;", "if *w > 1 { sum += w; }"),
         OWNER.replace("    sum\n}", "    sum + 1\n}"),
         OWNER.replace("sum += w;", "sum += w; sum += 1;"),
+        // `w * 2` to `w + 2` also gives 4 for `[2]`, so a total pin cannot
+        // separate a mutant inside the term.
+        OWNER.replace("sum += w;", "sum += w * 2;"),
+        // A shadowed walked parameter: the empty call input is not what loops.
+        OWNER.replace(
+            "let mut sum = 0;",
+            "let items: &[u32] = &[3, 4, 5];\n    let mut sum = 0;",
+        ),
+        // Code before the initialization.
+        OWNER.replace(
+            "let mut sum = 0;",
+            "let _ = items.len();\n    let mut sum = 0;",
+        ),
+        // A second parameter as the term could carry a user `AddAssign`.
+        OWNER
+            .replace("sum += w;", "sum += k;")
+            .replace("items: &[u32]", "k: &W, items: &[u32]"),
+        // Elements that are not a built-in integer type.
+        OWNER.replace("&[u32]", "&[Money]"),
+        OWNER.replace("&[u32]", "&[f64]"),
     ] {
         let lib = format!(
             "{owner}

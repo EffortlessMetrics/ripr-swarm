@@ -16,14 +16,10 @@ pub fn iter_total(items: &Vec<u64>) -> u64 {
     sum
 }
 
-pub struct Parcel {
-    pub grams: u32,
-}
-
-pub fn parcel_grams(parcels: &[Parcel]) -> u32 {
+pub fn rolled_total(rolls: &[u32]) -> u32 {
     let mut total = 0;
-    for p in parcels {
-        total = total + p.grams;
+    for r in rolls {
+        total = total + r;
     }
     total
 }
@@ -43,8 +39,8 @@ mod tests {
     }
 
     #[test]
-    fn parcels_weigh_their_sum() {
-        let parcels = [Parcel { grams: 40 }, Parcel { grams: 2 }];
-        assert_eq!(parcel_grams(&parcels), 42);
+    fn rolls_add_up() {
+        let rolls = [40, 2];
+        assert_eq!(rolled_total(&rolls), 42);
     }
 }

@@ -4,12 +4,12 @@
   "diff": "cases/loop-accumulator-bound-input.diff",
   "anchor": {
     "file": "src/lib.rs",
-    "line": 26
+    "line": 22
   },
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "loop_accumulator",
   "test_shape": "exact_pin_on_bound_input",
-  "hard_case": "The added term reads a field of the loop variable and the pin passes a local binding (`&parcels`), not a literal sequence. ripr cannot read that the input walks the loop, so it abstains instead of calling the exact pin weak.",
+  "hard_case": "The pin passes a local binding (`&rolls`), not a literal sequence. ripr cannot read that the input walks the loop, so it abstains instead of calling the exact pin weak.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -17,25 +17,25 @@
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
     "mutants": [
       {
-        "replacement": "total -= p.grams;",
-        "mutated_line": "total -= p.grams;",
+        "replacement": "total -= r;",
+        "mutated_line": "total -= r;",
         "outcome": "tests_failed",
-        "failing_test": "tests::parcels_weigh_their_sum",
-        "equivalence_review": "not equivalent: parcels_weigh_their_sum fails on it"
+        "failing_test": "tests::rolls_add_up",
+        "equivalence_review": "not equivalent: rolls_add_up fails on it"
       },
       {
-        "replacement": "total *= p.grams;",
-        "mutated_line": "total *= p.grams;",
+        "replacement": "total *= r;",
+        "mutated_line": "total *= r;",
         "outcome": "tests_failed",
-        "failing_test": "tests::parcels_weigh_their_sum",
-        "equivalence_review": "not equivalent: parcels_weigh_their_sum fails on it"
+        "failing_test": "tests::rolls_add_up",
+        "equivalence_review": "not equivalent: rolls_add_up fails on it"
       },
       {
         "replacement": "(delete the statement)",
         "mutated_line": "",
         "outcome": "tests_failed",
-        "failing_test": "tests::parcels_weigh_their_sum",
-        "equivalence_review": "not equivalent: parcels_weigh_their_sum fails on it"
+        "failing_test": "tests::rolls_add_up",
+        "equivalence_review": "not equivalent: rolls_add_up fails on it"
       }
     ]
   },
@@ -47,7 +47,7 @@
       "silent"
     ]
   },
-  "reasoning": "parcels_weigh_their_sum builds two parcels and pins 42 exactly, so each mutant of the update fails it. The input is a bound local of struct values, which the owner pin does not read as a literal sequence: the finding must read limited, never a gap.",
+  "reasoning": "rolls_add_up binds two rolls and pins 42 exactly, so each mutant of the update fails it. The input is a bound local, which the owner pin does not read as a literal sequence: the finding must read limited, never a gap.",
   "labeling_observation": {
     "ripr_commit": "cf8be83",
     "full_checkout_verdict": "gap",

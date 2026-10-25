@@ -73,15 +73,22 @@ needs loop-count reasoning.
 An owner has the **accumulator shape** when all of these hold, read from the
 parsed function body:
 
-- its body is `let mut acc = 0;` (an integer zero, optionally suffixed, with
-  no type annotation), then one `for x in P { .. }` (or `P.iter()`) where `P`
-  is a parameter of a slice-like type (`&[T]`, `&mut [T]`, `Vec<T>`, `&Vec<T>`),
-  then the bare tail `acc`;
+- its body is exactly, in this order, `let mut acc = 0;` (an integer zero,
+  optionally suffixed, with no type annotation), one `for x in P { .. }` (or
+  `for &x in P`, or `P.iter()`) and the bare tail `acc`. Nothing runs before
+  the initialization, so nothing can shadow or rebind the walked parameter;
+- `P` is a parameter whose type is a built-in integer slice (`&[T]`,
+  `&mut [T]`, `Vec<T>`, `&Vec<T>`, with `T` one of `i8`..`i128`, `isize`,
+  `u8`..`u128`, `usize`) and its name appears only in its declaration and the
+  loop;
 - the loop body is one statement, the update: `acc += term`, `acc -= term`,
   `acc = acc + term` or `acc = acc - term`, on one line;
-- `term` is built only from names, literals, field and index reads, `*`, `&`
-  and `+ - *`: no call, method call, macro, closure, `?`, `.await`, block,
-  branch or loop;
+- `term` is the loop variable, `*variable` or an integer literal. The
+  elements are a built-in integer type, so the update is the primitive
+  operator. A field, a second name or a call could carry a user
+  `AddAssign`/`SubAssign` impl (`impl AddAssign<&W> for i32`), and an operator
+  inside the term has mutants (`w * w` to `w + w`) that a pin of the total
+  does not separate;
 - `acc` is named exactly by its `let`, the update and the tail, and the body
   holds no other loop, `return`, `break`, `continue`, `?`, macro, closure,
   `if`, `match`, `async` or `unsafe`.
@@ -117,11 +124,13 @@ or `-=`, and the residual is documented here rather than hidden.
 ### Not a gap when the pin cannot be read
 
 A related direct-call test that pins the owner's whole result with an exact
-`assert_eq!` on a non-degenerate input, where the credit gates above do not
+`assert_eq!` on a non-degenerate input (not an empty collection, and not
+compared with a zero literal; a zero element among others is not degenerate), where the credit gates above do not
 hold (a bound input, a computed expectation, a value the helper computes),
 withholds the gap: the finding is `static_unknown` with
 `rust_pinned_shape_unresolved`, because ripr cannot read that the pinned input
-walks the loop and totals to a nonzero value. An empty or zero pin is
+walks the loop and totals to a nonzero value. An empty pin, or a pin whose expected
+value is a zero literal (an all-zero or cancelling run), is
 degenerate and keeps its gap: it cannot separate the update. A test with no
 exact pin (a smoke call, a relational check) keeps its gap.
 
@@ -136,11 +145,17 @@ exact pin (a smoke call, a relational check) keeps its gap.
 - A table-driven pin (`for (items, want) in cases { .. }`), a call in the term
   (`count += line.split_whitespace().count()`) and a nonzero start keep their
   `static_unknown` probe. Crediting them is future work.
+- A release build can wrap an unsigned `-=` back to the pinned value for a
+  single large element; debug builds panic. ripr does not model overflow.
 - Only `+`/`-` updates qualify; `*=` from zero is constant zero.
 - Unsigned subtraction that underflows panics in debug builds; ripr does not
   model overflow.
-- Types with user `AddAssign` impls cannot appear: the zero start is an
-  unsuffixed or built-in-suffixed integer literal.
+- Types with user `AddAssign` impls cannot appear: the elements are a
+  built-in integer type and the term is the loop variable, `*variable` or an
+  integer literal.
+- A term edit that coincides with the old term on the pinned input (`w * w`
+  to `w + w` at `[2]`) is outside the shape: compound terms keep their
+  `static_unknown` probe.
 
 ## Non-Goals
 

@@ -27,7 +27,7 @@ pub(crate) struct LoopAccumulator {
 /// items { acc += <term>; } acc }` with nothing else in it: the update is the
 /// loop body's only statement, `acc` appears only in its `let`, the update
 /// and the tail, and the body holds no other loop, exit, macro, closure or
-/// `unsafe`. `<term>` is call-free and does not mention `acc`. `acc op= term`
+/// `unsafe`. `<term>` is the loop variable, `*variable` or an integer literal. `acc op= term`
 /// and `acc = acc op term` with `op` in `+`, `-` both qualify. Starting from
 /// zero, a pinned nonzero result separates `+`/`-`, `*`, `/`, `%`, `&` and
 /// statement deletion, because each of those produces the opposite sign or
@@ -39,7 +39,7 @@ pub(crate) fn loop_accumulator(
     if function.async_token().is_some() || function.unsafe_token().is_some() {
         return None;
     }
-    let local = updated_local(update)?;
+    let (local, term) = updated_local(update)?;
     let statement = ast::ExprStmt::cast(update.syntax().parent()?)?;
     let loop_block = ast::StmtList::cast(statement.syntax().parent()?)?;
     let for_expr = ast::ForExpr::cast(loop_block.syntax().parent()?.parent()?)?;
@@ -49,24 +49,37 @@ pub(crate) fn loop_accumulator(
     }
     let body = function.body()?;
     let stmts = body.stmt_list()?;
-    // The loop is a direct statement of the owner body.
-    let for_statement = for_expr.syntax().parent()?;
-    if for_statement.kind() != SyntaxKind::EXPR_STMT
-        || for_statement.parent().as_ref() != Some(stmts.syntax())
+    // The body is exactly `let mut acc = 0; for .. { update } acc`, in that
+    // order, so nothing can shadow the walked parameter or run before the
+    // initialization.
+    let statements: Vec<ast::Stmt> = stmts.statements().collect();
+    let [
+        ast::Stmt::LetStmt(initialization),
+        ast::Stmt::ExprStmt(loop_statement),
+    ] = statements.as_slice()
+    else {
+        return None;
+    };
+    if loop_statement.expr().as_ref().map(AstNode::syntax) != Some(for_expr.syntax())
+        || !declares_zero(initialization, &local)
     {
         return None;
     }
+    let loop_variable = loop_variable(&for_expr)?;
+    if loop_variable == local || !is_plain_term(&term, &loop_variable) {
+        return None;
+    }
     let walked = walked_parameter(&for_expr)?;
+    if walked == local || walked == loop_variable {
+        return None;
+    }
     let position = function
         .param_list()?
         .params()
-        .position(|param| parameter_is_slice_named(&param, &walked))?;
+        .position(|param| parameter_is_integer_slice_named(&param, &walked))?;
     // The owner returns the local as its whole tail.
     let tail = stmts.tail_expr()?;
     if path_ident(&tail).as_deref() != Some(local.as_str()) {
-        return None;
-    }
-    if !declares_zero(&stmts, &local) {
         return None;
     }
     // The shape allows nothing else: no exit, second loop, macro, closure
@@ -113,6 +126,16 @@ pub(crate) fn loop_accumulator(
     if named != expected {
         return None;
     }
+    // The walked parameter is named by its declaration and the loop only.
+    let walked_names = function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == walked)
+        .count();
+    if walked_names != 2 {
+        return None;
+    }
     Some(LoopAccumulator {
         local,
         walked_position: position,
@@ -143,7 +166,7 @@ pub(crate) fn loop_accumulator_at(body: &str, changed_line: usize) -> Option<Loo
 
 /// The bare local an update adds to or subtracts from, when its right side is
 /// a call-free term that does not mention that local.
-fn updated_local(update: &ast::BinExpr) -> Option<String> {
+fn updated_local(update: &ast::BinExpr) -> Option<(String, ast::Expr)> {
     let local = path_ident(&update.lhs()?)?;
     let op = update.op_token()?;
     let term = match op.text() {
@@ -159,33 +182,47 @@ fn updated_local(update: &ast::BinExpr) -> Option<String> {
         }
         _ => return None,
     };
-    if term.syntax().text().contains_char('\n') || !is_plain_term(&term) {
+    if term.syntax().text().contains_char('\n') {
         return None;
     }
-    Some(local)
+    Some((local, term))
 }
 
-/// A term built only from names, literals, field and index reads, `*`/`&`
-/// and arithmetic operators, so nothing in it can run code or exit.
-fn is_plain_term(term: &ast::Expr) -> bool {
-    term.syntax()
-        .descendants()
-        .filter_map(ast::Expr::cast)
-        .all(|expr| match expr {
-            ast::Expr::PathExpr(_)
-            | ast::Expr::Literal(_)
-            | ast::Expr::FieldExpr(_)
-            | ast::Expr::IndexExpr(_)
-            | ast::Expr::ParenExpr(_) => true,
-            ast::Expr::PrefixExpr(prefix) => prefix
-                .op_token()
-                .is_some_and(|op| matches!(op.text(), "*" | "-")),
-            ast::Expr::RefExpr(_) => true,
-            ast::Expr::BinExpr(bin) => bin
-                .op_token()
-                .is_some_and(|op| matches!(op.text(), "+" | "-" | "*")),
-            _ => false,
-        })
+/// A term whose arithmetic is built in: the loop variable, `*variable` or an
+/// integer literal. The elements are a built-in integer type, so `acc op=
+/// term` is the primitive operator; a field, a second parameter or any other
+/// name could carry a user `AddAssign`/`SubAssign` impl, and an operator
+/// inside the term has mutants (`x * 2` to `x + 2`) a pin of the total does
+/// not separate.
+fn is_plain_term(term: &ast::Expr, loop_variable: &str) -> bool {
+    match term {
+        ast::Expr::PathExpr(_) => path_ident(term).as_deref() == Some(loop_variable),
+        ast::Expr::Literal(literal) => matches!(literal.kind(), ast::LiteralKind::IntNumber(_)),
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix.op_token().is_some_and(|op| op.text() == "*")
+                && prefix
+                    .expr()
+                    .is_some_and(|inner| path_ident(&inner).as_deref() == Some(loop_variable))
+        }
+        _ => false,
+    }
+}
+
+/// The name the loop binds to each element: `w` or `&w`.
+fn loop_variable(for_expr: &ast::ForExpr) -> Option<String> {
+    let pattern = for_expr.pat()?;
+    let ident = match pattern {
+        ast::Pat::IdentPat(ident) => ident,
+        ast::Pat::RefPat(reference) => match reference.pat()? {
+            ast::Pat::IdentPat(ident) => ident,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if ident.at_token().is_some() || ident.ref_token().is_some() || ident.mut_token().is_some() {
+        return None;
+    }
+    Some(ident.name()?.text().to_string())
 }
 
 fn path_ident(expr: &ast::Expr) -> Option<String> {
@@ -214,7 +251,7 @@ fn walked_parameter(for_expr: &ast::ForExpr) -> Option<String> {
     path_ident(&call.receiver()?)
 }
 
-fn parameter_is_slice_named(param: &ast::Param, name: &str) -> bool {
+fn parameter_is_integer_slice_named(param: &ast::Param, name: &str) -> bool {
     let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
         return false;
     };
@@ -224,55 +261,79 @@ fn parameter_is_slice_named(param: &ast::Param, name: &str) -> bool {
     let Some(ty) = param.ty() else {
         return false;
     };
-    let ty = ty.syntax().text().to_string();
-    let ty: String = ty.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let ty: String = ty
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
     let ty = ty.trim_start_matches('&');
-    ty.starts_with('[') || ty.starts_with("Vec<")
+    let ty = ty.strip_prefix("mut").unwrap_or(ty);
+    let element = ty
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .or_else(|| {
+            ty.strip_prefix("Vec<")
+                .and_then(|rest| rest.strip_suffix('>'))
+        });
+    element.is_some_and(|element| {
+        matches!(
+            element,
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+        )
+    })
 }
 
-/// The body holds `let mut <local> = 0;` (an integer zero, optionally
-/// suffixed) as a direct statement.
-fn declares_zero(stmts: &ast::StmtList, local: &str) -> bool {
-    stmts.statements().any(|stmt| {
-        let ast::Stmt::LetStmt(let_stmt) = stmt else {
-            return false;
-        };
-        let Some(ast::Pat::IdentPat(pattern)) = let_stmt.pat() else {
-            return false;
-        };
-        if pattern.mut_token().is_none()
-            || pattern.name().is_none_or(|name| name.text() != local)
-            || let_stmt.ty().is_some()
-        {
-            return false;
-        }
-        let Some(ast::Expr::Literal(literal)) = let_stmt.initializer() else {
-            return false;
-        };
-        let text: String = literal
-            .syntax()
-            .text()
-            .to_string()
-            .chars()
-            .filter(|ch| *ch != '_')
-            .collect();
-        text.strip_prefix('0').is_some_and(|suffix| {
-            matches!(
-                suffix,
-                "" | "u8"
-                    | "u16"
-                    | "u32"
-                    | "u64"
-                    | "u128"
-                    | "usize"
-                    | "i8"
-                    | "i16"
-                    | "i32"
-                    | "i64"
-                    | "i128"
-                    | "isize"
-            )
-        })
+/// `let mut <local> = 0;` (an integer zero, optionally suffixed, with no type
+/// annotation).
+fn declares_zero(let_stmt: &ast::LetStmt, local: &str) -> bool {
+    let Some(ast::Pat::IdentPat(pattern)) = let_stmt.pat() else {
+        return false;
+    };
+    if pattern.mut_token().is_none()
+        || pattern.name().is_none_or(|name| name.text() != local)
+        || let_stmt.ty().is_some()
+        || let_stmt.let_else().is_some()
+    {
+        return false;
+    }
+    let Some(ast::Expr::Literal(literal)) = let_stmt.initializer() else {
+        return false;
+    };
+    let text: String = literal
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| *ch != '_')
+        .collect();
+    text.strip_prefix('0').is_some_and(|suffix| {
+        matches!(
+            suffix,
+            "" | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+        )
     })
 }
 
@@ -316,14 +377,18 @@ mod tests {
             "sum = sum + w;",
             "sum = sum - w;",
             "sum -= w;",
-            "sum += *w * 2;",
-            "sum += w.weight;",
+            "sum += *w;",
+            "sum += 1;",
         ] {
             let source = SUM.replace("sum += w;", body);
             assert!(accumulator(&source).is_some(), "{body}");
         }
         let walked = SUM.replace("for w in items", "for w in items.iter()");
         assert!(accumulator(&walked).is_some());
+        let by_value = SUM.replace("for w in items", "for &w in items");
+        assert!(accumulator(&by_value).is_some());
+        let mutable = SUM.replace("&[u32]", "&mut [u32]");
+        assert!(accumulator(&mutable).is_some());
         let second = "fn total(scale: u32, items: Vec<u32>) -> u32 {\n    let mut sum = 0u32;\n    for w in items {\n        sum += w;\n    }\n    sum\n}\n";
         assert_eq!(
             accumulator(second).map(|found| found.walked_position),
@@ -344,6 +409,26 @@ mod tests {
             // A call in the term can run code or exit.
             SUM.replace("sum += w;", "sum += weigh(w);"),
             SUM.replace("sum += w;", "sum += w.get()?;"),
+            // An operator in the term has mutants a total pin does not separate.
+            SUM.replace("sum += w;", "sum += *w * 2;"),
+            SUM.replace("sum += w;", "sum += w + 1;"),
+            SUM.replace("sum += w;", "sum += w[0];"),
+            // A field or a second name could carry a user operator impl.
+            SUM.replace("sum += w;", "sum += w.weight;"),
+            SUM.replace("sum += w;", "sum += scale;")
+                .replace("items:", "scale: u32, items:"),
+            // Elements that are not a built-in integer type.
+            SUM.replace("&[u32]", "&[Money]"),
+            SUM.replace("&[u32]", "&[f64]"),
+            // A shadowed or rebound walked parameter, or a body in another order.
+            SUM.replace(
+                "let mut sum = 0;",
+                "let items = &[1u32][..];\n    let mut sum = 0;",
+            ),
+            SUM.replace(
+                "let mut sum = 0;",
+                "let mut sum = 0;\n    let items = &[1u32][..];",
+            ),
             // Operators other than `+` and `-` are not the shape.
             SUM.replace("sum += w;", "sum *= w;"),
             SUM.replace("sum += w;", "sum = w;"),

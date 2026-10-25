@@ -2,7 +2,7 @@
   "case_id": "loop-accumulator-bound-input",
   "subject_id": "authored-loop-accumulator",
   "origin": "authored",
-  "anchor": "src/lib.rs:26",
+  "anchor": "src/lib.rs:22",
   "behavior_family": "loop_accumulator",
   "test_shape": "exact_pin_on_bound_input",
   "hard_case": true,

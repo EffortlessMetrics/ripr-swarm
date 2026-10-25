@@ -123,7 +123,7 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
                     && test.file == related.file
                     && test.start_line == related.line
             })?;
-            pins_owner_exactly(test, &owner.name).then(|| {
+            pins_owner_exactly(test, &owner.name, shape).then(|| {
                 format!(
                     "`{}` ({}:{})",
                     related.name,
@@ -245,7 +245,7 @@ fn pins_result_ok(test: &TestFact, owner: &str) -> bool {
 /// Whether `test` is a live test with a plain `assert_eq!` whose one operand
 /// is the owner's call itself (see [`is_whole_call`]) on an input that is not
 /// empty or zero, and whose other operand does not name the owner.
-fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
+fn pins_owner_exactly(test: &TestFact, owner: &str, shape: Shape) -> bool {
     if is_ignored(test)
         || test
             .attrs
@@ -266,7 +266,7 @@ fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
                     text_calls(call, owner)
                         && !contains_name(other, owner)
                         && is_whole_call(call, owner)
-                        && !degenerate_input(call)
+                        && !degenerate_pin(shape, call, other)
                 };
                 pins(left, right) || pins(right, left)
             })
@@ -376,6 +376,32 @@ fn is_whole_call(operand: &str, owner: &str) -> bool {
             return false;
         }
     }
+}
+
+/// The pin `call == other` leaves the usual reading for `shape`. The
+/// accumulator walks every element, so one zero element is no more degenerate
+/// than any other: only an empty input or a zero total (the update then adds
+/// nothing a pin could notice) is.
+fn degenerate_pin(shape: Shape, call: &str, other: &str) -> bool {
+    if shape != Shape::AccumulatedLocal {
+        return degenerate_input(call);
+    }
+    let compact: String = call.chars().filter(|ch| !ch.is_whitespace()).collect();
+    ["[]", "::new()", "Vec::new"]
+        .iter()
+        .any(|empty| compact.contains(empty))
+        || is_zero_literal(other)
+}
+
+/// `0`, `-0`, `0_u32` and the like: an integer literal that is zero.
+fn is_zero_literal(text: &str) -> bool {
+    let compact: String = text.chars().filter(|ch| *ch != '_').collect();
+    let digits = compact.trim().trim_start_matches('-');
+    digits.strip_prefix('0').is_some_and(|suffix| {
+        suffix.is_empty()
+            || ((suffix.starts_with('u') || suffix.starts_with('i'))
+                && suffix[1..].chars().all(|ch| ch.is_ascii_alphanumeric()))
+    })
 }
 
 /// An input the closure or the `else` exit need not see: an empty literal,
