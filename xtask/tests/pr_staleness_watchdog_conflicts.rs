@@ -52,6 +52,8 @@ struct Pr {
     marker_comment: bool,
     moved: bool,
     later_state: Option<&'static str>,
+    covered: bool,
+    in_flight: bool,
 }
 
 impl Pr {
@@ -66,6 +68,8 @@ impl Pr {
             marker_comment: false,
             moved: false,
             later_state: None,
+            covered: false,
+            in_flight: false,
         }
     }
     fn sha(&self) -> String {
@@ -146,6 +150,20 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             pr.prior_statuses,
         )
         .map_err(|e| e.to_string())?;
+        if pr.covered {
+            fs::write(
+                dir.join(format!("checks.{}.json", pr.sha())),
+                r#"{"check_runs":[{"name":"Ripr Rust Small Result"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if pr.in_flight {
+            fs::write(
+                dir.join("runs.json"),
+                r#"{"workflow_runs":[{"status":"in_progress","display_title":"Merge-ready request abc"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
         if let Some(later) = pr.later_state {
             fs::write(
                 dir.join(format!("pull.{}.later.json", pr.number)),
@@ -160,7 +178,8 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join("comments.json"),
                 format!(
-                    r#"[{{"body":"unrelated"}},{{"body":"<!-- merge-ready-conflict:{}:main -->\nbody"}}]"#,
+                    r#"[{{"body":"unrelated"}},{{"body":"<!-- merge-ready-conflict:{}:main -->\nbody"}},{{"body":"<!-- merge-ready-dark:{} -->\nbody"}}]"#,
+                    pr.sha(),
                     pr.sha()
                 ),
             )
@@ -334,10 +353,12 @@ fn drafts_unlabeled_forks_and_clean_heads_are_left_alone() -> Result<(), String>
         },
         Pr {
             state: "clean",
+            covered: true,
             ..Pr::dirty(10)
         },
         Pr {
             state: "blocked",
+            covered: true,
             ..Pr::dirty(11)
         },
     ];
@@ -424,6 +445,75 @@ fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(
     assert_eq!(
         (outcome.comments, outcome.failures),
         (1, 1),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(), String> {
+    let pushed = Pr {
+        state: "clean",
+        ..Pr::dirty(17)
+    };
+    let outcome = run(&[pushed], "dark-push")?;
+    let sha = Pr::dirty(17).sha();
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (1, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .log
+            .contains(&format!("<!-- merge-ready-dark:{sha} -->")),
+        "{}",
+        outcome.log
+    );
+    assert!(outcome.summary.contains("re-apply notice posted"));
+
+    // Already told for this head: stay quiet.
+    let told = Pr {
+        state: "clean",
+        marker_comment: true,
+        ..Pr::dirty(18)
+    };
+    let outcome = run(&[told], "dark-told")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    Ok(())
+}
+
+#[test]
+fn a_covered_in_flight_or_uncomputed_head_gets_no_re_apply_notice() -> Result<(), String> {
+    let covered = Pr {
+        state: "clean",
+        covered: true,
+        ..Pr::dirty(19)
+    };
+    let in_flight = Pr {
+        state: "clean",
+        in_flight: true,
+        ..Pr::dirty(20)
+    };
+    let outcome = run(&[covered, in_flight], "dark-quiet")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    // Mergeability never computed: it may be a conflict, so do not blame a push.
+    // (Separate run: the in-flight fixture is shared by every PR in a run.)
+    let uncomputed = Pr {
+        state: "unknown",
+        ..Pr::dirty(21)
+    };
+    let outcome = run(&[uncomputed], "dark-uncomputed")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
         "{}",
         outcome.summary
     );
