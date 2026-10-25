@@ -1627,11 +1627,19 @@ fn withhold_rebound_scope_receivers(
 ) {
     let code = blank_ranges(source, masked);
     let opaque = identifier_occurrences(&code, "eval").next().is_some() || code.contains("\\u");
-    let rebound: Vec<String> = identifier_writes(&code)
+    let rebound: std::collections::HashSet<String> = identifier_writes(&code)
         .into_iter()
         .map(|(name, _)| name)
         .chain(declared_names(&code))
         .collect();
+    let sites: std::collections::HashSet<usize> = sites.iter().copied().collect();
+    // Both verdicts depend on the file and the name alone, not on the test,
+    // so each is computed once. A file-level binding is listed on every test,
+    // and rescanning the file for it per test was cubic (#10017).
+    let mut constructor_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let mut name_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
     for test in tests {
         for binding in &mut test.scope_bindings {
             let Some(constructor) = &binding.constructed_by else {
@@ -1640,18 +1648,27 @@ fn withhold_rebound_scope_receivers(
             let root = constructor.split('.').next().unwrap_or(constructor);
             // `Cart.prototype` anywhere (a spy or method assignment in a
             // hook) may replace the method the test calls.
-            let constructor_rebound = rebound.iter().any(|name| name == root)
-                || identifier_occurrences(&code, root).any(|at| {
-                    code[at + root.len()..]
-                        .trim_start()
-                        .strip_prefix('.')
-                        .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
-                })
-                || (constructor.contains('.') && member_assigned(&code, constructor));
+            let constructor_rebound = *constructor_verdicts
+                .entry(constructor.clone())
+                .or_insert_with(|| {
+                    rebound.contains(root)
+                        || identifier_occurrences(&code, root).any(|at| {
+                            code[at + root.len()..]
+                                .trim_start()
+                                .strip_prefix('.')
+                                .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
+                        })
+                        || (constructor.contains('.') && member_assigned(&code, constructor))
+                });
             if opaque
                 || constructor_rebound
-                || identifier_occurrences(&code, &binding.name)
-                    .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
+                || *name_verdicts
+                    .entry(binding.name.clone())
+                    .or_insert_with(|| {
+                        identifier_occurrences(&code, &binding.name).any(|at| {
+                            !sites.contains(&at) && !is_plain_read(&code, at, &binding.name)
+                        })
+                    })
             {
                 binding.constructed_by = None;
             }
