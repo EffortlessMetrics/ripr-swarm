@@ -233,6 +233,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
     generated: SyncMemo<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
+    /// The macro definitions a file sees from other files (#6925), the same
+    /// resolution the generated-test pass applied.
+    macro_visibility: OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
     resolved_modules: OnceLock<BTreeSet<(PathBuf, usize, String)>>,
     execution_contexts: SyncMemo<BTreeMap<PathBuf, Arc<Option<ExecutionContext>>>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
@@ -1356,7 +1359,20 @@ impl OwnerPinSyntax {
             .generated
             .borrow_mut()
             .entry(test.file.clone())
-            .or_insert_with(|| generated_test_pins(&test.file, &facts.source, NON_RETURNING_MACROS))
+            .or_insert_with(|| {
+                let imported = self
+                    .macro_visibility
+                    .get_or_init(|| {
+                        crate::analysis::facts::macro_visibility::MacroVisibility::new(
+                            index
+                                .files()
+                                .iter()
+                                .map(|(path, file)| (path.clone(), file.source.clone())),
+                        )
+                    })
+                    .imported_definitions(&test.file);
+                generated_test_pins(&test.file, &facts.source, &imported, NON_RETURNING_MACROS)
+            })
             .iter()
             .filter(|invocation| {
                 invocation.start_line == test.start_line && invocation.end_line == test.end_line

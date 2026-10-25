@@ -404,6 +404,251 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(text, key))
 }
 
+/// `true` when a `preset` value in `text` is not a plain package name: a
+/// path (`./p.js`, `/abs/preset`), a file name, or a non-literal value can
+/// carry a `rootDir`, `roots` or `snapshotResolver` this walk never reads.
+fn preset_may_name_a_file(text: &str) -> bool {
+    text.match_indices("preset").any(|(index, matched)| {
+        let before = text.get(..index).unwrap_or_default();
+        if before.chars().next_back().is_some_and(is_identifier_char) {
+            return false;
+        }
+        let rest = text.get(index + matched.len()..).unwrap_or_default();
+        let rest = rest.strip_prefix(['"', '\'', '`']).unwrap_or(rest);
+        let after = skip_trivia(rest);
+        // A computed key (`['preset']:`) or shorthand (`{ preset }`) names a
+        // preset this scan cannot read.
+        if after.starts_with([']', ',', '}']) {
+            return true;
+        }
+        // `preset` not followed by `:` is a value or a word, not a key.
+        let Some(value) = after.strip_prefix(':').map(skip_trivia) else {
+            return false;
+        };
+        let Some(name) = value.strip_prefix(['"', '\'']) else {
+            // A non-literal value (`preset: base`) is not read.
+            return true;
+        };
+        let (name, after_name) = name.split_once(['"', '\'']).unwrap_or((name, "\""));
+        // `"ts-jest" && "./custom.js"` evaluates to the second string; only a
+        // literal that ends the property is the name Jest sees.
+        let ends_property = {
+            let after = skip_trivia(after_name);
+            after.is_empty() || after.starts_with([',', '}'])
+        };
+        !(ends_property && is_known_non_relocating_preset(name))
+    })
+}
+
+/// `true` for the `ts-jest` presets, which set `transform` and `testMatch`
+/// and never `rootDir`, `roots` or `snapshotResolver`. Any other preset is a
+/// package or file Jest merges into the project, and this walk never reads
+/// it, so it can relocate snapshots (#10139).
+fn is_known_non_relocating_preset(name: &str) -> bool {
+    !name.contains("..")
+        && (name == "ts-jest"
+            || name
+                .strip_prefix("ts-jest/presets/")
+                .is_some_and(|rest| !rest.is_empty() && !rest.contains(['/', '.'])))
+}
+
+/// JS line terminators: LF, CR, U+2028 and U+2029 (#8895).
+fn is_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+/// `text` with every comment replaced by spaces, newlines kept, so offsets
+/// into the result are offsets into `text`. `None` for an unterminated
+/// string or block comment.
+fn blank_comments(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' | '\'' | '`' => {
+                out.push(ch);
+                loop {
+                    let inner = chars.next()?;
+                    out.push(inner);
+                    if inner == '\\' {
+                        out.push(chars.next()?);
+                    } else if inner == ch {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                out.push(' ');
+                while let Some(next) = chars.peek().copied() {
+                    if is_line_terminator(next) {
+                        break;
+                    }
+                    out.push(' ');
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                out.push(' ');
+                chars.next();
+                out.push(' ');
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == '*' && chars.peek() == Some(&'/') {
+                        chars.next();
+                        out.push_str("  ");
+                        closed = true;
+                        break;
+                    }
+                    out.push(if is_line_terminator(next) { next } else { ' ' });
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    Some(out)
+}
+
+/// `text` with its one `projects: [ { ... }, { ... } ]` array removed, when
+/// every element is an inline object literal that moves nothing: no string,
+/// identifier, spread or call at the array's top level (those name other
+/// configs), no template placeholder, and no `rootDir`, `roots`, `root`,
+/// `workspace` or `projects` key inside a project. `None` for any other
+/// spelling (a path or glob entry, a computed key, a member assignment, a
+/// second `projects`), so those keep delegating. A project's
+/// `snapshotResolver` is caught by `SNAPSHOT_OVERRIDES` before this runs.
+fn without_plain_inline_projects(raw: &str) -> Option<String> {
+    let blanked = blank_comments(raw)?;
+    let text = blanked.as_str();
+    let mut found = text.match_indices("projects");
+    let (index, matched) = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let preceded_by_ident = text
+        .get(..index)?
+        .chars()
+        .next_back()
+        .is_some_and(is_identifier_char);
+    if preceded_by_ident {
+        return None;
+    }
+    // `"projects":` and `'projects':` are the same key as `projects:`.
+    let after_name = text.get(index + matched.len()..)?;
+    let after_name = after_name.strip_prefix(['"', '\'']).unwrap_or(after_name);
+    let after_key = skip_trivia(after_name);
+    let after_colon = skip_trivia(after_key.strip_prefix(':')?);
+    let array = after_colon.strip_prefix('[')?;
+    let mut depth = 1usize;
+    let mut end = None;
+    let mut chars = array.char_indices().peekable();
+    let mut last_significant = '[';
+    while let Some((at, ch)) = chars.next() {
+        let before_this = last_significant;
+        if !ch.is_whitespace() {
+            last_significant = ch;
+        }
+        match ch {
+            // A regex literal in value position (`tag: /a(b)/`) holds
+            // parentheses and brackets that are not calls or nesting.
+            '/' if depth >= 2 && before_this == ':' => {
+                let mut in_class = false;
+                loop {
+                    let (_, inner) = chars.next()?;
+                    match inner {
+                        '\\' => {
+                            chars.next()?;
+                        }
+                        c if is_line_terminator(c) => return None,
+                        '[' => in_class = true,
+                        ']' => in_class = false,
+                        '/' if !in_class => break,
+                        _ => {}
+                    }
+                }
+            }
+            '"' | '\'' | '`' => {
+                // A string at the array's top level names another config.
+                if depth == 1 {
+                    return None;
+                }
+                loop {
+                    let (_, inner) = chars.next()?;
+                    if inner == '\\' {
+                        chars.next()?;
+                    } else if inner == '$' && ch == '`' && chars.peek().is_some_and(|c| c.1 == '{')
+                    {
+                        return None;
+                    } else if inner == ch {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek().is_some_and(|c| matches!(c.1, '/' | '*')) => {
+                let rest = skip_trivia(array.get(at..)?);
+                let skipped = array.len() - rest.len();
+                while chars.peek().is_some_and(|c| c.0 < skipped) {
+                    chars.next();
+                }
+            }
+            // A call can build a project at run time, and a nested array at
+            // the top level is not an inline object.
+            '(' => return None,
+            '[' if depth == 1 => return None,
+            '{' | '[' => depth += 1,
+            '}' | ']' | ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    if ch != ']' {
+                        return None;
+                    }
+                    end = Some(at);
+                    break;
+                }
+            }
+            c if depth == 1 && !(c.is_whitespace() || c == ',') => return None,
+            _ => {}
+        }
+    }
+    let end = end?;
+    let inside = array.get(..end)?;
+    if delegates_to_other_config(inside)
+        || mentions_named_key(inside, "rootDir")
+        || mentions_named_key(inside, "roots")
+        || inside.contains("...")
+        || preset_may_name_a_file(inside)
+    {
+        return None;
+    }
+    // A method call or index on the array (`.concat(["./other"])`) can add
+    // entries this scan never saw; only a list separator or the end of the
+    // object may follow the closing bracket.
+    let after_array = skip_trivia(array.get(end + 1..)?);
+    if !(after_array.is_empty() || after_array.starts_with([',', '}', ';'])) {
+        return None;
+    }
+    let tail_start = text.len() - after_colon.len() + 1 + end + 1;
+    let head = text.get(..index)?;
+    let head = head.strip_suffix(['"', '\'']).unwrap_or(head);
+    Some(format!("{head}{}", text.get(tail_start..)?))
+}
+
+/// `true` when a Jest or Vitest config names another config this walk does
+/// not read. A Jest config whose only such key is a plain inline `projects`
+/// array (#10139) does not: the walk reads that array itself.
+fn delegates_beyond_plain_projects(file_name: &str, text: &str) -> bool {
+    if let Some(rest) = file_name
+        .starts_with("jest")
+        .then(|| without_plain_inline_projects(text))
+        .flatten()
+    {
+        return delegates_to_other_config(&rest);
+    }
+    delegates_to_other_config(text)
+}
+
 /// JSON string escapes for the whitespace and quotes a `package.json`
 /// script may put around a flag (`"jest\t-u"`, `"jest \"-u\""`).
 const JSON_ESCAPES: [&str; 11] = [
@@ -528,7 +773,7 @@ fn scan_config_directory_uncached(directory: &Path, allow_symlink: bool) -> Opti
             || (file_name != "package.json" && mentions_update_key(&text))
             || (file_name == "package.json" && passes_config_by_path(&text))
             // A Jest/Vitest config that names other configs is not walked.
-            || (file_name != "package.json" && delegates_to_other_config(&text))
+            || (file_name != "package.json" && delegates_beyond_plain_projects(file_name, &text))
         {
             return None;
         }
