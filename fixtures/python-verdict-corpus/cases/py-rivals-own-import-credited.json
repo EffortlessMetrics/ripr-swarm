@@ -36,8 +36,10 @@
   "reasoning": "Control: the test imports subtotal from the module that defines it, so the edit fails its exact assertion.",
   "labeling_observation": {
     "ripr_commit": "b6491843",
-    "full_checkout_verdict": "limited",
-    "full_checkout_classifications": [],
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
     "excerpt_parity": "matched"
   }
 }

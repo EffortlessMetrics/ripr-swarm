@@ -91,3 +91,10 @@ consistency without consulting wall-clock time, filesystem modification time,
 or Git history. The numbering guard verifies that every spec file appears in
 `docs/specs/README.md` and that traceability/capability surfaces do not
 reference missing spec IDs.
+
+A PR registers its tests, fixtures, code, outputs and metrics in a file of its
+own under `.ripr/traceability.d/`. `[[extend]]` with a behavior `id` adds array
+items to that behavior, and a `[[behavior]]` entry registers a new spec. The
+checker folds the fragments into `.ripr/traceability.toml` before it validates,
+and an `[[extend]]` that names no behavior fails. Fragments exist so parallel
+PRs do not append to the same shared arrays and conflict.

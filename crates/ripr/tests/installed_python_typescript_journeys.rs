@@ -249,7 +249,7 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_
         "covers Rust files only, so this Python finding in `pricing/core.py` has no seam",
         "terminal reason names the language and file",
     )?;
-    if check.contains("no seam in the finding's file binds") {
+    if check.contains("ripr found no seam in this finding's file to bind it to") {
         return Err(format!("check kept the generic refusal:\n{check}"));
     }
     // No runnable repair start is offered for the unbindable finding.
