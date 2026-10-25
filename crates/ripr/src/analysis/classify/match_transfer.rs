@@ -52,6 +52,10 @@ struct MatchArm {
     /// pattern or the `|`-joined alternatives, each an exact string or
     /// char. A wildcard still respects source order.
     pattern: Option<Vec<TypedValue>>,
+    /// A `if <expr>` guard: the arm is selected only when the pattern
+    /// matches AND the guard evaluates to `true` over the exact inputs.
+    /// `None` is an unguarded arm.
+    guard: Option<String>,
     value: MatchValue,
 }
 
@@ -84,14 +88,23 @@ pub(crate) fn match_return_value(
                 literals.contains(&subject)
             }
         };
-        if selected {
-            return match &arm.value {
-                MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
-                MatchValue::Call(call) => {
-                    super::helper_transfer::nested_call_value(call, inputs, eval)
-                }
-            };
+        if !selected {
+            continue;
         }
+        // A guard must evaluate exactly: an unresolvable guard could
+        // select a different arm, so the whole match refuses rather
+        // than guess (the all-or-nothing Required shape).
+        if let Some(guard) = &arm.guard {
+            match evaluate_guard(guard, inputs) {
+                Some(true) => {}
+                Some(false) => continue,
+                None => return None,
+            }
+        }
+        return match &arm.value {
+            MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
+            MatchValue::Call(call) => super::helper_transfer::nested_call_value(call, inputs, eval),
+        };
     }
     // No arm matched and no wildcard was reached.
     None
@@ -168,15 +181,17 @@ impl MatchShape {
 }
 
 /// `"literal" => "value",` — the pattern is `_` or `|`-joined string or
-/// char literals; the value is a plain string literal or one nested
-/// direct call (`label_of("a")`) to a unique helper with literal or
-/// bound-parameter arguments. Guards, bindings, ranges and paths refuse
-/// the arm (and with it the whole helper): an unresolved pattern could
-/// match anything, and any other value shape is not an exact return the
-/// shared authorities can evaluate.
+/// char literals, optionally with an `if <expr>` guard; the value is a
+/// plain string literal or one nested direct call (`label_of("a")`) to
+/// a unique helper with literal or bound-parameter arguments. Guards,
+/// bindings, ranges and paths refuse the arm (and with it the whole
+/// helper) unless the guard evaluates exactly over the bound inputs: an
+/// unresolved pattern could match anything, and any other value shape
+/// is not an exact return the shared authorities can evaluate.
 fn parse_arm(line: &str) -> Option<MatchArm> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let (pattern, value) = trimmed.split_once(" => ")?;
+    let (pattern, guard) = split_guard(pattern)?;
     let pattern = if pattern == "_" {
         None
     } else {
@@ -188,7 +203,179 @@ fn parse_arm(line: &str) -> Option<MatchArm> {
         direct_call(value)?;
         MatchValue::Call(value.to_string())
     };
-    Some(MatchArm { pattern, value })
+    Some(MatchArm {
+        pattern,
+        guard,
+        value,
+    })
+}
+
+/// Split an arm's pattern section into the pattern and an optional
+/// `if <expr>` guard, honoring quotes: ` if ` inside a string or char
+/// literal is content, not a guard introducer. An unterminated literal
+/// refuses the arm.
+fn split_guard(pattern: &str) -> Option<(&str, Option<String>)> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, character) in pattern.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => match character {
+                '"' | '\'' => quote = Some(character),
+                ' ' => {
+                    // An ` if ` at this space, outside any literal,
+                    // introduces the guard.
+                    if pattern[index..].starts_with(" if ") {
+                        let guard = pattern[index + 4..].trim();
+                        if guard.is_empty() {
+                            return None;
+                        }
+                        return Some((pattern[..index].trim(), Some(guard.to_string())));
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    Some((pattern.trim(), None))
+}
+
+/// A guard comparison operator.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardCmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+/// Evaluate a match guard over the exact bound inputs. Fail-closed: a
+/// single comparison whose operands each evaluate exactly — through
+/// the shared #3295 evaluator, or `str::len()` (bytes, as Rust defines
+/// it) on an exact string — against a same-typed operand. Anything
+/// else (boolean combinators, method calls beyond `len()`, ordering
+/// comparisons on strings or chars, mixed types) refuses the whole
+/// match rather than guessing.
+fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
+    let (operator, lhs, rhs) = split_comparison(guard)?;
+    let lhs = guard_operand(lhs, inputs)?;
+    let rhs = guard_operand(rhs, inputs)?;
+    compare_guard_operands(&lhs, operator, &rhs)
+}
+
+/// Split `<lhs> <op> <rhs>` outside quotes, two-character operators
+/// first. Anything but exactly one comparison refuses.
+fn split_comparison(guard: &str) -> Option<(GuardCmp, &str, &str)> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let characters: Vec<(usize, char)> = guard.char_indices().collect();
+    let mut position = 0;
+    while position < characters.len() {
+        let (index, character) = characters[position];
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => match character {
+                '"' | '\'' => quote = Some(character),
+                '=' if guard[index..].starts_with("==") => {
+                    return Some((GuardCmp::Eq, &guard[..index], &guard[index + 2..]));
+                }
+                '!' if guard[index..].starts_with("!=") => {
+                    return Some((GuardCmp::Ne, &guard[..index], &guard[index + 2..]));
+                }
+                '<' => {
+                    if guard[index..].starts_with("<=") {
+                        return Some((GuardCmp::Le, &guard[..index], &guard[index + 2..]));
+                    }
+                    return Some((GuardCmp::Lt, &guard[..index], &guard[index + 1..]));
+                }
+                '>' => {
+                    if guard[index..].starts_with(">=") {
+                        return Some((GuardCmp::Ge, &guard[..index], &guard[index + 2..]));
+                    }
+                    return Some((GuardCmp::Gt, &guard[..index], &guard[index + 1..]));
+                }
+                _ => {}
+            },
+        }
+        position += 1;
+    }
+    None
+}
+
+/// Evaluate one guard operand: the shared #3295 evaluator over strings,
+/// chars, booleans and plain decimals, plus `str::len()` (Rust's byte
+/// length) on an exact string. Every other shape refuses.
+fn guard_operand(text: &str, inputs: &ExactInputs) -> Option<TypedValue> {
+    let text = text.trim();
+    if let Some(receiver) = text.strip_suffix(".len()") {
+        return match evaluate_initializer(receiver.trim(), inputs) {
+            EvalOutcome::Exact {
+                value: TypedValue::Str(string),
+                ..
+            } => Some(TypedValue::Index(string.len())),
+            _ => None,
+        };
+    }
+    match evaluate_initializer(text, inputs) {
+        EvalOutcome::Exact {
+            value:
+                value @ (TypedValue::Str(_)
+                | TypedValue::Char(_)
+                | TypedValue::Bool(_)
+                | TypedValue::Index(_)),
+            ..
+        } => Some(value),
+        _ => None,
+    }
+}
+
+/// Compare two exactly-evaluated guard operands. Ordering comparisons
+/// are exact only for indices; equality is exact for every scalar the
+/// operands evaluate to. Mixed or wider types refuse.
+fn compare_guard_operands(lhs: &TypedValue, operator: GuardCmp, rhs: &TypedValue) -> Option<bool> {
+    use TypedValue::{Bool, Char, Index, Str};
+    let equality_only = |equal: bool| -> Option<bool> {
+        match operator {
+            GuardCmp::Eq => Some(equal),
+            GuardCmp::Ne => Some(!equal),
+            _ => None,
+        }
+    };
+    match (lhs, rhs) {
+        (Index(a), Index(b)) => Some(match operator {
+            GuardCmp::Eq => a == b,
+            GuardCmp::Ne => a != b,
+            GuardCmp::Lt => a < b,
+            GuardCmp::Le => a <= b,
+            GuardCmp::Gt => a > b,
+            GuardCmp::Ge => a >= b,
+        }),
+        (Str(a), Str(b)) => equality_only(a == b),
+        (Char(a), Char(b)) => equality_only(a == b),
+        (Bool(a), Bool(b)) => equality_only(a == b),
+        _ => None,
+    }
 }
 
 /// A single direct-call shape: `name(args)` with an identifier callee
@@ -412,12 +599,12 @@ mod tests {
     fn guard_binding_range_and_computed_shapes_fail_closed() -> Result<(), String> {
         let cases: [(&str, &str); 9] = [
             (
-                "guard arm",
-                "        \"word\" if kind.len() > 2 => \"alpha\",",
+                "guard with an unresolvable operand",
+                "        \"word\" if kind.len() > other => \"alpha\",",
             ),
             (
-                "guard on an alternative",
-                "        \"word\" | \"text\" if kind.len() > 2 => \"alpha\",",
+                "guard with an unsupported method call",
+                "        \"word\" if kind.starts_with(\"w\") => \"alpha\",",
             ),
             ("bare binding pattern", "        word => \"alpha\","),
             (
@@ -450,6 +637,63 @@ mod tests {
                 "a {name} arm must refuse the match"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn guarded_arms_evaluate_over_exact_inputs() -> Result<(), String> {
+        // RIPR-SPEC-0164 (spec-b-0164-guard-arm): a guard the shared
+        // authorities can evaluate selects the arm exactly, like the
+        // Rust match; a guard that evaluates false falls through in
+        // source order.
+        let guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if kind.len() > 2 => \"alpha\",",
+        );
+        assert_ne!(guarded, BODY, "the guarded-arm substitution must apply");
+        let helper = match_fn("label", &guarded);
+        assert_eq!(returned(&helper, "\"word\"")?, "alpha");
+
+        // The same guard shape against a scrutinee that fails it falls
+        // through to the later literal arm instead.
+        let len_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if kind.len() > 5 => \"alpha\",\n        \"word\" => \"second\",",
+        );
+        let helper_len = match_fn("label", &len_guarded);
+        assert_eq!(returned(&helper_len, "\"word\"")?, "second");
+
+        // A guard applies to a whole alternative.
+        let alt_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" | \"text\" if kind.len() > 2 => \"alpha\",",
+        );
+        let helper_alt = match_fn("label", &alt_guarded);
+        assert_eq!(returned(&helper_alt, "\"word\"")?, "alpha");
+        assert_eq!(returned(&helper_alt, "\"text\"")?, "alpha");
+
+        // A wildcard guard decides between two wildcard arms: with no
+        // literal arms left, the guarded wildcard takes the scrutinee
+        // that passes its guard and the plain wildcard takes the rest.
+        let wildcard_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",\n        \"text\" => \"beta\",\n        _ => \"other\",",
+            "        _ if kind.len() > 2 => \"other\",\n        _ => \"short\",",
+        );
+        assert_ne!(
+            wildcard_guarded, BODY,
+            "the wildcard-guard substitution must apply"
+        );
+        let helper_wild = match_fn("label", &wildcard_guarded);
+        assert_eq!(returned(&helper_wild, "\"word\"")?, "other");
+        assert_eq!(returned(&helper_wild, "\"hi\"")?, "short");
+
+        // String equality is exact too.
+        let eq_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if kind == \"word\" => \"alpha\",",
+        );
+        let helper_eq = match_fn("label", &eq_guarded);
+        assert_eq!(returned(&helper_eq, "\"word\"")?, "alpha");
         Ok(())
     }
 
