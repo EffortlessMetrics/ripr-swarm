@@ -176,7 +176,8 @@ exact pin (a smoke call, a relational check) keeps its gap.
    under `rust_pinned_shape_unresolved`, never a gap.
 4. The same owner reached by a smoke call or a relational check
    (`>= before`) is a gap.
-5. An accumulator whose term calls a function, or that is driven by a
+5. An accumulator whose term has an operator (`w * w`, which equals `w + w`
+   at 2) or calls a function, or that is driven by a
    table-driven loop in the test, keeps its `static_unknown` verdict.
 
 ## Test Mapping

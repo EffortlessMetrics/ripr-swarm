@@ -16,6 +16,14 @@ pub fn zero_total(items: &[u32]) -> u32 {
     sum
 }
 
+pub fn square_total(items: &[u32]) -> u32 {
+    let mut sum = 0;
+    for w in items {
+        sum = sum + w * w;
+    }
+    sum
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28,5 +36,10 @@ mod tests {
     #[test]
     fn zeros_add_up_to_zero() {
         assert_eq!(zero_total(&[0, 0]), 0);
+    }
+
+    #[test]
+    fn two_squared_is_four() {
+        assert_eq!(square_total(&[2]), 4);
     }
 }
