@@ -8834,6 +8834,89 @@ fn caplog_messages_and_records_the_edit_removes_are_credited() -> Result<(), Str
     Ok(())
 }
 
+fn aliased_records_test(read: &str, between: &str) -> String {
+    format!(
+        "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = {read}\n{between}    assert \"low balance: 5\" in msgs\n"
+    )
+}
+
+#[test]
+fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), String> {
+    // #10151: `msgs = caplog.messages` after the call is the same read as
+    // `caplog.messages`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let retry = "log.warning(\"low balance: %s (retry)\", balance)";
+    for read in ["caplog.messages", "caplog.text"] {
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, removed, &aliased_records_test(read, ""))?,
+            (ExposureClass::Exposed, None),
+            "{read}: the edit removes the asserted message"
+        );
+    }
+    // The same evaluation calls a kept substring a gap instead of crediting it.
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, retry, &aliased_records_test("caplog.text", ""))?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_alias_that_is_not_a_plain_snapshot_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    // Mutated, rebound, deleted from, or read elsewhere between the snapshot
+    // and the assertion.
+    for between in [
+        "    msgs.append(\"low balance: 5\")\n",
+        "    msgs += [\"low balance: 5\"]\n",
+        "    msgs = frozen\n",
+        "    del msgs[0]\n",
+        "    seen = [m for m in msgs]\n",
+    ] {
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                removed,
+                &aliased_records_test("caplog.messages", between)
+            )?,
+            unread,
+            "{between}"
+        );
+    }
+    // Taken before the call: the alias holds the records that existed then.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    msgs = caplog.messages\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in msgs\n"
+        )?,
+        unread
+    );
+    // Taken inside the level block, not at the assertion's own level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n        msgs = caplog.messages\n    assert \"low balance: 5\" in msgs\n"
+        )?,
+        unread
+    );
+    // Bound twice.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            &aliased_records_test("caplog.messages", "    msgs = caplog.messages\n")
+        )?,
+        unread
+    );
+    Ok(())
+}
+
 #[test]
 fn caplog_messages_equality_and_records_containment_differ_on_a_suffix() -> Result<(), String> {
     let retry = "log.warning(\"low balance: %s (retry)\", balance)";
