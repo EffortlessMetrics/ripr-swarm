@@ -838,6 +838,14 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
     for prefix in ["if", "else if", "while", "for", "case", "yield"] {
         if let Some(stripped) = text.strip_prefix(prefix) {
             text = stripped.trim().to_string();
+            // `if (cond) return x;`: the statement after the closing paren is
+            // not part of the condition, so a trailing-paren trim would leave
+            // it in the right operand and the boundary would read as a call.
+            if matches!(prefix, "if" | "else if" | "while")
+                && let Some(condition) = leading_paren_group_before_statement(&text)
+            {
+                text = condition.to_string();
+            }
             break;
         }
     }
@@ -847,6 +855,46 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
         .trim_end_matches(';')
         .trim()
         .to_string()
+}
+
+/// The inside of a leading `( ... )` group that closes before the end of the
+/// line and is followed by a statement (`(total > 100) return total - 10;`).
+/// `None` when the group wraps the whole text, never closes, or holds an
+/// unterminated quote, so those shapes keep the caller's existing trim.
+fn leading_paren_group_before_statement(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix('(')?;
+    let mut depth = 1usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in rest.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let statement = rest.get(idx + 1..)?.trim();
+                    let has_statement = !statement.is_empty()
+                        && statement != "{"
+                        && statement != ";"
+                        && !statement.starts_with("//");
+                    return has_statement.then(|| rest.get(..idx).unwrap_or_default().trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The comparison operators the boundary discriminator probes, in probe
