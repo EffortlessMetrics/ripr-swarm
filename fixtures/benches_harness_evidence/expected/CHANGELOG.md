@@ -380,3 +380,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — benches_harness_evidence (30)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — benches_harness_evidence (31)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

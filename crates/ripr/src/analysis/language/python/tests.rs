@@ -4540,6 +4540,66 @@ fn caplog_text_the_edit_removes_is_credited_and_one_it_keeps_is_a_gap() -> Resul
 }
 
 #[test]
+fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), String> {
+    // #9546: a test that does not request `caplog`, or whose module or
+    // conftest redefines the fixture, reads some other object.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let classify = |mut tests: Vec<PythonTest>| {
+        if let Some(test) = tests.first_mut() {
+            test.fixture_defs.push(PythonFixtureDef {
+                name: "caplog".to_string(),
+                binding: "caplog".to_string(),
+                file: PathBuf::from("tests/conftest.py"),
+                body_text: "def caplog():\n    return Recorder()\n".to_string(),
+                imports: Vec::new(),
+            });
+        }
+        tests
+    };
+    let build = || {
+        extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!("import logging\nfrom src.audit import check_balance\n\n{PINNED_TEST}"),
+        )
+    };
+    let finding = |tests: &[PythonTest]| {
+        classify_change_with_source(
+            Path::new("src/audit.py"),
+            6,
+            &format!("        {removed}"),
+            Some("        log.warning(\"low balance: %s\", balance)"),
+            &extract_owners(Path::new("src/audit.py"), AUDIT_OWNER),
+            tests,
+            Some(AUDIT_OWNER),
+        )
+        .map(|finding| (finding.class, finding.static_limit_kind))
+    };
+    // Positive control: the builtin fixture is credited.
+    assert_eq!(finding(&build()), Some((ExposureClass::Exposed, None)));
+    // A redefined fixture abstains.
+    assert_eq!(
+        finding(&classify(build())),
+        Some((
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        ))
+    );
+    // A test that never requests `caplog` abstains.
+    let mut tests = build();
+    if let Some(test) = tests.first_mut() {
+        test.fixtures.clear();
+    }
+    assert_eq!(
+        finding(&tests),
+        Some((
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        ))
+    );
+    Ok(())
+}
+
+#[test]
 fn caplog_text_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
     let unread = (
         ExposureClass::StaticUnknown,
@@ -8880,20 +8940,134 @@ fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), Str
 }
 
 #[test]
-fn alias_replacement_skips_string_literals_and_longer_names() {
-    use super::caplog_text::replace_identifier;
+fn overlapping_alias_names_do_not_corrupt_the_read() -> Result<(), String> {
+    // #10282 review: `msgs = caplog.text` then `text = caplog.messages` made
+    // the second replacement rewrite the first's inserted `caplog.text`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs\n";
     assert_eq!(
-        replace_identifier(
-            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
-            "msgs",
-            "caplog.messages"
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_assertion_using_an_alias_is_evaluated() -> Result<(), String> {
+    // #10282 review: the alias use on a continuation line is part of the
+    // assertion statement, not an extra use.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert (\n        \"low balance: 5\" in msgs\n    )\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_alias_inside_a_triple_quoted_literal_is_not_substituted() -> Result<(), String> {
+    // Post-landing #10282 receipt: a plain quote toggle read
+    // `"""prefix "msgs" : 5"""` as alternating open and closed strings, so the
+    // `msgs` inside it was replaced and the evaluator read `caplog.text`.
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "\"\"\"prefix \"msgs\" : 5\"\"\" in msgs",
+            &[("msgs", "caplog.text")]
         ),
-        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
-            .replace("x.msgs", "x.caplog.messages")
+        "\"\"\"prefix \"msgs\" : 5\"\"\" in caplog.text"
     );
     assert_eq!(
-        replace_identifier("\"a\\\"msgs\" in msgs", "msgs", "R"),
+        replace_identifiers("\'\'\'a \'msgs\' b\'\'\' in msgs", &[("msgs", "R")]),
+        "\'\'\'a \'msgs\' b\'\'\' in R"
+    );
+    let owner = AUDIT_OWNER.replace(
+        "low balance: %s\", balance",
+        "prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\"",
+    );
+    for quote in ["\"\"\"", "\'\'\'"] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    assert {quote}prefix \"msgs\" : 5{quote} in msgs\n"
+        );
+        assert_eq!(
+            classify_log_text_edit_from(
+                &owner,
+                "log.warning(\"prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\")",
+                "log.warning(\"prefix \\\"msgs\\\" : 5\")",
+                &test
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{quote}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn two_aliases_whose_names_are_read_attributes_are_both_evaluated() -> Result<(), String> {
+    // Exact-successor review (P2): the local `text` was counted inside the
+    // other alias's `caplog.text`, so a two-alias assertion abstained.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs and \"low balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_direct_read_beside_a_same_named_alias_stays_a_required_condition() -> Result<(), String> {
+    // Review of #10309: replacing the attribute in `caplog.text` turned a
+    // direct check into `caplog.caplog.text`, which the evaluator dropped.
+    let owner_edit = "log.warning(\"balance: %s low\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.text\n    assert \"low balance: 5\" in caplog.text and \"balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, owner_edit, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_comment_ending_in_a_backslash_does_not_extend_the_assertion() -> Result<(), String> {
+    // #10309 review: the comment's trailing backslash is not a continuation,
+    // so the `del` on the next line is an extra use and keeps the abstention.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert \"low balance: 5\" in msgs  # see notes\\\n    del msgs\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_replacement_skips_string_literals_and_longer_names() {
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
+            &[("msgs", "caplog.messages")]
+        ),
+        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
+    );
+    assert_eq!(
+        replace_identifiers("\"a\\\"msgs\" in msgs", &[("msgs", "R")]),
         "\"a\\\"msgs\" in R"
+    );
+    // One pass: a read inserted for one alias is not rescanned as another
+    // alias named `text` (#10282 review).
+    assert_eq!(
+        replace_identifiers(
+            "\"x\" in msgs and text",
+            &[("msgs", "caplog.text"), ("text", "caplog.messages")]
+        ),
+        "\"x\" in caplog.text and caplog.messages"
     );
 }
 
@@ -9516,4 +9690,134 @@ fn tuple_valued_display_still_counts_as_a_whole_collection_compare() {
 fn comma_in_a_literal_comment_declines_the_joined_literal() {
     let source = "def f():\n    return [\n        10,\n        # note, note\n        21,\n    ]\n";
     assert!(enclosing_literal_pair(source, 5, "        21,", Some("        20,")).is_none());
+}
+
+/// A protocol-entry test whose body is `r = numeric_range(0)`, then `middle`,
+/// then `list(reversed(r))`; every `middle` below was checked with CPython's
+/// `ast.parse` (with `items`, `z`, `y` and `a` bound by the first lines).
+fn reversed_receiver_src(middle: &str) -> String {
+    format!(
+        "from src.nr import numeric_range\n\n\ndef test_x():\n    r = numeric_range(0)\n    items = [r]\n    z = 0\n    y = [[1]]\n    a = open_it\n{middle}    assert list(reversed(r)) == [1]\n"
+    )
+}
+
+#[test]
+fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited()
+-> Result<(), String> {
+    for middle in [
+        // An augmented assignment or annotation on a bracketed target.
+        "    (r) += [1]\n",
+        "    ((r)) += [1]\n",
+        "    (r): list = [1]\n",
+        // A comment inside the brackets, before or after the name.
+        "    (  # note\n        r\n    ) = [1]\n",
+        "    (\n        r  # note\n    ) = [1]\n",
+        // A backslash continuation before the `=` or after a target comma.
+        "    r \\\n        = [1]\n",
+        "    (r)\\\n        = [1]\n",
+        "    r \\\n        += [1]\n",
+        // A continuation before a later opener of the peel, LF and CRLF.
+        "    (\\\n        (r)) = [1]\n",
+        "    [\\\n        [r]] = [1]\n",
+        "    (\\\r\n        (r)) = [1]\n",
+        // An augmented assignment after a header, `else` or `;`.
+        "    if z: r += [1]\n",
+        "    if z == 1:\n        pass\n    else: r += [1]\n",
+        "    z = 1; r += [1]\n",
+        "    for x in y: r += 1\n",
+        // A walrus split inside brackets, and a tab before `as`.
+        "    (r\n     := [1])\n",
+        "    with (a\tas (r)): pass\n",
+        "    with a as\tr : pass\n",
+        // An import or `nonlocal` declaration names the receiver too.
+        "    import os as\tr\n",
+        "    import r\n",
+        "    def inner():\n        nonlocal r\n",
+        "    for \\\n        r in [[1]]:\n        pass\n",
+        // `in` directly after the closing bracket, and blank runs after a keyword.
+        "    for (r)in [[1]]:\n        pass\n",
+        "    for (r)in[[1]]:\n        pass\n",
+        "    for  r  in [[1]]:\n        pass\n",
+        "    for\tr in [[1]]:\n        pass\n",
+        "    def  r():\n        pass\n",
+        // Headers whose string spells prefixes, f-string braces or triple quotes.
+        "    if rb\")\": ( r), x = [1], 2\n",
+        "    if f\"{z}(\": ( r), x = [1], 2\n",
+        "    if z == '''it's''': ( r), x = [1], 2\n",
+        "    if z == \"\"\"it's\"\"\": ( r), x = [1], 2\n",
+        "    if z == 1: # note\n        ( r), x = [1], 2\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Result<(), String> {
+    for middle in [
+        // Comparisons are not augmented assignments.
+        "    assert (r) >= 0 and (r) <= 1\n",
+        // A bracketed condition, dict key or call argument is a read.
+        "    if (r):\n        pass\n",
+        "    d = {(r): 1}\n",
+        "    f(  # note\n        r\n    )\n",
+        "    f(r) \\\n        == 1\n    w = 1 \\\n        + len(r)\n",
+        // `in` after a bracket is a membership test outside a `for` target.
+        "    assert (r)in items\n",
+        "    for x in y: assert ((r)) in items\n",
+        // A quoted or commented `for` / `as` is text, not a keyword (#9992).
+        "    assert \"for\" and ((r)) in [r]\n",
+        "    assert 'for' and ((r))in items\n",
+        "    # for ((r)) in z\n    assert (r) in items\n",
+        "    assert (r) in items  # for\n",
+        "    assert 'as  r' and 'for  r in'\n",
+        "    # as  r\n",
+        // A header whose condition holds a string with a bracket is a read.
+        "    if z == \"(\": pass\n",
+        "    if z == '''it's''': pass\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
+    use super::related_tests::binds_in_target_list;
+    for body in [
+        "r = make()\ncase (r):\n    pass\n",
+        "r = make()\ncase [r]:\n    pass\n",
+        "r = make()\n    case (r):\n        pass\n",
+        "r = make()\ncase {\"k\": r}:\n    pass\n",
+        "r = make()\ncase Foo(x=r):\n    pass\n",
+        "r = make()\ncase (1 | r):\n    pass\n",
+        "r = make()\ncase Foo(a=1, b=(r)):\n    pass\n",
+    ] {
+        assert!(binds_in_target_list(body, "r"), "{body:?}");
+    }
+    for body in [
+        "r = make()\nif (r):\n    pass\n",
+        "r = make()\nif [r]:\n    pass\n",
+        "r = make()\ncase_count = (r)\n",
+        "r = make()\ncase r.A:\n    pass\n",
+        "r = make()\ncase r(1):\n    pass\n",
+        "r = make()\ncase other:\n    pass\n",
+    ] {
+        assert!(!binds_in_target_list(body, "r"), "{body:?}");
+    }
 }

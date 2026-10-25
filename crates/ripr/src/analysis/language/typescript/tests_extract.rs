@@ -1270,27 +1270,41 @@ impl TestScope {
         let levels: Vec<&Vec<ScopeEntry>> = std::iter::once(&innermost)
             .chain(self.levels.iter().rev())
             .collect();
-        for (depth, level) in levels.iter().enumerate() {
-            let mut names: Vec<&str> = level.iter().map(|(name, _, _)| name.as_str()).collect();
-            names.sort_unstable();
-            names.dedup();
-            for name in names {
-                if resolved.iter().any(|binding| binding.name == name) {
+        // Each level grouped by name once, in source order within a name, so a
+        // file with thousands of top-level bindings is not rescanned per name
+        // (#10017). The map is ordered, which keeps the output order that the
+        // sorted, deduplicated name list gave before.
+        let grouped: Vec<std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>>> = levels
+            .iter()
+            .map(|level| {
+                let mut by_name: std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>> =
+                    std::collections::BTreeMap::new();
+                for (name, value, phase) in level.iter() {
+                    by_name
+                        .entry(name.as_str())
+                        .or_default()
+                        .push((value, *phase));
+                }
+                by_name
+            })
+            .collect();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (depth, by_name) in grouped.iter().enumerate() {
+            for (&name, found) in by_name {
+                if !seen.insert(name) {
                     continue;
                 }
-                let mut writes: Vec<(&ScopeValue, Phase)> = level
-                    .iter()
-                    .filter(|(bound, _, _)| bound == name)
-                    .map(|(_, value, phase)| (value, *phase))
-                    .collect();
+                let mut writes = found.clone();
                 // Stable: source order is kept within a phase.
                 writes.sort_by_key(|(_, phase)| *phase);
                 let constructed_by = match writes.last() {
                     // An enclosing `beforeEach` runs after this `beforeAll`.
                     Some((_, Phase::BeforeAll))
-                        if levels[depth + 1..].iter().any(|outer| {
-                            outer.iter().any(|(bound, _, phase)| {
-                                bound == name && *phase == Phase::BeforeEach
+                        if grouped[depth + 1..].iter().any(|outer| {
+                            outer.get(name).is_some_and(|outer_writes| {
+                                outer_writes
+                                    .iter()
+                                    .any(|(_, phase)| *phase == Phase::BeforeEach)
                             })
                         }) =>
                     {
@@ -1613,11 +1627,19 @@ fn withhold_rebound_scope_receivers(
 ) {
     let code = blank_ranges(source, masked);
     let opaque = identifier_occurrences(&code, "eval").next().is_some() || code.contains("\\u");
-    let rebound: Vec<String> = identifier_writes(&code)
+    let rebound: std::collections::HashSet<String> = identifier_writes(&code)
         .into_iter()
         .map(|(name, _)| name)
         .chain(declared_names(&code))
         .collect();
+    let sites: std::collections::HashSet<usize> = sites.iter().copied().collect();
+    // Both verdicts depend on the file and the name alone, not on the test,
+    // so each is computed once. A file-level binding is listed on every test,
+    // and rescanning the file for it per test was cubic (#10017).
+    let mut constructor_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let mut name_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
     for test in tests {
         for binding in &mut test.scope_bindings {
             let Some(constructor) = &binding.constructed_by else {
@@ -1626,18 +1648,27 @@ fn withhold_rebound_scope_receivers(
             let root = constructor.split('.').next().unwrap_or(constructor);
             // `Cart.prototype` anywhere (a spy or method assignment in a
             // hook) may replace the method the test calls.
-            let constructor_rebound = rebound.iter().any(|name| name == root)
-                || identifier_occurrences(&code, root).any(|at| {
-                    code[at + root.len()..]
-                        .trim_start()
-                        .strip_prefix('.')
-                        .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
-                })
-                || (constructor.contains('.') && member_assigned(&code, constructor));
+            let constructor_rebound = *constructor_verdicts
+                .entry(constructor.clone())
+                .or_insert_with(|| {
+                    rebound.contains(root)
+                        || identifier_occurrences(&code, root).any(|at| {
+                            code[at + root.len()..]
+                                .trim_start()
+                                .strip_prefix('.')
+                                .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
+                        })
+                        || (constructor.contains('.') && member_assigned(&code, constructor))
+                });
             if opaque
                 || constructor_rebound
-                || identifier_occurrences(&code, &binding.name)
-                    .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
+                || *name_verdicts
+                    .entry(binding.name.clone())
+                    .or_insert_with(|| {
+                        identifier_occurrences(&code, &binding.name).any(|at| {
+                            !sites.contains(&at) && !is_plain_read(&code, at, &binding.name)
+                        })
+                    })
             {
                 binding.constructed_by = None;
             }

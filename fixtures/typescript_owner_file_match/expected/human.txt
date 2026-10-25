@@ -22,7 +22,7 @@ Start here:
   Missing discriminator (1 of 2): Related tests reach `betaScore` with a strong oracle, but no
     strong assertion observes a `betaScore(...)` call at the changed predicate boundary `value ==
     10`; inputs on one side of the boundary do not discriminate the changed comparison
-  Related test: tests/b.test.ts:3 beta keeps its threshold (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/b.test.ts:3 beta keeps its threshold (no input this test passes was seen reaching the changed boundary)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `value == 10`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available
@@ -34,6 +34,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related test(s) found for owner `betaScore`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full

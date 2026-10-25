@@ -338,6 +338,75 @@ fn repeated_deleted_line_in_one_owner_keeps_ids_unique() -> Result<(), String> {
     Ok(())
 }
 
+/// Two different deleted lines can share an eight-hex fingerprint (#8838).
+/// Which one takes the `.2` ordinal must not depend on the order the diff
+/// lists them in. `16976` and `28141` collide under this owner and path.
+#[test]
+fn colliding_deleted_lines_keep_their_ids_under_reorder() -> Result<(), String> {
+    let source =
+        "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    return total\n";
+    let low = "    total = min(total, 16976)";
+    let high = "    total = min(total, 28141)";
+    let id_of = |findings: &[Finding], text: &str| {
+        findings
+            .iter()
+            .find(|finding| finding.probe.before.as_deref() == Some(text))
+            .map(|finding| finding.id.clone())
+            .ok_or_else(|| format!("no record for {text}: {findings:?}"))
+    };
+    let forward = analyze(
+        "collide-forward",
+        source,
+        &[],
+        vec![line(6, 6, low), line(7, 6, high)],
+    )?;
+    let reversed = analyze(
+        "collide-reversed",
+        source,
+        &[],
+        vec![line(6, 6, high), line(7, 6, low)],
+    )?;
+    let base = "probe:src_cart.py:python_preview:6bbc8bb2";
+    for text in [low, high] {
+        assert_eq!(id_of(&forward, text)?, id_of(&reversed, text)?, "{text}");
+    }
+    let mut ids = [id_of(&forward, low)?, id_of(&forward, high)?];
+    ids.sort();
+    assert_eq!(ids, [base.to_string(), format!("{base}.2")]);
+    Ok(())
+}
+
+/// A candidate-side finding keeps the unsuffixed id, so a deleted line whose
+/// fingerprint collides with it numbers after it, whichever line is which.
+#[test]
+fn deleted_line_colliding_with_a_candidate_finding_numbers_after_it() -> Result<(), String> {
+    let base = "probe:src_cart.py:python_preview:6bbc8bb2";
+    for (label, kept, deleted) in [
+        ("cand-low", "16976", "28141"),
+        ("cand-high", "28141", "16976"),
+    ] {
+        let source = format!(
+            "CAP = 100\n\n\ndef capped_total(items):\n    total = min(total, {kept})\n    return total\n"
+        );
+        let removed = format!("    total = min(total, {deleted})");
+        let findings = analyze(label, &source, &[5], vec![line(7, 7, &removed)])?;
+        let id_of = |text: &str| {
+            findings
+                .iter()
+                .find(|finding| finding.probe.expression.trim() == text.trim())
+                .map(|finding| finding.id.clone())
+                .ok_or_else(|| format!("no record for {text}: {findings:?}"))
+        };
+        assert_eq!(
+            id_of(&format!("total = min(total, {kept})"))?,
+            base,
+            "{label}"
+        );
+        assert_eq!(id_of(&removed)?, format!("{base}.2"), "{label}");
+    }
+    Ok(())
+}
+
 /// A deleted line inside the old docstring ran no behavior, even when its
 /// text looks like code; the old-side docstring ranges say so.
 #[test]

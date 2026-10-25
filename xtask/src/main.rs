@@ -212,8 +212,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
-    write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, read_evidence_promotion_corpus,
+    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -15064,6 +15064,10 @@ fn check_doc_index() -> Result<(), String> {
 }
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
+/// Per-PR `[[artifact]]` fragments beside the ledger (`<ledger stem>.d/`), so a
+/// PR that registers a spec adds a file instead of appending to the ledger
+/// tail every other such PR edits (#9859).
+const DOC_ARTIFACT_FRAGMENT_EXTENSION: &str = "d";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
 /// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
 /// was added (#1718). Lower this as specs are registered.
@@ -15112,6 +15116,8 @@ struct DocArtifactLedger {
 #[derive(Clone, Debug, Default)]
 struct DocArtifactEntry {
     line: usize,
+    /// Fragment file the entry came from; `None` for the main ledger.
+    source: Option<String>,
     seen_fields: BTreeSet<String>,
     id: Option<String>,
     kind: Option<String>,
@@ -15274,16 +15280,19 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 
     let mut ids_by_line = BTreeMap::new();
     for artifact in &ledger.artifacts {
+        let origin = artifact.source.as_deref().unwrap_or(&ledger_display);
         let Some(id) = artifact.id.as_deref() else {
             violations.push(format!(
-                "{ledger_display}:{} artifact is missing required field `id`",
+                "{origin}:{} artifact is missing required field `id`",
                 artifact.line
             ));
             continue;
         };
-        if let Some(previous_line) = ids_by_line.insert(id.to_string(), artifact.line) {
+        if let Some((previous_origin, previous_line)) =
+            ids_by_line.insert(id.to_string(), (origin.to_string(), artifact.line))
+        {
             violations.push(format!(
-                "{ledger_display}:{} duplicate artifact id `{id}`; first defined at line {previous_line}",
+                "{origin}:{} duplicate artifact id `{id}`; first defined at {previous_origin}:{previous_line}",
                 artifact.line
             ));
         }
@@ -15306,7 +15315,54 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 fn parse_doc_artifact_ledger(path: &Path) -> Result<DocArtifactLedger, String> {
     let text = read_text_lossy(path)?;
     let display = normalize_path(path);
-    parse_doc_artifact_ledger_text(&display, &text)
+    let mut ledger = parse_doc_artifact_ledger_text(&display, &text)?;
+    ledger.artifacts.extend(parse_doc_artifact_fragments(path)?);
+    Ok(ledger)
+}
+
+/// Reads `<ledger stem>.d/*.toml` in file-name order. Only an absent directory
+/// is optional: an unreadable directory, a non-`.toml` entry, or a fragment
+/// that sets `schema_version` fails, so a fragment cannot be silently skipped.
+fn parse_doc_artifact_fragments(ledger_path: &Path) -> Result<Vec<DocArtifactEntry>, String> {
+    let dir = ledger_path.with_extension(DOC_ARTIFACT_FRAGMENT_EXTENSION);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?;
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "toml") {
+            return Err(format!(
+                "{} is not a .toml artifact fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    let mut artifacts = Vec::new();
+    for path in paths {
+        let display = normalize_path(&path);
+        let text = read_text_lossy(&path)?;
+        let fragment = parse_doc_artifact_ledger_text(&display, &text)?;
+        if fragment.schema_version.is_some() {
+            return Err(format!(
+                "{display} must not set schema_version; only the main ledger does"
+            ));
+        }
+        if fragment.artifacts.is_empty() {
+            return Err(format!("{display} has no [[artifact]] entries"));
+        }
+        for mut artifact in fragment.artifacts {
+            artifact.source = Some(display.clone());
+            artifacts.push(artifact);
+        }
+    }
+    Ok(artifacts)
 }
 
 fn parse_doc_artifact_ledger_text(display: &str, text: &str) -> Result<DocArtifactLedger, String> {
@@ -15425,6 +15481,7 @@ fn validate_doc_artifact_entry(
     artifact_ids: &BTreeSet<String>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
+    let ledger_display = artifact.source.as_deref().unwrap_or(ledger_display);
     let id_label = artifact.id.as_deref().unwrap_or("<missing id>");
     let Some(id) = artifact.id.as_deref() else {
         return Ok(());
@@ -19242,6 +19299,7 @@ fn check_count_policy(
     is_candidate: fn(&str) -> bool,
 ) -> Result<(), String> {
     let allowlist = read_count_policy_allowlist(allowlist_path)?;
+    let fragment_dir = normalize_path(&Path::new(allowlist_path).with_extension("d"));
     let mut counts = BTreeMap::<(String, String), usize>::new();
 
     for normalized in tracked_files()? {
@@ -19265,7 +19323,7 @@ fn check_count_policy(
             .unwrap_or(0);
         if *count > allowed {
             violations.push(format!(
-                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add to {allowlist_path}:\n  {path}|{pattern}|{count}|owner|reason"
+                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add a file under {fragment_dir}/ (named for this PR, e.g. <issue>-<slug>.txt) holding:\n  {path}|{pattern}|{count}|owner|reason"
             ));
         } else if *count < allowed {
             // Stale bound: the allowlist grants more budget than the code
@@ -21871,7 +21929,56 @@ fn strip_status_suffix(path: &str) -> &str {
 
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
     let text = read_text_lossy(Path::new(path))?;
-    parse_count_policy_allowlist(path, &text)
+    let mut allowed = parse_count_policy_allowlist(path, &text)?;
+    let mut declared_in = allowed
+        .keys()
+        .map(|key| (key.clone(), path.to_string()))
+        .collect::<BTreeMap<_, _>>();
+    for (fragment_path, fragment_text) in count_policy_fragments(path)? {
+        for (key, max_count) in parse_count_policy_allowlist(&fragment_path, &fragment_text)? {
+            if let Some(first) = declared_in.get(&key) {
+                return Err(format!(
+                    "{fragment_path}: path|pattern `{}|{}` is already declared in {first}",
+                    key.0, key.1
+                ));
+            }
+            declared_in.insert(key.clone(), fragment_path.clone());
+            allowed.insert(key, max_count);
+        }
+    }
+    Ok(allowed)
+}
+
+/// Per-PR rows beside a count-policy allowlist (`<allowlist stem>.d/*.txt`),
+/// so a PR that adds a spawn or network site adds a file instead of appending
+/// to the list tail every such PR edits (#9859). Only an absent directory is
+/// optional; a non-`.txt` entry or a read error fails, and fragments are read
+/// in file-name order.
+fn count_policy_fragments(allowlist_path: &str) -> Result<Vec<(String, String)>, String> {
+    let dir = Path::new(allowlist_path).with_extension("d");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?
+            .path();
+        if path.extension().is_none_or(|extension| extension != "txt") {
+            return Err(format!(
+                "{} is not a .txt allowlist fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| Ok((normalize_path(&path), read_text_lossy(&path)?)))
+        .collect()
 }
 
 fn parse_count_policy_allowlist(

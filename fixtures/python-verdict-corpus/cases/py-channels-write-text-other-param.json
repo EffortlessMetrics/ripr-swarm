@@ -1,0 +1,44 @@
+{
+  "case_id": "py-channels-write-text-other-param",
+  "subject_id": "authored-py-pytest-channels",
+  "diff": "cases/py-channels-write-text-other-param.diff",
+  "anchor": {
+    "file": "channels/core.py",
+    "line": 18
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "file_content",
+  "test_shape": "pytest_tmp_path_other_file_content",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "a.write_text(\"uno\")",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns a different value (the test reads back the file for the other parameter, not the one the changed line writes)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 17: the test reads back the file for the other parameter, not the one the changed line writes.",
+  "labeling_observation": {
+    "ripr_commit": "4ce68788",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

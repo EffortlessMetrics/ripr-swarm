@@ -285,18 +285,121 @@ fn mixed_rows_keep_their_own_miss() -> Result<(), String> {
     Ok(())
 }
 
-/// A strong assertion whose own input misses the boundary the owner pins.
-/// `missing_input` is withheld (its shared prose over-claims), so the row
-/// reports the unconfirmed observation.
+/// A strong assertion whose own closed-body input misses the boundary the
+/// owner pins carries `missing_input` (#10040), the row-owned fact the
+/// hedged TypeScript wording stands behind.
 #[test]
-fn strong_row_off_the_boundary_is_observation_unconfirmed() -> Result<(), String> {
+fn strong_row_off_the_boundary_is_missing_input() -> Result<(), String> {
     let source =
         format!("{IMPORT}test('below', () => {{\n  expect(applyDiscount(50)).toBe(50);\n}});\n");
     let finding = classify(&PREDICATE_CHANGE, &source)?;
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "below")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
+        Some(RelatedTestMiss::MissingInput)
+    );
+    Ok(())
+}
+
+/// `missing_input` (#10040) is claimed only from the closed-body fact. Each
+/// shape is the control with one construct that can reach the owner with
+/// another input, or that the fact cannot read; none may carry the miss.
+#[test]
+fn missing_input_is_withheld_for_every_unclosed_shape() -> Result<(), String> {
+    const CONTROL_BODY: &str =
+        "test('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n";
+    let control = classify(&PREDICATE_CHANGE, &format!("{IMPORT}{CONTROL_BODY}"))?;
+    weakly(&control);
+    assert_eq!(
+        miss_of(&control, "below")?,
+        Some(RelatedTestMiss::MissingInput)
+    );
+    // A control with an inert runner import still emits.
+    let finding = classify(
+        &PREDICATE_CHANGE,
+        &format!("{IMPORT}import {{ describe, expect, test }} from 'vitest';\n{CONTROL_BODY}"),
+    )?;
+    assert_eq!(
+        miss_of(&finding, "below")?,
+        Some(RelatedTestMiss::MissingInput),
+        "control with a runner import"
+    );
+    let cases: &[(&str, String)] = &[
+        (
+            "non-literal argument",
+            "test('below', () => {\n  expect(applyDiscount(Number('50'))).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner aliased to a local",
+            "test('below', () => {\n  const f = applyDiscount;\n  expect(f(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner passed as a value",
+            "test('below', () => {\n  expect([50].map(applyDiscount)).toEqual([50]);\n});\n".to_string(),
+        ),
+        (
+            "owner called again at the boundary",
+            "test('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n  applyDiscount(100);\n});\n".to_string(),
+        ),
+        (
+            "owner named outside test bodies",
+            "const alias = applyDiscount;\ntest('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner called from a same-file helper",
+            "function helper() {\n  return applyDiscount(100);\n}\ntest('below', () => {\n  helper();\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "unknown constant import",
+            "import { BOUND } from '../src/other';\ntest('below', () => {\n  expect(applyDiscount(BOUND)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner module mocked",
+            "jest.mock('../src/pricing');\ntest('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "table-driven owner call",
+            "test.each([[50], [100]])('below %i', (n) => {\n  expect(applyDiscount(n)).toBeDefined();\n});\n".to_string(),
+        ),
+    ];
+    for (label, body) in cases {
+        let finding = classify(&PREDICATE_CHANGE, &format!("{IMPORT}{body}"))?;
+        // Each shape must still produce a related row, so the check below
+        // cannot pass vacuously.
+        assert!(
+            !finding.related_tests.is_empty(),
+            "{label}: the shape produced no related row"
+        );
+        for row in &finding.related_tests {
+            assert_ne!(
+                row.miss,
+                Some(RelatedTestMiss::MissingInput),
+                "{label}: row {} rows {:?}",
+                row.name,
+                finding
+                    .related_tests
+                    .iter()
+                    .map(|r| (&r.name, r.miss))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    // A body that rebinds the owner name is not related at all: no row
+    // exists to carry the miss.
+    let rebound = classify(
+        &PREDICATE_CHANGE,
+        &format!(
+            "{IMPORT}test('below', () => {{\n  const applyDiscount = (n: number) => n;\n  expect(applyDiscount(50)).toBe(50);\n}});\n"
+        ),
+    )?;
+    assert!(
+        rebound.related_tests.is_empty(),
+        "rebound owner name: {:?}",
+        rebound
+            .related_tests
+            .iter()
+            .map(|r| (&r.name, r.miss))
+            .collect::<Vec<_>>()
     );
     Ok(())
 }
@@ -312,7 +415,7 @@ fn boundary_input_from_another_row_is_not_borrowed() -> Result<(), String> {
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "below")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
+        Some(RelatedTestMiss::MissingInput)
     );
     assert_eq!(
         miss_of(&finding, "at boundary weak")?,

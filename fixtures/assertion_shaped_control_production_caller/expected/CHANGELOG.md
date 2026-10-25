@@ -479,3 +479,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (31)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

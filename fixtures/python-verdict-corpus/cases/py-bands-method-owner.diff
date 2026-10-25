@@ -1,0 +1,12 @@
+diff --git a/bands/core.py b/bands/core.py
+--- a/bands/core.py
++++ b/bands/core.py
+@@ -24,7 +24,7 @@
+ 
+ class Rates:
+     def band_f(self, x):
+-        return x * 3
++        return x * 3 + 0.5
+ 
+ 
+ @lru_cache(maxsize=None)

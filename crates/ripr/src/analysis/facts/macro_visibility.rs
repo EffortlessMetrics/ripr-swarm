@@ -13,11 +13,18 @@
 //! Anything else resolves to nothing, which leaves the invocation
 //! unexpanded: an unresolved or ambiguous module declaration (a `#[path]`,
 //! another `cfg`, no file, several candidate files, several parents) never
-//! guesses. `#[macro_export]` paths, `use`-imported macros and `include!`
-//! are out of scope.
+//! guesses.
+//!
+//! A third route is a `#[macro_export]` macro named by path (#10298): the
+//! file spells `use crate::name;` and exactly one definition of `name` exists
+//! in the file's crate, plain `#[macro_export]`, with nothing else in the
+//! crate able to define or export a macro of that name. Cross-crate paths,
+//! renamed or grouped imports and `include!` are out of scope.
 
 use crate::analysis::sync_memo::SyncMemo;
-use crate::analysis::syntax::{MacroScope, first_macro_call, macro_scope};
+use crate::analysis::syntax::{
+    ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -27,6 +34,8 @@ use std::sync::{Arc, OnceLock};
 const MAX_DEPTH: usize = 4;
 /// Imported definitions one file may carry; beyond it the file gets none.
 const MAX_IMPORTED_BYTES: usize = 64 * 1024;
+/// Parent steps followed to find a file's crate root.
+const CRATE_ROOT_DEPTH: usize = 8;
 /// Directory names whose `.rs` files are crate roots of their own.
 const ROOT_DIRECTORIES: [&str; 3] = ["tests", "benches", "examples"];
 
@@ -40,6 +49,16 @@ pub(crate) struct MacroVisibility {
     /// Module name to the files that declare it with a `#[path]` or another
     /// attribute; built on first use.
     attributed: OnceLock<BTreeMap<String, BTreeSet<PathBuf>>>,
+    /// Generator name to every file that defines a macro of that name, with
+    /// the definition when it is a plain `#[macro_export]`; files that spell
+    /// `macro_export` somewhere unlisted. Built on first use.
+    exports: OnceLock<ExportIndex>,
+}
+
+#[derive(Debug, Default)]
+struct ExportIndex {
+    definitions: BTreeMap<String, Vec<(PathBuf, Option<String>)>>,
+    opaque: BTreeSet<PathBuf>,
 }
 
 impl Clone for MacroVisibility {
@@ -49,6 +68,7 @@ impl Clone for MacroVisibility {
             generators: self.generators.clone(),
             scopes: SyncMemo::default(),
             attributed: OnceLock::new(),
+            exports: OnceLock::new(),
         }
     }
 }
@@ -96,14 +116,14 @@ impl MacroVisibility {
             generators,
             scopes: SyncMemo::default(),
             attributed: OnceLock::new(),
+            exports: OnceLock::new(),
         }
     }
 
-    /// One line of `macro_rules!` items `file` sees from other files, or an
-    /// empty string.
-    pub(crate) fn imported_definitions(&self, file: &Path) -> String {
+    /// The `macro_rules!` items `file` sees from other files, or nothing.
+    pub(crate) fn imported_macros(&self, file: &Path) -> ImportedMacros {
         let Some(source) = self.sources.get(file) else {
-            return String::new();
+            return ImportedMacros::default();
         };
         // Parsing is the cost: most files never spell a generator's name as
         // a call, and `first_macro_call` would parse each of them to say so.
@@ -113,24 +133,166 @@ impl MacroVisibility {
         // A `#[macro_use]` module declared after the first call is not in
         // scope at it.
         let Some(first_call) = first_macro_call(source, &self.generators) else {
-            return String::new();
+            return ImportedMacros::default();
         };
         let mut walk = Walk::default();
-        if self.scope(file).is_none_or(|scope| scope.opaque) {
-            return String::new();
-        }
+        let Some(own) = self.scope(file).filter(|scope| !scope.opaque) else {
+            return ImportedMacros::default();
+        };
         self.collect_inherited(file, 0, &mut walk);
         self.collect_imports(file, first_call, 0, &mut walk);
+        let mut path_imports = Vec::new();
+        let mut blanked_prefixes = Vec::new();
+        let calls = generator_calls(source, &self.generators).unwrap_or_default();
+        let local: BTreeSet<&str> = own.macros.iter().map(|m| m.name.as_str()).collect();
+        let imported_by_use: BTreeSet<&str> =
+            own.uses.iter().map(|import| import.name.as_str()).collect();
+        for (name, calls) in &calls {
+            let by_use = imported_by_use.contains(name.as_str());
+            // A bare call with no `use` could be a glob import or an
+            // extern-crate macro; the splice would shadow it. A file that
+            // defines the name itself is not importing it.
+            let usable = if by_use {
+                !calls.nested_bare
+            } else {
+                !calls.bare && !calls.crate_prefixes.is_empty()
+            };
+            if !usable || local.contains(name.as_str()) {
+                continue;
+            }
+            // An import that does not resolve stays in the file, so the
+            // expander refuses that one name; the others are unaffected.
+            if let Some(text) = self.exported_definition(file, name) {
+                walk.out.push(text);
+                if by_use {
+                    path_imports.push(name.clone());
+                }
+                blanked_prefixes.extend(calls.crate_prefixes.iter().copied());
+            }
+        }
         if walk.refused {
-            return String::new();
+            return ImportedMacros::default();
         }
         let mut seen = BTreeSet::new();
         walk.out.retain(|text| seen.insert(text.clone()));
-        let joined = walk.out.join(" ");
-        if joined.len() > MAX_IMPORTED_BYTES {
-            return String::new();
+        let definitions = walk.out.join(" ");
+        if definitions.len() > MAX_IMPORTED_BYTES {
+            return ImportedMacros::default();
         }
-        joined
+        ImportedMacros {
+            definitions,
+            path_imports,
+            blanked_prefixes,
+        }
+    }
+
+    #[cfg(test)]
+    fn imported_definitions(&self, file: &Path) -> String {
+        self.imported_macros(file).definitions
+    }
+
+    /// The flattened definition `crate::name` names in `file`'s crate, when
+    /// exactly one macro of that name exists there and it is a plain
+    /// `#[macro_export]`. A file whose crate cannot be determined, or that
+    /// might belong to it, refuses.
+    fn exported_definition(&self, file: &Path, name: &str) -> Option<String> {
+        let root = self.crate_root(file)?;
+        let index = self.export_index();
+        let same_crate = |candidate: &Path| {
+            candidate == file || self.crate_root(candidate).is_none_or(|other| other == root)
+        };
+        if index.opaque.iter().any(|candidate| same_crate(candidate)) {
+            return None;
+        }
+        let mut here = index
+            .definitions
+            .get(name)?
+            .iter()
+            .filter(|(candidate, _)| same_crate(candidate));
+        let (definer, definition) = here.next()?;
+        if here.next().is_some() {
+            return None;
+        }
+        // The definer must be known to belong to the crate: a `cfg`'d, `path`
+        // or undeclared module may not be compiled at all.
+        (self.crate_root(definer).as_ref() == Some(&root))
+            .then(|| definition.clone())
+            .flatten()
+    }
+
+    /// The crate root file `file` belongs to, following unique `mod`
+    /// declarations upward.
+    fn crate_root(&self, file: &Path) -> Option<PathBuf> {
+        let mut current = file.to_path_buf();
+        for _ in 0..=CRATE_ROOT_DEPTH {
+            // A declaration decides first: `src/commands/build.rs` declared
+            // by `mod build;` is a module, not a crate root.
+            match self.parent(&current) {
+                Some((parent, _)) => current = parent,
+                None if self.is_crate_root(&current) => return Some(current),
+                None => return None,
+            }
+        }
+        None
+    }
+
+    /// A root file nothing declares: `lib.rs`, `main.rs`, `build.rs` (not
+    /// inside a `src` tree, where it is a module), or a file directly in
+    /// `tests`, `benches` or `examples`.
+    fn is_crate_root(&self, file: &Path) -> bool {
+        match file.file_name().and_then(|name| name.to_str()) {
+            // `src/lib.rs`, `src/main.rs` and `src/bin/<name>/main.rs`; a
+            // `lib.rs` deeper in a tree is a module that `mod lib;` names.
+            Some("lib.rs" | "main.rs")
+                if file.parent().is_some_and(|directory| {
+                    directory.file_name().is_some_and(|name| name == "src")
+                        || directory
+                            .parent()
+                            .and_then(Path::file_name)
+                            .is_some_and(|name| name == "bin")
+                }) =>
+            {
+                true
+            }
+            Some("build.rs") => !file
+                .ancestors()
+                .skip(1)
+                .any(|directory| directory.file_name().is_some_and(|name| name == "src")),
+            _ => file.parent().is_some_and(is_root_directory),
+        }
+    }
+
+    fn export_index(&self) -> &ExportIndex {
+        self.exports.get_or_init(|| {
+            let mut index = ExportIndex::default();
+            for path in self.sources.keys() {
+                if !self
+                    .sources
+                    .get(path)
+                    .is_some_and(|source| source.contains("macro_rules"))
+                {
+                    continue;
+                }
+                let Some(scope) = self.scope(path) else {
+                    continue;
+                };
+                if scope.export_opaque {
+                    index.opaque.insert(path.clone());
+                }
+                for scoped in scope
+                    .macros
+                    .iter()
+                    .filter(|scoped| self.generators.contains(&scoped.name))
+                {
+                    index
+                        .definitions
+                        .entry(scoped.name.clone())
+                        .or_default()
+                        .push((path.clone(), scoped.exported.then(|| scoped.text.clone())));
+                }
+            }
+            index
+        })
     }
 
     fn scope(&self, file: &Path) -> Option<Arc<MacroScope>> {
@@ -388,6 +550,273 @@ mod tests {
 
     fn defines_t(text: &str) -> bool {
         text.starts_with("macro_rules! t ")
+    }
+
+    const EXPORTED: &str =
+        "#[macro_export]\nmacro_rules! t { ($n:ident) => { #[test] fn $n() {} }; }\n";
+
+    fn path_imported(files: &[(&str, &str)], file: &str) -> (String, Vec<String>) {
+        let imported = visibility(files).imported_macros(Path::new(file));
+        (imported.definitions, imported.path_imports)
+    }
+
+    #[test]
+    fn an_exported_macro_named_by_path_resolves_in_its_crate() {
+        let files = [
+            ("src/lib.rs", "mod macros;\nmod cases;\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "use crate::t;\nt!(a);\n"),
+        ];
+        let (definitions, path_imports) = path_imported(&files, "src/cases.rs");
+        assert!(defines_t(&definitions) || definitions.contains("macro_rules! t "));
+        assert_eq!(path_imports, vec!["t".to_string()]);
+        // The defining file names nothing by path.
+        assert_eq!(
+            path_imported(&files, "src/macros.rs").1,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_crate_path_call_resolves_without_an_import_but_a_bare_call_does_not() {
+        let lib = ("src/lib.rs", "mod macros;\nmod cases;\n");
+        let files = [
+            lib,
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "crate::t!(a);\ncrate :: t!(b);\n"),
+        ];
+        let imported = visibility(&files).imported_macros(Path::new("src/cases.rs"));
+        assert!(imported.definitions.contains("macro_rules! t "));
+        assert_eq!(imported.blanked_prefixes.len(), 2);
+        assert!(imported.path_imports.is_empty());
+        let bare = [
+            lib,
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "crate::t!(a);\nt!(b);\n"),
+        ];
+        assert_eq!(
+            visibility(&bare).imported_macros(Path::new("src/cases.rs")),
+            ImportedMacros::default()
+        );
+        let nested = [
+            lib,
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "fn f() { crate::t!(a); }\n"),
+        ];
+        assert_eq!(
+            visibility(&nested).imported_macros(Path::new("src/cases.rs")),
+            ImportedMacros::default()
+        );
+    }
+
+    #[test]
+    fn an_exported_macro_of_another_crate_is_not_a_second_definition() {
+        let files = [
+            ("a/src/lib.rs", "mod macros;\nmod cases;\n"),
+            ("a/src/macros.rs", EXPORTED),
+            ("a/src/cases.rs", "use crate::t;\nt!(a);\n"),
+            ("b/src/lib.rs", "mod macros;\n"),
+            ("b/src/macros.rs", EXPORTED),
+        ];
+        assert_eq!(
+            path_imported(&files, "a/src/cases.rs").1,
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_path_import_that_is_not_exactly_one_plain_export_refuses() {
+        let cases = "use crate::t;\nt!(a);\n";
+        let lib = "mod macros;\nmod other;\nmod cases;\n";
+        let refused = |macros: &str, other: &str| {
+            let files = [
+                ("src/lib.rs", lib),
+                ("src/macros.rs", macros),
+                ("src/other.rs", other),
+                ("src/cases.rs", cases),
+            ];
+            path_imported(&files, "src/cases.rs")
+        };
+        let none = (String::new(), Vec::<String>::new());
+        // A second macro of the name anywhere in the crate.
+        assert_eq!(refused(EXPORTED, GENERATOR), none, "second definition");
+        assert_eq!(refused(EXPORTED, EXPORTED), none, "second export");
+        // Not exported: `use crate::t` cannot name it.
+        assert_eq!(refused(GENERATOR, "fn f() {}\n"), none, "not exported");
+        // An export the scope cannot list can define the name too.
+        let hidden = "mod inner {\n    #[macro_export]\n    macro_rules! t { ($n:ident) => { #[test] fn $n() {} }; }\n}\n";
+        assert_eq!(refused(EXPORTED, hidden), none, "export inside a module");
+        let gated = "#[cfg(feature = \"x\")]\n#[macro_export]\nmacro_rules! t { () => {} }\n";
+        assert_eq!(refused(EXPORTED, gated), none, "cfg'd export");
+        let local = "#[macro_export(local_inner_macros)]\nmacro_rules! t { () => {} }\n";
+        assert_eq!(refused(local, "fn f() {}\n"), none, "export with arguments");
+    }
+
+    #[test]
+    fn a_path_import_needs_top_level_calls_and_a_declared_definer() {
+        let lib = "mod macros;\nmod cases;\n";
+        let nested = "use crate::t;\nmod tests { t!(a); }\n";
+        let files = [
+            ("src/lib.rs", lib),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", nested),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/cases.rs"),
+            (String::new(), Vec::new()),
+            "a child module does not see the import"
+        );
+        let cases = "use crate::t;\nt!(a);\n";
+        for declaration in [
+            "#[cfg(feature = \"x\")]\nmod macros;\nmod cases;\n",
+            "#[path = \"macros.rs\"]\nmod macros;\nmod cases;\n",
+            "mod cases;\n",
+        ] {
+            let files = [
+                ("src/lib.rs", declaration),
+                ("src/macros.rs", EXPORTED),
+                ("src/cases.rs", cases),
+            ];
+            assert_eq!(
+                path_imported(&files, "src/cases.rs"),
+                (String::new(), Vec::new()),
+                "{declaration}"
+            );
+        }
+        // `#[cfg(test)]` leaves the module plain.
+        let files = [
+            ("src/lib.rs", "#[cfg(test)]\nmod macros;\nmod cases;\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", cases),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/cases.rs").1,
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_nested_lib_rs_is_a_module_not_a_crate_root() {
+        // `src/a/lib.rs` is declared by `mod lib;` in `src/a.rs`; `module_identity`
+        // cannot name it, so the exported macro in it is not attributed to a
+        // crate, and a sibling is refused rather than credited from a wrong root.
+        let files = [
+            ("src/lib.rs", "mod a;\n"),
+            ("src/a.rs", "mod lib;\nmod cases;\n"),
+            ("src/a/lib.rs", EXPORTED),
+            ("src/a/cases.rs", "use crate::t;\nt!(boundary);\n"),
+        ];
+        let visibility = visibility(&files);
+        assert!(!visibility.is_crate_root(Path::new("src/a/lib.rs")));
+        assert!(visibility.is_crate_root(Path::new("src/lib.rs")));
+        assert!(visibility.is_crate_root(Path::new("crates/x/src/main.rs")));
+        assert!(visibility.is_crate_root(Path::new("src/bin/tool/main.rs")));
+        assert_eq!(
+            visibility
+                .imported_macros(Path::new("src/a/cases.rs"))
+                .path_imports,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_module_file_named_like_a_root_is_not_taken_for_a_crate() {
+        // `module_identity` cannot name a `build.rs` module, so its parent is
+        // unknown; it must not become a crate of its own either.
+        let files = [
+            ("src/lib.rs", "mod commands;\nmod macros;\nmod other;\n"),
+            ("src/commands/mod.rs", "mod build;\n"),
+            ("src/commands/build.rs", "use crate::t;\nt!(a);\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/other.rs", GENERATOR),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/commands/build.rs"),
+            (String::new(), Vec::new())
+        );
+        // A package-root build script is still a root.
+        assert!(!visibility(&files).is_crate_root(Path::new("src/commands/build.rs")));
+        assert!(visibility(&files).is_crate_root(Path::new("crates/x/build.rs")));
+    }
+
+    #[test]
+    fn an_unresolved_path_import_does_not_withdraw_a_resolved_one() {
+        let two = "#[macro_export]\nmacro_rules! u { ($n:ident) => { #[test] fn $n() {} }; }\n";
+        let macros = format!("{EXPORTED}{two}");
+        let other = "macro_rules! u { () => {} }\n";
+        let files = [
+            ("src/lib.rs", "mod macros;\nmod other;\nmod cases;\n"),
+            ("src/macros.rs", macros.as_str()),
+            ("src/other.rs", other),
+            (
+                "src/cases.rs",
+                "use crate::t;\nuse crate::u;\nt!(a);\nu!(b);\n",
+            ),
+        ];
+        // `u` has a second definition, `t` does not.
+        assert_eq!(
+            path_imported(&files, "src/cases.rs").1,
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_renamed_grouped_or_orphan_path_import_resolves_nothing() {
+        let lib = "mod macros;\nmod cases;\n";
+        for cases in [
+            "use crate::t as u;\nt!(a);\n",
+            "use crate::{t};\nt!(a);\n",
+            "use crate::*;\nt!(a);\n",
+            "#[cfg(unix)]\nuse crate::t;\nt!(a);\n",
+        ] {
+            let files = [
+                ("src/lib.rs", lib),
+                ("src/macros.rs", EXPORTED),
+                ("src/cases.rs", cases),
+            ];
+            assert_eq!(
+                path_imported(&files, "src/cases.rs"),
+                (String::new(), Vec::new()),
+                "{cases}"
+            );
+        }
+        // `cases.rs` that no `mod` declaration reaches has no known crate.
+        let files = [
+            ("src/lib.rs", "mod macros;\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "use crate::t;\nt!(a);\n"),
+        ];
+        assert_eq!(
+            path_imported(&files, "src/cases.rs"),
+            (String::new(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn an_integration_test_crate_resolves_its_own_exported_macro() {
+        let files = [
+            ("tests/main.rs", "mod support;\nmod cases;\n"),
+            ("tests/support/mod.rs", EXPORTED),
+            ("tests/cases.rs", "use crate::t;\nt!(a);\n"),
+            ("tests/other.rs", EXPORTED),
+        ];
+        // `tests/other.rs` is another test crate with its own `t`.
+        assert_eq!(
+            path_imported(&files, "tests/cases.rs").1,
+            vec!["t".to_string()]
+        );
+        // A second test crate that exports the name is a different crate; a
+        // module of the same crate that does is a second definition.
+        let twice = [
+            ("tests/main.rs", "mod support;\nmod cases;\n"),
+            ("tests/support/mod.rs", EXPORTED),
+            ("tests/cases.rs", "use crate::t;\nt!(a);\n"),
+            ("tests/support/extra.rs", EXPORTED),
+        ];
+        assert_eq!(
+            path_imported(&twice, "tests/cases.rs").1,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

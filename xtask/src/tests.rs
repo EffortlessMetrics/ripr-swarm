@@ -165,7 +165,7 @@ use super::{
     mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
     next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
-    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
+    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
@@ -3423,6 +3423,75 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
     assert!(report.contains("repair_packet_ready=true"), "{report}");
     assert!(report.contains("must_disclose_witness"), "{report}");
     assert!(report.contains("promoted to exposed"), "{report}");
+}
+
+// The three cases that moved from `corpus.json` to `cases/*.json` are no
+// longer listed in the manifest, so deleting the directory or one file would
+// leave a valid, smaller corpus that the gate passes. This pins them from
+// outside the case files, the way the Perl charter test pins its case.
+#[test]
+fn moved_python_charter_cases_stay_in_the_live_corpus() -> Result<(), String> {
+    let corpus_path = super::repo_rooted_fixture_path(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+    let corpus = super::read_evidence_promotion_corpus(&corpus_path)?;
+    let cases = corpus
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or("live honesty corpus has no `cases` array")?;
+    for id in [
+        "python_module_formatted_generator_test",
+        "python_multiline_literal_sibling_read",
+        "python_literal_value_inside_longer_number",
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| {
+                format!("live honesty corpus dropped charter case `{id}`; restore its cases/ file")
+            })?;
+        assert_eq!(
+            case.get("tier").and_then(Value::as_str),
+            Some("pure"),
+            "{id} must stay tier `pure`"
+        );
+        let promotes = case
+            .get("assertions")
+            .and_then(Value::as_array)
+            .is_some_and(|assertions| {
+                assertions.iter().any(|assertion| {
+                    assertion.get("type").and_then(Value::as_str) == Some("must_not_promote")
+                })
+            });
+        assert!(promotes, "{id} must keep its `must_not_promote` assertion");
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> Result<(), String> {
+    let dir = temp_dir("promotion-case-files");
+    let corpus = dir.join("corpus.json");
+    write(
+        &corpus,
+        r#"{"schema_version":"1","cases":[{"id":"base_case"}]}"#,
+    );
+    write(&dir.join("cases/b_case.json"), r#"{"id":"b_case"}"#);
+    write(&dir.join("cases/a_case.json"), r#"{"id":"a_case"}"#);
+
+    let folded = super::read_evidence_promotion_corpus(&corpus)?;
+    let ids: Vec<&str> = folded["cases"]
+        .as_array()
+        .ok_or("no cases array")?
+        .iter()
+        .filter_map(|case| case["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["base_case", "a_case", "b_case"]);
+
+    write(&dir.join("cases/dup.json"), r#"{"id":"base_case"}"#);
+    let error = super::read_evidence_promotion_corpus(&corpus)
+        .err()
+        .ok_or("a repeated case id was accepted")?;
+    assert!(error.contains("repeats case id `base_case`"), "{error}");
+    Ok(())
 }
 
 #[test]
@@ -12247,6 +12316,78 @@ fn sorted_allowlist_content_preserves_header_and_sorts_entries() {
         sorted,
         "# Header\n# More\n\na|kind|owner|reason\nz|kind|owner|reason\n"
     );
+}
+
+#[test]
+fn count_policy_fragments_merge_rows_and_reject_a_row_declared_in_both_files() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments", |root| {
+        let list = "policy/process_allowlist.txt";
+        write(
+            &root.join(list),
+            "# header\na.rs|ExampleMarker|1|owner|main row\n",
+        );
+        // Without a fragment directory the main list is the whole allowlist.
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(rows.len(), 1);
+
+        write(
+            &root.join("policy/process_allowlist.d/b.txt"),
+            "b.rs|ExampleMarker|2|owner|fragment row\n",
+        );
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(
+            rows.get(&("b.rs".to_string(), "ExampleMarker".to_string())),
+            Some(&2)
+        );
+        assert_eq!(rows.len(), 2);
+
+        write(
+            &root.join("policy/process_allowlist.d/dup.txt"),
+            "a.rs|ExampleMarker|9|owner|silently wider bound\n",
+        );
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("policy/process_allowlist.d/dup.txt")
+                && error.contains("already declared in policy/process_allowlist.txt"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn count_policy_fragments_fail_closed_on_a_non_txt_entry_and_a_malformed_row() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments-closed", |root| {
+        let list = "policy/network_allowlist.txt";
+        write(&root.join(list), "# header\n");
+        let dir = root.join("policy/network_allowlist.d");
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("is not a .txt allowlist fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("bad.txt"), "only|three|fields\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains(
+                "policy/network_allowlist.d/bad.txt:1 expected path|pattern|max_count|owner|reason"
+            ),
+            "{error}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -25460,6 +25601,115 @@ owner = "repo-infra"
             violations
                 .iter()
                 .any(|violation| violation.contains("duplicate artifact id `RIPR-PROP-0001`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+const DOC_ARTIFACT_FRAGMENT_DIR: &str = "policy/doc-artifacts.d";
+
+fn doc_artifact_main_ledger() -> &'static str {
+    r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#
+}
+
+fn doc_artifact_fragment(id: &str) -> String {
+    format!(
+        "[[artifact]]\nid = \"{id}\"\nkind = \"proposal\"\npath = \"docs/proposals/{id}-beta.md\"\nstatus = \"proposed\"\nowner = \"repo-infra\"\n"
+    )
+}
+
+#[test]
+fn doc_artifact_fragments_register_entries_and_report_their_own_file_and_line() -> Result<(), String>
+{
+    with_temp_cwd("doc-artifacts-fragments", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0002-beta.md",
+            "RIPR-PROP-0002",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0002.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0002"),
+        );
+        let ledger = parse_doc_artifact_ledger(&root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(ledger.artifacts.len(), 2);
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+
+        // A fragment entry that points at a missing file names the fragment, not the main ledger.
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0003.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0003"),
+        );
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("policy/doc-artifacts.d/0003.toml:1 artifact `RIPR-PROP-0003` points at missing file")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifact_fragments_fail_closed_and_catch_cross_file_duplicates() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-fragments-closed", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        let ledger = root.join(DOC_ARTIFACT_LEDGER);
+        let dir = root.join(DOC_ARTIFACT_FRAGMENT_DIR);
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(
+            error.contains("is not a .toml artifact fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("empty.toml"), "# nothing\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("has no [[artifact]] entries"), "{error}");
+
+        write(
+            &dir.join("empty.toml"),
+            &format!(
+                "schema_version = \"1.0\"\n{}",
+                doc_artifact_fragment("RIPR-PROP-0002")
+            ),
+        );
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("must not set schema_version"), "{error}");
+        fs::remove_file(dir.join("empty.toml")).map_err(|e| e.to_string())?;
+
+        write(
+            &dir.join("dup.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0001"),
+        );
+        let violations = doc_artifact_violations(root, &ledger)?;
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "policy/doc-artifacts.d/dup.toml:1 duplicate artifact id `RIPR-PROP-0001`; first defined at policy/doc-artifacts.toml:"
+            )),
             "{violations:#?}"
         );
         Ok(())
