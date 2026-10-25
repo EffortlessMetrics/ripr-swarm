@@ -504,6 +504,51 @@ pub(super) fn client_receivers(body_text: &str) -> Vec<String> {
     receivers
 }
 
+/// Whether `name` is bound anywhere in the body other than as a parameter of
+/// the first line's `def` (a local assignment, import, loop target, ...). An
+/// application name bound this way is not the module-level import it spells.
+pub(super) fn rebinds_name(body_text: &str, name: &str) -> bool {
+    let lines = logical_lines(body_text);
+    let signature = lines
+        .first()
+        .is_some_and(|line| line_binds(line, name) && line.trim_start().contains("def "));
+    binding_count(&lines, name) > usize::from(signature)
+}
+
+/// Whether `name` is a parameter of the first line's `def` that nothing in
+/// the body rebinds, so it is the value the caller (a fixture) supplies.
+pub(super) fn is_unrebound_parameter(body_text: &str, name: &str) -> bool {
+    let lines = logical_lines(body_text);
+    lines
+        .first()
+        .is_some_and(|line| line_binds(line, name) && line.trim_start().contains("def "))
+        && binding_count(&lines, name) == 1
+}
+
+/// The name an alias chain starts from: `c = client` leads to `client`; a name
+/// with no single plain-name binding leads to itself.
+pub(super) fn client_root(body_text: &str, receiver: &str) -> String {
+    let lines = logical_lines(body_text);
+    let mut target = receiver;
+    for _ in 0..=lines.len() {
+        if binding_count(&lines, target) != 1 {
+            break;
+        }
+        let Some((_, value)) = lines
+            .iter()
+            .filter_map(|line| simple_binding(line))
+            .find(|(name, _)| *name == target)
+        else {
+            break;
+        };
+        if !is_plain_name(value) {
+            break;
+        }
+        target = value;
+    }
+    target.to_string()
+}
+
 /// The application name a receiver's client construction passes, following
 /// aliases of the client back to the construction. `None` when the chain does
 /// not end in a construction over a plain name (a fixture, a dotted or called

@@ -395,3 +395,95 @@ fn an_unreadable_client_fixture_reaches_the_route_without_oracle_credit() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn a_shadowed_application_name_is_not_the_import_it_spells() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let local = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items():\n    app = build_other_app()\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert_eq!(route_relation("app/a.py", OWN_APP, local)?, unidentified);
+    let fixture_named = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items(app):\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert_eq!(
+        route_relation("app/a.py", OWN_APP, fixture_named)?,
+        unidentified
+    );
+    // The same body without the shadow is the owner's own app.
+    let own = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(related("app/a.py", OWN_APP, own)?);
+    // A conftest client fixture over its own parameter is not an import.
+    let shadow_fixture = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef app():\n    return make_app()\n\n@pytest.fixture\ndef client(app):\n    return TestClient(app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&shadow_fixture)?,
+        Some(PythonRelationKind::ApiClientRouteUnidentifiedApp)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fixture_parameter_the_test_rebinds_or_a_class_override_is_unidentified() -> Result<(), String>
+{
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef client():\n    return TestClient(app)\n"
+    );
+    let run = |test: &str| -> Result<Option<PythonRelationKind>, String> {
+        let (owners, tests) = super::fixtures_tests::workspace(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", test),
+        ]);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "items")
+            .ok_or_else(|| "expected items owner".to_string())?;
+        Ok(related_test_candidates(owner, &tests)
+            .first()
+            .map(|candidate| candidate.relation))
+    };
+    let plain = "def test_items(client):\n    assert client.get(\"/items\")\n";
+    assert_eq!(run(plain)?, Some(PythonRelationKind::ApiClientRouteCall));
+    // A fixture parameter that the body rebinds is whatever it was rebound to.
+    let rebound =
+        "def test_items(client):\n    client = make_client()\n    assert client.get(\"/items\")\n";
+    assert_eq!(run(rebound)?, unidentified);
+    // An alias of the fixture parameter leads back to it.
+    let alias = "def test_items(client):\n    http = client\n    assert http.get(\"/items\")\n";
+    assert_eq!(run(alias)?, Some(PythonRelationKind::ApiClientRouteCall));
+    // A class method may sit under a class-level override that is not recorded.
+    let method = "class TestItems:\n    def test_items(self, client):\n        assert client.get(\"/items\")\n";
+    assert_eq!(run(method)?, unidentified);
+    Ok(())
+}
+
+#[test]
+fn an_owner_modules_reexport_of_its_imported_app_is_its_own_app() -> Result<(), String> {
+    let routes = "from app.core import app\n\n@app.get(\"/items\")\ndef items():\n    return []\n";
+    let via = |import: &str| {
+        format!(
+            "from starlette.testclient import TestClient\n{import}\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n"
+        )
+    };
+    // The owner's module re-exports the app it imported.
+    assert!(related(
+        "app/routes.py",
+        routes,
+        &via("from app.routes import app")
+    )?);
+    // A package above the owner may define another `app`.
+    assert_eq!(
+        route_relation("app/routes.py", routes, &via("from app import app"))?,
+        Some(PythonRelationKind::ApiClientRouteUnidentifiedApp)
+    );
+    // The shared origin itself and a third module keep their readings.
+    assert!(related(
+        "app/routes.py",
+        routes,
+        &via("from app.core import app")
+    )?);
+    assert_eq!(
+        route_relation("app/routes.py", routes, &via("from app.other import app"))?,
+        None
+    );
+    Ok(())
+}
