@@ -158,9 +158,10 @@ use super::{
     lane1_evidence_audit_repo_exposure_args,
     lane1_evidence_audit_report_from_complete_repo_exposure, lane1_evidence_audit_timeout_error,
     lane1_readiness_packet_specs, limited_badge_artifacts_json, limited_badge_artifacts_markdown,
-    line_has_static_language_inline_allow, local_context_line_findings, local_markdown_target,
-    lsp_cockpit_report, lsp_cockpit_report_json, lsp_cockpit_report_markdown,
-    markdown_links_in_text, missing_anchor_violation, mutation_calibration_report_json,
+    line_has_static_language_inline_allow, load_traceability_behaviors,
+    local_context_line_findings, local_markdown_target, lsp_cockpit_report,
+    lsp_cockpit_report_json, lsp_cockpit_report_markdown, markdown_links_in_text,
+    missing_anchor_violation, mutation_calibration_report_json,
     mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
     next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
@@ -12492,6 +12493,69 @@ fn sorted_traceability_behavior_blocks_content_sorts_blocks_by_id() {
     let sorted = sorted_traceability_behavior_blocks_content(&input);
 
     assert_eq!(sorted, format!("{prefix}{block_a}{block_b}"));
+}
+
+#[test]
+fn traceability_fragments_extend_a_behavior_and_register_a_new_one() -> Result<(), String> {
+    let dir = temp_dir("traceability-fragments");
+    let manifest = dir.join(".ripr/traceability.toml");
+    write(
+        &manifest,
+        "[[behavior]]\nid = \"RIPR-SPEC-0001\"\nname = \"A\"\nspec = \"docs/specs/a.md\"\ntests = [\n  \"t/base.rs\",\n]\nmetrics = [\"m\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/pr-1.toml"),
+        "[[extend]]\nid = \"RIPR-SPEC-0001\"\ntests = [\n  \"t/frag.rs\",\n]\nfixtures = [\"f/one\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/pr-2.toml"),
+        "[[behavior]]\nid = \"RIPR-SPEC-0002\"\nname = \"B\"\nspec = \"docs/specs/b.md\"\nmetrics = [\"m\"]\n",
+    );
+
+    let (behaviors, violations) = load_traceability_behaviors(&manifest)?;
+
+    assert!(violations.is_empty(), "{violations:?}");
+    assert_eq!(behaviors.len(), 2);
+    let first = &behaviors[0];
+    assert_eq!(first.tests, vec!["t/base.rs", "t/frag.rs"]);
+    assert_eq!(first.fixtures, vec!["f/one"]);
+    assert_eq!(behaviors[1].id.as_deref(), Some("RIPR-SPEC-0002"));
+    Ok(())
+}
+
+#[test]
+fn traceability_fragment_extend_without_a_behavior_or_with_a_name_is_a_violation()
+-> Result<(), String> {
+    let dir = temp_dir("traceability-fragment-violations");
+    let manifest = dir.join(".ripr/traceability.toml");
+    write(
+        &manifest,
+        "[[behavior]]\nid = \"RIPR-SPEC-0001\"\nname = \"A\"\nspec = \"docs/specs/a.md\"\nmetrics = [\"m\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/orphan.toml"),
+        "[[extend]]\nid = \"RIPR-SPEC-0099\"\ntests = [\"t/x.rs\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/renamed.toml"),
+        "[[extend]]\nid = \"RIPR-SPEC-0001\"\nname = \"other\"\n",
+    );
+
+    let (_, violations) = load_traceability_behaviors(&manifest)?;
+
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("RIPR-SPEC-0099") && v.contains("no [[behavior]] carries")),
+        "{violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("sets `name` or `spec`")),
+        "{violations:?}"
+    );
+    Ok(())
 }
 
 #[test]

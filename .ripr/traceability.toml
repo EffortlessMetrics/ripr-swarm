@@ -3,6 +3,11 @@
 # This file maps behavior specs to the tests, code, output contracts, and
 # metrics that prove or track them. It starts as a lightweight manifest and will
 # become mechanically checked as xtask traceability work lands.
+#
+# Register a PR's tests, fixtures, code, outputs or metrics in a file of its own
+# under `.ripr/traceability.d/` (`[[extend]]` with the behavior `id` plus the
+# arrays to add, or a whole `[[behavior]]` for a new spec) instead of appending
+# to the arrays below, which every PR edits and which therefore conflict.
 
 [[behavior]]
 id = "RIPR-SPEC-0001"
