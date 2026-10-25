@@ -49,7 +49,9 @@ jobs:
           save-if: false
 
       - name: Prepare locked owner-return fixture dependencies
-        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
       # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming
       # it here keeps that build out of the measured test time, as the required
@@ -58,19 +60,28 @@ jobs:
         timeout-minutes: 20
         run: cargo xtask check-covered-by
 
+      # Build and run are timed apart: the required step's 1287 s includes its own
+      # ~336 s nextest build, so only build plus run is comparable to it. The shard
+      # also lists its own partition (and shard 1 the full workspace) so the
+      # partition-check job can prove the shards are a disjoint cover.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 40
         run: |
           mkdir -p target/nextest/ci
-          start=$(date +%s)
+          t0=$(date +%s)
+          cargo nextest run --workspace --profile ci --no-run
+          t1=$(date +%s)
+          cargo nextest list --workspace --partition count:${{ matrix.shard }}/4 --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          [ "${{ matrix.shard }}" = 1 ] && cargo nextest list --workspace --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+          t2=$(date +%s)
           set +e
           cargo nextest run --workspace --profile ci --no-fail-fast --partition count:${{ matrix.shard }}/4
           status=$?
           set -e
-          end=$(date +%s)
+          t3=$(date +%s)
           tests=$(grep -Eo '<testsuites [^>]*tests="[0-9]+"' target/nextest/ci/junit.xml | grep -Eo 'tests="[0-9]+"' | grep -Eo '[0-9]+' || echo 0)
           printf '%s\n' "$status" > target/nextest/ci/shard-${{ matrix.shard }}.status
-          { echo "### Shard ${{ matrix.shard }} of 4"; echo "nextest exit status: $status"; echo "tests in junit: $tests"; echo "test step seconds (build plus run): $((end - start))"; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Shard ${{ matrix.shard }} of 4"; echo "nextest exit status: $status"; echo "tests in junit: $tests"; echo "build seconds: $((t1 - t0)); list seconds: $((t2 - t1)); run seconds: $((t3 - t2)); build plus run: $((t3 - t0 - (t2 - t1)))"; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
       - name: Upload shard results
@@ -81,5 +92,32 @@ jobs:
           path: |
             target/nextest/ci/junit.xml
             target/nextest/ci/shard-${{ matrix.shard }}.status
+            target/nextest/ci/list-*.txt
           if-no-files-found: warn
           retention-days: 7
+
+  partition-check:
+    name: partition-check
+    needs: linux-shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: linux-shard-*
+          path: shards
+
+      # The four partition lists must be pairwise disjoint and their union must be
+      # the full workspace list: equal-sized omissions and duplicates would pass a
+      # summed JUnit count.
+      - name: Check the shards are a disjoint cover
+        run: |
+          cat shards/linux-shard-*/list-[1-4].txt | sort > union.txt
+          dup=$(uniq -d union.txt | wc -l)
+          uniq union.txt > union-unique.txt
+          missing=$(comm -13 union-unique.txt shards/linux-shard-1/list-all.txt | wc -l)
+          extra=$(comm -23 union-unique.txt shards/linux-shard-1/list-all.txt | wc -l)
+          total=$(wc -l < shards/linux-shard-1/list-all.txt)
+          { echo "### Partition cover"; echo "workspace tests listed: $total"; echo "duplicated across shards: $dup"; echo "missing from shards: $missing"; echo "not in workspace list: $extra"; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$dup" -eq 0 ] && [ "$missing" -eq 0 ] && [ "$extra" -eq 0 ]
