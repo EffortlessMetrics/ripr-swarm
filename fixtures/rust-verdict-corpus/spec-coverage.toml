@@ -12,15 +12,15 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 219
+floor = 224
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-# 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
+# 144 (#6485: two grid rows recovered, one bound-input abstention added). Was 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
-missed_credit_ceiling = 145
+missed_credit_ceiling = 144
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
