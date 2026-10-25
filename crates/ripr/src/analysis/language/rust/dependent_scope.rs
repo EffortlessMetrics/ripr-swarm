@@ -695,6 +695,15 @@ pub(super) fn admit_dependents(
     // main index then counts twice, which a union absorbs.
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
+    // File names spelled by `#[path]`/`include!` compositions, `"*"` for one
+    // with no readable literal: a composed withheld binary's macros reach
+    // the composing crate (#10191).
+    let mut composed_names = BTreeSet::new();
+    for file in &admitted {
+        if let Some(bytes) = read_source(root, file)? {
+            note_composed_names(&bytes, &mut composed_names);
+        }
+    }
     let drop_ins = crate::analysis::facts::drop_in::DropInManifests::new(root);
     let members = crate::analysis::facts::member_crates::MemberCrates::new(root);
     // A package nested under a changed one relates like the owner's own, so
@@ -742,6 +751,7 @@ pub(super) fn admit_dependents(
             consumed.record(file, bytes.as_deref());
             // No content to index: the full selection skips it too.
             if let Some(bytes) = bytes {
+                note_composed_names(&bytes, &mut composed_names);
                 batch_bytes = batch_bytes.saturating_add(bytes.len());
                 loaded.push((file, bytes));
             }
@@ -802,6 +812,7 @@ pub(super) fn admit_dependents(
             }
         }
     }
+    withheld_macro_bindings.widen_composed(&composed_names);
     admitted.sort();
     admitted.dedup();
     let main_files = crate::analysis::workspace::with_module_context_files(all_files, admitted);
@@ -1452,6 +1463,26 @@ fn composes_modules(bytes: &[u8]) -> bool {
         let name = after_space(next + 1);
         word_at(name, b"path") || word_at(name, b"cfg_attr")
     })
+}
+
+/// The `.rs` file names a composing file spells, or `"*"` when it composes
+/// modules without spelling one.
+fn note_composed_names(bytes: &[u8], names: &mut BTreeSet<String>) {
+    if !composes_modules(bytes) {
+        return;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let mut spelled = false;
+    for literal in text.split('"').skip(1).step_by(2) {
+        if let Some(name) = literal.strip_suffix(".rs") {
+            let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+            names.insert(format!("{base}.rs"));
+            spelled = true;
+        }
+    }
+    if !spelled {
+        names.insert("*".to_string());
+    }
 }
 
 fn identifier_tokens(text: &str) -> impl Iterator<Item = String> + '_ {

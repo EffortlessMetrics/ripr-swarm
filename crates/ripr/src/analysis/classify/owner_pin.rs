@@ -363,6 +363,10 @@ pub(in crate::analysis) struct WithheldMacroBindings {
     by_root: CrateMacroBindings,
     /// The first such site per trusted name and root, for disclosure.
     root_sites: BTreeMap<(String, PathBuf), (PathBuf, MacroBindingSite)>,
+    /// Withheld binary roots whose sites were confined to themselves. A file
+    /// that composes one of them (`#[path]`, `include!`) puts its macros in
+    /// another crate, which [`Self::widen_composed`] undoes.
+    confined_binaries: BTreeSet<PathBuf>,
 }
 
 impl WithheldMacroBindings {
@@ -412,6 +416,9 @@ impl WithheldMacroBindings {
                 root.as_deref().filter(|_| site.crate_local)
             };
             if let Some(root) = local_root {
+                if binary {
+                    self.confined_binaries.insert(path.to_path_buf());
+                }
                 self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
                     .entry(root.to_path_buf())
@@ -427,6 +434,42 @@ impl WithheldMacroBindings {
             self.sites
                 .entry(name)
                 .or_insert_with(|| (path.to_path_buf(), site));
+        }
+        self.any_name
+    }
+}
+
+impl WithheldMacroBindings {
+    /// A withheld binary's macros stay in its own crate only while no file
+    /// composes it into another one. `composed` holds the file names that
+    /// path/include compositions spell, with `"*"` standing for a
+    /// composition ripr cannot read; a binary so named, or any binary under
+    /// `"*"`, keeps its sites workspace-wide again. Returns `any_name`.
+    pub(in crate::analysis) fn widen_composed(&mut self, composed: &BTreeSet<String>) -> bool {
+        let unreadable = composed.contains("*");
+        let widened = std::mem::take(&mut self.confined_binaries)
+            .into_iter()
+            .filter(|binary| {
+                unreadable
+                    || binary
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| composed.contains(name))
+            })
+            .collect::<Vec<_>>();
+        for binary in widened {
+            let Some(names) = self.by_root.remove(&binary) else {
+                continue;
+            };
+            for name in names {
+                let Some((path, site)) = self.root_sites.remove(&(name.clone(), binary.clone()))
+                else {
+                    continue;
+                };
+                self.any_name |= site.kind.binds_any_name();
+                self.trusted.insert(name.clone());
+                self.sites.entry(name).or_insert((path, site));
+            }
         }
         self.any_name
     }

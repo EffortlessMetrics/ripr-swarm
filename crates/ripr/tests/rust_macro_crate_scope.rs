@@ -274,3 +274,30 @@ fn visible_macro_rebindings_and_unknown_placement_still_refuse_credit() -> Resul
     }
     Ok(())
 }
+
+const SHADOW_FUZZ: &str = "macro_rules! assert_eq { ($($t:tt)*) => {} }\nfuzz_target!(|bytes: &[u8]| { let _ = bytes; });\n";
+
+#[test]
+fn dotted_binary_path_still_contains_an_unrelated_fuzz_binary() -> Result<(), String> {
+    let manifest = BIN.replace("path = 'parse_version.rs'", "path = './parse_version.rs'");
+    let finding = Subject::new(&[
+        ("fuzz/Cargo.toml", manifest.as_str()),
+        ("fuzz/parse_version.rs", SHADOW_FUZZ),
+    ])?
+    .finding()?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn test_that_composes_the_shadowing_binary_loses_credit() -> Result<(), String> {
+    let composing = "#[macro_use]\n#[path = \"../fuzz/parse_version.rs\"]\nmod fuzz;\nuse demo::answer;\n#[test]\nfn pins() { assert_eq!(answer(), 7); }\n";
+    let finding = Subject::new(&[
+        ("tests/pin.rs", composing),
+        ("fuzz/Cargo.toml", BIN),
+        ("fuzz/parse_version.rs", SHADOW_FUZZ),
+    ])?
+    .finding()?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}

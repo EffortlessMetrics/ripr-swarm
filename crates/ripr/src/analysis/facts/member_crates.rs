@@ -226,13 +226,18 @@ impl MemberCrates {
                 }
             }
         }
+        // Cargo accepts `./parse.rs`; a `..` or absolute path stays refused.
         let relative_path = |text: &str| {
             let path = Path::new(text);
-            (!text.is_empty()
-                && path
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_))))
-            .then(|| directory.join(path))
+            let mut joined = directory.to_path_buf();
+            for part in path.components() {
+                match part {
+                    Component::Normal(name) => joined.push(name),
+                    Component::CurDir => {}
+                    _ => return None,
+                }
+            }
+            (joined != directory).then_some(joined)
         };
         let library = match manifest.get("lib") {
             None => directory.join("src/lib.rs"),
@@ -999,6 +1004,16 @@ mod tests {
             "[package]\nname='fuzz'\nversion='0.0.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n";
         for (manifest, file, expected) in [
             (binary.to_string(), "parse.rs", true),
+            (
+                binary.replace("path='parse.rs'", "path='./parse.rs'"),
+                "parse.rs",
+                true,
+            ),
+            (
+                binary.replace("path='parse.rs'", "path='../parse.rs'"),
+                "parse.rs",
+                false,
+            ),
             (
                 format!("{binary}[lib]\npath='parse.rs'\n"),
                 "parse.rs",
