@@ -2118,6 +2118,81 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
     Ok(())
 }
 
+/// #10125: the workspace foreign-write index is built once per run. A rebuild
+/// per changed file would parse every workspace source again for each one.
+#[test]
+fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result<(), String> {
+    fn parses_for(changed_modules: usize) -> Result<(usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-parse-once")?;
+        let mut changed_files = Vec::new();
+        for index in 0..3 {
+            let module = PathBuf::from(format!("settings{index}.py"));
+            write_file(&root.join(&module), &format!("LIMIT{index} = 12\n"))?;
+            write_file(
+                &root.join(format!("test_settings{index}.py")),
+                &format!(
+                    "from settings{index} import LIMIT{index}\n\n\ndef test_limit():\n    assert LIMIT{index} == 10\n"
+                ),
+            )?;
+            if index < changed_modules {
+                changed_files.push(ChangedFile {
+                    path: module,
+                    added_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 12"),
+                    }],
+                    removed_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 10"),
+                    }],
+                });
+            }
+        }
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::module_value::FOREIGN_PARSES.with(|parses| parses.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let parses = super::module_value::FOREIGN_PARSES.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((parses, result.findings.len()))
+    }
+
+    let (one_parses, one_findings) = parses_for(1)?;
+    let (three_parses, three_findings) = parses_for(3)?;
+    assert_eq!(one_findings, 1, "one changed constant is one finding");
+    assert_eq!(
+        three_findings, 3,
+        "three changed constants are three findings"
+    );
+    assert_eq!(
+        one_parses, 6,
+        "each of the six workspace sources is parsed once"
+    );
+    assert_eq!(
+        three_parses, one_parses,
+        "changing more files must not parse the workspace again"
+    );
+    Ok(())
+}
+
 #[test]
 fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), String> {
     let root = unique_tempdir("analyze-diff-docstring-interior")?;
