@@ -160,7 +160,10 @@ impl<'a> Package<'a> {
             .and_then(|related| {
                 related
                     .iter()
-                    .find(|test| test["name"] == "discount_boundary")
+                    // The test as the analyzer names it, `r#` kept for a raw name.
+                    .find(|test| {
+                        test["name"] == "discount_boundary" || test["name"] == "r#discount_boundary"
+                    })
             })
             .and_then(|test| test["relation_reason"].as_str().map(str::to_string));
         Ok((relation, classification))
@@ -1874,6 +1877,16 @@ fn an_in_file_test_module_import_resolves_from_its_own_scope() -> Result<(), Str
             ),
         ),
         "one-line module header",
+    )?;
+    // A raw test name: the test fn lookup compares the name as the producer
+    // records it, `r#` included (#10377).
+    assert_recovered(
+        &in_file(
+            LIB,
+            &tests_module("use super::order_discount;", &test_file(BARE))
+                .replace("fn discount_boundary", "fn r#discount_boundary"),
+        ),
+        "raw test name",
     )?;
     // Regression guard (no named relative import, so the resolver is not
     // consulted): the glob-only layout links.
