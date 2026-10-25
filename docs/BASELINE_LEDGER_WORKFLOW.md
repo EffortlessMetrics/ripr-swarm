@@ -238,6 +238,13 @@ The membership list is one sorted path per production file (about 50 bytes
 each; roughly 47 KB for 900 files) and is carried in the repo-exposure
 artifact, the ledger and the gate decision; very large workspaces carry a
 proportionally larger list.
+Gate admission also recomputes the non-Rust analysis inputs (classified config
+text, `.ripr/test_intent.toml`, the suppressions file, `RIPR_CFG_FEATURES`) and
+requires them to equal the ledger's `corpus.analysis_inputs`; a ledger produced
+under different config, test intent, suppressions or feature environment stays
+`not_evaluated`, so run the gate under the same inputs. A writer who deletes
+records and recomputes `records_digest`/`records_total` still earns the
+disclosure: the digest is tamper-evident against accidental filtering only.
 The inventory discloses `corpus.analyzed_production_files` from its actual
 production-role inputs, including cache hits. Gate admission requires both
 that membership and the corpus hash to match current discovery and source-role

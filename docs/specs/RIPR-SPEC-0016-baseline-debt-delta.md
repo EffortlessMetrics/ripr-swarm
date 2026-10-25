@@ -294,8 +294,12 @@ bucket:
   production-role inputs, independently of surviving seams and on cache hits.
   `gate evaluate` emits the `rust_workspace_complete` scope only on the
   gap-ledger path, only while that digest still matches the ledger's records,
-  and only while the disclosed corpus hash and production-file membership
-  equal the gated tree's current discovery and source-role selection; a
+  and only while the disclosed corpus hash, production-file membership and
+  non-Rust analysis-input identity (`corpus.analysis_inputs`: the classified
+  configuration, `.ripr/test_intent.toml`, the suppressions file and
+  `RIPR_CFG_FEATURES`, as the producer cache key hashes them) equal the gated
+  tree's, recomputed with the producer's own helpers; a missing or partial
+  input identity fails closed (the gate must run with the same environment); a
   filtered, edited or stale ledger, or an evaluation with no loadable root,
   falls back to `gap_ledger_artifact`. A `rust_workspace_complete` scope in a
   `--pr-guidance` document is dropped. Under `rust_workspace_complete` an absent
@@ -304,6 +308,10 @@ bucket:
   spelling) in the producer's disclosed production-file membership; every other path
   stays `not_evaluated`. The digest is tamper-evident, not authentication, and a
   hand-edited gate-decision is out of scope for this contract.
+  Records are committed only by `records_digest` and `records_total`; the
+  covered membership is workspace-derived, so a ledger writer who deletes
+  records and recomputes both still earns the disclosure. The digest is
+  tamper-evident against accidental filtering, not authentication.
   Accepted limits, stated plainly: the contract does not authenticate the
   producer. A ledger rewritten by someone who recomputes `records_digest` on a
   tree whose corpus still matches earns the scope; `baseline diff` and `baseline

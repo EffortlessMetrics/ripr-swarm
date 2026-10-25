@@ -84,6 +84,46 @@ fn rust_corpus_hash(stamp: Option<&Value>) -> Result<&str, CorpusSubjectCheck> {
     Ok(hash)
 }
 
+/// Non-Rust analysis inputs that shape findings without changing any Rust
+/// file: the build-feature environment, the classified configuration, the
+/// test-intent file and the suppressions file. They are the producer cache
+/// key's own hashes, so a gate recomputes them with the same helper.
+const ANALYSIS_INPUT_KEYS: [&str; 4] = [
+    "cfg_features_hash",
+    "config_hash",
+    "test_intent_hash",
+    "suppressions_hash",
+];
+
+pub(crate) fn analysis_inputs_subject(
+    key: &crate::analysis::seam_cache::RepoSeamCacheKey,
+) -> Value {
+    serde_json::json!({
+        "cfg_features_hash": key.cfg_features_hash,
+        "config_hash": key.config_hash,
+        "test_intent_hash": key.test_intent_hash,
+        "suppressions_hash": key.suppressions_hash,
+    })
+}
+
+/// The disclosed input identity, `None` unless every component is a
+/// non-empty string (missing or partial identity never establishes coverage).
+pub(crate) fn analysis_inputs(corpus: &Value) -> Option<[&str; 4]> {
+    let inputs = corpus.get("analysis_inputs")?.as_object()?;
+    if inputs.len() != ANALYSIS_INPUT_KEYS.len() {
+        return None;
+    }
+    let mut out = [""; 4];
+    for (slot, name) in out.iter_mut().zip(ANALYSIS_INPUT_KEYS) {
+        let value = inputs.get(name)?.as_str()?;
+        if value.is_empty() {
+            return None;
+        }
+        *slot = value;
+    }
+    Some(out)
+}
+
 pub(crate) fn production_files_subject(files: &[PathBuf]) -> Option<Value> {
     let paths = files
         .iter()
@@ -140,7 +180,12 @@ pub(crate) fn rust_workspace_coverage_is_current(
     let Some(current) = current.as_array() else {
         return false;
     };
+    let Some(inputs) = coverage.get("corpus").and_then(analysis_inputs) else {
+        return false;
+    };
+    let current_inputs = analysis_inputs_subject(&key);
     key.files_content_hash == hash
+        && analysis_inputs(&serde_json::json!({"analysis_inputs": current_inputs})) == Some(inputs)
         && captured
             == current
                 .iter()

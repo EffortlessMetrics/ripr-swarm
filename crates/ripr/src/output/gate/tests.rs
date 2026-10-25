@@ -5623,6 +5623,75 @@ fn e2e_ledger_coverage_rejects_role_only_source_changes() -> Result<(), String> 
     Ok(())
 }
 
+/// #9599: a ledger produced under one set of non-Rust analysis inputs (config,
+/// test intent, suppressions, build-feature environment) does not earn
+/// coverage when gated under different ones, even with identical Rust bytes
+/// and production-file membership.
+#[test]
+fn e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs() -> Result<(), String> {
+    let root = temp_dir("gate-e2e-ledger-inputs-9599")?;
+    e2e_write_project(&root, "pub fn unrelated() {}\n")?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let ledger = e2e_real_ledger_at(&root, &config)?;
+    let captured: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    assert_eq!(
+        captured["analysis_coverage"]["corpus"]["analysis_inputs"]
+            .as_object()
+            .map(|inputs| inputs.len()),
+        Some(4),
+        "{captured}"
+    );
+    let scope_of = |root: &Path| -> Result<Value, String> {
+        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(root, &ledger)?)
+            .map_err(|err| err.to_string())?;
+        Ok(gate["analysis_scope"]["scope"].clone())
+    };
+    assert_eq!(scope_of(&root)?, "rust_workspace_complete");
+
+    let intent = root.join(".ripr").join("test_intent.toml");
+    let suppressions = root.join(config.suppressions().path());
+    for (name, path, text) in [
+        ("config", root.join("ripr.toml"), "[analysis]\n# changed\n"),
+        ("test_intent", intent, "# changed\n"),
+        ("suppressions", suppressions, "# changed\n"),
+    ] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&path, text).map_err(|err| err.to_string())?;
+        assert_eq!(scope_of(&root)?, "gap_ledger_artifact", "{name}");
+        fs::remove_file(&path).map_err(|err| err.to_string())?;
+        assert_eq!(
+            scope_of(&root)?,
+            "rust_workspace_complete",
+            "{name} restored"
+        );
+    }
+
+    // A disclosure with the input identity removed or blanked establishes
+    // nothing, even on the matching tree.
+    for patch in [None, Some(json!({"cfg_features_hash": ""}))] {
+        let mut stripped = captured.clone();
+        match patch {
+            None => {
+                if let Some(corpus) = stripped["analysis_coverage"]["corpus"].as_object_mut() {
+                    corpus.remove("analysis_inputs");
+                }
+            }
+            Some(blank) => {
+                stripped["analysis_coverage"]["corpus"]["analysis_inputs"]["cfg_features_hash"] =
+                    blank["cfg_features_hash"].clone();
+            }
+        }
+        let stripped = serde_json::to_string(&stripped).map_err(|err| err.to_string())?;
+        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(&root, &stripped)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(gate["analysis_scope"]["scope"], "gap_ledger_artifact");
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
 #[test]
 fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<(), String> {
     let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";

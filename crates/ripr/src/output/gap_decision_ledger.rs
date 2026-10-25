@@ -440,8 +440,10 @@ pub(crate) struct SafeGatePredicate {
 /// consumer can tell a ledger that still holds exactly the records the coverage
 /// disclosure was made for from one filtered, edited or re-labelled afterwards.
 /// It detects accidental or casual change; it is not an authenticated
-/// signature, so a party who can rewrite the ledger and recompute it is out of
-/// scope.
+/// signature. The covered file membership is derived from the workspace, not
+/// from the records; the records are committed only by this digest and
+/// `records_total`, so a writer who deletes records and recomputes both still
+/// earns the disclosure. Out of scope: producer authentication.
 pub(crate) fn gap_records_digest(records: &[GapRecord]) -> String {
     use sha2::{Digest, Sha256};
     let mut canonical = records
@@ -537,6 +539,7 @@ fn repo_exposure_analysis_coverage(
     let corpus = source.pointer("/source_subject/corpus")?;
     if !corpus_identity_is_well_formed(corpus)
         || crate::output::gap_source_subject::analyzed_production_files(corpus).is_none()
+        || crate::output::gap_source_subject::analysis_inputs(corpus).is_none()
     {
         return None;
     }
@@ -566,6 +569,10 @@ pub(crate) fn verified_analysis_coverage(document: &Value, records: &[GapRecord]
         || coverage
             .get("corpus")
             .and_then(crate::output::gap_source_subject::analyzed_production_files)
+            .is_none()
+        || coverage
+            .get("corpus")
+            .and_then(crate::output::gap_source_subject::analysis_inputs)
             .is_none()
     {
         return None;
@@ -7898,6 +7905,7 @@ mod tests {
             "cache_schema_version": SCHEMA,
             "files_content_hash": "0123456789abcdef",
             "analyzed_production_files": ["src/lib.rs"],
+            "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d"},
         })
     }
 

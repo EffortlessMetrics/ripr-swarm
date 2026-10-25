@@ -1681,6 +1681,10 @@ fn workspace_scope_not_evaluated_reason(
             .pointer("/corpus/cache_schema_version")
             .is_some_and(Value::is_string)
         && analyzed_files.is_some()
+        && scope
+            .get("corpus")
+            .and_then(crate::output::gap_source_subject::analysis_inputs)
+            .is_some()
         && scope.get("records_total").is_some_and(Value::is_u64)
         && scope
             .get("records_digest")
@@ -4099,6 +4103,7 @@ mod tests {
                 "analyzed_production_files": [
                     "src/anywhere/new.rs", "crates/a/src/lib.rs", "src/target.rs"
                 ],
+                "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d"},
             },
             "records_total": 1,
             "records_digest": format!("sha256:{}", "0".repeat(64)),

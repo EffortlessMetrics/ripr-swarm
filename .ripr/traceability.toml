@@ -2391,6 +2391,8 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::repo_exposure_coverage_requires_a_complete_run_with_a_corpus_identity",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::a_hand_written_minimal_repo_exposure_document_earns_no_coverage",
   "crates/ripr/src/output/gate/tests.rs::e2e_real_markdown_lists_parser_declined_files",
+  "crates/ripr/src/output/gap_source_subject/corpus.rs::tests::production_membership_is_sorted_deduplicated_and_fails_closed",
+  "crates/ripr/src/output/gate/tests.rs::e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs",
   "crates/ripr/src/output/gate/tests.rs::e2e_unloadable_config_keeps_gap_ledger_artifact_scope",
   "crates/ripr/src/output/review_comments.rs::tests::parser_declined_files_markdown_names_the_limitation_and_stays_inert",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_production_files_partition_parsed_from_parser_declined",
