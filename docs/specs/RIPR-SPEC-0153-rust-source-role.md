@@ -157,7 +157,8 @@ and macro suffixes never classify.
 For the existing workspace wrapper-macro alias rule, a direct automatic
 `src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
 (#10141). Manifest authority must confirm automatic binary discovery and
-the existing default-target constraints. The new route refuses missing
+the existing default-target constraints, including Cargo's edition-specific
+automatic-discovery default. The new route refuses missing
 manifest authority, local reexport prefixes, shadowed macro-crate prefixes,
 globs, and packages with indexed module/include edges or an incomplete
 module scan. Nested binary helpers and explicit targets with automatic

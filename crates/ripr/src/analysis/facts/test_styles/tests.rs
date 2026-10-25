@@ -1686,6 +1686,9 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
     for manifest in [
         None,
         Some("[package]\nname='app'\nversion='0.1.0'\nautobins=false\n"),
+        Some("[package]\nname='app'\nversion='0.1.0'\nedition='2015'\n[[bin]]\nname='app'\n"),
+        Some("[package]\nname='app'\nversion='0.1.0'\n[lib]\nname='app'\n"),
+        Some("[package]\nname='app'\nversion='0.1.0'\nedition.workspace=true\n"),
     ] {
         let names = alias_test_names_with_manifest(
             &[
@@ -1698,6 +1701,19 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
             names.is_empty(),
             "unconfirmed binary root credited: {names:?}"
         );
+    }
+    for manifest in [
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2018'\n[[bin]]\nname='app'\n",
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2015'\nautobins=true\n[[bin]]\nname='app'\n",
+    ] {
+        let names = alias_test_names_with_manifest(
+            &[
+                ("app/src/bin/worker.rs", &binary),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+            Some(manifest),
+        )?;
+        assert_eq!(names, ["aliased"], "manifest {manifest}");
     }
     Ok(())
 }

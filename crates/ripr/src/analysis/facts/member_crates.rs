@@ -190,10 +190,39 @@ impl MemberCrates {
         let Some(bin) = crate_root.parent().filter(|dir| dir.ends_with("src/bin")) else {
             return false;
         };
-        crate_root.extension().is_some_and(|ext| ext == "rs")
-            && bin
-                .parent()
-                .is_some_and(|src| self.is_default_unit_target_root(&src.join("main.rs")))
+        let Some(src) = bin.parent() else {
+            return false;
+        };
+        if crate_root.extension().is_none_or(|ext| ext != "rs")
+            || !self.is_default_unit_target_root(&src.join("main.rs"))
+        {
+            return false;
+        }
+        let (Some(root), Some(package_dir)) = (&self.root, src.parent()) else {
+            return false;
+        };
+        let root = lexical(root);
+        let Some((package, _)) = nearest_package(&root, &lexical(&root.join(package_dir))) else {
+            return false;
+        };
+        let metadata = package.manifest.get("package");
+        if let Some(enabled) = metadata.and_then(|package| package.get("autobins")) {
+            return enabled.as_bool() == Some(true);
+        }
+        // Cargo's 2015 default disables discovery when *any* target is
+        // manually declared. Unknown/inherited editions need an explicit flag.
+        match metadata.and_then(|package| package.get("edition")) {
+            Some(edition) if matches!(edition.as_str(), Some("2018" | "2021" | "2024")) => true,
+            None => !["lib", "bin", "example", "test", "bench"]
+                .iter()
+                .any(|kind| package.manifest.get(*kind).is_some()),
+            Some(edition) if edition.as_str() == Some("2015") => {
+                !["lib", "bin", "example", "test", "bench"]
+                    .iter()
+                    .any(|kind| package.manifest.get(*kind).is_some())
+            }
+            Some(_) => false,
+        }
     }
 
     fn default_target_root_with_flags(&self, crate_root: &Path, required_flags: &[&str]) -> bool {
