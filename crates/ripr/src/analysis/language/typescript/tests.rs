@@ -18113,6 +18113,7 @@ mod loop_count_tests;
 mod loop_declared_tests;
 mod match_object_tests;
 mod mocha_hook_owner_tests;
+mod mock_call_count_tests;
 mod mock_form_tests;
 mod mock_object_argument_tests;
 mod mock_spread_source_tests;
