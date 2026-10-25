@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_bool_owner_unrelated_patching/input
+config: <cwd>/fixtures/python_bool_owner_unrelated_patching/input/ripr.toml
+
+Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+INFO rules.py:2
+  id: probe:rules.py:python_preview:9d399b85
+
+Changed
+  after:      return age >= 18
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:rules.py::is_adult
+  canonical gap: gap:python:rules.py:is_adult:predicate_boundary:predicate:age>=18
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  exposed (info, confidence 0.60)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `is_adult`
+  - infection yes: Changed Python expression can alter preview-classified predicate behavior: `return age >= 18`
+  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated
+  - local flow reaches unknown sink: return age >= 18 (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_rules.py:6 test_adult uses strong exact value oracle: assert not is_adult(17)
+  - source function argument value age = 18 at line 8
+  - source function argument value age == 18 at line 8
+  - source function argument value age = 17 at line 9
+
+Weakness
+  - Related Python test reaches `is_adult` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+
+Next step
+  Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_bool_owner_unrelated_patching/input --diff <cwd>/fixtures/python_bool_owner_unrelated_patching/diff.patch --mode fast probe:rules.py:python_preview:9d399b85
+  ripr context --root <cwd>/fixtures/python_bool_owner_unrelated_patching/input --diff <cwd>/fixtures/python_bool_owner_unrelated_patching/diff.patch --mode fast --at probe:rules.py:python_preview:9d399b85
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

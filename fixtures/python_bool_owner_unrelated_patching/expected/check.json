@@ -1,0 +1,136 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_bool_owner_unrelated_patching/input",
+  "config_path": "<cwd>/fixtures/python_bool_owner_unrelated_patching/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:438821b48cc0f4acec87b5f6db1a4cf9c10188d688586f3029269b7604107c5a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:rules.py:python_preview:9d399b85",
+      "canonical_gap_id": "gap:python:rules.py:is_adult:predicate_boundary:predicate:age>=18",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:rules.py:is_adult:predicate_boundary:predicate:age>=18",
+        "language": "python",
+        "file": "rules.py",
+        "owner": "is_adult",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "age>=18"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:rules.py:python_preview:9d399b85",
+        "family": "predicate",
+        "delta": "control",
+        "file": "rules.py",
+        "line": 2,
+        "expression": "    return age >= 18",
+        "owner": "python:rules.py::is_adult"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `is_adult`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `return age >= 18`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `is_adult`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `return age >= 18`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: return age >= 18 (line 2)", "related test tests/test_rules.py:6 test_adult uses strong exact value oracle: assert not is_adult(17)", "source function argument value age = 18 at line 8", "source function argument value age == 18 at line 8", "source function argument value age = 17 at line 9"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"return age >= 18","line":2}
+      ],
+      "evidence": ["owner: is_adult", "owner_kind: function", "test_framework: pytest (test_adult)", "test_fixtures: monkeypatch (test_adult)", "test_verify_command: python -m pytest tests/test_rules.py::test_adult (test_adult)", "related_test_relation: syntactic_call (test_adult)", "test_oracle: exact_value strong (test_adult)"],
+      "missing": ["Related Python test reaches `is_adult` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "assertion_texts": {
+        "8": "assert is_adult(18)",
+        "9": "assert not is_adult(17)"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "age = 18",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "age == 18",
+            "context": "function_argument",
+            "provenance": "assert is_adult(18) | age = 18; literal operand 18"
+          },
+          {
+            "line": 9,
+            "value": "age = 17",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "age = 18",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "age == 18",
+          "context": "function_argument",
+          "provenance": "assert is_adult(18) | age = 18; literal operand 18"
+        },
+        {
+          "line": 9,
+          "value": "age = 17",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_adult",
+          "file": "tests/test_rules.py",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert not is_adult(17)"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "age",
+      "observed_sink": "assert is_adult(18)",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["rules.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"rules.py","digest":"sha256:4158e1b55abb44ddd11e55935f7c61463daf972291e648d451b92e03eefa4981"}]}
+}

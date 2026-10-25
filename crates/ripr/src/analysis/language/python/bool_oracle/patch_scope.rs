@@ -2,34 +2,47 @@
 //!
 //! The bare-bool credit needs the test's callee to stay bound to the function
 //! it imported. A file-wide `mock` / `patch` substring disqualified nearly
-//! every real pytest file, so this pass reads the token stream and keeps the
-//! old veto for everything except a small closed allow-list:
+//! every real pytest file, so this pass keeps that veto and exempts only a
+//! closed allow-list of occurrences, read from the token stream:
 //!
-//! - `monkeypatch.setenv` / `delenv` / `chdir` (environment, not a name);
-//! - mock constructors (`Mock`, `MagicMock`, ..) and `assert_*` / `reset_mock`;
-//! - imports of patch-like names, never aliased with `as`.
+//! - exact `monkeypatch.setenv(` / `delenv(` / `chdir(` calls;
+//! - mock constructors (`Mock`, `MagicMock`, ..) and `x.assert_*(` calls;
+//! - `import` / `from .. import` statements (a statement start, no `as`);
+//! - a declared parameter (`def test(monkeypatch)`) or its annotation;
+//! - a docstring.
 //!
-//! Any other call on a patch-like name (`patch`, `patch.object`, `setattr`,
-//! `delattr`, `setitem`, `patch.dict`, `monkeypatch.context()`, `mocker.spy`, a
-//! helper containing the marker) disqualifies, as does any alias or
-//! reference to such an API (`swap = mock.patch.object`, `partial(patch.object)`),
-//! and any allowed call whose arguments name the callee or the owner, contain a
-//! string with a backslash (an escape can spell the name), an f-string,
-//! adjacent literals, `*args` / `**kwargs` or `autospec`.
+//! Any other name containing `patch`, `mock`, `Mock`, `setattr`, `delattr` or
+//! `monkey`, any string containing one of those (or `spy`, `setitem`,
+//! `delitem`) outside a docstring, any name that reaches a patcher indirectly
+//! (`getattr`, `getfixturevalue`, `__import__`, `__self__`, `builtins`,
+//! `partial`, `setitem`, `delitem`, `spy`, `context`, `syspath_prepend`, ..),
+//! and any allowed call whose arguments name the callee or owner, contain a
+//! backslash, an f-string, adjacent literals, `*args` / `**kwargs` or
+//! `autospec`, disqualifies.
 //!
-//! Accepted residuals: a collaborator patched by name (`patch("src.rules.helper")`
-//! disqualifies, but only the veto, not a credit), conftest autouse fixtures,
-//! and a direct `rules.f = fake` assignment (counted by the binding scan, not
-//! here).
+//! Accepted residuals: conftest autouse fixtures and a collaborator patched
+//! out of sight (both outside the file); a direct `rules.f = fake` assignment
+//! is caught by the binding scan, not here.
 
 use rustpython_parser::{Mode, Tok, lexer::lex};
 
 const PATCH_MARKERS: [&str; 5] = ["patch", "mock", "Mock", "setattr", "delattr"];
 
-/// Names that rebind or patch when called, aliased or passed along.
-const PATCH_API_NAMES: [&str; 12] = [
-    "patch", "object", "multiple", "dict", "setattr", "delattr", "setitem", "delitem", "context",
-    "spy", "partial", "stopall",
+/// Names that reach or apply a patcher without containing a marker.
+const INDIRECT_NAMES: [&str; 13] = [
+    "getattr",
+    "__getattribute__",
+    "getfixturevalue",
+    "__import__",
+    "__builtins__",
+    "builtins",
+    "__self__",
+    "partial",
+    "setitem",
+    "delitem",
+    "spy",
+    "context",
+    "syspath_prepend",
 ];
 
 /// Names that build or inspect a mock object without patching anything.
@@ -51,6 +64,17 @@ const ENVIRONMENT_VERBS: [&str; 3] = ["setenv", "delenv", "chdir"];
 
 fn has_marker(text: &str) -> bool {
     PATCH_MARKERS.iter().any(|marker| text.contains(marker))
+        || text.to_ascii_lowercase().contains("monkey")
+}
+
+/// Text that names a patcher, in a string or an f-string.
+fn string_names_patcher(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    [
+        "patch", "mock", "setattr", "delattr", "setitem", "delitem", "spy", "monkey",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
 }
 
 /// Whether `text` holds `name` as a whole identifier.
@@ -76,14 +100,22 @@ pub(super) fn may_patch_names(source: &str, names: &[&str]) -> bool {
         }
     }
     let regions = Regions::of(&tokens);
-    // A formatted string hides its expressions from the token stream.
-    if tokens.iter().any(|token| {
-        matches!(token, Tok::String { kind, value, .. }
-            if kind.is_any_fstring() && (has_marker(value) || names.iter().any(|name| value.contains(name))))
-    }) {
-        return true;
-    }
-    for index in 0..tokens.len() {
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Tok::Name { name } if INDIRECT_NAMES.contains(&name.as_str()) => return true,
+            Tok::String { value, kind, .. } => {
+                let docstring = is_statement_start(&tokens, index)
+                    && matches!(tokens.get(index + 1), None | Some(Tok::Newline));
+                // A formatted string hides its expressions from the token stream.
+                if !docstring
+                    && (string_names_patcher(value)
+                        || (kind.is_any_fstring() && names.iter().any(|name| value.contains(name))))
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
         if import_alias_hides_marker(&tokens, &regions, index) {
             return true;
         }
@@ -98,6 +130,15 @@ pub(super) fn may_patch_names(source: &str, names: &[&str]) -> bool {
         }
     }
     false
+}
+
+/// Whether the token at `index` begins a statement.
+fn is_statement_start(tokens: &[Tok], index: usize) -> bool {
+    index == 0
+        || matches!(
+            tokens[index - 1],
+            Tok::Newline | Tok::Indent | Tok::Dedent | Tok::Semi
+        )
 }
 
 /// Token positions that are parameter lists or import statements.
@@ -134,7 +175,7 @@ impl Regions {
                         .map_or(tokens.len(), |offset| index + offset);
                     regions.parameters[index + 1..end].fill(true);
                 }
-                Tok::Import | Tok::From => {
+                Tok::Import | Tok::From if is_statement_start(tokens, index) => {
                     let end = tokens[index..]
                         .iter()
                         .position(|token| matches!(token, Tok::Newline | Tok::Semi))
@@ -195,59 +236,30 @@ fn chain_may_patch(
     chain: &Chain<'_>,
     names: &[&str],
 ) -> bool {
-    if regions.declarations[start] {
+    if regions.declarations[start] || regions.imports[start] {
         return false;
-    }
-    let last = chain.segments.last().copied().unwrap_or("");
-    let next = tokens.get(chain.end + 1);
-    if matches!(next, Some(Tok::Lpar)) {
-        return call_may_patch(tokens, chain, chain.end + 1, names);
-    }
-    // A reference, not a call. A name that is not itself patch-like (the
-    // `return_value` of `mock_get.return_value`) cannot alias a patcher.
-    if regions.imports[start] {
-        return false;
-    }
-    // `swap = mock.patch.object`, `partial(patch.object, ..)`: any segment.
-    if chain
-        .segments
-        .iter()
-        .any(|segment| PATCH_API_NAMES.contains(segment))
-    {
-        return true;
-    }
-    if !has_marker(last) || MOCK_OBJECT_NAMES.contains(&last) {
-        return false;
-    }
-    let previous = start.checked_sub(1).and_then(|before| tokens.get(before));
-    // A keyword name (`f(mock=True)`) binds nothing.
-    if matches!(next, Some(Tok::Equal))
-        && matches!(previous, Some(Tok::Lpar | Tok::Comma))
-        && !regions.parameters[start]
-    {
-        return false;
-    }
-    // A declared parameter or its annotation (`mocker: MockerFixture`), not a
-    // default value that could alias a patcher.
-    if regions.parameters[start] {
-        return matches!(previous, Some(Tok::Equal));
-    }
-    true
-}
-
-fn call_may_patch(tokens: &[Tok], chain: &Chain<'_>, open: usize, names: &[&str]) -> bool {
-    let Some(close) = matching_close(tokens, open) else {
-        return true;
-    };
-    if args_name_a_target_or_hide_one(&tokens[open + 1..close], names) {
-        return true;
     }
     let verb = chain.segments.last().copied().unwrap_or("");
-    let safe = ENVIRONMENT_VERBS.contains(&verb)
-        || MOCK_OBJECT_NAMES.contains(&verb)
-        || verb.starts_with("assert")
-        || verb == "reset_mock";
-    !safe
+    if matches!(tokens.get(chain.end + 1), Some(Tok::Lpar)) {
+        let allowed = (chain.segments.len() == 2
+            && chain.segments[0] == "monkeypatch"
+            && ENVIRONMENT_VERBS.contains(&verb))
+            || MOCK_OBJECT_NAMES.contains(&verb)
+            || (chain.segments.len() >= 2 && verb.starts_with("assert"));
+        return !allowed || call_args_hide_a_target(tokens, chain.end + 1, names);
+    }
+    // A reference: only a declared parameter or its annotation is understood.
+    let previous = start.checked_sub(1).and_then(|before| tokens.get(before));
+    !(regions.parameters[start]
+        && matches!(
+            previous,
+            Some(Tok::Lpar | Tok::Comma | Tok::Star | Tok::DoubleStar | Tok::Colon)
+        ))
+}
+
+fn call_args_hide_a_target(tokens: &[Tok], open: usize, names: &[&str]) -> bool {
+    matching_close(tokens, open)
+        .is_none_or(|close| args_name_a_target_or_hide_one(&tokens[open + 1..close], names))
 }
 
 /// Any identifier or string in the arguments that names a target, or a form

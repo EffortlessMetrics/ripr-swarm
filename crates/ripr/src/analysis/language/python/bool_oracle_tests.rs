@@ -315,6 +315,11 @@ fn tests_with(prelude: &str, params: &str, body: &str) -> String {
 fn given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited() {
     for (prelude, params, body) in [
         (
+            "",
+            "",
+            "    \"\"\"Mentions mock and patch in prose.\"\"\"\n",
+        ),
+        (
             "from unittest import mock\n",
             "monkeypatch",
             "    monkeypatch.setenv('HOME', '/tmp/x')\n",
@@ -663,6 +668,43 @@ fn given_an_escaped_or_dynamic_namespace_write_then_the_assertion_stays_smoke() 
             "",
             "monkeypatch",
             "    monkeypatch.setattr(rules.Session, 'send', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    yield from [swap := monkeypatch.setattr]\n    swap(rules, 'is_adult', None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    yield from (swap := mock.patch.object,)\n    swap(rules, 'is_adult')\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    yield from (swap := monkeypatch.setattr,)\n    swap(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "request",
+            "    s = request.getfixturevalue('monkey' 'patch')\n    getattr(s, 'setattr')(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    s = monkeypatch.setenv.__self__\n    getattr(s, 'set' + 'attr')(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    s = monkeypatch.setenv.__self__\n    s.setattr(rules, 'is_adult', None)\n",
+        ),
+        ("", "mp", "    mp.setitem(NS, NAME, None)\n"),
+        ("", "monkeypatch", "    helper(monkeypatch)\n"),
+        (
+            "",
+            "monkeypatch",
+            "    swap = monkeypatch\n    swap.setattr(rules, 'is_adult', None)\n",
         ),
     ] {
         let tests = tests_with(prelude, params, body);

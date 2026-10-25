@@ -198,24 +198,27 @@ mock expectations, and custom `assert_*` helpers.
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
     or non-literal argument stays smoke. The patch veto is narrowed
-    only to a closed allow-list (#10391): a test file keeps the credit when its
-    only patch-like use is `monkeypatch.setenv` / `delenv` / `chdir`, mock
-    constructors (`Mock`, `MagicMock`, ..), `assert_*` / `reset_mock` calls and
-    un-aliased imports of `mock` / `patch`, none naming the callee or owner.
-    Every other use of a patch-like name keeps the credit withheld: `patch`,
-    `patch.object`, `patch.multiple`, `patch.dict`, `setattr`, `delattr`,
-    `setitem`, `delitem`, `monkeypatch.context()`, `mocker.spy`, helpers whose
-    name contains `patch` / `mock`, any alias or reference to those
-    (`swap = mock.patch.object`, `functools.partial(patch.object, ..)`), any
-    argument containing the callee name, a string with a backslash, an
-    f-string, adjacent literals, `*args` / `**kwargs` or `autospec`, and
-    file-wide `globals(`, `locals(`, `vars(`, `exec(`, `eval(`, `__code__`,
-    `__dict__`, `__globals__`, `sys.modules` and `importlib`. Accepted
-    residuals, not detected by this pass: a collaborator patched elsewhere
-    (`patch("src.rules.helper")` withholds credit only because `patch` is
-    used), conftest autouse fixtures that patch the callee, and a direct
-    `rules.f = fake` assignment (caught by the binding scan, not by patch
-    reading).
+    only to a closed allow-list (#10391): a test file keeps the credit when
+    every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
+    `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
+    `chdir(` call, a mock constructor (`Mock`, `MagicMock`, ..), an `assert_*`
+    call, an `import` / `from .. import` statement without `as`, a declared
+    parameter or its annotation, or a docstring, with no argument naming the
+    callee or owner. Everything else keeps the credit withheld: any other
+    patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
+    `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
+    `yield from [swap := ..]`), any string outside a docstring that contains
+    `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`, `spy` or
+    `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
+    `__import__`, `__builtins__`, `builtins`, `__self__`, `partial`,
+    `setitem`, `delitem`, `spy`, `context` or `syspath_prepend`, a string
+    argument with a backslash, an f-string, adjacent literals, `*args` /
+    `**kwargs`, `autospec`, and file-wide `globals(`, `locals(`, `vars(`,
+    `exec(`, `eval(`, `__code__`, `__dict__`, `__globals__`, `sys.modules` and
+    `importlib`. Accepted residuals, not detected by this pass: conftest
+    autouse fixtures that patch the callee, a collaborator patched out of
+    sight, and a direct `rules.f = fake` assignment (caught by the binding
+    scan, not by patch reading).
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
