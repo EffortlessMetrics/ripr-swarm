@@ -1,0 +1,9 @@
+//! A different package that also defines a `Gauge` with a `reading`.
+
+pub struct Gauge;
+
+impl Gauge {
+    pub fn reading() -> u32 {
+        7
+    }
+}
