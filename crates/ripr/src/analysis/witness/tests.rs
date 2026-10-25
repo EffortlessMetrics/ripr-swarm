@@ -111,6 +111,8 @@ impl FindingSpec {
             relation_confidence: reason.map(RelationReason::confidence),
             relation_reason: reason,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
         self
     }

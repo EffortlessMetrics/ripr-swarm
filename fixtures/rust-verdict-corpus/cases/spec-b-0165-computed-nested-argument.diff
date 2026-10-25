@@ -1,0 +1,12 @@
+diff --git a/src/r_computed.rs b/src/r_computed.rs
+--- a/src/r_computed.rs
++++ b/src/r_computed.rs
+@@ -15,7 +15,7 @@
+ 
+ pub fn classify_rc(input: &str) -> &'static str {
+     let final_label = label_rc(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

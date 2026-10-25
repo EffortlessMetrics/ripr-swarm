@@ -424,6 +424,43 @@ comments, strings, and docstrings:
 - module-level owner: a local bound by an import of, or from, the owner
   module.
 
+A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
+an oracle-eligible relation, only to a test whose straight-line `assert`
+provably holds under the old literal and fails under the new one. The module
+binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
+namespace writer), the edit is the file's only changed line, no test file
+writes the attribute, and the test keeps its imported names. Reader functions
+must retain their binding too: same-module walrus/attribute replacements and
+workspace foreign writes withhold the reader's credit. Attribute targets come
+from the parsed statement tree, including parenthesized, unpacked, annotated,
+loop/context and spaced targets; comparison reads and annotations without values
+are not writes. An unparseable foreign source retains word-based write uncertainty;
+references to its module name, malformed test/initializer/conftest files, hidden
+loader spellings or package export uncertainty withhold credit globally. An
+unreferenced malformed production module alone does not erase exact credit.
+The workspace word index is bounded; overflow withholds credit. This is a bounded
+source read, not a complete import or reflective-execution graph. The assertion
+reads `NAME` itself or calls a module function with literal arguments whose
+body is one `return` expression over its parameters, literals and `NAME`; a
+name, call, operator or value kind outside that bounded evaluator decides
+nothing and the edit keeps the `missing_import_graph` abstention. A value no
+assertion distinguishes is never graded as a gap. A function defined under a
+decided module-level `if sys.version_info >= (3, 0):` condition (the only
+decided shapes are Python 2/3 version tuples, with `sys` the single plain
+import) is an ordinary function owner when its name has no other live
+binding (including walrus replacements), and no module-source write or
+uncertainty may replace `sys.version_info`, including an annotated attribute
+target. A definition in the dead arm stays with the `<module>` abstention.
+The workspace pass also withholds conditional-derived owners when another file
+may replace the callable or `sys.version_info`. Physical continuation indentation
+never makes a trailing `return` safe before the asserted value read; ordinary
+multiline setup remains eligible. A generator test lends no executed-body credit.
+Formatted strings remain uncertain in this bounded admission because their
+expressions can carry generator syntax. Statement identity uses the reported
+source assertion, independently of the boolean oracle's normalized gate text.
+Preceding assertions must evaluate true under the same bounded old/new scope
+before a later assertion can supply the value-flip credit.
+
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
 
@@ -486,7 +523,9 @@ values defined in RIPR-SPEC-0026:
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
   owner only through an `assert_*(...)` helper body the adapter does not
-  inspect)
+  inspect; a same-file helper that is only `assert` statements, called with
+  literal arguments from a plain test, is not this limit: see the helper
+  inlining amendment below)
 - `property_based_test` (e.g., a related test uses Hypothesis `@given(...)`
   generated inputs whose concrete discriminator coverage is not statically
   known)
@@ -770,126 +809,126 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```python
-def apply_discount(amount: float, threshold: float) -> float:
-    if amount >= threshold:
-        return amount * 0.9
-    return amount
-```
+   ```python
+   def apply_discount(amount: float, threshold: float) -> float:
+       if amount >= threshold:
+           return amount * 0.9
+       return amount
+   ```
 
-Existing tests:
+   Existing tests:
 
-```python
-def test_discount_applies_above_threshold():
-    assert apply_discount(100, 50) == 90
+   ```python
+   def test_discount_applies_above_threshold():
+       assert apply_discount(100, 50) == 90
 
-def test_no_discount_below_threshold():
-    assert apply_discount(10, 50) == 10
-```
+   def test_no_discount_below_threshold():
+       assert apply_discount(10, 50) == 10
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `apply_discount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
-- missing discriminator: `amount == threshold`
-- finding emits `language = "python"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `apply_discount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
+   - missing discriminator: `amount == threshold`
+   - finding emits `language = "python"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Error path with `pytest.raises`:
+2. Error path with `pytest.raises`:
 
-```python
-def test_rejects_negative_amount():
-    with pytest.raises(ValueError):
-        apply_discount(-1, 50)
-```
+   ```python
+   def test_rejects_negative_amount():
+       with pytest.raises(ValueError):
+           apply_discount(-1, 50)
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `error-path`
-- the `pytest.raises` context manager is recorded as the discriminator
-  surface
+   - oracle: `error-path`
+   - the `pytest.raises` context manager is recorded as the discriminator
+     surface
 
-Decorator indirection limit:
+3. Decorator indirection limit:
 
-```python
-@retry(times=3)
-def fetch_total(client):
-    return client.get_total()
-```
+   ```python
+   @retry(times=3)
+   def fetch_total(client):
+       return client.get_total()
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "decorator_indirection"`; finding
-  stays conservative.
+   - probe emits `static_limit_kind = "decorator_indirection"`; finding
+     stays conservative.
 
-Functools memoization is not decorator indirection:
+4. Functools memoization is not decorator indirection:
 
-```python
-from functools import lru_cache
+   ```python
+   from functools import lru_cache
 
-@lru_cache
-def format_year(year):
-    return "%03d" % (year % 100)
+   @lru_cache
+   def format_year(year):
+       return "%03d" % (year % 100)
 
-@lru_cache(maxsize=None)
-def century_index(year):
-    return year % 1000
-```
+   @lru_cache(maxsize=None)
+   def century_index(year):
+       return year % 1000
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- neither owner emits `decorator_indirection`;
-- a direct exact-value test on `format_year` can credit the owner;
-- a related test that reaches `century_index` without observing the
-  changed return remains a gap.
+   - neither owner emits `decorator_indirection`;
+   - a direct exact-value test on `format_year` can credit the owner;
+   - a related test that reaches `century_index` without observing the
+     changed return remains a gap.
 
-Typing markers are not decorator indirection:
+5. Typing markers are not decorator indirection:
 
-```python
-from typing import final, override
+   ```python
+   from typing import final, override
 
-class Child(Base):
-    @override
-    def rate(self, n):
-        return n + 1
-```
+   class Child(Base):
+       @override
+       def rate(self, n):
+           return n + 1
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- `@final`, `@override` and `@no_type_check` written as plain names (and
-  `typing.` / `typing_extensions.` qualified or aliased spellings; the
-  `typing_extensions` spelling covers `final` and `override` only) return the
-  function unchanged, so the owner emits no `decorator_indirection`;
-- a rebound receiver, a competing alias, a local same-named decorator, a
-  marker written as a call (`@final(wrapper)`), a file where the marker name
-  appears anywhere other than a `@name` decorator line or a `typing` /
-  `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
-  target, nested or class-scope rebind, `try`/`except` import fallback), a
-  star import from another module, or any decorator in the file that is not
-  a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
-  `decorator_indirection`. This is a lexical fail-closed screen, not a scope
-  analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
-  `contextlib.contextmanager` and `property` also stay limited.
+   - `@final`, `@override` and `@no_type_check` written as plain names (and
+     `typing.` / `typing_extensions.` qualified or aliased spellings; the
+     `typing_extensions` spelling covers `final` and `override` only) return the
+     function unchanged, so the owner emits no `decorator_indirection`;
+   - a rebound receiver, a competing alias, a local same-named decorator, a
+     marker written as a call (`@final(wrapper)`), a file where the marker name
+     appears anywhere other than a `@name` decorator line or a `typing` /
+     `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+     target, nested or class-scope rebind, `try`/`except` import fallback), a
+     star import from another module, or any decorator in the file that is not
+     a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+     `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+     analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
+     `contextlib.contextmanager` and `property` also stay limited.
 
-Simple route decorator repair:
+6. Simple route decorator repair:
 
-```python
-@api.post("/checkout")
-def checkout(coupon_expired):
-    response.status_code = 422
-```
+   ```python
+   @api.post("/checkout")
+   def checkout(coupon_expired):
+       response.status_code = 422
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- route decorator is preserved as owner context rather than treated as
-  arbitrary decorator indirection;
-- probe can emit a field/object repair card with missing discriminator
-  `response.status_code == 422`;
-- finding remains `preview` / advisory and does not execute route
-  registration.
+   - route decorator is preserved as owner context rather than treated as
+     arbitrary decorator indirection;
+   - probe can emit a field/object repair card with missing discriminator
+     `response.status_code == 422`;
+   - finding remains `preview` / advisory and does not execute route
+     registration.
 
 ## Test Mapping
 
@@ -989,6 +1028,44 @@ precedence. It corrects three oracle lines in place above: `!=`,
 `isinstance` and `assertNotEqual` were listed as broad, broad-type and
 exact-value oracles, but the code records all three as
 `relational_check` / weak, and no broad-type kind exists.
+
+## Helper Inlining Amendment (2026-10-22, #9636)
+
+A plain test that calls a same-file assertion helper with literal arguments
+(`check_pass(50, True)` over `def check_pass(score, want): assert passes(score) == want`)
+reads as the helper's `assert` statements with each parameter replaced by its
+literal argument, on the call's own line (every line number is unchanged). The
+rewrite is credit or unknown only: the substituted asserts pass through the
+ordinary oracle admission, so a weak or unrecognised assert is no stronger than
+when written inline; no new finding kind or repair rule is added and the
+ordinary classifier applies. It applies only to
+test files, and only when all of these hold; otherwise the call reads as before:
+
+- the helper is a module-level, undecorated, synchronous `def`, spelled
+  `def NAME` exactly once in the file (and never also a `class NAME`), with plain positional parameters (no
+  default, `*args`, keyword-only or `**kwargs`), whose body is only `assert`
+  statements (and an optional leading docstring), one per line; every mention
+  of its name is its definition or a direct call;
+- the file does not use `globals(`, `setattr(`, `exec(`, `eval(`, a star import
+  or `__getattr__`;
+- the call is a top-level expression statement, alone on its line, of a
+  module-level `test*` function with no parameters and no decorators, whose
+  body holds only expression and `assert` statements and no walrus, with
+  exactly one argument per parameter, each a string, number, boolean or `None`
+  literal (a signed number is parenthesised);
+- a parameter is used in the asserts only as a plain value: not as an
+  attribute name, keyword, inside a string, or as the object of a member access
+  or call when the argument is a number, or directly followed by a quote
+  (a string prefix); the asserts hold no `lambda`, comprehension, walrus,
+  `await`, `yield`, backslash, or any `[` or `{` (every one is refused). A
+  rewrite that does not parse is discarded and the original source is read.
+
+A helper in another file (#9419), a call under `if`/loop/`with`, a computed
+argument or a helper with control flow stays `no_static_path`.
+
+This differs from `helper_assertions` (#9419, #9711): it is a same-file,
+literal-argument, multi-assert source rewrite that runs first, so
+`helper_assertions` then sees no call to resolve.
 
 ## Metrics
 

@@ -27,6 +27,10 @@ pub(super) enum PythonRelationKind {
     LocalBinding,
     DunderProtocol,
     ProtocolEntryCall,
+    /// The test's assertion statically depends on an edited module-level
+    /// constant, directly or through a module function it calls with literal
+    /// arguments, and fails under the new value (`module_value.rs`, #9423).
+    ModuleValueCall,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -50,6 +54,7 @@ impl PythonRelationKind {
             Self::LocalBinding => 4,
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
+            Self::ModuleValueCall => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -69,6 +74,7 @@ impl PythonRelationKind {
                 | Self::ConstructorCall
                 | Self::LocalBinding
                 | Self::ProtocolEntryCall
+                | Self::ModuleValueCall
         )
     }
 
@@ -86,6 +92,7 @@ impl PythonRelationKind {
             Self::LocalBinding => "local_binding",
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
+            Self::ModuleValueCall => "module_value_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -131,25 +138,24 @@ pub(super) fn related_test_candidates<'a>(
             })
         })
         .collect();
+    sort_related_candidates(&mut candidates);
+    candidates
+}
+
+/// Candidate order is owner-level and shared by every changed line of the
+/// owner, so it has no changed family: it ranks by the strongest assertion
+/// overall (focus `None`). Which assertion a row displays and the classifier
+/// judges is the per-change selection in `related_tests_for_candidates`.
+pub(super) fn sort_related_candidates(candidates: &mut [PythonRelatedCandidate<'_>]) {
     candidates.sort_by(|left, right| {
         right
             .relation
             .rank()
             .cmp(&left.relation.rank())
-            .then_with(|| {
-                // Candidate order is owner-level and shared by every changed
-                // line of the owner, so it has no changed family: it ranks by
-                // the strongest assertion overall (focus `None`). Which
-                // assertion a row displays and the classifier judges is the
-                // per-change selection in `related_tests_for_candidates`.
-                let left_rank = strongest_rank(left.test);
-                let right_rank = strongest_rank(right.test);
-                right_rank.cmp(&left_rank)
-            })
+            .then_with(|| strongest_rank(right.test).cmp(&strongest_rank(left.test)))
             .then_with(|| left.test.file.cmp(&right.test.file))
             .then_with(|| left.test.name.cmp(&right.test.name))
     });
-    candidates
 }
 
 /// Most same-module caller hops followed from a changed helper (#4568).
@@ -306,6 +312,8 @@ pub(super) fn related_tests_for_candidates(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()
@@ -934,7 +942,7 @@ fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool 
 /// Whether the test rebinds the builtin `name` (an import, an assignment,
 /// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
 /// `name(...)` is no longer the builtin.
-fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+pub(super) fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
     test.imports.iter().any(|import| import.alias == name)
         || test_rebinds_import_alias(test, name)
         || test.constant_rebinding.rebinds(name)
@@ -2091,24 +2099,118 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    owner
-        .route_paths
-        .iter()
-        .any(|route| body_calls_api_client_route(&test.body_text, route))
+    let receivers = super::route_client::client_receivers(&test.body_text);
+    owner.route_paths.iter().enumerate().any(|(index, route)| {
+        // An empty or missing verb list is an unknown verb, which keeps the
+        // path-only match; a known list must contain the verb the test called.
+        let verbs = owner.route_methods.get(index).map(Vec::as_slice);
+        receivers
+            .iter()
+            .filter(|receiver| {
+                !client_targets_rival_app(
+                    test,
+                    owner,
+                    receiver,
+                    owner.route_receivers.get(index).map(String::as_str),
+                )
+            })
+            .any(|receiver| {
+                body_calls_api_client_route(
+                    &test.body_text,
+                    receiver,
+                    route,
+                    verbs.unwrap_or_default(),
+                )
+            })
+    })
 }
 
-fn body_calls_api_client_route(body_text: &str, route: &str) -> bool {
-    [
-        "client.get",
-        "client.post",
-        "client.put",
-        "client.patch",
-        "client.delete",
-        "client.options",
-        "client.head",
-    ]
-    .into_iter()
-    .any(|callee| contains_python_call_with_first_string_argument(body_text, callee, route))
+/// Whether the request client demonstrably targets a different application
+/// than the owner's route decorator. Only the case this adapter can decide from
+/// the pair is withheld: the client is built over an application name imported
+/// from a module that is not the owner's module, and that name equals the
+/// decorator's receiver, so two modules each defining `app` cannot both take the
+/// credit. A client built elsewhere (a fixture, an unresolved name, a router
+/// the application includes under another name) stays unknown and keeps the
+/// path-and-verb match.
+fn client_targets_rival_app(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    receiver: &str,
+    owner_receiver: Option<&str>,
+) -> bool {
+    let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
+        return false;
+    };
+    let Some(app_name) = super::route_client::client_app_name(&test.body_text, receiver) else {
+        return false;
+    };
+    // Where the owner's file itself got the receiver: a shared application
+    // imported from a third module is the same object the test imports from there.
+    let owner_origin = owner
+        .imports
+        .iter()
+        .find(|import| import_bound_name(import) == owner_receiver)
+        .map(|import| (import.source_module.as_str(), import.imported.as_str()));
+    test.imports.iter().any(|import| {
+        if import_bound_name(import) != app_name || import.source_module.is_empty() {
+            return false;
+        }
+        match owner_origin {
+            // Same module, different symbol (`from common import other_app as app`)
+            // is a different application under the same bound name.
+            Some((origin, symbol)) => {
+                if import.source_module == origin {
+                    import.imported != symbol
+                } else {
+                    import.imported == owner_receiver || import.imported == symbol
+                }
+            }
+            // Defined in the owner's own module: the test's import must name that
+            // module or a package above it (`from pkg import app` re-exports
+            // `pkg/main.py`'s `app`).
+            None => {
+                let names_owner_module =
+                    import_source_module_matches_owner(import, owner, &test.file)
+                        || owner_module_paths(&owner.file)
+                            .iter()
+                            .any(|path| path.starts_with(&format!("{}.", import.source_module)));
+                if names_owner_module {
+                    import.imported != owner_receiver
+                } else {
+                    import.imported == owner_receiver
+                }
+            }
+        }
+    })
+}
+
+fn import_bound_name(import: &PythonImport) -> &str {
+    if import.alias.is_empty() {
+        import.imported.as_str()
+    } else {
+        import.alias.as_str()
+    }
+}
+
+fn body_calls_api_client_route(
+    body_text: &str,
+    receiver: &str,
+    route: &str,
+    route_verbs: &[String],
+) -> bool {
+    ["get", "post", "put", "patch", "delete", "options", "head"]
+        .into_iter()
+        .filter(|verb| {
+            route_verbs.is_empty() || route_verbs.iter().any(|accepted| accepted == verb)
+        })
+        .any(|verb| {
+            contains_python_call_with_first_string_argument(
+                body_text,
+                &format!("{receiver}.{verb}"),
+                route,
+            )
+        })
 }
 
 fn contains_python_call_with_first_string_argument(
@@ -2215,7 +2317,18 @@ fn converter_accepts(converter: &str, value: &str) -> bool {
 pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> {
     let body = text.strip_prefix('(')?.trim_start();
     let literal = first_python_string_literal(body)?;
-    body.starts_with(&literal)
+    // The literal must be the whole argument: `"/items" + suffix`, `"/x" % v`,
+    // `"/x".format(..)` and adjacent literals name a different path.
+    let mut after = body.strip_prefix(&literal)?.trim_start();
+    // A comment between the literal and the delimiter does not extend it.
+    while after.starts_with('#') {
+        after = after
+            .split_once('\n')
+            .map_or("", |(_, rest)| rest)
+            .trim_start();
+    }
+    let whole_argument = after.starts_with([',', ')']);
+    whole_argument
         .then(|| python_string_literal_value(&literal))
         .flatten()
 }
@@ -2707,7 +2820,7 @@ pub(super) fn text_binds_name(text: &str, name: &str) -> bool {
 /// [`test_binds_local`] for an imported alias: the test body's own
 /// `import pkg.mod as alias` statement is the import being checked (#4567
 /// records it among the test's imports), not a rebinding of it.
-fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
+pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)
