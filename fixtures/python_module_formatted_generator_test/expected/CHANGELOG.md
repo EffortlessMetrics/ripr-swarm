@@ -41,7 +41,7 @@ Updated:
 ## Pending — python_module_formatted_generator_test (4)
 
 Reason:
-RIPR-SPEC-0319 next-step lines: fixture goldens blessed without them (#10235 after #9449 combined-tree drift)
+RIPR-SPEC-0319: main #9449 added Next guidance lines under static limitations without reblessing these fixtures (inherited red goldens); human.txt also carries this PR's RIPR-SPEC-0122 clipped-to-wrap line
 
 Command:
 `cargo xtask goldens bless python_module_formatted_generator_test --reason "..."`
