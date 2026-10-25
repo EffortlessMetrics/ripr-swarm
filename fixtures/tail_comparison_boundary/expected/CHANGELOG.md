@@ -396,3 +396,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — tail_comparison_boundary (34)
+
+Reason:
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

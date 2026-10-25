@@ -12,7 +12,16 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 207
+floor = 218
+
+# Most abstained rows whose tests do catch the change (missed credit). A
+# regression fails `verdict-corpus check`; an improvement passes with a note
+# to lower this number (not a failure, so concurrent fixes do not collide).
+# Raising it is a reviewed edit with a reason.
+# 145 = 143 blessed on main (#10140 re-measures it) + 2 new measured rows
+# (spec0096-named-binding-used, spec0048-label-rendered-observed) whose
+# initializer-call and const shapes abstain today; analyzer fix tracked in #9871.
+missed_credit_ceiling = 145
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -783,14 +792,18 @@ id = "RIPR-SPEC-0163"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Bounded literal match-arm transfer
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0164"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Bounded recursive helper evaluation
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0165"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "the repeated state is reached only by an input that recurses forever at runtime, so no test row can reach it and no runtime label can pin it; match_transfer unit tests (repeated state) and the recursive_controls fixture cover the refusal"
 
 # Unsafe execution boundary probes
 [[spec]]

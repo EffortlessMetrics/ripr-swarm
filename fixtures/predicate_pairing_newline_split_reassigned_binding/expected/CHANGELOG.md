@@ -142,3 +142,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_newline_split_reassigned_binding (12)
+
+Reason:
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless predicate_pairing_newline_split_reassigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

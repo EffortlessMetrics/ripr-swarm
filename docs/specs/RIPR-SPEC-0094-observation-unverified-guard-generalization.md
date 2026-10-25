@@ -160,11 +160,22 @@ Per-family fixture pairs (blind and confirmed) plus the MatchArm qualifier-blind
    `call_deletion` (effect), expression `notifier.send(order_id)`, test
    `assert!(result);` (a plain assert, no mock, no token). After the fix:
    `weakly_exposed` / `observation_unverified`.
-5. SideEffect / CallDeletion confirmed (Part C), must stay exposed. Probe
-   family `call_deletion` (effect), expression `notifier.send(order_id)`, test
+5. SideEffect confirmed (Part C), must stay exposed. Probe family
+   `side_effect`, expression `notifier.send(order_id)`, test
    `assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);`. After
    the fix: `exposed` (a strong persisted-state observer; `token_match` on
    `notifier`; the effect observer kind-matches the seam).
+
+In `observation_verified_side_effect`, this call is the function's tail-return
+expression, so its aligned diff produces SideEffect and ReturnValue probes,
+not CallDeletion. The payload assertion observes the effect; it does not assert
+the returned boolean. Genuine standalone-call deletion has its separate
+semicolon-terminated control in `observation_verified_call_deletion` (#8954).
+The aligned `observation_verified_semicolon_effect` twin pins the standalone
+call at line 18 and `true` at line 19: exactly CallDeletion + SideEffect, both
+`exposed`, with one finding per family in the honesty corpus. Runtime payload
+and deletion controls are effect evidence; both payloads returning `true`
+supply no returned-value discriminator.
 
 A bare Medium mock observer (`mock.verify();`, no token) clears
 `observation_unverified` via Part C but remains `weakly_exposed` because Medium
