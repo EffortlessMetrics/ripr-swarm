@@ -12478,6 +12478,19 @@
           "class": "no_static_path"
         }
       ]
+    },
+    {
+      "id": "ts_parameter_default_body_shadow",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_parameter_default_setup_hook",
+      "vector": "body_local_root_proofs_cannot_hide_parameter_default_hook_writes",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
+      ]
     }
   ]
 }

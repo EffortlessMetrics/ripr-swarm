@@ -8650,6 +8650,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/typescript_reassigned_setup_hook",
+  "fixtures/typescript_parameter_default_setup_hook",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",
   "fixtures/rust_trait_impl_import",
@@ -17425,6 +17426,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/typescript_reassigned_setup_hook",
+  "fixtures/typescript_parameter_default_setup_hook",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",

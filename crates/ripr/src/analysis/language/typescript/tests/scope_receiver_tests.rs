@@ -781,6 +781,90 @@ describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); i
             ExposureClass::NoStaticPath,
         ),
         (
+            "default_parameter_body_shadow",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', (ignored = (globalThis.beforeEach = () => {})) => {
+ const globalThis = {};
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_parameter_unshadowed",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', (ignored = (globalThis.beforeEach = () => {})) => {
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "body_shadow_positive",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+ const globalThis = {};
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "default_function_body_shadow",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', function (ignored = (globalThis.beforeEach = () => {})) {
+ const globalThis = {};
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_bare_hook_body_shadow",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('noise', (ignored = (beforeEach = () => {})) => { const beforeEach = () => {}; });
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_outer_literal_body_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = {};
+describe('target', (ignored = (globalThis.beforeEach = () => {})) => { const globalThis = global; let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "default_parameter_value_remains_unknown",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', (globalThis = {}) => { globalThis.beforeEach = () => {}; let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
             "local_globalthis_alias",
             r#"import { expect } from 'chai';
 import { Cart } from '../src/cart.js';

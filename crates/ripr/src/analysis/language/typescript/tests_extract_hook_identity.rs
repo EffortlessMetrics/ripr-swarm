@@ -208,7 +208,6 @@ impl Scan<'_> {
         &mut self,
         span: u32,
         params: &FormalParameters<'_>,
-        body: &[Statement<'_>],
         name: Option<&str>,
         strict: bool,
     ) {
@@ -225,19 +224,12 @@ impl Scan<'_> {
             .map(|identifier| identifier.name.to_string())
             .collect();
         names.extend(name.map(str::to_string));
-        collect_registration_scope_names(body, &mut names, strict);
         let mode = if self.synchronous_callbacks.contains(&span) {
             self.mode
         } else {
             Mode::Deferred
         };
-        self.push(
-            (u64::from(span) << 3) | 1,
-            names,
-            mode,
-            strict,
-            literal_object_roots(body),
-        );
+        self.push((u64::from(span) << 3) | 1, names, mode, strict, Vec::new());
     }
 }
 
@@ -332,15 +324,9 @@ impl<'a> Visit<'a> for Scan<'_> {
     fn enter_node(&mut self, kind: AstKind<'a>) {
         match kind {
             AstKind::Function(function) => {
-                let body = function
-                    .body
-                    .as_ref()
-                    .map(|body| body.statements.as_slice())
-                    .unwrap_or_default();
                 self.function_frame(
                     function.span.start,
                     &function.params,
-                    body,
                     function.id.as_ref().map(|id| id.name.as_str()),
                     self.strict || function.has_use_strict_directive(),
                 );
@@ -348,10 +334,20 @@ impl<'a> Visit<'a> for Scan<'_> {
             AstKind::ArrowFunctionExpression(arrow) => self.function_frame(
                 arrow.span.start,
                 &arrow.params,
-                &arrow.body.statements,
                 None,
                 self.strict || arrow.has_use_strict_directive(),
             ),
+            AstKind::FunctionBody(body) => {
+                // Oxc visits parameter defaults before entering the body.
+                // Body declarations and root proofs cannot shield writes
+                // made in that earlier parameter/outer environment.
+                let mut names = Vec::new();
+                collect_registration_scope_names(&body.statements, &mut names, self.strict);
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.names.extend(names);
+                    frame.literal_object_roots = literal_object_roots(&body.statements);
+                }
+            }
             AstKind::BlockStatement(block) => {
                 let mut names = Vec::new();
                 collect_registration_scope_names(&block.body, &mut names, self.strict);

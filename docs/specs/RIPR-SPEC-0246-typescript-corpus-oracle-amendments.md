@@ -312,6 +312,9 @@ reason `gap_evidence_unresolved`:
   a local root may alias the global object. Only an immutable empty-object
   literal binding in the nearest lexical frame proves a disjoint root here;
   unreadable global keys and other local root values remain conservative.
+  Parameter-default effects resolve before body-local declarations and root
+  proofs are installed, in their parameter/outer environment. Parameter values
+  are not evaluated to grant hook identity.
   Comments and literal contents are not writes. Helper execution, uncertain or
   repeated registration order, self-referencing callbacks, hook-binding argument
   effects and restoration remain unresolved. This rule

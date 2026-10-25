@@ -594,6 +594,10 @@ A local root can alias the actual global object: only a `const` binding to an
 empty object literal in that lexical frame proves a disjoint root here. Parameters,
 mutable bindings and other initializers keep possible ambient writes; nonempty
 literals may contain forwarding setters and remain unresolved.
+Parameter-default effects resolve in the parameter/outer environment before
+body-local declarations or empty-object proofs become visible. A default value
+does not itself prove a parameter's object identity; uncertain effects stay
+conservative without a parameter-value evaluator.
 A later write cannot revoke an already registered callback; a separate
 lexical binding or an ambient property cannot rebind an imported hook identifier.
 An unreadable computed global target withholds affected ambient hook identities.
