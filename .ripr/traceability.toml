@@ -1758,6 +1758,9 @@ tests = [
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_warns_when_verify_or_receipt_look_stale",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_quotes_paths_with_spaces",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_markdown_names_next_command_and_limits",
+  "crates/ripr/tests/agentic_bench_cage.rs::status_shares_one_worktree_capture_across_finished_attempts",
+  "crates/ripr/src/edit_cage/mod.rs::tests::reevaluation_scope_shares_one_capture_without_hiding_later_edits",
+  "crates/ripr/src/edit_cage/mod.rs::tests::reevaluation_scope_does_not_cache_a_failed_capture",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_refuses_to_choose_between_open_seams",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_does_not_restart_a_seam_that_finished",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_never_redirects_into_a_missing_workflow_directory",
@@ -1946,6 +1949,7 @@ code = [
   "crates/ripr/src/cli/agent.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/help.rs",
+  "crates/ripr/src/edit_cage/mod.rs",
   "xtask/src/reports/operator.rs"
 ]
 outputs = [
