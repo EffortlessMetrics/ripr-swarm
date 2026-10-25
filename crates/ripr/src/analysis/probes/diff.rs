@@ -170,6 +170,15 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_block_comments = old_source
         .map(crate::analysis::syntax::block_comment_only_lines)
         .unwrap_or_default();
+    // #10089: the entries of a multi-line `#![allow(..)]`/`#[derive(..)]` sit
+    // on lines that do not start with `#`, but they are attribute text, like
+    // the single-line form `should_ignore_changed_line` already skips.
+    let added_attribute_lines = find_file_facts(index, &changed.path)
+        .map(|facts| attribute_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_attribute_lines = old_source
+        .map(attribute_continuation_lines)
+        .unwrap_or_default();
     let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
@@ -234,7 +243,8 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) {
+        if should_ignore_changed_line(text) || added_attribute_lines.contains(&added.new_side_line)
+        {
             continue;
         }
         if opens_new_function_with_added_body(index, changed, added_index, &signature_cx) {
@@ -539,7 +549,9 @@ pub(crate) fn probes_for_file_with_relations(
         // line coincidences. External file context retains the index composer
         // authority used by the existing test-evidence exclusion.
         // Other families keep their existing candidate-coordinate handling.
-        let is_test_evidence = if removed_bounds.lines[removed_index] {
+        let is_test_evidence = if removed_bounds.lines[removed_index]
+            || removed_bounds.field_declarations[removed_index]
+        {
             file_is_composed_test_evidence(index, &changed.path)
                 || removed_bounds.old_index.as_ref().is_some_and(|old| {
                     changed_line_is_test_evidence(
@@ -581,7 +593,7 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) {
+        if should_ignore_changed_line(text) || removed_attribute_lines.contains(&removed.line) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -615,6 +627,17 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #9183: a deleted field declaration with no replacement is type
+            // syntax in the old source, not a deleted construction. The
+            // replacement checks above ran on the lexical family, so an
+            // edited field keeps its before/after pairing.
+            let family = if family == ProbeFamily::FieldConstruction
+                && removed_bounds.field_declarations[removed_index]
+            {
+                ProbeFamily::StaticUnknown
+            } else {
+                family
+            };
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 removed,
@@ -928,6 +951,64 @@ fn join_tokens(lines: &[&str]) -> String {
             out.push(' ');
         }
         out.push_str(&line);
+    }
+    out
+}
+
+/// 1-based lines of `source` that continue a multi-line outer or inner
+/// attribute (`#![allow(\n    clippy::x,\n)]`): every line after the one whose
+/// first token is `#[` or `#![`, through the line that closes its bracket.
+/// Read from comment/string-masked text. Fail closed: the closing line counts
+/// only when nothing but whitespace follows the bracket (`)] fn f() {` does
+/// not), and an attribute that never closes marks nothing.
+fn attribute_continuation_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let masked = mask_comments_and_strings(source);
+    let lines = masked.lines().collect::<Vec<_>>();
+    let mut out = std::collections::BTreeSet::new();
+    let mut at = 0;
+    while at < lines.len() {
+        let rest = lines[at].trim_start();
+        let Some(open) = rest.strip_prefix("#![").or_else(|| rest.strip_prefix("#[")) else {
+            at += 1;
+            continue;
+        };
+        let mut depth = 1usize;
+        let mut text = open;
+        let mut end = at;
+        let closed = loop {
+            let mut tail_after_close = None;
+            for (offset, ch) in text.char_indices() {
+                match ch {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            tail_after_close = Some(&text[offset + 1..]);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(tail) = tail_after_close {
+                break Some(tail.trim().is_empty());
+            }
+            end += 1;
+            match lines.get(end) {
+                Some(next) => text = next,
+                None => break None,
+            }
+        };
+        let Some(clean_close) = closed else {
+            at += 1;
+            continue;
+        };
+        if end > at {
+            // 1-based: line index `at` is line `at + 1`.
+            let last = if clean_close { end } else { end - 1 };
+            out.extend(at + 2..=last + 1);
+        }
+        at = end + 1;
     }
     out
 }
@@ -2346,6 +2427,79 @@ mod tests {
         );
         let in_comment = probes_for("/*\n limit: threshold,\n*/\n");
         assert!(in_comment.is_empty(), "{in_comment:?}");
+    }
+
+    #[test]
+    fn multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does() {
+        // #10089, dogfood (serde `56c29b3`): a renamed lint inside a
+        // multi-line `#![allow(..)]` is attribute text, not behavior.
+        let path = PathBuf::from("src/lib.rs");
+        let probes_for = |source: &str| {
+            // The changed line is wherever the entry sits in this source.
+            let at = source
+                .lines()
+                .position(|line| line.trim() == "limit: threshold,")
+                .map_or(0, |index| index + 1);
+            assert!(at > 0, "premise: the source holds the entry: {source}");
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line: at,
+                    new_side_line: at,
+                    text: "limit: threshold,".to_string(),
+                }],
+                removed_lines: vec![],
+            };
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            });
+            probes_for_file(Path::new("workspace"), &changed, &index)
+        };
+        let as_code = probes_for("let c = Config {\n limit: threshold,\n};\n");
+        assert!(
+            !as_code.is_empty(),
+            "control: the same text outside an attribute must still seed a probe"
+        );
+        for attribute in [
+            "#![allow(\n limit: threshold,\n)]\n",
+            "#[cfg_attr(\n    feature = \"x\",\n    allow(\n limit: threshold,\n    ),\n)]\nfn f() {}\n",
+        ] {
+            let in_attribute = probes_for(attribute);
+            assert!(in_attribute.is_empty(), "{attribute}: {in_attribute:?}");
+        }
+    }
+
+    #[test]
+    fn attribute_continuation_lines_cover_the_span_and_fail_closed() {
+        let lines = |source: &str| {
+            attribute_continuation_lines(source)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        // Lines after the opener through the closing `)]`.
+        assert_eq!(
+            lines("#![allow(\n    a,\n    b,\n)]\nfn f() {}\n"),
+            [2, 3, 4]
+        );
+        // A one-line attribute has no continuation line.
+        assert!(lines("#[allow(a)]\nfn f() {}\n").is_empty());
+        // The closing line counts only when nothing follows the bracket.
+        assert_eq!(lines("#[allow(\n    a,\n)] fn f() {\n    g();\n}\n"), [2]);
+        // Bracket text in a string or comment does not move the span, and an
+        // attribute that never closes marks nothing.
+        assert_eq!(lines("#[doc = \"]\"]\nfn f() {}\n"), Vec::<usize>::new());
+        assert_eq!(lines("#[a(\n    \"]\", // ]\n    b,\n)]\n"), [2, 3, 4]);
+        assert!(lines("#[allow(\n    a,\nfn f() {}\n").is_empty());
+        // A `#[` that is not the first token of its line starts nothing.
+        assert!(lines("let v = x; #[allow(\n    a,\n)]\n").is_empty());
     }
 
     #[test]

@@ -454,7 +454,7 @@ pub(crate) fn build_gap_decision_ledger_report(
             // #5203: propagate the producer's run-state disclosure (for
             // example `limited_findings_bound`) so a ledger built from a
             // bounded check document stays visibly bounded. Without this the
-            // gate would evaluate the rendered prefix as a complete
+            // gate would evaluate the rendered subset as a complete
             // denominator. Any source kind may carry the entry; only
             // presence propagates.
             run_limitations = source_value
