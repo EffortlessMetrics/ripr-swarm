@@ -3,7 +3,7 @@
   "subject_id": "authored-spec-b-layout",
   "diff": "cases/spec-b-0169-out-of-line-cfg-test-helper.diff",
   "anchor": {
-    "file": "src/l_outline/tests.rs",
+    "file": "src/l_outline/checks.rs",
     "line": 4
   },
   "edit_kind": "behavior_preserving_rewrite",
@@ -20,15 +20,15 @@
         "replacement": "3",
         "mutated_line": "3",
         "outcome": "tests_failed",
-        "failing_test": "l_outline::tests::the_outline_shift_is_three_l_outline",
-        "equivalence_review": "not equivalent: l_outline::tests::the_outline_shift_is_three_l_outline fails on it"
+        "failing_test": "l_outline::checks::the_outline_shift_is_three_l_outline",
+        "equivalence_review": "not equivalent: l_outline::checks::the_outline_shift_is_three_l_outline fails on it"
       },
       {
         "replacement": "5",
         "mutated_line": "5",
         "outcome": "tests_failed",
-        "failing_test": "l_outline::tests::the_outline_shift_is_three_l_outline",
-        "equivalence_review": "not equivalent: l_outline::tests::the_outline_shift_is_three_l_outline fails on it"
+        "failing_test": "l_outline::checks::the_outline_shift_is_three_l_outline",
+        "equivalence_review": "not equivalent: l_outline::checks::the_outline_shift_is_three_l_outline fails on it"
       }
     ]
   },

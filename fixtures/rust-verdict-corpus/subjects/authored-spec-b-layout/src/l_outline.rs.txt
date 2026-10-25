@@ -5,4 +5,4 @@ pub fn shifted_outline(base: u32) -> u32 {
 }
 
 #[cfg(test)]
-mod tests;
+mod checks;

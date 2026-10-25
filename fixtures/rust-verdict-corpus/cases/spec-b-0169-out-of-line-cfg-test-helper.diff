@@ -1,6 +1,6 @@
-diff --git a/src/l_outline/tests.rs b/src/l_outline/tests.rs
---- a/src/l_outline/tests.rs
-+++ b/src/l_outline/tests.rs
+diff --git a/src/l_outline/checks.rs b/src/l_outline/checks.rs
+--- a/src/l_outline/checks.rs
++++ b/src/l_outline/checks.rs
 @@ -1,7 +1,7 @@
  use super::*;
  
