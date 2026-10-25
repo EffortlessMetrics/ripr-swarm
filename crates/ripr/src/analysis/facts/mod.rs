@@ -41,6 +41,7 @@ mod includes;
 mod index;
 mod local_test_alias;
 mod macro_generated_tests;
+pub(crate) mod macro_visibility;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
