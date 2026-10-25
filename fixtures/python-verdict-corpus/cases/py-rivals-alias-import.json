@@ -36,7 +36,9 @@
   "labeling_observation": {
     "ripr_commit": "b6491843",
     "full_checkout_verdict": "limited",
-    "full_checkout_classifications": [],
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
     "excerpt_parity": "matched"
   }
 }

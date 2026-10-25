@@ -134,3 +134,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_selected_credit (12)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_selected_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
