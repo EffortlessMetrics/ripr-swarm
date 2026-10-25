@@ -2308,6 +2308,7 @@ impl RustAdapter {
             .collect::<BTreeSet<_>>();
 
         let mut findings = Vec::new();
+        let value_origins = std::sync::Mutex::new(crate::value_origins::ValueOrigins::default());
         let mut parser_spans = BTreeMap::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
@@ -2486,7 +2487,7 @@ impl RustAdapter {
                         committed_source::with_overlay(overlay.clone(), || {
                             graph_counter.run(|| {
                                 cancellation::checkpoint().ok()?;
-                                Some(classifier::classify_probe_with_candidate_index(
+                                Some(classifier::classify_probe_with_candidate_index_and_origins(
                                     &seeded.probe,
                                     &index,
                                     workspace_index_complete,
@@ -2494,6 +2495,7 @@ impl RustAdapter {
                                     &related_test_candidate_index,
                                     &transitive_reach,
                                     seeded.propagation_origin.as_ref(),
+                                    Some(&value_origins),
                                 ))
                             })
                         })
@@ -2727,6 +2729,7 @@ impl RustAdapter {
         );
 
         Ok(LanguageDiffResult {
+            value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
                 &index,
@@ -3130,6 +3133,7 @@ impl RustAdapter {
         let transitive_reach = classify::TransitiveReachIndex::new(&index);
 
         let mut findings = Vec::new();
+        let value_origins = std::sync::Mutex::new(crate::value_origins::ValueOrigins::default());
         let mut parser_spans = BTreeMap::new();
 
         // #2972: one path-dependency edge context per repo pass. Repo mode
@@ -3159,7 +3163,7 @@ impl RustAdapter {
                         classify::RelatedTestCandidateIndex::new(&index)
                             .with_analysis_root(&options.root)
                     });
-                let mut finding = classifier::classify_probe_with_candidate_index(
+                let mut finding = classifier::classify_probe_with_candidate_index_and_origins(
                     &probe,
                     &index,
                     true,
@@ -3167,6 +3171,7 @@ impl RustAdapter {
                     related_test_candidate_index,
                     &transitive_reach,
                     None,
+                    Some(&value_origins),
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
@@ -3211,6 +3216,7 @@ impl RustAdapter {
         );
 
         Ok(LanguageRepoResult {
+            value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
                 &index,
