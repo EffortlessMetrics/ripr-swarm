@@ -1174,6 +1174,13 @@ top-level `crate::name!` calls to `#[macro_export]` test generators
 (RIPR-SPEC-0117, #10298), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### `#[test_case]` literal rows classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.107 to 1.108 for
+literal-row `#[test_case]` bodies (RIPR-SPEC-0120, #10190), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
@@ -1260,7 +1267,7 @@ content commitment, dependent verify commitments and receipt byte hashes only.
 
 ### indirect owner call limit classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.107 to 1.108 for owners
+The same snapshots follow corpus cache generation 1.108 to 1.109 for owners
 reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.

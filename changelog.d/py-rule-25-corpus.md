@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Python verdict corpus: 7 `py-props-*` cases on `authored-py-pytest-properties` covering RIPR-SPEC-0238 rule 25 (an idempotence assert in either order and a loop identity over a plain or tuple `for` target scored as gaps; a chain with a literal, a literal expected value and a name bound outside the loop credited), labelled by real pytest runs; no false verdicts and no ceiling change (#9412).
