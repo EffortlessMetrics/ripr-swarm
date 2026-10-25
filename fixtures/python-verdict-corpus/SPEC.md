@@ -83,6 +83,11 @@ this repository's license, one per test library or library feature:
   and bound exception assertions; `and`/`or`/`not` chains). Cases are
   one-line edits or rewrites labeled by real pytest runs (Python 3.13.16,
   pytest 9.1.1, pytest-mock 3.17.0).
+- `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
+  abstentions (positional band within and outside the band, spread band,
+  non-literal band, longer owner body, method owner, decorated owner). Every
+  case reads `static_unknown`; the outside-band edit is the one case whose
+  test catches the change.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
