@@ -1662,7 +1662,7 @@ fn the_candidate_manifest_and_its_accepted_digest_travel_together() -> TestResul
     }
     let digest = "a".repeat(64);
     match super::command::parse_args(&to_args(&["--candidate-manifest-sha256", &digest])) {
-        Err(error) if error.contains("requires --candidate-manifest") => {}
+        Err(error) if error.starts_with("--candidate-manifest-sha256 requires") => {}
         other => {
             return Err(format!(
                 "a digest without a manifest must refuse: {:?}",
@@ -1678,6 +1678,17 @@ fn the_candidate_manifest_and_its_accepted_digest_travel_together() -> TestResul
     ])) {
         Err(error) if error.contains("is not a 64-character SHA-256") => {}
         other => return Err(format!("a short digest must refuse: {:?}", other.err())),
+    }
+    for flag in ["--candidate-manifest", "--candidate-manifest-sha256"] {
+        let value = if flag == "--candidate-manifest" {
+            "manifest.json"
+        } else {
+            digest.as_str()
+        };
+        match super::command::parse_args(&to_args(&[flag, value, flag, value])) {
+            Err(error) if error == format!("{flag} was given twice") => {}
+            other => return Err(format!("a repeated {flag} must refuse: {:?}", other.err())),
+        }
     }
     Ok(())
 }

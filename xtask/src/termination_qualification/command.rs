@@ -436,8 +436,18 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
             "--expected-sha256" => expected_sha256 = Some(value),
             "--expected-version" => expected_version = Some(value),
             "--expected-commit" => expected_commit = Some(value),
-            "--candidate-manifest" => candidate_manifest = Some(PathBuf::from(value)),
-            "--candidate-manifest-sha256" => candidate_manifest_sha256 = Some(value),
+            // A repeated manifest or digest would let the last spelling win
+            // silently; refuse it like a repeated removal control.
+            "--candidate-manifest" => {
+                if candidate_manifest.replace(PathBuf::from(value)).is_some() {
+                    return Err("--candidate-manifest was given twice".to_string());
+                }
+            }
+            "--candidate-manifest-sha256" => {
+                if candidate_manifest_sha256.replace(value).is_some() {
+                    return Err("--candidate-manifest-sha256 was given twice".to_string());
+                }
+            }
             "--family" => families.push(parse_family(&value)?),
             "--removal-control" => {
                 let (family, path) = value.split_once('=').ok_or_else(|| {

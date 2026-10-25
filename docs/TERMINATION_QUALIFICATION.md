@@ -31,7 +31,8 @@ a family takes one control only, from either source.
 
 
 Outputs: `target/ripr/reports/termination-qualification.{json,md}`. Other
-flags: `--expected-sha256`, `--expected-version`, `--expected-commit`, `--family`, `--no-repeat`,
+flags: `--expected-sha256`, `--expected-version`, `--expected-commit`,
+`--candidate-manifest` with `--candidate-manifest-sha256`, `--family`, `--no-repeat`,
 `--deadline-seconds` (default 60), `--allow-incomplete`, `--work-dir`, `--out`.
 
 ## What runs
