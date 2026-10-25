@@ -174,6 +174,8 @@ Common options:
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.
+  --legend          Print the Evidence stage and summary definitions; the
+                    human output shows them on the first run only.
   --mode MODE       instant, draft (default), fast, deep, or ready: how much
                     of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
@@ -251,6 +253,10 @@ Options:
                            output then notes that those edits were not
                            analyzed. Cannot be combined with --worktree,
                            --diff, --candidate-tree, or repo-scope formats.
+  --legend                 Print the Evidence stage and summary definitions in
+                           the human output. They are shown on the first run
+                           in a build tree; later runs keep one pointer line.
+                           No effect on other formats.
   --mode MODE              How much of the workspace is indexed: instant
                            (changed files only, cheapest), draft (packages the
                            diff touches; the default), fast (same as draft for

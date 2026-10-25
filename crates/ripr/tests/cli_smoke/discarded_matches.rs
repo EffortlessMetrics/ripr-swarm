@@ -274,7 +274,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 ])?;
                 let human = run(&[
                     "check", "--root", &root_arg, "--diff", &patch_arg, "--mode", "fast",
-                    "--format", "human",
+                    "--format", "human", "--legend",
                 ])?;
                 let human_full = run(&[
                     "check",

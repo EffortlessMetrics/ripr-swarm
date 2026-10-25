@@ -1251,7 +1251,9 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
-        FixtureCheckFormat::Human => {}
+        // Goldens are one deterministic projection: pin the Evidence legend
+        // that the CLI collapses after the first run in a build tree.
+        FixtureCheckFormat::Human => args.push("--legend".to_string()),
         FixtureCheckFormat::HumanFull => {
             args.push("--format".to_string());
             args.push("human-full".to_string());

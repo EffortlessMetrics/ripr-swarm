@@ -342,17 +342,35 @@ impl LspConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportsConfig {
     pub max_related_tests: usize,
+    /// How much of the Evidence legend the bounded human digest prints. Set by
+    /// the `check` command from first-run state and `--legend`; not a
+    /// `ripr.toml` key, so library callers keep the full legend (#10481).
+    pub(crate) human_legend: HumanLegend,
+}
+
+/// The bounded human digest's legend (RIPR-SPEC-0122): the ten definition
+/// lines, or one line pointing at `ripr check --legend`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum HumanLegend {
+    #[default]
+    Full,
+    Pointer,
 }
 
 impl Default for ReportsConfig {
     fn default() -> Self {
         Self {
             max_related_tests: DEFAULT_CONTEXT_RELATED_TESTS,
+            human_legend: HumanLegend::default(),
         }
     }
 }
 
 impl ReportsConfig {
+    pub(crate) fn human_legend(&self) -> HumanLegend {
+        self.human_legend
+    }
+
     pub(crate) fn max_related_tests(&self) -> usize {
         self.max_related_tests
     }
@@ -872,6 +890,7 @@ impl RiprConfig {
         } = lsp;
         let ReportsConfig {
             max_related_tests: _,
+            human_legend: _,
         } = reports;
         let SuppressionsConfig { path: _ } = suppressions;
         let LanguagesConfig {

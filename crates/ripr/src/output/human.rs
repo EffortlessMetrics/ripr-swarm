@@ -7061,6 +7061,40 @@ mod tests {
         );
     }
 
+    /// #10481: after the first run the legend collapses to one pointer line;
+    /// every other digest line, including the Evidence stage line, is kept.
+    #[test]
+    fn bounded_evidence_legend_collapses_to_one_pointer_line() {
+        let output = bounded_output_with_findings(vec![sample_finding()]);
+        let full = super::render_bounded_with_config(&output, &RiprConfig::default());
+        let mut config = RiprConfig::default();
+        config.reports.human_legend = crate::config::HumanLegend::Pointer;
+        let pointer = super::render_bounded_with_config(&output, &config);
+
+        assert!(full.contains("    Stages (static evidence):"), "{full}");
+        assert!(!pointer.contains("Stages (static evidence)"), "{pointer}");
+        assert!(!pointer.contains("Summary terms:"), "{pointer}");
+        assert_eq!(
+            pointer
+                .matches("    Terms: `ripr check --legend` prints")
+                .count(),
+            1,
+            "{pointer}"
+        );
+        let evidence = full
+            .lines()
+            .find(|line| line.starts_with("  Evidence: reach "))
+            .map(str::to_string);
+        assert!(evidence.is_some(), "{full}");
+        assert!(
+            pointer
+                .lines()
+                .any(|line| Some(line) == evidence.as_deref()),
+            "{pointer}"
+        );
+        assert_eq!(full.lines().count() - 9, pointer.lines().count());
+    }
+
     /// #9373 item 1: stage names and conservative state words are explained
     /// beside the selected finding, once even when many findings are hidden.
     #[test]

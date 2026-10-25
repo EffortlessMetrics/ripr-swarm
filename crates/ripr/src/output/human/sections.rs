@@ -278,18 +278,26 @@ pub(crate) fn render_finding_digest_with_config(
         ));
         // #9373 item 1: explain the pipeline and its conservative tokens at
         // the bounded surface; full human and machine evidence stay unchanged.
-        out.push_str(concat!(
-            "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
-            "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-            "      discriminator = assertion distinguishes intended from wrong behavior\n",
-            "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-            "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
-            "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
-            "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
-            "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
-            "      candidate line = changed line ripr considers for probes\n",
-        ));
+        // #10481: after the first run the digest keeps one pointer line; the
+        // definitions stay one flag away.
+        if config.reports().human_legend() == crate::config::HumanLegend::Pointer {
+            out.push_str(
+                "    Terms: `ripr check --legend` prints the stage, state and summary definitions\n",
+            );
+        } else {
+            out.push_str(concat!(
+                "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+                "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+                "      discriminator = assertion distinguishes intended from wrong behavior\n",
+                "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+                "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+                "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
+                "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
+                "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
+                "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
+                "      candidate line = changed line ripr considers for probes\n",
+            ));
+        }
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
             out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));

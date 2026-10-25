@@ -63,6 +63,9 @@ mod init_followups;
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/legend_first_run.rs"]
+mod legend_first_run;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
 #[cfg(feature = "lang-rust")]

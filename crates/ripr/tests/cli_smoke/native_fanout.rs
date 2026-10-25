@@ -57,7 +57,17 @@ impl Fixture {
         env: &[(&str, &str)],
     ) -> Result<std::process::Output, std::io::Error> {
         let root = selected_root.to_string_lossy();
-        let mut args = vec!["check", "--root", &root, "--diff", "input.diff", "--quiet"];
+        // `--legend` pins the Evidence legend: the human member always carries
+        // it, while a repeated native run would collapse it after the first.
+        let mut args = vec![
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            "input.diff",
+            "--quiet",
+            "--legend",
+        ];
         args.extend_from_slice(extra);
         run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &self.0, &args, env)
     }
