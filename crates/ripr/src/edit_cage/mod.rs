@@ -386,6 +386,9 @@ thread_local! {
 /// recaptures. An inner scope is inert; the outermost one owns the memo.
 pub(crate) struct ReevaluationMemoScope {
     owner: bool,
+    /// The memo is thread-local, so the scope must drop on the thread that
+    /// opened it: a `*const ()` makes it `!Send`.
+    _same_thread: std::marker::PhantomData<*const ()>,
 }
 
 impl ReevaluationMemoScope {
@@ -399,7 +402,10 @@ impl ReevaluationMemoScope {
                 true
             }
         });
-        Self { owner }
+        Self {
+            owner,
+            _same_thread: std::marker::PhantomData,
+        }
     }
 
     /// Repository captures this scope actually performed.
