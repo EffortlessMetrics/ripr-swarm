@@ -25,8 +25,16 @@ case = "perl-bless-counter-start"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "perl-hostile-autoload-field"
+reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
+
+[[entry]]
 case = "perl-hostile-constant-tax"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "perl-hostile-glob-double"
+reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
 case = "perl-hostile-line-directive-pad"
