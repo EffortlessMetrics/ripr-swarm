@@ -457,11 +457,12 @@ mod tests {
         Ok(())
     }
 
-    /// Entries that outnumber the real missed credit would pass the gate with
-    /// only a note, so pin each committed entry set to its blessed rows. The
-    /// accepted count is derived from the entries, never stored on a shared
-    /// line. The name is kept from the retired numeric ceiling test (CI selects
-    /// it by name); it now pins the entry sets to the blessed missed rows.
+    /// Pin each committed entry set to its blessed rows. `check-all` now fails
+    /// a stale entry in the corpus step (#10341); this test is the second pin,
+    /// run with the full test step, so the equality survives if that wiring is
+    /// ever bypassed. The accepted count is derived from the entries, never
+    /// stored on a shared line. The name is kept from the retired numeric
+    /// ceiling test (CI selects it by name).
     #[test]
     fn committed_ceilings_equal_the_blessed_missed_credit() -> Result<(), String> {
         for language in ["rust", "typescript", "python", "perl"] {
