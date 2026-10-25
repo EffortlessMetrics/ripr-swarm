@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_platform_guarded_test/input
 config: <cwd>/fixtures/typescript_platform_guarded_test/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
 
 Changed file(s) by language: typescript = 1
 
@@ -17,17 +17,17 @@ Start here:
   File: src/subject.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unknown (severity: note, confidence 0.40)
+  Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return age >= 18;
-  Missing discriminator (1 of 2): Related test reaches `isAdult` but the strongest extracted oracle
-    is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion
-    or a `toThrow` form with an exact payload (string, object, or class reference)
+  Analyzer limit: Related tests reach `isAdult` only through a registration under a condition static
+    analysis cannot evaluate (a platform or environment guard); whether they run, and what they
+    assert, is not established either way
   Related test: tests/guarded.test.ts:7 isAdult at the boundary
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and
-    edit-boundary fields are available
-  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+  Next step — TypeScript preview advisory: the related test asserts inside a callback the extractor
+    cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is
+    needed on that evidence, and no repair packet is emitted
+  Evidence: reach yes · infection unknown · propagation unknown · observation unknown · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior

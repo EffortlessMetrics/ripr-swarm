@@ -18809,3 +18809,32 @@ fn unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial() -
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
+
+#[test]
+fn finding_resting_only_on_a_guarded_test_reads_static_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("guard-unknown")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function f(a: number): number {\n  return a + 1;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/f.test.ts"),
+        "import { f } from '../src/calc';\nif (isWindows) {\n  test('f increments', () => {\n    expect(f(1)).toBe(2);\n  });\n}\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/calc.ts", &[(2, "  return a + 1;")])],
+    )?;
+    assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+    assert!(
+        matches!(result.findings[0].class, ExposureClass::StaticUnknown),
+        "{:?}",
+        result.findings[0].class
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}

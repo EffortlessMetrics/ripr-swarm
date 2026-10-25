@@ -227,8 +227,11 @@ whose condition is not a constant, such as a platform or environment guard
 (`if (isWindows) { test(...) }`), is indexed for reach, in the consequent and
 in the `else` branch. Whether the branch runs is unknown to static analysis,
 so the test records the guard (`!(cond)` for the `else` branch; nested guards
-join with `&&`), keeps no assertion, and its admission stays unresolved: it can
-make a finding `weakly_exposed` but never `exposed`. The finding and the
+join with `&&`), keeps no assertion, and its admission stays unresolved. When
+every oracle-eligible related test of a finding is guarded, the finding reads
+`static_unknown` (reach yes, observation and discrimination unknown), never
+`weakly_exposed` or `exposed`: a guarded test that does run may well pin the
+change. An unguarded related test decides the finding as before. The finding and the
 outcome name `typescript_conditional_registration` with the guard and its line.
 A constant condition keeps its existing reading.
 

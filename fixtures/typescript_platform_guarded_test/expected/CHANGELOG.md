@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_platform_guarded_test (4)
+
+Reason:
+RIPR-SPEC-0243: a finding whose only related tests are guarded reads static_unknown, not weakly_exposed (#10438)
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
