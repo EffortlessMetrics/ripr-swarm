@@ -89,12 +89,6 @@ pub(crate) fn assign_row_misses(
             }
             _ => None,
         };
-        row.miss_support = match row.miss {
-            Some(RelatedTestMiss::MissingInput) => {
-                context.boundary_fact.map(RelatedTestMissSupport::from_fact)
-            }
-            _ => None,
-        };
     }
 }
 

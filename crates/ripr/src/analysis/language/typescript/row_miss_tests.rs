@@ -309,12 +309,7 @@ fn strong_row_off_the_boundary_is_missing_input() -> Result<(), String> {
     );
     // The row carries the finding's boundary as its row-owned support.
     let support = support_of(&finding, "below");
-    assert!(
-        support
-            .as_deref()
-            .is_some_and(|value| value.contains("100")),
-        "the row carries the boundary it missed, got {support:?}"
-    );
+    assert_eq!(support.as_deref(), Some("total == 100"));
     Ok(())
 }
 
