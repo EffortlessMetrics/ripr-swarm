@@ -441,7 +441,9 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
     ] {
         let (_, text) = sources
             .iter()
-            .find(|(path, _)| path.ends_with(suffix))
+            // Component-wise: the scanned path is a native-separator string,
+            // so a `/` suffix never matches a Windows `\\` path as text.
+            .find(|(path, _)| std::path::Path::new(path).ends_with(suffix))
             .ok_or_else(|| format!("{suffix} was not scanned"))?;
         assert!(
             text.lines().count() >= minimum_lines,
