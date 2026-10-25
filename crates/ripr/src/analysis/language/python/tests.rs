@@ -9517,3 +9517,133 @@ fn comma_in_a_literal_comment_declines_the_joined_literal() {
     let source = "def f():\n    return [\n        10,\n        # note, note\n        21,\n    ]\n";
     assert!(enclosing_literal_pair(source, 5, "        21,", Some("        20,")).is_none());
 }
+
+/// A protocol-entry test whose body is `r = numeric_range(0)`, then `middle`,
+/// then `list(reversed(r))`; every `middle` below was checked with CPython's
+/// `ast.parse` (with `items`, `z`, `y` and `a` bound by the first lines).
+fn reversed_receiver_src(middle: &str) -> String {
+    format!(
+        "from src.nr import numeric_range\n\n\ndef test_x():\n    r = numeric_range(0)\n    items = [r]\n    z = 0\n    y = [[1]]\n    a = open_it\n{middle}    assert list(reversed(r)) == [1]\n"
+    )
+}
+
+#[test]
+fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited()
+-> Result<(), String> {
+    for middle in [
+        // An augmented assignment or annotation on a bracketed target.
+        "    (r) += [1]\n",
+        "    ((r)) += [1]\n",
+        "    (r): list = [1]\n",
+        // A comment inside the brackets, before or after the name.
+        "    (  # note\n        r\n    ) = [1]\n",
+        "    (\n        r  # note\n    ) = [1]\n",
+        // A backslash continuation before the `=` or after a target comma.
+        "    r \\\n        = [1]\n",
+        "    (r)\\\n        = [1]\n",
+        "    r \\\n        += [1]\n",
+        // A continuation before a later opener of the peel, LF and CRLF.
+        "    (\\\n        (r)) = [1]\n",
+        "    [\\\n        [r]] = [1]\n",
+        "    (\\\r\n        (r)) = [1]\n",
+        // An augmented assignment after a header, `else` or `;`.
+        "    if z: r += [1]\n",
+        "    if z == 1:\n        pass\n    else: r += [1]\n",
+        "    z = 1; r += [1]\n",
+        "    for x in y: r += 1\n",
+        // A walrus split inside brackets, and a tab before `as`.
+        "    (r\n     := [1])\n",
+        "    with (a\tas (r)): pass\n",
+        "    with a as\tr : pass\n",
+        // An import or `nonlocal` declaration names the receiver too.
+        "    import os as\tr\n",
+        "    import r\n",
+        "    def inner():\n        nonlocal r\n",
+        "    for \\\n        r in [[1]]:\n        pass\n",
+        // `in` directly after the closing bracket, and blank runs after a keyword.
+        "    for (r)in [[1]]:\n        pass\n",
+        "    for (r)in[[1]]:\n        pass\n",
+        "    for  r  in [[1]]:\n        pass\n",
+        "    for\tr in [[1]]:\n        pass\n",
+        "    def  r():\n        pass\n",
+        // Headers whose string spells prefixes, f-string braces or triple quotes.
+        "    if rb\")\": ( r), x = [1], 2\n",
+        "    if f\"{z}(\": ( r), x = [1], 2\n",
+        "    if z == '''it's''': ( r), x = [1], 2\n",
+        "    if z == \"\"\"it's\"\"\": ( r), x = [1], 2\n",
+        "    if z == 1: # note\n        ( r), x = [1], 2\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Result<(), String> {
+    for middle in [
+        // Comparisons are not augmented assignments.
+        "    assert (r) >= 0 and (r) <= 1\n",
+        // A bracketed condition, dict key or call argument is a read.
+        "    if (r):\n        pass\n",
+        "    d = {(r): 1}\n",
+        "    f(  # note\n        r\n    )\n",
+        "    f(r) \\\n        == 1\n    w = 1 \\\n        + len(r)\n",
+        // `in` after a bracket is a membership test outside a `for` target.
+        "    assert (r)in items\n",
+        "    for x in y: assert ((r)) in items\n",
+        // A quoted or commented `for` / `as` is text, not a keyword (#9992).
+        "    assert \"for\" and ((r)) in [r]\n",
+        "    assert 'for' and ((r))in items\n",
+        "    # for ((r)) in z\n    assert (r) in items\n",
+        "    assert (r) in items  # for\n",
+        "    assert 'as  r' and 'for  r in'\n",
+        "    # as  r\n",
+        // A header whose condition holds a string with a bracket is a read.
+        "    if z == \"(\": pass\n",
+        "    if z == '''it's''': pass\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
+    use super::related_tests::binds_in_target_list;
+    for body in [
+        "r = make()\ncase (r):\n    pass\n",
+        "r = make()\ncase [r]:\n    pass\n",
+        "r = make()\n    case (r):\n        pass\n",
+        "r = make()\ncase {\"k\": r}:\n    pass\n",
+        "r = make()\ncase Foo(x=r):\n    pass\n",
+        "r = make()\ncase (1 | r):\n    pass\n",
+        "r = make()\ncase Foo(a=1, b=(r)):\n    pass\n",
+    ] {
+        assert!(binds_in_target_list(body, "r"), "{body:?}");
+    }
+    for body in [
+        "r = make()\nif (r):\n    pass\n",
+        "r = make()\nif [r]:\n    pass\n",
+        "r = make()\ncase_count = (r)\n",
+        "r = make()\ncase r.A:\n    pass\n",
+        "r = make()\ncase r(1):\n    pass\n",
+        "r = make()\ncase other:\n    pass\n",
+    ] {
+        assert!(!binds_in_target_list(body, "r"), "{body:?}");
+    }
+}

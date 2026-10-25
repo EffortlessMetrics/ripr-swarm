@@ -3769,6 +3769,9 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_non_ascii_identifier_prefix_then_the_classifier_credits_no_call",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_non_identifier_non_ascii_neighbours_then_the_call_is_an_intentional_miss",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned_as_an_f_string",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
+  "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -18943,10 +18946,16 @@ spec = "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md"
 tests = [
   "crates/ripr/src/output/doctor_binary.rs::tests::cargo_build_output_running_binary_suppresses_path_mismatch_warning",
   "crates/ripr/src/output/doctor_binary.rs::tests::different_installed_ripr_on_path_warns_without_build_output_claim",
+  "crates/ripr/src/output/doctor_binary.rs::tests::missing_path_ripr_with_launching_config_warns_advisory_only",
+  "crates/ripr/src/output/doctor_binary.rs::tests::only_server_definitions_count_as_launching_configs",
+  "crates/ripr/src/output/doctor_binary.rs::tests::launching_config_with_ripr_on_path_stays_quiet",
+  "crates/ripr/src/output/doctor_binary.rs::tests::missing_path_ripr_without_launching_config_stays_quiet",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::default_screen_warns_when_config_launches_ripr_missing_from_path",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/output/doctor_binary.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md",

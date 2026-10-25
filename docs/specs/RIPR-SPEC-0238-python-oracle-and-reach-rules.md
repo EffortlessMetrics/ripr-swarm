@@ -1367,14 +1367,19 @@ and the test is `tests/test_subject.py`, which imports each owner from
   (#6597) score credited under rules 12 to 14; the `py-almost-*` cases
   cover rule 12's other forms (default and `places=None` credited,
   explicit `places=` and `delta=`, the positional `delta`, a spread and a
-  non-`self` receiver scored as a gap),
+  non-`self` receiver scored as a gap), the `py-raises-*` cases cover
+  rules 13 and 14 (a callable-form `raises` or `assertRaises`, with and
+  without `match=`, and a coarse length read of a bound exception score
+  as gaps; a bound `.exception` compared with `==` and an `.args` index
+  score credited),
   `py-spec0233-ex11-fluent-helper` scores limited under rule 3, and
   `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
   rule 20. Example 34's `exc.value is not None` and length forms have
   cases (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`,
-  #7546); the corpus has no `assertRaises` callable,
-  `assertRaises ... as cm` or other example 34 form yet, and each needs
-  its own case before those parts read as established.
+  #7546); `assertRaises` callable and `assertRaises ... as cm` now have
+  cases (`py-raises-callable-unittest`,
+  `py-raises-bound-unittest-exception`), and any other example 34 form
+  needs its own case before that part reads as established.
   Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
   mutant the `assert_called_once_with` expectation kills, which scores
   credited under rule 17's called-parameter form, and a sign case
