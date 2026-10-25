@@ -5,6 +5,75 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "python_dynamic_namespace_dunder_setattr",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dynamic_namespace_dunder_setattr",
+      "vector": "dynamic_namespace_writer_cannot_credit_an_imported_module_object_or_constant",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "python_dynamic_namespace_reload",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dynamic_namespace_reload",
+      "vector": "dynamic_namespace_writer_cannot_credit_an_imported_module_object_or_constant",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "python_dynamic_namespace_renamed_delattr",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dynamic_namespace_renamed_delattr",
+      "vector": "dynamic_namespace_writer_cannot_credit_an_imported_module_object_or_constant",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_operand_callee_later_binding",
       "language": "rust",
       "tier": "pure",
