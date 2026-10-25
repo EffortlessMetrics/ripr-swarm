@@ -5,6 +5,10 @@
 //! a limitation whenever its sources are scanned. A docs-only diff must not
 //! mention it; the same sentinel must appear once the diff touches Rust, so
 //! the silence is not an insensitive probe.
+//!
+//! Boundary: the probe observes workspace Rust that reaches the index. A read
+//! that never feeds the index (for example a bare open that is discarded)
+//! would not name the sentinel; this test does not claim to catch that.
 
 use std::fs;
 use std::path::{Path, PathBuf};
