@@ -193,6 +193,8 @@ fn pins_error_payload() {
             "assert_send::<Vec<u8>>();",
             "common::assert_sync::<Wrapper>();",
             "assert_send_sync::< Wrapper >( );",
+            // Known fail-closed over-refusal: refused by shape, not callee.
+            "checker.assert_ready::<Wrapper>();",
         ] {
             assert!(
                 !patterns::is_custom_assertion_helper(line),

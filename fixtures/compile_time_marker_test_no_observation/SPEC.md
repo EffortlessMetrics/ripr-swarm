@@ -35,6 +35,15 @@ only by `same_test_file` and has no assertion, so it is listed with a
 
 ## Limits
 
+The refusal is by shape, not by callee: every zero-argument turbofish call is
+dropped, including ambient-state helpers (`assert_valid::<Config>()`), method
+forms (`checker.assert_ready::<T>()`) and `assert_ok::<T>()?`, a known
+fail-closed over-refusal. The check is line-based and reads only the first callee of a line, so a
+multi-statement line (`foo(); assert_send::<T>();`) is judged by `foo`; the
+lexical extractor read no fact from it before and reads none now (fail-open,
+other statement-splitting paths not measured).
+
+
 Reach stays `weak` (not `no`) because `get` is named elsewhere in the source
 (`self.inner.get()`); `owner_may_be_reached_unseen` does not tell a call of
 another type's method from a call of the owner (#10091 follow-up). Renaming the
