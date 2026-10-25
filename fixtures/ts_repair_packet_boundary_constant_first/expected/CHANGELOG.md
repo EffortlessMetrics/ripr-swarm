@@ -454,6 +454,32 @@ Updated:
 ## Pending — ts_repair_packet_boundary_constant_first (35)
 
 Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (36)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (37)
+
+Reason:
 RIPR-SPEC-0224 (#10040): the TypeScript row-owned MissedBoundary fact now emits missing_input with the hedged 'seen' wording instead of observation_unconfirmed
 
 Command:
