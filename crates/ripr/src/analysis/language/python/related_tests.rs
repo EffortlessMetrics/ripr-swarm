@@ -803,19 +803,22 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         // `in` binds only inside a `for` target list (`for (r) in items`,
         // `for x, (r) in items`); a membership test such as
         // `assert ((r)) in items` rebinds nothing.
-        || (rest.starts_with("in ") && is_inside_for_target(head_line))
+        || (rest.starts_with("in ") && is_inside_for_target(head))
         || head.trim_end().ends_with(" as")
 }
 
 /// Whether `head` (the text of a line before a peeled target) sits in the
-/// target list of a `for` statement: the last whole word `for` has no `in`,
-/// `=` or `:` after it.
+/// target list of a `for` statement: the last whole code word `for` on the
+/// current line has no `in`, `=` or `:` after it. Keep earlier lines available
+/// to the string mask, since a triple-quoted string can start on one of them.
 fn is_inside_for_target(head: &str) -> bool {
+    let line_start = head.rfind('\n').map_or(0, |at| at + 1);
     let mut search = head.len();
-    while let Some(at) = head[..search].rfind("for") {
+    while let Some(offset) = head[line_start..search].rfind("for") {
+        let at = line_start + offset;
         let boundary_before = !head[..at].ends_with(is_python_identifier_char);
         let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
-        if boundary_before && boundary_after {
+        if boundary_before && boundary_after && !python_text_hides_code(head, at) {
             let targets = &head[at + 3..];
             return !targets.contains(['=', ':'])
                 && !targets

@@ -370,7 +370,9 @@ comments, strings, and docstrings:
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
   `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target, or
-  not the whole bound value, is not credited. A `:` ends a target position only
+  not the whole bound value, is not credited. A quoted `for` in a membership
+  read (`assert 'for' and ((r)) in [r]`) does not rebind the receiver.
+  A `:` ends a target position only
   when it closes a compound-statement header whose brackets balance outside
   string literals and comments (`if ")": ( r), x = ...` rebinds, a dict value
   `{"k": (r), 1}` does not); a header split across lines is a known limit: a
