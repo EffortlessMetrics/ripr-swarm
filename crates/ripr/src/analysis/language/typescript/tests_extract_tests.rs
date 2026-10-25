@@ -1164,6 +1164,14 @@ fn skipped_suite_bindings_follow_imports_and_immutable_aliases() {
     let file = Path::new("test/binding.test.ts");
     for (prelude, suite) in [
         ("", "describe.skip"),
+        (
+            "import { test } from '@playwright/test';",
+            "test.describe.serial.skip",
+        ),
+        (
+            "import { test } from '@playwright/test';",
+            "test.describe.parallel.skip",
+        ),
         ("import { describe as group } from 'mocha';", "group.skip"),
         (
             "import { describe as group } from 'vitest'; const d = group;",
@@ -1237,6 +1245,37 @@ fn skipped_suite_bindings_keep_unrelated_and_shadowed_notices() {
         ),
         format!("let d = describe; d = custom; d.skip('runs', () => {{ {nested} }});"),
         format!("const d = describe; d.skip = custom; d.skip('runs', () => {{ {nested} }});"),
+        format!(
+            "const d = describe; (d.skip as any) = custom; d.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("const d = describe; [d.skip] = [custom]; d.skip('runs', () => {{ {nested} }});"),
+        format!("function register(describe) {{ describe.skip('runs', () => {{ {nested} }}); }}"),
+        format!("{{ const describe = custom; describe.skip('runs', () => {{ {nested} }}); }}"),
+        format!("for (const describe of helpers) describe.skip('runs', () => {{ {nested} }});"),
+        format!(
+            "const group = {{ skip: (_n, fn) => fn() }}; namespace N {{ const group = describe; }} group.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "function shadow(describe) {{ globalThis.describe = custom; }} describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "import * as runner from 'mocha'; const globalThis = runner; globalThis.describe = custom; runner.describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "({{ describe }} = {{ describe: custom }}); describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("({{ describe = custom }} = {{}}); describe.skip('runs', () => {{ {nested} }});"),
+        format!("let d = describe; d.skip = custom; describe.skip('runs', () => {{ {nested} }});"),
+        format!(
+            "let d; d = describe; d.skip = custom; describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "Object.assign(describe, {{ skip: custom }}); describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "Object.defineProperty(describe, 'skip', {{ value: custom }}); describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("customize(describe); describe.skip('runs', () => {{ {nested} }});"),
         format!("describe = custom; describe.skip('runs', () => {{ {nested} }});"),
     ] {
         let allocator = Allocator::default();
@@ -1267,6 +1306,22 @@ fn skipped_suite_bindings_preserve_evaluated_argument_and_sibling_notices() {
             gap.as_ref()
                 .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
             "{source}: {gap:?}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_cover_alias_options_and_block_locals() {
+    let file = Path::new("test/binding.test.ts");
+    for source in [
+        "const d = describe; d('off', { skip: true }, () => { it('dormant', () => {}); });",
+        "{ const d = describe; d.skip('off', () => { it('dormant', () => {}); }); }",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{source}"
         );
     }
 }

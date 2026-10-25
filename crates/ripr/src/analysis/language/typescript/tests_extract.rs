@@ -2,8 +2,8 @@
 
 use super::*;
 
-#[derive(Clone, Copy)]
-enum TestDeclarationRoot {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TestDeclarationRoot {
     Test,
     Describe,
 }
@@ -13,7 +13,7 @@ impl TestDeclarationRoot {
     /// `context` and the TDD / Vitest / `node:test` `suite` (#4548). The
     /// skipped spellings (`xit`, `xcontext`, `.skip`) are deliberately not
     /// matched: they register no running test.
-    fn matches_identifier(self, name: &str) -> bool {
+    pub(super) fn matches_identifier(self, name: &str) -> bool {
         match self {
             Self::Test => matches!(name, "test" | "it" | "specify"),
             Self::Describe => matches!(name, "describe" | "context" | "suite"),
@@ -3718,21 +3718,10 @@ fn is_playwright_describe_member(
 /// A `describe`-root call the runner skips: a `.skip` / `.fixme`
 /// modifier on the root (alone or after active modifiers), or an options
 /// object that turns the suite off.
-fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
-    fn skipped_modifier_on_describe(expression: &Expression<'_>) -> bool {
-        match expression {
-            Expression::StaticMemberExpression(member) => {
-                (matches!(member.property.name.as_str(), "skip" | "fixme")
-                    && expression_is_active_declaration(
-                        &member.object,
-                        TestDeclarationRoot::Describe,
-                    ))
-                    || (is_active_declaration_modifier(member.property.name.as_str())
-                        && skipped_modifier_on_describe(&member.object))
-            }
-            _ => false,
-        }
-    }
+fn callee_is_skipped_describe(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    bindings: &super::declaration_bindings::DeclarationBindings,
+) -> bool {
     // Only a literal `skip: true` turns the suite off; a
     // dynamic value, a spread or any other key (`fails`) leaves it active.
     let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
@@ -3760,9 +3749,8 @@ fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
             off
         })
     };
-    skipped_modifier_on_describe(&call.callee)
-        || (expression_is_active_declaration(&call.callee, TestDeclarationRoot::Describe)
-            && literally_off(call))
+    bindings.skipped_describe(&call.callee)
+        || (bindings.active(&call.callee, TestDeclarationRoot::Describe) && literally_off(call))
 }
 
 fn is_active_declaration_modifier(name: &str) -> bool {
@@ -4174,8 +4162,11 @@ pub(crate) fn detect_partial_test_extraction_expanded(
         }
         let imports = extract_imports_from_statements(&ret.program.body);
         let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+        let bindings =
+            super::declaration_bindings::DeclarationBindings::of_program(&ret.program, &admission);
         let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
+            bindings,
             source: &source,
             extracted_starts: &extracted_starts,
             covered: covered.as_deref().unwrap_or_default(),
@@ -4245,6 +4236,7 @@ fn extracted_span_starts(
 /// (statement containers, call arguments, function bodies). Array-element and
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
+    bindings: super::declaration_bindings::DeclarationBindings,
     source: &'a SourceText<'a>,
     extracted_starts: &'a [usize],
     /// Suite-factory declarations whose registrations the appended
@@ -4505,7 +4497,19 @@ impl UnextractedTestFinder<'_> {
         // A skipped suite (`describe.skip(...)`, `describe('x', { skip: true },
         // ...)`) registers nothing and its callback never runs, so a
         // registration inside it is not one the extractor dropped.
-        if callee_is_skipped_describe(call) {
+        if callee_is_skipped_describe(call, &self.bindings) {
+            // The callback is dormant, but titles/options are evaluated before
+            // the runner receives them. Retain registrations in invoked values.
+            for argument in &call.arguments {
+                if let Some(expression) = argument.as_expression() {
+                    self.visit_empty_table_evaluated_expression(expression);
+                } else {
+                    self.visit_argument(argument);
+                }
+                if self.gap.is_some() {
+                    break;
+                }
+            }
             return;
         }
         if statement_position && self.gap.is_none() {

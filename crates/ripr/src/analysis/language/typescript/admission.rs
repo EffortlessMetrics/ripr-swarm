@@ -305,6 +305,13 @@ impl TypeScriptAdmissionContext {
             .is_some_and(|registration| registration.kind == expected)
     }
 
+    /// Proven runner imports shared by registration disclosure (#10169).
+    pub(super) fn runner_declaration_imports(&self) -> impl Iterator<Item = &TypeScriptImport> {
+        self.registration_imports
+            .iter()
+            .filter(|import| self.import_class(import) == ImportClass::Runner)
+    }
+
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }

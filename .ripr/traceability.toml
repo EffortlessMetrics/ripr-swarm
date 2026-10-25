@@ -17175,6 +17175,10 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_follow_imports_and_immutable_aliases",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_unrelated_and_shadowed_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_preserve_evaluated_argument_and_sibling_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_cover_alias_options_and_block_locals",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",
@@ -17429,6 +17433,7 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/declaration_bindings.rs",
   "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",
   "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",

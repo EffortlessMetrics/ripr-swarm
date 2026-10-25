@@ -272,6 +272,16 @@ Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
 test record and retain a typed partial-extraction limitation, including an
 assertion-only callback with no nested test call. This does not expand aliases.
 
+Skipped-suite disclosure resolves the referenced lexical runner binding, not
+its spelling (#10169). Known runner imports and immutable aliases (including
+namespace members) may establish a dormant suite callback. Parameters,
+block/catch/loop/namespace locals, unrelated imports, writes and opaque code
+cannot establish that fact. Only the dormant callback is omitted; evaluated
+registration arguments and later siblings remain eligible for a partial
+extraction notice. This disclosure rule does not expand test extraction or
+oracle credit. Computed aliases, mutable aliases and unresolved flows retain
+the conservative notice.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,

@@ -69,6 +69,7 @@ mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
+mod declaration_bindings;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
