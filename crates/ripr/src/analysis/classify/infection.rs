@@ -210,8 +210,7 @@ fn only_bare_row_assertions(test: &TestSummary, owner: &str) -> bool {
     let is_bool = |text: &str| matches!(text.trim(), "true" | "false");
     let is_call = |text: &str| {
         let text = text.trim();
-        text.strip_prefix(owner)
-            .is_some_and(|rest| closes_at_end(rest))
+        text.strip_prefix(owner).is_some_and(closes_at_end)
             && owner_call_has_plain_literal_arguments(text, owner)
     };
     statements.iter().all(|statement| {
