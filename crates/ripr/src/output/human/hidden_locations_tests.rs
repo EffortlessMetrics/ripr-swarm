@@ -29,7 +29,7 @@ fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
     assert!(rendered.contains("\nHidden:\n"), "{rendered}");
     for index in usize::from(selected)..3 {
         assert!(
-            rendered.contains(&format!("    - ./src/f{index}.rs:{} (weak)\n", 7 + index)),
+            rendered.contains(&format!("    - ./src/f{index}.rs:{} (weak); kind: predicate; reason: missing strong oracle\n", 7 + index)),
             "{rendered}"
         );
     }
@@ -117,7 +117,7 @@ fn outside_parent_escape_and_unrooted_paths_keep_their_spelling() -> std::io::Re
     for file in files {
         assert!(
             rendered.contains(&format!(
-                "    - {}:7 (weak)\n",
+                "    - {}:7 (weak); kind: predicate; reason: missing strong oracle\n",
                 crate::output::path::display_path(&file)
             )),
             "{rendered}"
@@ -136,7 +136,7 @@ fn path_encoding_and_terminal_escaping_are_preserved() {
     output.root = root;
     let rendered = render(&output);
     assert!(
-        rendered.contains("    - ./src/percent%25name\\u{1b}.rs:7 (weak)\n"),
+        rendered.contains("    - ./src/percent%25name\\u{1b}.rs:7 (weak); kind: predicate; reason: missing strong oracle\n"),
         "{rendered}"
     );
     assert!(!rendered.contains('\u{1b}'), "{rendered}");
@@ -164,11 +164,15 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
     );
     assert_eq!(rendered.matches("    - ./src/").count(), 20, "{rendered}");
     assert!(
-        rendered.contains("    - ./src/f00.rs:1 (weak)\n"),
+        rendered.contains(
+            "    - ./src/f00.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+        ),
         "{rendered}"
     );
     assert!(
-        rendered.contains("    - ./src/f19.rs:20 (weak)\n"),
+        rendered.contains(
+            "    - ./src/f19.rs:20 (weak); kind: predicate; reason: missing strong oracle\n"
+        ),
         "{rendered}"
     );
     assert!(!rendered.contains("    - ./src/f20.rs:"), "{rendered}");

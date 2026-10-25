@@ -2722,11 +2722,15 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("    - src/f1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/f2.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f2.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -2768,11 +2772,15 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_0.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_0.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
@@ -2915,7 +2923,9 @@ mod tests {
             "base-side evidence must not read as lower-priority:\n{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -2949,11 +2959,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak, base-side)\n"),
+            rendered.contains("    - src/base.rs:1 (weak, base-side); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate)\n"),
+            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
     }

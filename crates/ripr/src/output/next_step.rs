@@ -59,6 +59,8 @@ pub(crate) fn reconcile_next_step(finding: &Finding) -> String {
 /// Evidence-specific guidance for a named unresolved edge. This changes only
 /// the explanation; it neither clears the limitation nor admits a repair.
 pub(crate) fn unresolved_edge_guidance(finding: &Finding) -> Option<String> {
+    // Preserve the public optional-field contract uniformly across renderers.
+    finding.recommended_next_step.as_ref()?;
     if !matches!(
         finding.static_limit_kind,
         Some(
@@ -139,6 +141,33 @@ mod tests {
             reconcile_next_step(&finding),
             "add a direct test for parse_unit"
         );
+    }
+
+    #[test]
+    fn limited_journey_absent_next_step_stays_absent_with_a_typed_edge() {
+        let mut finding = complete_ts_finding();
+        finding.language = Some(LanguageId::Rust);
+        finding.language_status = None;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence =
+            vec!["limitation_first_unresolved_edge: entry `outer` -> owner `inner`".to_string()];
+        finding.recommended_next_step = None;
+        assert_eq!(unresolved_edge_guidance(&finding), None);
+        assert_eq!(reconcile_next_step(&finding), "");
+        let output = check_output_for(finding);
+        let config = RiprConfig::default();
+        let human = human_render_with_config(&output, &config);
+        let json = json_render_with_config(&output, &config, None);
+        assert!(
+            !human.contains("Tests cannot close this static-analysis limitation"),
+            "{human}"
+        );
+        assert!(
+            !json.contains("Tests cannot close this static-analysis limitation"),
+            "{json}"
+        );
+        assert!(json.contains("\"recommended_next_step\": \"\""), "{json}");
     }
 
     // ── shared test fixture ────────────────────────────────────────────────────
