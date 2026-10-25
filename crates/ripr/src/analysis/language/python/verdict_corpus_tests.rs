@@ -1973,6 +1973,17 @@ const AREA: &str = "def area(a, b):\n    return b * a\n";
 const AREA_TABLE: &str = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,want\", [(3, 7, 21)])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
 
 #[test]
+fn untyped_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), String> {
+    // Integer test rows do not establish the production function's operand
+    // types: the same function accepts noncommutative __mul__/__rmul__ objects.
+    assert_eq!(
+        classify(AREA, 2, "    return a * b", AREA_TABLE)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
 fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
     // `a * b` -> `b * a` changes no value, so rows that agree on both sides
     // say nothing about an operand the table fails to vary.
