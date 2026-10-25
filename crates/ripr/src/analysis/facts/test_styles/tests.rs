@@ -1707,9 +1707,12 @@ fn binary_root_alias_refuses_shadowed_prefixes_and_alternate_module_readings() -
 {
     for extra in [
         "mod my_macros {}",
+        "mod r#my_macros {}",
         "use external_macros as my_macros;",
+        "use external_macros as r#my_macros;",
         "use external_macros::*;",
         "extern crate external_macros as my_macros;",
+        "extern crate external_macros as r#my_macros;",
         "make_bindings!();",
     ] {
         let binary = format!("{extra}\n{ALIAS_ROOT}{USER}");

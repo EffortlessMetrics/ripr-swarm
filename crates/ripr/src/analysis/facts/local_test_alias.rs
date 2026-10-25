@@ -306,9 +306,9 @@ fn code_tokens(source: &str) -> String {
         .collect()
 }
 
-/// The crate-root files `file` could belong to: `src/lib.rs` and
-/// `src/main.rs` of its package that the index holds. Empty when the file
-/// is not under a `src` directory (an integration test is its own crate).
+/// Indexed library/main roots, or the file itself for an admitted direct
+/// automatic binary. Unresolved binary helpers and files outside `src`
+/// receive no crate-root credit.
 fn crate_roots(
     files: &BTreeMap<PathBuf, IndexedFileFacts>,
     file: &Path,
@@ -353,9 +353,11 @@ fn binary_alias_root_is_unambiguous(
         return false;
     };
     let scope = name_scope_for_file(&parse.tree());
-    if scope.child_modules.contains(&target.first)
-        || scope.defines.contains(&target.first)
-        || scope.imports_of(&target.first).next().is_some()
+    let shadows =
+        |name: &str| name.trim_start_matches("r#") == target.first.trim_start_matches("r#");
+    if scope.child_modules.iter().any(|name| shadows(name))
+        || scope.defines.iter().any(|name| shadows(name))
+        || scope.imports.iter().any(|import| shadows(&import.bound))
         || !scope.globs.is_empty()
     {
         return false;
