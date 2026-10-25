@@ -10,9 +10,30 @@ use super::source_utils::{SourceText, text_for_range};
 use super::{PythonAssertion, PythonOwner, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
-const PLAIN_METHODS: [&str; 7] = [
-    "__init__", "__bool__", "__add__", "__eq__", "__lt__", "__repr__", "__str__",
-];
+mod workspace_admission;
+
+const PLAIN_METHODS: [&str; 2] = ["__init__", "__bool__"];
+
+/// Bind this capability's observing file only after a bounded physical audit.
+pub(super) fn bind_workspace_observer(
+    root: &std::path::Path,
+    owners: &mut [PythonOwner],
+    sources: &std::collections::BTreeMap<std::path::PathBuf, String>,
+    incomplete: bool,
+) {
+    let pair = workspace_admission::closed_sources(root, sources, incomplete);
+    for owner in owners.iter_mut().filter(|owner| owner.name == "__bool__") {
+        owner.class_facts.truthiness_observer = pair.as_ref().and_then(|pair| {
+            if pair[0] == owner.file {
+                Some(pair[1].clone())
+            } else if pair[1] == owner.file {
+                Some(pair[0].clone())
+            } else {
+                None
+            }
+        });
+    }
+}
 
 /// This capability accepts one import and one plain test definition. Extra
 /// definitions can execute defaults/annotations or supersede the selected test.
@@ -131,7 +152,8 @@ pub(super) fn credit<'a>(
         }
     }
     for test in tests {
-        if !test.decorators.is_empty()
+        if owner.class_facts.truthiness_observer.as_ref() != Some(&test.file)
+            || !test.decorators.is_empty()
             || !test.fixtures.is_empty()
             || !test.constant_rebinding.plain_test_module
             || test.imports.len() != 1

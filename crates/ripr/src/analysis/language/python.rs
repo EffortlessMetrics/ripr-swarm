@@ -1036,6 +1036,19 @@ impl PythonAdapter {
         let workspace_incomplete = refused_files > 0
             || !workspace_read.limits.is_empty()
             || !workspace_read.io_failures.is_empty();
+        if all_owners.iter().any(|owner| {
+            owner.name == "__bool__"
+                && python_changed_files
+                    .iter()
+                    .any(|changed| changed.path == owner.file)
+        }) {
+            dunder_truthiness::bind_workspace_observer(
+                &options.root,
+                &mut all_owners,
+                &workspace_read.sources,
+                workspace_incomplete,
+            );
+        }
         let foreign_index = module_value::ForeignIndex::build(
             workspace_read
                 .sources

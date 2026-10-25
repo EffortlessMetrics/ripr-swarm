@@ -16682,6 +16682,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_credits_only_a_changed_truth_value",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_test_rebinding_activation_and_wrappers",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_replaced_tests_and_definition_effects",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::physical_pair_and_empty_package_initializers_are_admitted",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::every_third_python_source_is_refused_without_discovery_filters",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::local_import_artifacts_and_changed_source_bytes_are_refused",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::entry_and_depth_limits_refuse_unknown_frontiers",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_owner_body_is_deferred_then_no_changed_effect_is_credited",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_deferred_owner_is_only_a_method_token_then_no_branch_restores_credit",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_synchronous_field_helper_when_body_runs_then_changed_effect_stays_credited",
@@ -16720,6 +16724,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/dunder_truthiness.rs",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs",
   "crates/ripr/src/analysis/language/python/module_constants.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/message_pin.rs",

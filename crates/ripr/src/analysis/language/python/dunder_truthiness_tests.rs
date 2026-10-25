@@ -4,6 +4,15 @@ use super::owners_tests::{extract_owners, extract_tests};
 use super::related_tests::apply_class_facts;
 use crate::domain::{ExposureClass, Finding};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_WORKSPACE: AtomicUsize = AtomicUsize::new(0);
+struct TestWorkspace(std::path::PathBuf);
+impl Drop for TestWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 type Check = Result<(), String>;
 const MONEY: &str = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __bool__(self):\n        return self.cents > 0\n";
@@ -15,6 +24,25 @@ fn classify(source: &str, old: &str, test_source: &str, sole: bool) -> Result<Fi
     let test_file = Path::new("tests/test_money.py");
     let mut owners = extract_owners(file, source);
     apply_class_facts(&mut owners);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-dunder-classifier-{}-{}",
+        std::process::id(),
+        NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    let workspace = TestWorkspace(root);
+    let sources = std::collections::BTreeMap::from([
+        (file.to_path_buf(), source.to_string()),
+        (test_file.to_path_buf(), test_source.to_string()),
+    ]);
+    for (path, text) in &sources {
+        let absolute = workspace.0.join(path);
+        std::fs::create_dir_all(absolute.parent().ok_or("source needs parent")?)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(absolute, text).map_err(|error| error.to_string())?;
+    }
+    super::dunder_truthiness::bind_workspace_observer(&workspace.0, &mut owners, &sources, false);
     for owner in &mut owners {
         if owner.is_module_owner() {
             owner.foreign_writes = super::module_value::ForeignWrites::scan(

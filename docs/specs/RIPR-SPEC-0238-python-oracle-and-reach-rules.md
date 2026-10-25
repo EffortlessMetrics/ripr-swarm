@@ -864,13 +864,21 @@ mutant calibrates the rule; ripr reports only the static shape.
     discriminator only when its condition holds before and fails after the
     edit. The module must contain one plain, undecorated class without bases;
     methods have no decorators, defaults or annotations and are limited to
-    `__init__`, `__bool__`, `__add__`, `__eq__`, `__lt__`, `__repr__` and `__str__`.
+    `__init__` and `__bool__`.
     Its constructor is one `self.field = parameter` and
     `__bool__` is one return comparing that field to a signed 64-bit integer
     literal with `==`, `!=`, `<`, `<=`, `>` or `>=`. Both old and new predicates
     must resolve on the same field. The test module contains one import and
     one argument-free, undecorated function without annotations or defaults;
-    literal docstrings are allowed. Its sole statement is that assertion,
+    literal docstrings are allowed. A truthiness-only physical audit must find
+    exactly those two nonempty, ASCII Python sources with bytes matching the
+    parsed view. Empty package initializers are allowed. It inspects every
+    directory, including generated, excluded and hidden paths, within 512
+    entries and 16 levels; a third Python source, local bytecode/native/import
+    artifact, symlink, non-ASCII path, incomplete read or traversal/type error
+    refuses this credit. The audit is a bounded current filesystem observation,
+    not a change to the general walker or a hostile-race guarantee.
+    The selected function's sole statement is that assertion,
     the class import identifies the exact owner module, and no fixture, implicit
     setup, activation control, edited test, rebinding or known foreign write
     can replace the class, constructor, method or field. Other types and wider

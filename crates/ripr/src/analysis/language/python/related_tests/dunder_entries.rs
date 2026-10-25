@@ -29,6 +29,9 @@ use crate::domain::OwnerKind;
 /// Class-level facts the entry binding reads, filled once per workspace.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(in crate::analysis::language::python) struct PythonClassFacts {
+    /// Sole observing source after the truthiness-only physical isolation audit.
+    /// Unknown/default contexts cannot provide the new integer truthiness credit.
+    pub(in crate::analysis::language::python) truthiness_observer: Option<std::path::PathBuf>,
     /// Every method name defined in the owner's class body.
     pub(in crate::analysis::language::python) methods: Vec<String>,
     /// Whether the class's `__enter__` is a bare `return self`.
