@@ -348,3 +348,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_log_message (21)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless propagate_log_message --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

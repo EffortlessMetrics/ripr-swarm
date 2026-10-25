@@ -1914,3 +1914,11 @@ path = "docs/specs/RIPR-SPEC-0357-binding-default-reaches-return.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #10259 records the value-default return-flow contract: a changed let whose unwrap_or default reaches the returned text unchanged reads as a return flow without new credit, and credit needs the default branch taken under an exact assertion."
+
+[[artifact]]
+id = "RIPR-SPEC-0360"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0360-rust-loop-accumulator-update.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #6485 records the loop-accumulator contract: a changed update of a zero-initialized local the owner returns gets a return_value probe, an exact pin credits it only when it walks a non-empty literal input and pins a nonzero total, and an exact pin ripr cannot read is withheld, never a gap."

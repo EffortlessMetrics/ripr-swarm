@@ -6462,11 +6462,26 @@ fn validate_spec_references(
     ids: &BTreeMap<String, Vec<String>>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    for relative in [
-        ".ripr/traceability.toml",
-        "metrics/capabilities.toml",
-        "docs/CAPABILITY_MATRIX.md",
-    ] {
+    let mut references = vec![
+        ".ripr/traceability.toml".to_string(),
+        "metrics/capabilities.toml".to_string(),
+        "docs/CAPABILITY_MATRIX.md".to_string(),
+    ];
+    if let Ok(entries) = fs::read_dir(root.join(TRACEABILITY_FRAGMENT_DIR)) {
+        let mut fragments: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+            .map(|entry| {
+                format!(
+                    "{TRACEABILITY_FRAGMENT_DIR}/{}",
+                    entry.file_name().to_string_lossy()
+                )
+            })
+            .collect();
+        fragments.sort();
+        references.extend(fragments);
+    }
+    for relative in &references {
         let path = root.join(relative);
         if !path.exists() {
             continue;
@@ -6529,7 +6544,7 @@ fn check_traceability() -> Result<(), String> {
         return finish_traceability_report(&violations, &advisories);
     }
 
-    let (behaviors, parse_violations) = parse_traceability_manifest(manifest)?;
+    let (behaviors, parse_violations) = load_traceability_behaviors(manifest)?;
     violations.extend(parse_violations);
     if behaviors.is_empty() {
         violations.push(".ripr/traceability.toml has no [[behavior]] entries".to_string());
@@ -6877,6 +6892,76 @@ fn is_ascii_digits(value: &str) -> bool {
     value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// Directory of traceability fragments. A PR registers its tests, fixtures,
+/// code, outputs and metrics, or a whole new behavior, in a file of its own
+/// here instead of editing the shared `.ripr/traceability.toml` arrays that
+/// every PR otherwise appends to.
+const TRACEABILITY_FRAGMENT_DIR: &str = ".ripr/traceability.d";
+
+/// The base manifest plus every fragment, with `[[extend]]` entries folded
+/// into the behavior they name. An `[[extend]]` whose id no behavior carries
+/// is a violation, and a fragment may not set `name` or `spec` on an extend.
+fn load_traceability_behaviors(
+    manifest: &Path,
+) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
+    let (mut all, mut violations) = parse_traceability_manifest(manifest)?;
+    let dir = manifest
+        .parent()
+        .map(|parent| parent.join("traceability.d"))
+        .unwrap_or_else(|| PathBuf::from(TRACEABILITY_FRAGMENT_DIR));
+    if dir.is_dir() {
+        let mut fragments: Vec<PathBuf> = fs::read_dir(&dir)
+            .map_err(|error| format!("failed to read {}: {error}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        fragments.sort();
+        for fragment in fragments {
+            let (behaviors, fragment_violations) = parse_traceability_manifest(&fragment)?;
+            violations.extend(fragment_violations);
+            all.extend(behaviors);
+        }
+    }
+
+    let mut merged: Vec<TraceBehavior> = Vec::new();
+    let mut extends = Vec::new();
+    for behavior in all {
+        if behavior.extends {
+            extends.push(behavior);
+        } else {
+            merged.push(behavior);
+        }
+    }
+    for extend in extends {
+        let location = format!("{}:{}", extend.source, extend.line);
+        let Some(id) = extend.id.as_ref() else {
+            violations.push(format!("{location} [[extend]] is missing `id`"));
+            continue;
+        };
+        if extend.name.is_some() || extend.spec.is_some() {
+            violations.push(format!(
+                "{location} [[extend]] for {id} sets `name` or `spec`; those belong to its [[behavior]]"
+            ));
+        }
+        let Some(base) = merged
+            .iter_mut()
+            .find(|behavior| behavior.id.as_ref() == Some(id))
+        else {
+            violations.push(format!(
+                "{location} [[extend]] names {id}, which no [[behavior]] carries"
+            ));
+            continue;
+        };
+        base.tests.extend(extend.tests);
+        base.fixtures.extend(extend.fixtures);
+        base.code.extend(extend.code);
+        base.outputs.extend(extend.outputs);
+        base.metrics.extend(extend.metrics);
+    }
+    Ok((merged, violations))
+}
+
 fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
     let text = read_text_lossy(path)?;
     let mut behaviors = Vec::new();
@@ -6921,12 +7006,14 @@ fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<S
             }
             continue;
         }
-        if trimmed == "[[behavior]]" {
+        if trimmed == "[[behavior]]" || trimmed == "[[extend]]" {
             if let Some(behavior) = current.take() {
                 behaviors.push(behavior);
             }
             current = Some(TraceBehavior {
                 line: line_number,
+                extends: trimmed == "[[extend]]",
+                source: normalize_path(path),
                 ..TraceBehavior::default()
             });
             continue;
@@ -16882,7 +16969,7 @@ fn changed_source_layers(changes: &[ChangedPath]) -> BTreeSet<&'static str> {
 fn source_layer_for_path(path: &str) -> Option<&'static str> {
     if path.starts_with(".github/workflows/") {
         Some("workflows")
-    } else if path == ".ripr/traceability.toml" {
+    } else if path == ".ripr/traceability.toml" || path.starts_with(".ripr/traceability.d/") {
         Some("traceability")
     } else if path.starts_with(".ripr/goals/") {
         Some("goal-manifest")
@@ -21090,6 +21177,7 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
             || is_fixture_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         warnings.push(
@@ -21207,6 +21295,7 @@ fn critic_findings(
             || is_golden_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         findings.push(CriticFinding {

@@ -1762,7 +1762,11 @@ fn parameter_rebound_before(
     if owner_declares_local(owner, name, declared_line.saturating_sub(1)) {
         return true;
     }
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    // Char literals are blanked first so `';'` / `'{'` do not end a pattern
+    // region early and `'"'` does not open a string (#10228).
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(
+        &crate::analysis::language::mask_rust_char_literals(&owner.body),
+    );
     if pattern_position_binds_before(owner, &masked, name, initializer) {
         return true;
     }
@@ -9955,6 +9959,14 @@ assert_eq!(input.amount, 100);"#
             (
                 "match k {\n        None => { drop(1); }\n        Some(Foo { n, .. })\n            => 1,\n    };\n    ",
                 "match k {\n        None => { drop(1); }\n        Some(Foo { a, .. })\n            => 1,\n    };\n    ",
+            ),
+            (
+                "match (x, c) {\n        Some(n)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+                "match (x, c) {\n        Some(a)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+            ),
+            (
+                "if let ('=', n) = pair {\n        drop(n);\n    }\n    ",
+                "if let ('=', a) = pair {\n        drop(a);\n    }\n    ",
             ),
             (
                 "match k { Some(n) => 1, None => 2 };\n    ",

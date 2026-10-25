@@ -347,7 +347,7 @@ Updated:
 ## Pending — unsafe_boundary_probe (29)
 
 Reason:
-RIPR-SPEC-0357 stage 1: changed let reaching the returned expression adds binding_return_relation evidence only (#10259)
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
 
 Command:
 `cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
@@ -359,7 +359,7 @@ Updated:
 ## Pending — unsafe_boundary_probe (30)
 
 Reason:
-RIPR-SPEC-0357 stage 1: neutral non-claim wording (#10259)
+RIPR-SPEC-0357 stage 1: changed let reaching the returned expression adds binding_return_relation evidence only (#10259)
 
 Command:
 `cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
