@@ -512,9 +512,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// per row (#6925). Old entries read the table's owner as unreached.
 /// `1.102`: the same equal-arm sink limit reads a rustfmt-layout branch
 /// chain (#10134). Old entries keep the exposed verdict.
-/// `1.103`: a literal fixture receiver can feed an exact tuple-projection
-/// sum pin (#9766). Old entries retain the framework-oracle limit.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.103";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.102";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -663,8 +661,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.103";
 /// `0.107`: same equal-arm sink limit as full `1.100`.
 /// `0.108`: same macro table tests as full `1.101`.
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
-/// `0.110`: same literal fixture receiver pin as full `1.103`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.109";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -815,8 +812,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
 /// `0.107`: same equal-arm sink limit as full `1.100`.
 /// `0.108`: same macro table tests as full `1.101`.
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
-/// `0.110`: same literal fixture receiver pin as full `1.103`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.109";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only

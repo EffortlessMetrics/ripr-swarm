@@ -6,20 +6,20 @@
   "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:dd8b2c290153bcd93d3f9570eee2ea7658211a6a42896c5f69a9084c21bbaeb1","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:7de5c7cf94c760c78368d0076733122d3ddefb7d72c99cffe538615b7a676aa8","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:return_value:4827254b",
+      "id": "probe:src_lib.rs:return_value:d4907aca",
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.66,
       "probe": {
-        "id": "probe:src_lib.rs:return_value:4827254b",
+        "id": "probe:src_lib.rs:return_value:d4907aca",
         "family": "return_value",
         "delta": "value",
         "file": "./src/lib.rs",
-        "line": 15,
+        "line": 16,
         "expression": "self.items.iter().map(|(_, price)| price).sum()"
        },
       "ripr": {
@@ -29,31 +29,31 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach total: fixture_total", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, price)| price).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, price)| price).sum() (line 15)", "related test src/lib.rs:51 fixture_total uses strong exact value oracle: assert_eq!(fixture().total(), 0);", "related test src/lib.rs:36 empty_pop_panics uses weak broad error oracle: assert!(result.is_err());", "related test src/lib.rs:30 longest_of_nothing uses strong exact value oracle: assert_eq!(longest(&[]), None);", "related test src/lib.rs:30 longest_of_nothing uses smoke only oracle: assert!(longest(&[\"a\"]).is_some());", "related test src/lib.rs:45 pops_the_first uses strong exact value oracle: assert_eq!(pop_front(&mut values), 4);", "source assertion argument value \"a\" at line 32", "source assertion argument value 4 at line 47", "source assertion argument value 0 at line 52"],
+      "evidence_path": ["reach yes: Related tests appear to reach total: fixture_total", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, price)| price).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, price)| price).sum() (line 16)", "related test src/lib.rs:52 fixture_total uses strong exact value oracle: assert_eq!(fixture().total(), 0);", "related test src/lib.rs:37 empty_pop_panics uses weak broad error oracle: assert!(result.is_err());", "related test src/lib.rs:31 longest_of_nothing uses strong exact value oracle: assert_eq!(longest(&[]), None);", "related test src/lib.rs:31 longest_of_nothing uses smoke only oracle: assert!(longest(&[\"a\"]).is_some());", "related test src/lib.rs:46 pops_the_first uses strong exact value oracle: assert_eq!(pop_front(&mut values), 4);", "source assertion argument value \"a\" at line 33", "source assertion argument value 4 at line 48", "source assertion argument value 0 at line 53"],
       "flow_sinks": [
-        {"kind":"return_value","text":"self.items.iter().map(|(_, price)| price).sum()","line":15}
+        {"kind":"return_value","text":"self.items.iter().map(|(_, price)| price).sum()","line":16}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, price)| price).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach total: fixture_total", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `fixture_total` (src/lib.rs:51)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, price)| price).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach total: fixture_total", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `fixture_total` (src/lib.rs:52)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
       "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
       "assertion_texts": {
-        "32": "assert!(longest(&[\"a\"]).is_some());",
-        "47": "assert_eq!(pop_front(&mut values), 4);",
-        "52": "assert_eq!(fixture().total(), 0);"
+        "33": "assert!(longest(&[\"a\"]).is_some());",
+        "48": "assert_eq!(pop_front(&mut values), 4);",
+        "53": "assert_eq!(fixture().total(), 0);"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 32,
+            "line": 33,
             "value": "\"a\"",
             "context": "assertion_argument"
           },
           {
-            "line": 47,
+            "line": 48,
             "value": "4",
             "context": "assertion_argument"
           },
           {
-            "line": 52,
+            "line": 53,
             "value": "0",
             "context": "assertion_argument"
           }
@@ -63,17 +63,17 @@
       },
       "observed_values": [
         {
-          "line": 32,
+          "line": 33,
           "value": "\"a\"",
           "context": "assertion_argument"
         },
         {
-          "line": 47,
+          "line": 48,
           "value": "4",
           "context": "assertion_argument"
         },
         {
-          "line": 52,
+          "line": 53,
           "value": "0",
           "context": "assertion_argument"
         }
@@ -85,7 +85,7 @@
         {
           "name": "fixture_total",
           "file": "src/lib.rs",
-          "line": 51,
+          "line": 52,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(fixture().total(), 0);",
@@ -97,7 +97,7 @@
         {
           "name": "empty_pop_panics",
           "file": "src/lib.rs",
-          "line": 36,
+          "line": 37,
           "oracle_strength": "weak",
           "oracle_kind": "broad_error",
           "oracle": "assert!(result.is_err());",
@@ -109,7 +109,7 @@
         {
           "name": "longest_of_nothing",
           "file": "src/lib.rs",
-          "line": 30,
+          "line": 31,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(longest(&[]), None);",
@@ -121,7 +121,7 @@
         {
           "name": "longest_of_nothing",
           "file": "src/lib.rs",
-          "line": 30,
+          "line": 31,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
           "oracle": "assert!(longest(&[\"a\"]).is_some());",
@@ -133,7 +133,7 @@
         {
           "name": "pops_the_first",
           "file": "src/lib.rs",
-          "line": 45,
+          "line": 46,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(pop_front(&mut values), 4);",
@@ -146,15 +146,15 @@
       "stop_reasons": ["fixture_opaque", "gap_evidence_unresolved"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "`fixture_total` (src/lib.rs:51) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
-      "suggested_next_action": "`fixture_total` (src/lib.rs:51) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "recommended_next_step": "`fixture_total` (src/lib.rs:52) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`fixture_total` (src/lib.rs:52) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
       "language": "rust",
       "static_limit_kind": "rust_framework_oracle_unresolved",
       "static_limitation": {
         "analyzer_route": "analysis/classify/gap-admission",
         "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
         "kind": "rust_framework_oracle_unresolved",
-        "last_established_edge": "related tests `fixture_total` (src/lib.rs:51)",
+        "last_established_edge": "related tests `fixture_total` (src/lib.rs:52)",
         "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
       },
       "source_currentness": "candidate_current"

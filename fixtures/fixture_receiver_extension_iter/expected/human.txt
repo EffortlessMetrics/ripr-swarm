@@ -10,13 +10,13 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: limited by static analysis
   Safe next action: inspect the named static limitation before treating this as repair-ready
-  File: ./src/lib.rs:15
+  File: ./src/lib.rs:16
   Static exposure: unknown (severity: note, confidence 0.66)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: self.items.iter().map(|(_, price)| price).sum()
   Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
-  Related test (1 of 5 matched rows): src/lib.rs:51 fixture_total (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: `fixture_total` (src/lib.rs:51) pins the owner's result on a receiver a test helper
+  Related test (1 of 5 matched rows): src/lib.rs:52 fixture_total (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: `fixture_total` (src/lib.rs:52) pins the owner's result on a receiver a test helper
     builds, and ripr does not read what the helper puts in it for the changed closure to run over,
     so ripr does not report a gap. Check that the test's setup reaches the changed code and that its
     expectation differs between the old and the new behavior; add a test only if either fails
@@ -33,11 +33,11 @@ Start here:
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast probe:src_lib.rs:return_value:4827254b
-  ripr context --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast --at probe:src_lib.rs:return_value:4827254b
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:4827254b --root <cwd>/fixtures/fixture_receiver_extension_iter/input` for the full gate's answer
+  ripr explain --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast probe:src_lib.rs:return_value:d4907aca
+  ripr context --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast --at probe:src_lib.rs:return_value:d4907aca
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:d4907aca --root <cwd>/fixtures/fixture_receiver_extension_iter/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/fixture_receiver_extension_iter/input --at src/lib.rs:15 --kind return_value
+  ripr agent stub --root <cwd>/fixtures/fixture_receiver_extension_iter/input --at src/lib.rs:16 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

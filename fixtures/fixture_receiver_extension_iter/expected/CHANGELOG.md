@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — fixture_receiver_extension_iter (2)
+
+Reason:
+RIPR-SPEC-0240 #9766: normalize raw module and method identity, and retain associated macro dispatch refusal before crediting literal fixture data
+
+Command:
+`cargo xtask goldens bless fixture_receiver_extension_iter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
