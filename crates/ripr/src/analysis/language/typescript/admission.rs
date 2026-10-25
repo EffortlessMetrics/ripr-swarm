@@ -305,7 +305,7 @@ impl TypeScriptAdmissionContext {
             .is_some_and(|registration| registration.kind == expected)
     }
 
-    /// Proven runner imports shared by registration disclosure (#10169).
+    /// Validated runner imports shared by registration disclosure (#10169).
     pub(super) fn runner_declaration_imports(&self) -> impl Iterator<Item = &TypeScriptImport> {
         self.registration_imports
             .iter()
