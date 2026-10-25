@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,7 +12,7 @@
+     fn try_get_uint(&mut self, nbytes: usize) -> Result<u64, TryGetError>;
+ 
+     fn try_get_int(&mut self, nbytes: usize) -> Result<i64, TryGetError> {
+-        Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))
++        Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes * 1))
+     }
+ }
+ 
