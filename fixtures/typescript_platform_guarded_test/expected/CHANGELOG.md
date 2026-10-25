@@ -1,0 +1,25 @@
+# Golden Output Changes
+
+## Pending — typescript_platform_guarded_test (1)
+
+Reason:
+RIPR-SPEC-0243: new fixture for a registration under a platform guard (#10438)
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_platform_guarded_test (2)
+
+Reason:
+RIPR-SPEC-0243: guarded registration names typescript_conditional_registration (#10438)
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

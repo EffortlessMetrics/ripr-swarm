@@ -221,6 +221,17 @@ dropped, and names the call's line. A rendered pointer to an expanded test's
 assertion names the call's line; the assertion's own line stays an offset from
 the call, which the classifier indexes.
 
+**Rule 20. A test registered under an unevaluable `if` is reached, never credited (#10438).**
+A `test` / `it` call (or a `describe` holding them) inside an `if` statement
+whose condition is not a constant, such as a platform or environment guard
+(`if (isWindows) { test(...) }`), is indexed for reach, in the consequent and
+in the `else` branch. Whether the branch runs is unknown to static analysis,
+so the test records the guard (`!(cond)` for the `else` branch; nested guards
+join with `&&`), keeps no assertion, and its admission stays unresolved: it can
+make a finding `weakly_exposed` but never `exposed`. The finding and the
+outcome name `typescript_conditional_registration` with the guard and its line.
+A constant condition keeps its existing reading.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.

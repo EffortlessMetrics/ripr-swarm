@@ -121,3 +121,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (11)
+
+Reason:
+RIPR-SPEC-0243: unevaluated-condition label also covers a conditionally registered test (#10438)
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

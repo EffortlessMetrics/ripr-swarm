@@ -495,6 +495,9 @@ impl TypeScriptAdapter {
         // evaluate (#8714): the credit stands, the disclosure carries the
         // "may never execute" caveat.
         let mut conditional_credit_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
+        // Tests registered under an unevaluated `if` (#10438): indexed for
+        // reach, never credited; one gap per test file.
+        let mut conditional_registration_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
         // Owner shapes the extractor does not index, detected on CHANGED
         // production files only (#4104-A): their changed lines produce no
         // finding today, so the disclosure is the only honest signal.
@@ -658,6 +661,16 @@ impl TypeScriptAdapter {
                 // file, not two).
                 if let Some(gap) = conditional_credit_gap {
                     conditional_credit_gaps.push(gap);
+                }
+                if let Some(test) = tests
+                    .iter()
+                    .find(|test| test.conditional_registration.is_some())
+                {
+                    conditional_registration_gaps.push(TypeScriptConditionalCreditGap {
+                        file: relative.to_path_buf(),
+                        sample_line: test.factory_call_line.unwrap_or(test.line),
+                        condition: test.conditional_registration.clone().unwrap_or_default(),
+                    });
                 }
                 all_tests.extend(tests);
             } else {
@@ -1182,6 +1195,18 @@ impl TypeScriptAdapter {
         if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
             limitations.push(limitation);
         }
+        let consulted_registration_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            if test_index_consumed {
+                self::consulted_credit_gaps(&conditional_registration_gaps, &consulted_test_files)
+            } else {
+                Vec::new()
+            };
+        if let Some(limitation) = conditional_gap_summary(
+            &consulted_registration_gaps,
+            ConditionalGapKind::Registration,
+        )? {
+            limitations.push(limitation);
+        }
         // Partial owner extraction (#4104-A): changed lines inside owner
         // shapes the extractor does not index produce no finding, so this
         // typed limitation replaces the silent skip.
@@ -1420,6 +1445,48 @@ const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
 fn conditional_assertion_credit_summary(
     gaps: &[&TypeScriptConditionalCreditGap],
 ) -> Result<Option<AnalysisLimitation>, String> {
+    conditional_gap_summary(gaps, ConditionalGapKind::AssertionCredit)
+}
+
+/// Which unevaluated-condition disclosure a gap summary is for.
+#[derive(Clone, Copy)]
+enum ConditionalGapKind {
+    /// An assertion sits under the condition and keeps its credit (#8714).
+    AssertionCredit,
+    /// A test registration sits under the condition and earns no credit
+    /// (#10438).
+    Registration,
+}
+
+impl ConditionalGapKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => "typescript_conditional_assertion_credit",
+            Self::Registration => "typescript_conditional_registration",
+        }
+    }
+
+    fn plural_subject(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => {
+                "credit assertions under conditions static analysis cannot evaluate"
+            }
+            Self::Registration => "register tests under conditions static analysis cannot evaluate",
+        }
+    }
+
+    fn limitation(self, gap: &TypeScriptConditionalCreditGap) -> TypeScriptNamedLimitation {
+        match self {
+            Self::AssertionCredit => conditional_assertion_credit_limitation(gap),
+            Self::Registration => conditional_registration_limitation(gap),
+        }
+    }
+}
+
+fn conditional_gap_summary(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    kind: ConditionalGapKind,
+) -> Result<Option<AnalysisLimitation>, String> {
     let recovery = || {
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
@@ -1430,7 +1497,7 @@ fn conditional_assertion_credit_summary(
         [] => Ok(None),
         [gap] => {
             let gap = *gap;
-            let limitation = conditional_assertion_credit_limitation(gap);
+            let limitation = kind.limitation(gap);
             Ok(Some(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::UnevaluatedCondition,
@@ -1440,8 +1507,10 @@ fn conditional_assertion_credit_summary(
                 .with_path(gap.file.to_string_lossy())?
                 .with_affected_items(1)?
                 .with_detail(format!(
-                    "typescript_conditional_assertion_credit: `{}` at {}",
-                    gap.condition, limitation.sample_source
+                    "{}: `{}` at {}",
+                    kind.name(),
+                    gap.condition,
+                    limitation.sample_source
                 ))?,
             ))
         }
@@ -1457,14 +1526,16 @@ fn conditional_assertion_credit_summary(
                     format!(
                         "`{}` at {}",
                         gap.condition,
-                        conditional_assertion_credit_limitation(gap).sample_source
+                        kind.limitation(gap).sample_source
                     )
                 })
                 .collect::<Vec<_>>();
             let remainder = gaps.len().saturating_sub(samples.len());
             let head = format!(
-                "typescript_conditional_assertion_credit: {} test file(s) credit assertions under conditions static analysis cannot evaluate",
-                files.len()
+                "{}: {} test file(s) {}",
+                kind.name(),
+                files.len(),
+                kind.plural_subject()
             );
             let mut detail = format!("{head}; e.g. {}", samples.join("; "));
             if remainder > 0 {

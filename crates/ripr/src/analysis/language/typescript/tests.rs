@@ -139,6 +139,7 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -208,6 +209,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -263,6 +265,7 @@ fn direct_test_with_assertion(
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -312,6 +315,7 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -1877,6 +1881,7 @@ fn find_related_tests_matches_by_call_name() {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: Vec::new(),
@@ -1900,6 +1905,7 @@ fn find_related_tests_matches_by_call_name() {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: Vec::new(),
@@ -1950,6 +1956,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -3699,6 +3706,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -3750,6 +3758,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: Vec::new(),
@@ -3772,6 +3781,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: Vec::new(),
@@ -4015,6 +4025,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -4366,6 +4377,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -4451,6 +4463,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: Vec::new(),
@@ -4473,6 +4486,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: Vec::new(),
@@ -5305,6 +5319,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -5400,6 +5415,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -7331,6 +7347,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: vec![TypeScriptImport {
@@ -7358,6 +7375,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             mock_factories_in_file: Vec::new(),
             mock_spread_sources_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: vec![TypeScriptImport {
@@ -7419,6 +7437,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -7474,6 +7493,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -7530,6 +7550,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -7627,6 +7648,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -7771,6 +7793,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -7880,6 +7903,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -8143,6 +8167,7 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -8652,6 +8677,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -8734,6 +8760,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -8818,6 +8845,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -9006,6 +9034,7 @@ fn package_local_filter_selects_same_package_test() {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9100,6 +9129,7 @@ fn package_local_filter_rejects_cross_package_test() {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -9151,6 +9181,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9222,6 +9253,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9428,6 +9460,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -9451,6 +9484,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9531,6 +9565,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![import],
@@ -9671,6 +9706,7 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
@@ -9784,6 +9820,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9895,6 +9932,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9998,6 +10036,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10101,6 +10140,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10202,6 +10242,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10303,6 +10344,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10426,6 +10468,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10522,6 +10565,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10624,6 +10668,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10796,6 +10841,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10899,6 +10945,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11033,6 +11080,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11120,6 +11168,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11209,6 +11258,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11369,6 +11419,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11452,6 +11503,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11528,6 +11580,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11601,6 +11654,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11675,6 +11729,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11765,6 +11820,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11856,6 +11912,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11956,6 +12013,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12061,6 +12119,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12107,6 +12166,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12211,6 +12271,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12310,6 +12371,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12442,6 +12504,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -13336,6 +13399,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -13449,6 +13513,7 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -16340,7 +16405,7 @@ fn analyze_diff_discloses_changed_test_file_parse_error() -> Result<(), String> 
 }
 
 /// (b) A recognized test file that parses but registers a test with a
-/// template-literal title in a body the extractor does not walk (an `if`
+/// template-literal title in a body the extractor does not walk (a `while`
 /// block) must emit `typescript_test_extraction_partial`.
 #[test]
 fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Result<(), String> {
@@ -16351,7 +16416,7 @@ fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Re
     )?;
     ts_write_file(
         &root.join("tests/calc.test.ts"),
-        "import { add } from '../src/calc';\nif (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
+        "import { add } from '../src/calc';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
     )?;
 
     let adapter = TypeScriptAdapter;
@@ -16387,7 +16452,7 @@ fn analyze_diff_collapses_test_extraction_partial_into_one_summary() -> Result<(
     for index in 1..=5 {
         ts_write_file(
             &root.join(format!("tests/calc{index}.test.ts")),
-            "import { add } from '../src/calc';\nif (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
+            "import { add } from '../src/calc';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
         )?;
     }
 
@@ -18277,6 +18342,7 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -18661,4 +18727,44 @@ fn analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder() -> Resu
         "line-to-id association must not follow diff order"
     );
     Ok(())
+}
+
+/// #10438: a test registered under an `if` whose condition static analysis
+/// cannot evaluate is indexed for reach, but names the guard and earns no
+/// assertion credit.
+#[test]
+fn if_guarded_registration_is_indexed_with_guard_and_no_assertion_credit() {
+    let source = "if (isWindows) {\n  test('a', () => {\n    expect(f(1)).toBe(2);\n  });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].conditional_registration.as_deref(), Some("isWindows"));
+    assert!(tests[0].assertions.is_empty(), "{:?}", tests[0].assertions);
+}
+
+#[test]
+fn else_branch_registration_names_the_negated_guard() {
+    let source = "if (isWindows) {\n  test('a', () => { expect(f(1)).toBe(2); });\n} else {\n  test('b', () => { expect(f(1)).toBe(2); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    let guards = tests
+        .iter()
+        .map(|test| test.conditional_registration.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(guards, vec![Some("isWindows"), Some("!(isWindows)")]);
+}
+
+#[test]
+fn describe_nested_under_an_if_guards_its_tests() {
+    let source = "if (isLinux) {\n  describe('s', () => {\n    test('a', () => { expect(f(1)).toBe(2); });\n  });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].conditional_registration.as_deref(), Some("isLinux"));
+}
+
+#[test]
+fn unguarded_registration_keeps_assertion_credit() {
+    let source = "test('a', () => {\n  expect(f(1)).toBe(2);\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].conditional_registration, None);
+    assert!(!tests[0].assertions.is_empty());
 }

@@ -98,7 +98,7 @@ impl AnalysisLimitationKind {
             Self::ProducerFailure => "part of the analysis failed",
             Self::EolOnlyChurn => "some files changed only in line endings",
             Self::UnevaluatedCondition => {
-                "a credited assertion sits under a condition static analysis cannot evaluate"
+                "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
         }
     }
@@ -192,7 +192,8 @@ pub(crate) enum AnalysisLimitationKind {
     /// #8714: a credited assertion sits under a branch condition static
     /// analysis cannot evaluate, so the credited oracle may never execute.
     /// The limitation content discloses conditional credit rather than
-    /// unanalyzed files, but unlike `EolOnlyChurn` this kind still marks the
+    /// unanalyzed files (#10438 reuses it for a test registered under an
+    /// unevaluated `if`, which is indexed for reach but not credited), but unlike `EolOnlyChurn` this kind still marks the
     /// outcome incomplete: consumers gating on `analysis_complete` see these
     /// runs as partial (#8714 review). Letting it ride a complete outcome is
     /// a separate, consumer-visible design decision.
