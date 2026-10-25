@@ -1,4 +1,7 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
+import { stripTypeScriptTypes } from 'node:module';
 import type * as vscode from 'vscode';
 import { MAX_REQUEST_TRACE_BYTES, MAX_REQUEST_TRACE_EVENTS, observeDocuments, RequestEventTrace } from '../requestEventTrace';
 
@@ -90,6 +93,91 @@ suite('Request event trace unit controls', () => {
     assert.throws(() => wrapped(document, {} as vscode.Range, {} as vscode.CodeActionContext,
       token as vscode.CancellationToken, () => { throw original; }), error => error === original);
     assert.strictEqual(token.listeners.size, 0);
+  });
+
+  test('a synchronously rejecting Thenable records one terminal event and preserves its error', () => {
+    const trace = new RequestEventTrace();
+    const token = new Token();
+    const document = { uri: { toString: () => 'file:///fixture/alpha.rs' }, version: 2 } as vscode.TextDocument;
+    const original = new Error('original synchronous Thenable rejection');
+    let forwards = 0;
+    const thenable = { then: (_resolve: unknown, reject: (error: unknown) => unknown) => reject(original) };
+    assert.throws(() => trace.middleware()(document, {} as vscode.Range, {} as vscode.CodeActionContext,
+      token as vscode.CancellationToken, () => {
+        forwards++; return thenable as unknown as Thenable<vscode.CodeAction[]>;
+      }), error => error === original);
+    const events = trace.snapshot().events as Array<Record<string, unknown>>;
+    assert.strictEqual(forwards, 1);
+    assert.deepStrictEqual(events.map(event => event.kind), ['provider.begin', 'provider.reject']);
+    assert.strictEqual(token.listeners.size, 0);
+  });
+
+  test('the actual host control disposes every fixture after an entry and cleanup timeout', async () => {
+    // Execute the committed control with API doubles, not a copied cleanup.
+    // Native runs read their compiled sibling; the offline syntax replay reads TS.
+    const native = path.join(__dirname, 'request_event_trace_host.test.js');
+    const sourcePath = fs.existsSync(native) ? native : [
+      path.join(__dirname, 'request_event_trace_host.test.ts'),
+      path.resolve(__dirname, '../../../test/suite/request_event_trace_host.test.ts'),
+    ].find(file => fs.existsSync(file));
+    assert.ok(sourcePath, 'the actual host control source must be available');
+    const callbacks = new Map<string, () => Promise<void>>();
+    let providers = 0;
+    let disposedProviders = 0;
+    let listeners = 0;
+    let disposedListeners = 0;
+    let commands = 0;
+    const subscribe = () => {
+      listeners++;
+      return { dispose: () => {
+        disposedListeners++;
+        if (disposedListeners === 1) { throw new Error('first listener disposal failed'); }
+      } };
+    };
+    const fakeApi = {
+      workspace: { openTextDocument: async () => ({ uri: { toString: () => 'untitled:trace' }, version: 1 }),
+        onDidOpenTextDocument: subscribe, onDidChangeTextDocument: subscribe,
+        onDidSaveTextDocument: subscribe, onDidCloseTextDocument: subscribe },
+      languages: { registerCodeActionsProvider: () => {
+        providers++; return { dispose: () => { disposedProviders++; } };
+      } },
+      commands: { executeCommand: () => { commands++; return new Promise(() => {}); } },
+      Range: class {},
+    };
+    const timeouts: Error[] = [];
+    class ObservedTimeout extends Error {
+      constructor(message: string) { super(message); timeouts.push(this); }
+    }
+    const defineSuite = (_name: string, callback: () => void) => callback.call({ timeout() {} });
+    const defineTest = (name: string, callback: () => Promise<void>) => { callbacks.set(name, callback); };
+    const timer = (callback: () => void) => { queueMicrotask(callback); return 1; };
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    if (sourcePath === native) {
+      const requireDouble = (name: string) => {
+        if (name === 'assert') { return assert; }
+        if (name === 'vscode') { return fakeApi; }
+        if (name === '../requestEventTrace') { return { observeDocuments, RequestEventTrace }; }
+        throw new Error(`unexpected host-control import: ${name}`);
+      };
+      new Function('require', 'exports', 'suite', 'test', 'setTimeout', 'clearTimeout', 'Error', source)(
+        requireDouble, {}, defineSuite, defineTest, timer, () => {}, ObservedTimeout);
+    } else {
+      const body = stripTypeScriptTypes(source.replace(/^import .*;\r?\n/gm, ''), { mode: 'transform' });
+      new Function('vscode', 'assert', 'observeDocuments', 'RequestEventTrace', 'suite', 'test',
+        'setTimeout', 'clearTimeout', 'Error', body)(fakeApi, assert, observeDocuments, RequestEventTrace,
+        defineSuite, defineTest, timer, () => {}, ObservedTimeout);
+    }
+    const control = callbacks.get('model-edit observes the real host token without retrying the command');
+    assert.ok(control, 'must execute the real model-edit control body');
+    let failure: unknown;
+    try { await control(); } catch (error) { failure = error; }
+    assert.strictEqual(commands, 1, 'timeout must not retry the command');
+    assert.strictEqual(providers, 1);
+    assert.strictEqual(disposedProviders, 1, 'the provider must be disposed even when it was never entered');
+    assert.strictEqual(listeners, 4);
+    assert.strictEqual(disposedListeners, 4, 'all document listeners must be disposed after cleanup timeout');
+    assert.strictEqual(timeouts.length, 2, 'exercise both entry and cleanup timeouts');
+    assert.strictEqual(failure, timeouts[0], 'cleanup must preserve the original entry failure');
   });
 
   test('bounds and sanitizes metadata; replacement documents get distinct local identities', () => {

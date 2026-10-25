@@ -41,6 +41,7 @@ suite('Request event trace real-host controls', function () {
           })]);
         } finally { if (timer) { clearTimeout(timer); } }
       };
+      let primaryFailed = false;
       try {
         await bounded(entry);
         trace.record(`control.${stimulus}`, trace.document(document));
@@ -60,12 +61,30 @@ suite('Request event trace real-host controls', function () {
         assert.strictEqual(events.some(event => event.kind === 'document.change'
           && Number(event.content_changes) > 0), stimulus === 'model-edit');
         assert.strictEqual(trace.snapshot().dropped_events, 0);
+      } catch (error) {
+        primaryFailed = true;
+        throw error;
       } finally {
         // Settle only this fixture's pending provider before removing it.
-        release?.([]);
-        await bounded(command);
-        second?.dispose(); provider.dispose();
-        for (const subscription of subscriptions) { subscription.dispose(); }
+        let cleanupFailed = false;
+        let cleanupError: unknown;
+        try {
+          release?.([]);
+          await bounded(command);
+        } catch (error) {
+          cleanupFailed = true;
+          cleanupError = error;
+        } finally {
+          // An unentered provider leaves release unset and command pending.
+          // Neither that timeout nor one throwing disposer may skip the rest.
+          for (const resource of [second, provider, ...subscriptions]) {
+            try { resource?.dispose(); }
+            catch (error) {
+              if (!cleanupFailed) { cleanupFailed = true; cleanupError = error; }
+            }
+          }
+        }
+        if (!primaryFailed && cleanupFailed) { throw cleanupError; }
       }
     });
   }

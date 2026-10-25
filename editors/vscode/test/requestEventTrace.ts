@@ -83,11 +83,20 @@ export class RequestEventTrace {
       const subscription = token.onCancellationRequested(() => {
         this.record('provider.cancel', { ...fields, cancelled: true });
       });
+      let settled = false;
       const resolved = <T>(value: T): T => {
-        subscription.dispose(); this.record('provider.resolve', fields); return value;
+        if (!settled) {
+          settled = true;
+          subscription.dispose(); this.record('provider.resolve', fields);
+        }
+        return value;
       };
       const rejected = (error: unknown): never => {
-        subscription.dispose(); this.record('provider.reject', fields, error); throw error;
+        if (!settled) {
+          settled = true;
+          subscription.dispose(); this.record('provider.reject', fields, error);
+        }
+        throw error;
       };
       try {
         const result = previous ? previous(document, range, context, token, next)
