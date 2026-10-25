@@ -19,13 +19,22 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return await Promise.reject(new Error("missing id"));
-  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `loadProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `loadProfile`;
+    verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
+    assertion
   Related test: tests/profile.test.ts:1 rejects missing profile id broadly
   Next step — TypeScript preview advisory: broad error evidence does not establish missing
     discriminator `rejects Error matching "missing id"`; add an exact payload to `toThrow` (string,
     object, or class reference) and no actionable repair packet is emitted until verify, receipt,
     and edit-boundary fields are available
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: 1 related test(s) found for owner `loadProfile`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -33,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_awaited_promise_reject/input --diff <cwd>/fixtures/typescript_awaited_promise_reject/diff.patch --mode fast probe:src_profile.ts:typescript_preview:9da98202
   ripr context --root <cwd>/fixtures/typescript_awaited_promise_reject/input --diff <cwd>/fixtures/typescript_awaited_promise_reject/diff.patch --mode fast --at probe:src_profile.ts:typescript_preview:9da98202
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_profile.ts:typescript_preview:9da98202 --root <cwd>/fixtures/typescript_awaited_promise_reject/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

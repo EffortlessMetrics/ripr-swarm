@@ -15,15 +15,26 @@ Start here:
   Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20
   Changed behavior: c == ' '
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `c` is a
+    local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which
+    side of the boundary a test reaches; activation/infection is unknown; a related test that passes
+    literal inputs on each side of the boundary would let ripr decide
   Related test (1 of 2 matched rows): tests/classify.rs:4 leading_space_classifies_other
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word
     - infection unknown: Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which…
     - 9 more detail line(s) in --format human-full
@@ -31,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/helper_chain_one_hop/input --diff <cwd>/fixtures/helper_chain_one_hop/diff.patch --mode fast probe:src_lib.rs:predicate:ac178c7f
   ripr context --root <cwd>/fixtures/helper_chain_one_hop/input --diff <cwd>/fixtures/helper_chain_one_hop/diff.patch --mode fast --at probe:src_lib.rs:predicate:ac178c7f
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:ac178c7f --root <cwd>/fixtures/helper_chain_one_hop/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/helper_chain_one_hop/input --at src/lib.rs:2 --kind predicate
 

@@ -19,12 +19,21 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (total >= 100) {
-  Missing discriminator (1 of 2): Related tests reach `applyDiscount` with a strong oracle, but no strong assertion observes a `applyDiscount(...)` call at the changed predicate boundary `total == 100`; inputs on…
+  Missing discriminator (1 of 2): Related tests reach `applyDiscount` with a strong oracle, but no
+    strong assertion observes a `applyDiscount(...)` call at the changed predicate boundary `total
+    == 100`; inputs on one side of the boundary do not discriminate the changed comparison
   Related test: tests/discount.test.ts:5 shadow assertion at 100 (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `total == 100`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `applyDiscount`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -32,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_witness_receiver_qualified/input --diff <cwd>/fixtures/typescript_witness_receiver_qualified/diff.patch --mode fast probe:src_discount.ts:typescript_preview:a9f257a1
   ripr context --root <cwd>/fixtures/typescript_witness_receiver_qualified/input --diff <cwd>/fixtures/typescript_witness_receiver_qualified/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:a9f257a1
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_discount.ts:typescript_preview:a9f257a1 --root <cwd>/fixtures/typescript_witness_receiver_qualified/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

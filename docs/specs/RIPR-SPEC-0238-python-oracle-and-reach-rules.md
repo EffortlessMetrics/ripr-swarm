@@ -330,7 +330,35 @@ Relations, first match wins (rank, oracle-eligible):
   (braces or angle brackets, with or without a converter) matches one
   concrete segment the router accepts for its converter: untyped and
   `str` take any non-empty segment, `int`, `float` and `uuid` validate
-  the value, and `path` or any unknown converter stays unmatched;
+  the value, and `path` or any unknown converter stays unmatched. The
+  literal must be the whole first argument (`"/items" + x`, `"/items" % x`,
+  `"/items".format(..)` and adjacent literals name another path), in the test
+  call and in the route decorator alike (a decorator whose path is not a
+  whole literal is a dynamic route registration, a static limit). The
+  receiver is `client`, or a name bound once by assignment or `with ... as`
+  from `client`, another receiver or a `TestClient(...)` construction (any
+  alias chain length; an assignment, annotation, augmented assignment, tuple
+  or `for`/`with`/walrus target, `def` or `import` of the same name anywhere in
+  the body withdraws it; a call wrapped over lines or written `app = x` reads
+  like its one-line form), or an
+  `AsyncClient(...)` built over an application (`app=` or an
+  `ASGITransport`). A client built over an application name imported from a
+  module that is not where the owner's application comes from is a rival and
+  does not relate: the owner's file imports the receiver from a module (the
+  test must import it from that module), or defines it itself (the test must
+  import it from that module or a package above it) and so is one built over
+  another symbol of the owner's module. A client's application comes from the
+  test body or, for a fixture parameter, from the nearest `@pytest.fixture` of
+  that name (the test's module, then `conftest.py` up the directory chain)
+  whose every `return` or `yield` builds a client over one imported name. Only
+  a client built over the owner's own application is `api_client_route_call`.
+  A client whose application is not resolved (a fixture it cannot read or that
+  builds on another fixture, an unresolved, dotted or called application name
+  such as a factory, a rebound name, a router an application includes under
+  another name, a decorator on a receiver the adapter does not recognise) that
+  still calls the route's path and verb is `api_client_route_unidentified_app`
+  (2, reach only, never an oracle) and reads as the static limit
+  `missing_import_graph`, not as a gap or a credit (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -385,7 +413,8 @@ This order is the existing behavior and is normative:
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
   owner's own module imports (mock constructors and the click, typer and
-  `sys` output calls are exempt);
+  `sys` output calls are exempt, including `print(..., file=sys.stderr)`
+  and `file=sys.stdout`, `py-fixtures-warning-stderr`);
 - L11: `unsupported_syntax` for `lambda`;
 - L12: the implicit dunder dispatch limit (RIPR-SPEC-0028), then
   `python_transitive_reach_unresolved` on `no_static_path`
@@ -400,17 +429,49 @@ This order is the existing behavior and is normative:
      and `x.type(1)` do not count; `getattr (o, n)` now counts.
    - a subscript call counts when `]` is followed by `(` outside strings.
    - `__getattr__` counts as a whole identifier.
-   - `lambda` counts as a keyword token followed by a space or `:`, so
-     `'lambda x'` does not count and `lambda: 0`, missed today, does.
+   - `lambda` counts as a keyword token followed by a space, `:` or `(`.
+     On a plain line (no `{`, backslash or triple quote) a `lambda` inside
+     a string or comment does not count; on any other line it counts,
+     because an f-string expression or a multi-line string edge can run
+     it. `lambda: 0`, missed before, counts.
    - an import alias counts at an identifier boundary: the character
      before is not an identifier character or `.`, and `(` or `.`
      follows. `pos.x` does not match alias `os`, and `score(` does not
      match alias `re`.
    - `mocked_module` body calls count for `patch(`, `patch.object(` and
-     `patch.multiple(` only when the callee is bare or its receiver is
-     `mock`, `unittest.mock`, `mocker`, or a name the test file imports
-     from `unittest.mock` or `mock`. `client.patch(` does not count. The
-     `monkeypatch` forms and decorator rule are unchanged.
+     `patch.multiple(` at an identifier boundary, except an HTTP request:
+     a receiver that is `client`, `test_client`, `api_client`,
+     `async_client`, `session`, `requests` or `httpx` (alone or after
+     `self.`), in a test whose body and imports never mention a mock. Any
+     other receiver, and any test that mentions a mock, keeps the limit
+     (fail closed). The `monkeypatch` forms and decorator rule are
+     unchanged.
+   - `mocked_module` does not apply to a test whose every substitution is
+     `with patch("<dotted.target>", return_value=<nonzero int or str literal>):`
+     (`patch` bound once, from `unittest.mock`/`mock`, or `mock.patch`),
+     when the test is a plain function (no decorators, defaults or
+     `*args`) whose statements are only `assert <expr>`, `name = <expr>`
+     and such `with` blocks of those, with expressions made of names,
+     constants, operators and calls of the owner or a safe builtin (a
+     `;`, a chained, attribute or subscript assignment, a helper call, a
+     nested def or a default argument is not plain, so none can rebind
+     names behind the patch), and the changed line, old and new, is one `return` of an f-string or `+`/`-` expression
+     over names, int and string literals, the substituted zero-argument
+     call (`time.time()` or `time()`) and `int(<that call>)`. The call
+     appears exactly once on each side, with the same sign and the same
+     `int(...)` wrapping, so the expression is `s*v + K` and an edit that
+     changes `K` changes the value the assertion pins, as it would without
+     the patch. With more than one call, or a changed sign, a collision at
+     the fixed value (`v + v` against `v - v + 2` at `v = 1`) hides the
+     edit. Products, divisions, `%`, `max`/`min`, indexing, comparisons,
+     branches, other calls, an assignment on the changed line, and a zero,
+     float, bool or `None` stand-in keep the limit. The patched name must
+     appear in the owner only on the changed line, and the owner and its
+     class must not be a segment of the target. A patch decorator,
+     `patch.object`, an `as` binding, `side_effect`, `autospec`, a
+     non-literal `return_value`, another mock name in the body, or an
+     edit to the patched call's arguments keeps the limit. The substituted
+     calls are not read as unresolved imports (`time.time()`).
 
 ### Sink alignment
 
@@ -464,6 +525,9 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     whole-collection comparison counts only when a dict or list display is
     the other compared operand of the assertion, not when `== {` or `== [`
     appears anywhere in its text.
+    A changed element on its own line of a multi-line literal bound by
+    `return` or an assignment is judged as the joined enclosing literal, so
+    the same rules apply as for a one-line literal.
 11. **The f-string length gate reads the crediting assertion.** For a
     changed f-string whose literal text changed and whose interpolations
     did not, an assertion that is a pure `len(...)` aggregate cannot
@@ -724,23 +788,85 @@ mutant calibrates the rule; ripr reports only the static shape.
     band: an old result already outside the band, a result within `1e-9`
     (relative) of the band edge, a non-literal argument, a positional
     band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode).
-22. **A `caplog.text` membership check on a changed log call abstains.**
-    When the changed line is a logging call (`<receiver>.debug`, `.info`,
-    `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
-    string literal) and the selected assertion is `<text> in caplog.text`
-    sharing a word of three or more characters with that literal, the
-    finding is `static_unknown` with `unsupported_syntax`. The check
-    compares against `%`-formatted text and a runtime level filter, neither
-    of which the adapter evaluates, so a message edit
-    (`py-idioms-caplog-message`) and a level edit (`py-idioms-caplog-level`)
-    both abstain instead of reading a weak gap. An assertion about unrelated
-    text keeps its verdict. `caplog.messages` and `caplog.records` are not
-    read by this rule. The membership is read from the parsed assertion, not
-    its text layout: extra spacing, parentheses, line breaks, implicit
-    literal concatenation, an assertion message and a membership joined by
-    `and` all abstain the same way, while a membership against any receiver
-    other than `caplog.text` is not read.
+    without the old line (repo mode). The `py-bands-*` cases pin the
+    abstentions: a positional band (an edit the band absorbs and one it
+    rejects, the latter a documented missed credit), a `**` spread,
+    named constants for the expected value and band, a two-statement
+    owner, a method owner and a decorated owner.
+22. **A `caplog.text` membership check on a changed log call is
+    evaluated where it is decidable, else abstains.** When the changed
+    line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
+    `.warn`, `.error`, `.critical` or `.exception` with a string literal)
+    and the selected assertion is `<text> in caplog.text` sharing a word
+    of three or more characters with that literal, the finding is
+    `static_unknown` with `unsupported_syntax`, unless the formatted
+    message can be evaluated. It can when all of these hold: the old and
+    new lines are logging calls on the same receiver with a literal
+    message and no keyword arguments, whose arguments are string or
+    integer literals or owner parameters the test's own calls bind to
+    such literals, formatted with `%s`, `%d`, `%i` and `%%` (no
+    arguments: the message as written); the owner is an undecorated
+    function whose lines between its `def` and the changed line are only
+    plain `if <comparison>:` blocks, with nothing after the line but
+    `return` or `pass`; every owner call of the test has a readable guard
+    outcome; the test pins the capture level with exactly one
+    `caplog.at_level(<level>)` block around its owner calls or one
+    `caplog.set_level(<level>)` before them and makes no other call, no
+    `caplog.clear`, no patching; the module configures no logger
+    (`setLevel`, `propagate`, filters, handlers, `logging` configuration);
+    and the asserted text holds a space after a character other than an
+    upper-case letter, a digit or a space, so it is read from the message
+    and not from the record header. A record is captured when its level is
+    at least the pinned level. The asserted text in the old message and
+    not in the new one (`py-idioms-caplog-message`, and a level lowered
+    below the pin, `py-idioms-caplog-level`) is `exposed`; in both is a
+    weak gap; a test that did not log the text before the edit, or any
+    shape outside these bounds, abstains. A custom `log_format` is not
+    read. The asserted literals are only those the assertion requires: a
+    single membership or an `and` chain, never a literal under `or`. The
+    receiver is `logging` or a module-level `name = logging.getLogger(...)`
+    (a detached `logging.Logger(...)` or any other object abstains), the
+    method is not `exception` (its traceback can hold the asserted text),
+    and the test never rebinds `caplog`. `caplog` must be pytest's own
+    fixture: the test requests it as a parameter and no `@pytest.fixture`
+    in its module or a `conftest.py` up its directory chain defines a
+    fixture of that name; otherwise the reading abstains. An assertion about
+    unrelated text keeps its verdict.
+    The same evaluation reads the captured records' formatted messages,
+    which carry no record header: `"<text>" in caplog.messages` and
+    `"<text>" in [r.message for r in caplog.records]` (or
+    `r.getMessage()`) compare one whole message, and
+    `any(<text> in r.message for r in caplog.records)` finds the text
+    inside one message (`any(r.message == <text> ...)`, in either operand
+    order, compares a whole one). Indexed or whole-list forms (`caplog.records[0].message == ...`,
+    `caplog.messages == [...]`) and a filtered `any(...)` abstain when
+    they share a word with the changed message.
+    An absence assertion reads the same way with the outcome inverted:
+    `"<text>" not in caplog.text`, `... not in caplog.messages`,
+    `... not in [r.message for r in caplog.records]` and
+    `not any(<text> in r.message for r in caplog.records)` pass while no
+    captured text matches. A text absent from the old message and present
+    in the new one is `exposed`; absent from both (including a new call
+    below the pinned level, which records nothing) is a weak gap; a text
+    already present in the old message means the test fails before the
+    edit and is not read. An absence literal under `or` is not required,
+    as for a presence literal. The membership is read from the parsed assertion, not its text layout:
+    extra spacing, parentheses, line breaks, implicit literal
+    concatenation, an assertion message and a membership joined by `and`
+    all read the same way, while a membership against any other receiver
+    is not read.
+    A local alias of a captured-log read (`msgs = caplog.text`,
+    `.messages` or `.records`) reads as the read itself only when the name
+    is bound once, to the read, at the assertion's own indentation and after
+    every owner call, and appears nowhere else in the test but the
+    assertion statement (a wrapped assertion counts as one statement). An
+    alias that is appended to, rebound, deleted, read in a comprehension,
+    taken before the call or inside a nested block keeps the abstention, as
+    does a name spelled inside a quoted literal (single, double or triple
+    quoted), which is data. A local called `text`, `messages` or `records`
+    is not confused with the attribute of `caplog.text` and the like. `caplog`'s
+    reads are rebuilt on each access, so an alias taken before the call
+    would hold earlier records (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
@@ -775,6 +901,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     of it, or with `minversion` or `reason`, still abstains
     (`py-trap-module-skipped`, `py-trap-empty-table`,
     `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
+25. **A property check pins no value.** A single `==` in an `assert`
+    statement is a weak relational check, as a tautology is (rule 1), when
+    one side is a call and the other side is either a call that appears in
+    that call's arguments (`f(f(x)) == f(x)`, either order, at any depth,
+    keyword and container arguments included) or a `for` loop variable that
+    appears in them (`for n in range(1, 5): assert f(1, n) == n`; `async for`
+    and tuple or list targets count, `while` loops and names bound outside a
+    loop do not). The calls need not be the changed owner. Idempotence holds
+    for any constant return and an identity over a loop variable holds for
+    `n / 1`, so neither notices an edit. An independent expected value (a
+    literal, `n * 3`, a name bound outside a loop) still pins, and so does a
+    chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
+    `assertEqual` and helper forms keep their strength
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
 
 ### Verdict ladder
 
@@ -1213,7 +1353,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   39, and rules 1, 2, 4 and 9 alongside them);
   `python/hypothesis.rs` unit tests pin `@given` pairing and `@example`
   rows.
-- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15),
+- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15; the
+  `py-conjuncts-*` cases add an exact owner conjunct credited, an exact
+  conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
+  comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
   (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
   `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
@@ -1243,14 +1386,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
   value, unary-sign and changed-argument negatives, and integer zero.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
-  (#6597) score credited under rules 12 to 14,
+  (#6597) score credited under rules 12 to 14; the `py-almost-*` cases
+  cover rule 12's other forms (default and `places=None` credited,
+  explicit `places=` and `delta=`, the positional `delta`, a spread and a
+  non-`self` receiver scored as a gap), the `py-raises-*` cases cover
+  rules 13 and 14 (a callable-form `raises` or `assertRaises`, with and
+  without `match=`, and a coarse length read of a bound exception score
+  as gaps; a bound `.exception` compared with `==` and an `.args` index
+  score credited),
   `py-spec0233-ex11-fluent-helper` scores limited under rule 3, and
   `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
   rule 20. Example 34's `exc.value is not None` and length forms have
   cases (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`,
-  #7546); the corpus has no `assertRaises` callable,
-  `assertRaises ... as cm` or other example 34 form yet, and each needs
-  its own case before those parts read as established.
+  #7546); `assertRaises` callable and `assertRaises ... as cm` now have
+  cases (`py-raises-callable-unittest`,
+  `py-raises-bound-unittest-exception`), and any other example 34 form
+  needs its own case before that part reads as established.
   Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
   mutant the `assert_called_once_with` expectation kills, which scores
   credited under rule 17's called-parameter form, and a sign case
@@ -1307,6 +1458,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
   module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
   the `py-trap-*` corpus cases.
+- `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
+  checks, rule 25), pinned by `property_assertion_tests.rs` and the
+  `py-grid-*-property` corpus cases.
 
 ## Metrics
 

@@ -62,7 +62,7 @@ fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session; it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope — `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input; use `ripr check --committed` for committed input or `ripr check --format json` for working-tree input. Continue with `ripr_list_gaps` for the bounded working set; read one item's evidence with `ripr_get_gap` or ripr://gap/{canonical_id}. When repair-readiness facts are established, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` or ripr://repair-attempt/{attempt_id}, inspect receipt state with `ripr_get_receipt_status` or ripr://receipt/{receipt_id}, list every durable attempt with `ripr_list_repair_attempts`, and project the repair card with `ripr_get_repair_card` or ripr://repair-card/{canonical_id} — the same repair_card.v1 document `ripr agent card` and the language server project.";
+pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session; it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope — `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input; use `ripr check --committed` for committed input or `ripr check --worktree --format json` for working-tree input. Continue with `ripr_list_gaps` for the bounded working set; read one item's evidence with `ripr_get_gap` or ripr://gap/{canonical_id}. When repair-readiness facts are established, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` or ripr://repair-attempt/{attempt_id}, inspect receipt state with `ripr_get_receipt_status` or ripr://receipt/{receipt_id}, list every durable attempt with `ripr_list_repair_attempts`, and project the repair card with `ripr_get_repair_card` or ripr://repair-card/{canonical_id} — the same repair_card.v1 document `ripr agent card` and the language server project.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state: repository-root discovery state (validated or unavailable, with root error detail when no usable Git work tree is detected), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block — current desired input, attempt state (no_snapshot, in_flight, completed, failed), last completed snapshot identity, last-known-good state, freshness, the typed AnalysisOutcome, and profile facts (project_config loaded with enabled languages when the workspace ripr.toml resolves, built-in defaults otherwise, an unreadable config detected_not_loaded). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
 
@@ -787,7 +787,7 @@ fn scope_disclosure_schema() -> Value {
     })
 }
 
-fn status_success_schema() -> Value {
+pub(super) fn status_success_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -973,6 +973,31 @@ fn status_success_schema() -> Value {
                         "additionalProperties": false
                     },
                     "analysis_outcome": { "type": ["object", "null"] },
+                    "language_completeness": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "language": { "type": "string" },
+                                "status": {
+                                    "type": "string",
+                                    "enum": [
+                                        "complete",
+                                        "complete_zero",
+                                        "partial",
+                                        "unavailable",
+                                        "invalid",
+                                        "failed",
+                                        "unsupported",
+                                        "not_selected",
+                                        "no_current_scope"
+                                    ]
+                                }
+                            },
+                            "required": ["language", "status"],
+                            "additionalProperties": false
+                        }
+                    },
                     "profile": {
                         "type": "object",
                         "properties": {
@@ -1630,9 +1655,9 @@ mod tests {
             ("template ripr-receipt-status", 475),
             ("template ripr-repair-card", 475),
         ]);
-        if instructions.is_empty() || instructions.len() > 1665 {
+        if instructions.is_empty() || instructions.len() > 1676 {
             return Err(format!(
-                "instructions contain {} UTF-8 bytes; expected 1..=1665",
+                "instructions contain {} UTF-8 bytes; expected 1..=1676",
                 instructions.len()
             ));
         }
@@ -1673,14 +1698,14 @@ mod tests {
         if let Some(surface) = budgets.keys().next() {
             return Err(format!("{surface} is missing from its published catalog"));
         }
-        if previous_surfaces > 14900 {
+        if previous_surfaces > 14911 {
             return Err(format!(
-                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 14900"
+                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 14911"
             ));
         }
-        if total > 15990 {
+        if total > 16001 {
             return Err(format!(
-                "complete descriptions/instructions total {total} UTF-8 bytes, over 15990"
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 16001"
             ));
         }
         Ok(total)
@@ -1697,7 +1722,7 @@ mod tests {
         // Independent literal accounting at the #9935 basis, including the
         // ninth tool and instructions once. Intentional metadata changes
         // need to reconcile this byte count as well as the ceilings.
-        assert_eq!(total, 15981);
+        assert_eq!(total, 15992);
         Ok(())
     }
 
@@ -2148,11 +2173,16 @@ mod tests {
             "launches no processes",
             "No document this server returns is a repair authorization",
             "approval and sandbox policy remain authoritative",
-            "ripr check --format json",
+            "ripr check --worktree --format json",
         ] {
             if !INSTRUCTIONS.contains(required) {
                 return Err(format!("instructions lost {required:?}: {INSTRUCTIONS}"));
             }
+        }
+        // `ripr mcp --help` and the instructions must name the same command
+        // for working-tree input (#10347).
+        if !crate::mcp::MCP_HELP.contains("ripr check --worktree --format json") {
+            return Err("MCP help and instructions name different working-tree commands".into());
         }
         Ok(())
     }

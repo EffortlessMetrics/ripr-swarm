@@ -201,6 +201,57 @@ describe.sequential("serial suite", () => {
 }
 
 #[test]
+fn recurses_playwright_describe_members_of_the_test_root() {
+    let tests = extract_tests(
+        Path::new("tests/pricing.spec.ts"),
+        r#"
+test.describe("plain suite", () => {
+    test("plain case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.serial("serial suite", () => {
+    test("serial case", () => {
+        expect(add(1, 2)).toBe(3);
+    });
+});
+test.describe.parallel.only("focused suite", () => {
+    test("focused case", () => {
+        expect(normalize("x")).toBe("x");
+    });
+});
+test.describe.skip("skipped suite", () => {
+    test("skipped case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.fixme("fixme suite", () => {
+    test("fixme case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.only.skip("active then disabled suite", () => {
+    test("disabled case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.configure({ mode: "serial" });
+runner.describe("unknown root", () => {
+    test("unknown case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+"#,
+    );
+
+    assert_eq!(tests.len(), 3);
+    assert_eq!(tests[0].name, "plain suite plain case");
+    assert_eq!(tests[1].name, "serial suite serial case");
+    assert_eq!(tests[2].name, "focused suite focused case");
+    assert!(tests.iter().all(|test| test.describe_names.len() == 1));
+}
+
+#[test]
 fn recurses_bare_and_modified_parameterized_suites() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -367,13 +418,22 @@ test.only("discount boundary", () => {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         arity: None,
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -768,7 +828,7 @@ fn report_snippet_partial_owner_disclosure_preserves_selected_source_identity() 
             "class Decoy {{ ordinary() {{ return 0; }} }}{newline}class Selected {{{newline}  chosen = ({newline}{}value: number{newline}  ) => value + 1;{newline}}}{newline}",
             " ".repeat(100)
         );
-        let gap = detect_owner_extraction_gap(file, &source, &[4])
+        let gap = detect_owner_extraction_gap(file, &source, &[4], Path::new("."), None)
             .ok_or_else(|| "expected a real unsupported class-field owner".to_string())?;
         assert_eq!(gap.file, file);
         assert_eq!(gap.sample_line, 4);
@@ -914,6 +974,71 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
 }
 
+/// A skipped suite registers nothing and its callback never runs, so a
+/// registration inside it is not a dropped one. The active-but-unwalked
+/// registration beside it is still disclosed.
+#[test]
+fn skipped_describe_registrations_are_not_a_partial_extraction() {
+    let file = Path::new("test/rank.test.ts");
+    for header in [
+        "describe.skip(\"medal\", () => {",
+        "describe.only.skip(\"medal\", () => {",
+        "describe(\"medal\", { skip: true }, () => {",
+    ] {
+        let source = format!(
+            "import {{ medal }} from \"../src/rank\";\n{header}\n  it(\"awards bronze\", () => {{ expect(medal(50)).toBe(\"bronze\"); }});\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{header}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{header}"
+        );
+    }
+    // A skipped suite bound to a variable is not walked either.
+    let source = "import { medal } from \"../src/rank\";\nconst suite = describe.skip(\"medal\", () => {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "variable-initializer skipped suite"
+    );
+    // Controls: a dynamic skip, a spread, `fails` and `expectFailure` leave
+    // the suite active, so its unindexed registration stays disclosed.
+    for options in [
+        "{ skip: process.platform === \"win32\" }",
+        "{ skip: cond }",
+        "{ ...opts }",
+        "{ fails: true }",
+        "{ expectFailure: true }",
+        "{ skip: false }",
+        "{ skip: true, ...opts }",
+        "{ skip: true, [key]: false }",
+        "{ todo: true }",
+    ] {
+        let source = format!(
+            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  const rows = load();\n  for (const row of rows) {{\n    it(\"awards\", () => {{ expect(medal(row)).toBe(\"bronze\"); }});\n  }}\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{options}"
+        );
+    }
+    // Control: the same registration under an active describe-shaped
+    // helper callback stays disclosed, and so does one under an active
+    // `describe` that is unwalked because it sits in a helper function.
+    for source in [
+        "import { medal } from \"../src/rank\";\nfunction register() {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n}\n",
+        "import { medal } from \"../src/rank\";\ndescribe.skip(\"medal\", () => {});\nfunction register() {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n}\n",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_some(),
+            "{source}"
+        );
+    }
+}
+
 /// RIPR-SPEC-0243 rule 17 (#9497): a `node:test` callback that calls
 /// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
 /// have gone, so it registers no discriminator. Negative: the same body
@@ -1031,4 +1156,31 @@ test("own skip", async t => {
     let tests = extract_tests(Path::new("test/price.test.js"), source);
     let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
     assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
+}
+
+#[test]
+fn partial_extraction_disclosure_matches_every_extracted_start_in_a_large_file() {
+    let file = Path::new("test/many.test.ts");
+    let mut source = String::from("import { it, expect } from 'vitest';\n");
+    for index in 0..5_000 {
+        source.push_str(&format!(
+            "it('t{index}', () => {{ expect(f{index}()).toBe({index}); }});\n"
+        ));
+    }
+    let tests = extract_tests(file, &source);
+    assert_eq!(tests.len(), 5_000);
+    assert!(
+        detect_partial_test_extraction(file, &source, &tests).is_none(),
+        "every registration was extracted, so none may be reported as dropped"
+    );
+
+    source.push_str("function register() {\n  it('late', () => { expect(late()).toBe(1); });\n}\n");
+    let tests = extract_tests(file, &source);
+    assert_eq!(tests.len(), 5_000);
+    let gap = detect_partial_test_extraction(file, &source, &tests);
+    assert_eq!(
+        gap.map(|gap| gap.sample_line),
+        Some(5_000 + 3),
+        "the one registration inside a helper must still be disclosed"
+    );
 }

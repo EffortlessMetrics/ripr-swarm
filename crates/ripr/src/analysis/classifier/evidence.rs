@@ -2,7 +2,7 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument,
+    activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
@@ -11,15 +11,16 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
     observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    owner_touches_field_only_at, package_prefix, parameter_rebound,
+    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -86,6 +87,35 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
+/// #9871: reach for a changed constant whose same-file readers are called by
+/// tests. A call to a reader is not a call that executes the read, so the
+/// stage is `weak`, never `yes`, and the class stays `static_unknown`.
+fn const_reader_reach(context: &ProbeContext<'_>) -> StageEvidence {
+    let constant = context.probe.changed_const_name().unwrap_or("the constant");
+    let readers = context
+        .const_readers
+        .iter()
+        .take(3)
+        .map(|reader| format!("`{}`", reader.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tests = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| crate::analysis::classify::relation_establishes_reach(*reason, true))
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    StageEvidence::new(
+        StageState::Weak,
+        Confidence::Low,
+        format!(
+            "Tests call {readers}, which reads the changed constant `{constant}`; whether the tested path executes that read is not established: {tests}"
+        ),
+    )
+}
+
 fn return_ledger_limit(
     owner: &str,
     ledger: &crate::analysis::classify::ReturnedLedger,
@@ -135,6 +165,11 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
+        let reach = if context.const_readers.is_empty() {
+            reach
+        } else {
+            const_reader_reach(context)
+        };
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
@@ -286,38 +321,41 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !is_unselected_input_reason(&fact.reason));
         }
+        // #7970: a function that is not one of the related tests and
+        // calls the owner by name (a wrapper, a helper, a production
+        // caller) may feed it inputs the literal call lines do not show.
+        // #8462: a production function that holds the owner without a call
+        // shape (`let f = owner; f(1, 1)`) or a `macro_rules!` body that
+        // expands to a call is invisible to `calls`, so the bare name in
+        // either counts as another caller.
+        let owner_has_other_callers = context.owner_fn.is_none_or(|owner| {
+            let other_function_holds_owner = context.index.functions().iter().any(|function| {
+                function.id != owner.id
+                    && !test_summaries
+                        .iter()
+                        .any(|test| test.file == function.file && test.name == function.name)
+                    && (function.calls.iter().any(|call| call.name == owner.name)
+                        || mentions_identifier(function.body.as_str(), &owner.name))
+            });
+            // Only the `&&`/`||` operand reading consumes this, so other
+            // families skip the per-file macro scan.
+            other_function_holds_owner
+                || (matches!(
+                    context.probe.family,
+                    ProbeFamily::Predicate | ProbeFamily::ReturnValue
+                ) && context.index.files().values().any(|file| {
+                    macro_rules_bodies(&file.source)
+                        .iter()
+                        .any(|body| mentions_identifier(body, &owner.name))
+                }))
+        });
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
             context.owner_fn,
-            // #7970: a function that is not one of the related tests and
-            // calls the owner by name (a wrapper, a helper, a production
-            // caller) may feed it inputs the literal call lines do not show.
-            // #8462: a production function that holds the owner without a call
-            // shape (`let f = owner; f(1, 1)`) or a `macro_rules!` body that
-            // expands to a call is invisible to `calls`, so the bare name in
-            // either counts as another caller.
-            context.owner_fn.is_none_or(|owner| {
-                let other_function_holds_owner = context.index.functions().iter().any(|function| {
-                    function.id != owner.id
-                        && !test_summaries
-                            .iter()
-                            .any(|test| test.file == function.file && test.name == function.name)
-                        && (function.calls.iter().any(|call| call.name == owner.name)
-                            || mentions_identifier(function.body.as_str(), &owner.name))
-                });
-                // Only the `&&`/`||` operand reading consumes this, so other
-                // families skip the per-file macro scan.
-                other_function_holds_owner
-                    || (matches!(context.probe.family, ProbeFamily::Predicate)
-                        && context.index.files().values().any(|file| {
-                            macro_rules_bodies(&file.source)
-                                .iter()
-                                .any(|body| mentions_identifier(body, &owner.name))
-                        }))
-            }),
+            owner_has_other_callers,
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -329,43 +367,92 @@ impl ClassifiedProbeEvidence {
         // grades the finding as a gap ("tests miss the boundary") that the
         // computed argument makes unreadable — a claim this seam must not
         // make. Infection abstains with the same reason.
+        let chain_tests = context
+            .related_tests
+            .iter()
+            .map(|(test, _)| *test)
+            .collect::<Vec<_>>();
         let chain_computed_inputs = match (context.owner_fn, context.helper_chain.as_ref()) {
-            (Some(owner), Some(chain)) => {
-                let chain_tests = context
-                    .related_tests
-                    .iter()
-                    .map(|(test, _)| *test)
-                    .collect::<Vec<_>>();
-                !crate::analysis::classify::computed_input_parameters(
-                    owner,
-                    &owner_parameter_names(owner),
-                    &chain_tests,
-                    Some(chain),
-                )
-                .is_empty()
-            }
+            (Some(owner), Some(chain)) => !crate::analysis::classify::computed_input_parameters(
+                owner,
+                &owner_parameter_names(owner),
+                &chain_tests,
+                Some(chain),
+            )
+            .is_empty(),
             _ => false,
+        };
+        // #9889: a chain-edge argument that is no literal or caller
+        // parameter (`wide_x(input.trim())`) stops row transfer even when it
+        // is no arithmetic. What the owner receives is unreadable, so
+        // observation through the chain can be neither confirmed nor
+        // refuted, the same as for a computed argument above.
+        let chain_row_stop = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(chain))
+                if !chain_computed_inputs
+                    && !matches!(context.probe.family, ProbeFamily::Predicate)
+                    && matches!(infect.state, StageState::Yes | StageState::Weak)
+                    && helper_only_reach(&context.related_tests) =>
+            {
+                crate::analysis::classify::chain_row_transfer_stop(
+                    owner,
+                    &chain_tests,
+                    chain,
+                    context.index,
+                )
+            }
+            _ => None,
         };
         let infect = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(_))
                 if !matches!(context.probe.family, ProbeFamily::Predicate)
-                    && chain_computed_inputs
+                    && (chain_computed_inputs || chain_row_stop.is_some())
                     && helper_only_reach(&context.related_tests)
                     && matches!(infect.state, StageState::Yes | StageState::Weak) =>
             {
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    format!(
-                        "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
-                        owner_parameter_names(owner)
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| "the changed input".to_string())
-                    ),
+                    match &chain_row_stop {
+                        Some(argument) => format!(
+                            "Infection unknown: the call chain hands `{}` the argument `{argument}`, which is not an exact input value, so ripr cannot tell whether the changed behavior is activated",
+                            owner.name
+                        ),
+                        None => format!(
+                            "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
+                            owner_parameter_names(owner)
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| "the changed input".to_string())
+                        ),
+                    },
                 )
             }
             _ => infect,
+        };
+        // RIPR-SPEC-0353: an all-bool `&&`/`||` owner body has no digit, call
+        // or arithmetic to mark its tail a returned value, so the sink reads
+        // unknown. When the related tests' literal rows tell the chain from
+        // every one-step mutation, the tail is the owner's return and the
+        // direct-return witness may complete.
+        let (flow_sinks, propagation_witness) = match context.owner_fn.and_then(|owner| {
+            crate::analysis::classify::exercised_bool_chain_return_sink(
+                context.probe,
+                &activation,
+                &test_summaries,
+                owner,
+                owner_has_other_callers,
+            )
+            .map(|sink| (owner, sink))
+        }) {
+            Some((owner, sink)) => {
+                let sinks = vec![sink];
+                let witness =
+                    crate::analysis::classify::constant_tail_witness(context.probe, owner, &sinks)
+                        .map(PropagationWitnessDiagnostic::from_witness);
+                (sinks, witness.or(propagation_witness))
+            }
+            None => (flow_sinks, propagation_witness),
         };
         let valid_witness = propagation_witness
             .as_ref()
@@ -416,7 +503,12 @@ impl ClassifiedProbeEvidence {
                             &context.related_tests,
                         )
                     } else {
-                        !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                        !chain_forwards_to_observed_hops(
+                            &owner.name,
+                            chain,
+                            &context.related_tests,
+                            context.index,
+                        )
                             && field_projection.is_none()
                     } =>
             {
@@ -706,6 +798,23 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.implicit_expansion.unwrap_or(&fallback_expansion),
         );
+        // #9849: only an established unconditional bool whole-return may
+        // borrow the existing predicate boundary authority through a wrapper.
+        // This view supplies activation facts, never a second classification.
+        let wrapper_boundary_probe = (matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && helper_only_reach(&context.related_tests)
+            && owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
+        .then(|| {
+            let mut predicate = context.probe.clone();
+            predicate.family = ProbeFamily::Predicate;
+            predicate
+        });
+        // Reveal asks once per assertion. Compute the whole-test activation
+        // only once per original test, and borrow its rows instead of copying
+        // them for each assertion. File/name/coordinate retain provenance.
+        let wrapper_activations = RefCell::new(BTreeMap::new());
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -715,6 +824,39 @@ impl ClassifiedProbeEvidence {
             &cross_package_defeats,
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
+                wrapper_return_pin: &|test, assertion| {
+                    wrapper_boundary_probe.is_some()
+                        && context.related_tests.iter().any(|(related, reason)| {
+                            *reason == RelationReason::HelperOwnerCall
+                                && related.file == test.file
+                                && related.start_line == test.start_line
+                                && related.name == test.name
+                        })
+                        && context
+                            .owner_fn
+                            .zip(context.helper_chain.as_ref())
+                            .is_some_and(|(owner, chain)| {
+                                let mut cached = wrapper_activations.borrow_mut();
+                                let activation = cached
+                                    .entry((test.file.clone(), test.start_line, test.name.clone()))
+                                    .or_insert_with(|| {
+                                        activation_and_boundary_input(
+                                            wrapper_boundary_probe
+                                                .as_ref()
+                                                .unwrap_or(context.probe),
+                                            context.owner_fn,
+                                            &[test],
+                                            &flow_sinks,
+                                            context.helper_chain.as_ref(),
+                                            context.index,
+                                            context.workspace_complete,
+                                            context.test_value_facts,
+                                        )
+                                        .activation
+                                    });
+                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
+                            })
+                },
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {
                     if !matches!(
@@ -777,6 +919,11 @@ impl ClassifiedProbeEvidence {
                                 pin_syntax,
                             )
                         })
+                },
+                out_parameter_read: &|test, assertion| {
+                    context.owner_fn.and_then(|owner| {
+                        assertion_out_parameter(owner, context.index, test, assertion, pin_syntax)
+                    })
                 },
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)
@@ -906,6 +1053,14 @@ impl ClassifiedProbeEvidence {
             )
             .activation
         };
+        // #9329: the asserting entry's check helper never names the owner,
+        // so only the name defeats gate it.
+        let entry_loan = |test: &TestSummary, assertion: &OracleFact| {
+            context.owner_fn.filter(|owner| {
+                !import_defeats(test, &owner.name) && !cross_package_defeats(test, &owner.name)
+            })?;
+            pin_syntax.helper_loan(test, assertion, context.index)
+        };
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
@@ -951,6 +1106,7 @@ impl ClassifiedProbeEvidence {
                     .map(|chain| WrapperEntryPairing {
                         chain,
                         test_activation: &one_test_activation,
+                        entry_loan: &entry_loan,
                     }),
                 context.index,
             ) {
@@ -986,6 +1142,13 @@ impl ClassifiedProbeEvidence {
         // to the same value: the field equals that operand there. Both
         // operands must be established primitive, so the dropped operator cannot
         // be an overloaded call with side effects (#7084 review).
+        let outer_imports = context
+            .owner_fn
+            .filter(|_| {
+                matches!(context.probe.family, ProbeFamily::FieldConstruction)
+                    && discriminate.state == StageState::Yes
+            })
+            .and_then(|owner| outer_imported_names(context.index, owner));
         let discriminate = if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && discriminate.state == StageState::Yes
             && let Some(owner) = context.owner_fn
@@ -993,6 +1156,7 @@ impl ClassifiedProbeEvidence {
                 &context.probe.expression,
                 &owner.name,
                 owner.body.as_str(),
+                outer_imports.as_ref(),
                 &context.related_tests,
                 context.index,
             ) {
@@ -1078,6 +1242,25 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
 
+        // #9871: a test that calls a reader of the changed constant is related
+        // for reach only. Whether its path executes the read is unestablished,
+        // so no assertion is credited as observing or discriminating the
+        // constant: both stages stay unknown rather than yes/weak.
+        let (observe, discriminate) = if context.const_readers.is_empty() {
+            (observe, discriminate)
+        } else {
+            let unknown =
+                |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+            (
+                unknown(
+                    "Not established: whether a test observes the changed constant; the tests only call a function that reads it",
+                ),
+                unknown(
+                    "Not established: whether a test discriminates the changed constant; the tests only call a function that reads it",
+                ),
+            )
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -1100,8 +1283,11 @@ impl ClassifiedProbeEvidence {
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
         };
-        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-            || discriminate.state != StageState::Yes)
+        // #9871: a reader-only relation has no owner pin to refuse against, so
+        // an owner-name scan would only add a misleading refusal note.
+        let assertion_refusal = (context.const_readers.is_empty()
+            && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+                || discriminate.state != StageState::Yes))
             .then(|| {
                 let mut notes = Vec::new();
                 for (test, _) in &context.related_tests {
@@ -1885,12 +2071,16 @@ mod tests {
             );
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
-            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 functions: facts.functions.clone(),
                 tests: facts.tests.clone(),
                 files: [(path, facts)].into_iter().collect(),
                 ..Default::default()
             });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
             let owner = index
                 .functions()
                 .iter()
@@ -1948,12 +2138,13 @@ mod tests {
         let source = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
         let path = PathBuf::from("src/lib.rs");
         let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: facts.functions.clone(),
             tests: facts.tests.clone(),
             files: [(path, facts)].into_iter().collect(),
             ..Default::default()
         });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
         let owner = index
             .functions()
             .iter()

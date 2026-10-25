@@ -19,8 +19,17 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return {"detail": "coupon expired"}
-  Analyzer limit: Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route registration `api.post`; syntax-first preview evidence cannot safely match client calls to a…
+  Analyzer limit: Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route
+    registration `api.post`; syntax-first preview evidence cannot safely match client calls to a
+    concrete route path
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach no: 0 related Python test(s) found for owner `checkout`
     - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
     - 7 more detail line(s) in --format human-full
@@ -28,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast probe:app_checkout.py:python_preview:c1a8e812
   ripr context --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast --at probe:app_checkout.py:python_preview:c1a8e812
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:app_checkout.py:python_preview:c1a8e812 --root <cwd>/fixtures/python_dynamic_route_registration_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

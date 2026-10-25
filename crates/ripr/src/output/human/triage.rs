@@ -10,7 +10,9 @@ use crate::domain::{
     select_canonical_next_action,
 };
 use crate::output::path::display_path;
-use crate::output::preview_actionability::preview_actionability_for;
+use crate::output::preview_actionability::{
+    preview_actionability_for, repo_scope_no_repair_reason,
+};
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
@@ -635,7 +637,9 @@ pub(crate) fn canonical_next_action_for_triage(
             Some(FindingDrillIn::Commands(navigation)) => navigation.list_command(),
             None => format!(
                 "ripr check --root {}",
-                shell_arg(&output.root.display().to_string())
+                shell_arg(&crate::agent::loop_commands::root_display(
+                    &output.root.display().to_string()
+                ))
             ),
         },
         check_case: Some(check_case_for_triage(triage, output)),
@@ -1030,17 +1034,20 @@ fn python_preview_safe_action(finding: &Finding) -> String {
     }
     let (reason, manual_step) = if finding.class == ExposureClass::NoStaticPath {
         (
-            "no Python test reaches this code",
+            "no Python test reaches this code".to_string(),
             "add a test that calls it by hand",
         )
+    } else if let Some(scope_reason) = repo_scope_no_repair_reason(finding) {
+        // #5531: the typed repo scope, not placement, is why no card exists.
+        (scope_reason, "add or strengthen a test by hand")
     } else if finding.activation.missing_discriminators.is_empty() {
         (
-            "static evidence names no concrete missing discriminator",
+            "static evidence names no concrete missing discriminator".to_string(),
             "add or strengthen a test by hand",
         )
     } else {
         (
-            "its test placement or related-test evidence is incomplete",
+            "its test placement or related-test evidence is incomplete".to_string(),
             "add or strengthen a test by hand",
         )
     };
@@ -1336,6 +1343,7 @@ mod tests {
 
     fn test_output(findings: Vec<Finding>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),

@@ -31,6 +31,8 @@
 mod macro_argument;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+#[cfg(test)]
+mod asserting_entry_tests;
 mod field_projection;
 #[cfg(test)]
 mod method_hop_tests;
@@ -1409,6 +1411,40 @@ pub(crate) fn helper_return_value(
             continue;
         }
         let cleaned = trimmed.trim_end_matches(';').trim();
+        // Masking blanks a string literal, so a line that is one whole
+        // literal reads empty here; it is the tail, not a skipped line.
+        if cleaned.is_empty() && strict_literal(raw_line.trim().trim_end_matches(';')).is_some() {
+            // Masking also blanks the interior of a multi-line raw string,
+            // and an `async` body or an early `return` makes the last
+            // literal something other than the value the call yields.
+            let word = |name: &str| {
+                masked
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|token| token == name)
+            };
+            // A `;` makes it a discarded expression statement, not the
+            // value the helper yields; the binding tail below decides.
+            if raw_line.trim().ends_with(';') {
+                continue;
+            }
+            if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
+                || helper.body.contains("r#")
+                || helper.body.contains("r\"")
+                // Masking blanks block-comment text exactly like a string,
+                // so a quoted line inside `/* ... */` would read as a tail.
+                || helper.body.contains("/*")
+                || word("async")
+                || word("return")
+                || tail.is_some()
+            {
+                return None;
+            }
+            if tail.is_some() {
+                return None;
+            }
+            tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
+            continue;
+        }
         if cleaned.is_empty()
             || cleaned.starts_with("//")
             || cleaned.starts_with('#')
@@ -1429,6 +1465,17 @@ pub(crate) fn helper_return_value(
         tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
     }
     let tail = tail?;
+    // A helper whose tail is one strict literal returns it whatever its
+    // inputs are (`fn pick(_kind: &str) -> &'static str { "alpha" }`).
+    // Only a whole-token literal counts, so no operation is evaluated.
+    if let Some(literal) =
+        strict_literal(&tail).filter(|text| super::match_transfer::is_single_literal(text))
+    {
+        return match super::value_transfer::evaluate_initializer(&literal, inputs) {
+            super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
+            _ => None,
+        };
+    }
     let is_identifier = !tail.is_empty()
         && tail
             .chars()
@@ -1663,7 +1710,7 @@ pub(crate) fn chain_entry_pin_admits(
     if !every_hop_is_a_method_site {
         return false;
     }
-    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests) {
+    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
         return false;
     }
     let Some(entry) = chain.hops.last() else {
@@ -2153,8 +2200,11 @@ pub(crate) fn chain_forwards_to_observed_hops(
         &crate::analysis::facts::TestSummary,
         crate::domain::RelationReason,
     )],
+    index: &RustIndex,
 ) -> bool {
-    hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+    let hops = observed_hops(chain, related_tests);
+    hops_forward_owner_result(owner_name, hops)
+        || asserting_method_entry(owner_name, hops, index).is_some()
 }
 
 /// The returned-ledger proof covers only the first caller. It may replace that
@@ -2279,6 +2329,130 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         tracked = next;
     }
     true
+}
+
+/// #9329: the asserting entry of a method-hop chain. The top hop is a
+/// `#[cfg(test)]` check helper that makes the method hop's receiver call
+/// (`fn check(expected, b: ByteSize, si) { assert_eq!(expected, b.to_string_as(si)) }`)
+/// and does nothing else, so the helper's assertion observes the result of
+/// that call directly. It answers the top hop when:
+///
+/// - every hop below it hands the owner's result straight to its caller's
+///   return ([`hops_forward_owner_result`]), so the method's result is the
+///   owner's result with no transformation;
+/// - the helper's body is exactly one `assert_eq!`/`assert_ne!` statement,
+///   so nothing rebinds, drops or reshapes the call's result first;
+/// - one compared operand is exactly the hop's call, `<receiver>.<method>(<args>)`
+///   with the hop's own arguments, and the other operand names neither the
+///   receiver, the method, nor a direct call of the owner (an expected
+///   value derived from the same call would make the comparison trivial).
+///
+/// Anything else, including a chain of one hop, answers `None` (fail closed).
+pub(crate) fn asserting_method_entry<'a>(
+    owner_name: &str,
+    hops: &'a [HelperHop],
+    index: &RustIndex,
+) -> Option<&'a HelperHop> {
+    use crate::analysis::facts::FunctionSourceRole;
+    let (top, below) = hops.split_last()?;
+    let method = below.last()?.caller.name.as_str();
+    let receiver = top.receiver.as_deref()?;
+    if top.through_macro
+        || top.caller.source_role != FunctionSourceRole::CfgTestModule
+        || !hops_forward_owner_result(owner_name, below)
+        || !hops_call_the_indexed_callees(owner_name, below, index)
+        || !top
+            .arguments
+            .iter()
+            .all(|argument| is_identifier(argument.trim()))
+    {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&top.caller.body);
+    if masked.len() != top.caller.body.len() {
+        return None;
+    }
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    let inner = top.caller.body.get(open + 1..close)?.trim();
+    let masked_inner = masked.get(open + 1..close)?.trim();
+    // Exactly one statement: the assertion macro, with at most a closing `;`.
+    let statement = masked_inner.strip_suffix(';').unwrap_or(masked_inner);
+    if !(statement.starts_with("assert_eq!(") || statement.starts_with("assert_ne!("))
+        || statement.contains(';')
+        || super::reveal::matching_parenthesis(statement, "assert_eq!".len())
+            .is_none_or(|end| end + 1 != statement.len())
+    {
+        return None;
+    }
+    let raw_statement = inner.strip_suffix(';').unwrap_or(inner);
+    let operands = super::reveal::assertion_comparison_operands(raw_statement)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    let call = squash(&format!(
+        "{receiver}.{method}({})",
+        top.arguments
+            .iter()
+            .map(|argument| argument.trim())
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+    let other = if squash(operands[0]).trim_start_matches('&') == call {
+        operands[1]
+    } else if squash(operands[1]).trim_start_matches('&') == call {
+        operands[0]
+    } else {
+        return None;
+    };
+    let other_masked = crate::analysis::language::mask_rust_comments_and_strings(other);
+    let names_word = |text: &str, word: &str| contains_word(text, word);
+    if names_word(&other_masked, receiver)
+        || names_word(&other_masked, method)
+        || is_direct_call_site(&other_masked, owner_name)
+    {
+        return None;
+    }
+    Some(top)
+}
+
+/// #9329: every hop below the asserting entry calls the workspace function the
+/// chain names, not another item that only shares its bare name. A hop's caller
+/// file that imports (or macro-defines) the callee name, or a caller body that
+/// rebinds it, makes the call unresolved, so the observed result may belong to
+/// `std::cmp::min` rather than the changed `min`. The callee must also be the
+/// one workspace function of that name. Anything unresolved refuses the hop.
+fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &RustIndex) -> bool {
+    let files = index.files();
+    hops.iter().enumerate().all(|(step, hop)| {
+        let callee = match step.checked_sub(1) {
+            None => owner_name,
+            Some(below) => match hops.get(below) {
+                Some(lower) => lower.caller.name.as_str(),
+                None => return false,
+            },
+        };
+        let Some(file) = files.get(&hop.caller.file) else {
+            return false;
+        };
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&hop.caller.body);
+        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        let rebinds = ["fn ", "let ", "let mut "].iter().any(|prefix| {
+            let pattern = format!("{prefix}{callee}");
+            masked.match_indices(&pattern).any(|(at, _)| {
+                !masked[..at].chars().next_back().is_some_and(is_word)
+                    && !masked[at + pattern.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        });
+        callee_is_unique(callee, index)
+            && !rebinds
+            && !super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                callee,
+                &index.package_names,
+            )
+    })
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
@@ -3809,20 +3983,24 @@ mod tests {
         };
         let middle_test = calling("middle", "assert!(middle(10));");
         let entry_test = calling("entry", "assert_eq!(entry(10), 5);");
+        let empty = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
         assert!(chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test])
+            &related(&[&middle_test]),
+            &empty
         ));
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&entry_test])
+            &related(&[&entry_test]),
+            &empty
         ));
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test, &entry_test])
+            &related(&[&middle_test, &entry_test]),
+            &empty
         ));
         // A helper-owner-call test whose hop cannot be found checks the
         // whole chain.
@@ -3830,7 +4008,8 @@ mod tests {
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test, &unknown])
+            &related(&[&middle_test, &unknown]),
+            &empty
         ));
     }
 

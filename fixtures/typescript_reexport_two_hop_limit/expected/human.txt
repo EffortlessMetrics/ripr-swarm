@@ -18,10 +18,19 @@ Start here:
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
   Changed behavior: return false;
-  Discriminator (observed, advisory): Related test reaches `isRawNetworkError` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+  Discriminator (observed, advisory): Related test reaches `isRawNetworkError` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant discriminator
   Related test: test/util.test.ts:7 isRawNetworkError via two-hop chain
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `isRawNetworkError`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -29,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_reexport_two_hop_limit/input --diff <cwd>/fixtures/typescript_reexport_two_hop_limit/diff.patch --mode fast probe:src_util.ts:typescript_preview:5a933676
   ripr context --root <cwd>/fixtures/typescript_reexport_two_hop_limit/input --diff <cwd>/fixtures/typescript_reexport_two_hop_limit/diff.patch --mode fast --at probe:src_util.ts:typescript_preview:5a933676
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_util.ts:typescript_preview:5a933676 --root <cwd>/fixtures/typescript_reexport_two_hop_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

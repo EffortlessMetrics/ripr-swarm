@@ -54,6 +54,19 @@ pub(crate) struct TypeScriptOwner {
     /// method, getter or duplicate), which keeps the member from being
     /// replaced inside the object. RIPR-SPEC-0243 rule 5.
     pub(crate) default_object_member: bool,
+    /// `true` when the owner is the whole value of a CommonJS
+    /// `module.exports = <function>` assignment (an anonymous or named
+    /// function expression, an arrow, or a plain reference to a top-level
+    /// function declaration). A `require()` of such a module IS the
+    /// function, so the test's binding is called directly; the `require()`
+    /// of an ES module's default export is a namespace object and is not.
+    /// RIPR-SPEC-0243 rule 19.
+    pub(crate) commonjs_default_export: bool,
+    /// `module.exports = <function>` as the file's whole export, independent of
+    /// the file-level gate that licenses `commonjs_default_export`: a named
+    /// import or member of such a module (`const { f } = require(...)`,
+    /// `k.f`) is a property of the function, never the owner.
+    pub(crate) commonjs_whole_function: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for
@@ -149,6 +162,11 @@ pub(crate) struct TypeScriptTest {
     /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Vec<(String, String)>,
+    /// Names the containing test file writes more than once (their
+    /// declaration initializer plus a reassignment, update or loop target),
+    /// so a binding such as `let f = require('./owner')` may no longer hold
+    /// the owner function. Populated once per file by `extract_tests`.
+    pub(crate) written_locals_in_file: Vec<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -325,6 +343,13 @@ pub(crate) enum TypeScriptRelationKind {
     /// Admitted only when no test calls the owner itself. Reach is real but
     /// indirect, so the classifier never promotes it to `exposed`.
     ModuleEntryCall,
+    /// Test calls an instance method that a bare `@owner` method decorator
+    /// wraps, where the owner is a straight-line pass-through decorator
+    /// (RIPR-SPEC-0243 rule 21, #10189). Unlike `ModuleEntryCall`, the
+    /// decorated method's call result *is* the wrapper's return value, so
+    /// the classifier may lend `exposed` when the changed line is that
+    /// return. Entries only exist for shapes `decorated_entries` proves.
+    DecoratedMethodCall,
     /// Test imports a module-level value (`export const stop =
     /// Symbol('stop')`) from the owner's module and uses it as a value
     /// outside a direct `expect(...)` subject (#8568). Heuristic: the use
@@ -348,7 +373,7 @@ impl TypeScriptRelationKind {
             // genuinely exercises the owner, just via an intermediate file.
             Self::ReExportChainFollowed => 4,
             // Below every relation that calls the owner itself.
-            Self::ModuleEntryCall => 3,
+            Self::ModuleEntryCall | Self::DecoratedMethodCall => 3,
             Self::SameFileProximity => 3,
             Self::ModuleValueUse => 2,
             Self::DescribeName => 2,
@@ -367,6 +392,7 @@ impl TypeScriptRelationKind {
                 | Self::ClassMethodCall
                 | Self::ReExportChainFollowed
                 | Self::ModuleEntryCall
+                | Self::DecoratedMethodCall
         )
     }
 
@@ -384,6 +410,7 @@ impl TypeScriptRelationKind {
             Self::ClassMethodCall => "class_method_call",
             Self::ReExportChainFollowed => "re_export_chain_followed",
             Self::ModuleEntryCall => "module_entry_call",
+            Self::DecoratedMethodCall => "decorated_method_call",
             Self::ModuleValueUse => "module_value_use",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
@@ -700,14 +727,18 @@ impl TypeScriptErrorPayload {
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
             }
-            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral
+            | TypeScriptErrorPayloadKind::ChaiThrowClass
+            | TypeScriptErrorPayloadKind::ChaiThrowClassLiteral => {
                 format!("expect(...).to.throw({})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsContainsRegex
             | TypeScriptErrorPayloadKind::AssertThrowsObject => {
                 format!("assert.throws(..., {})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsContainsRegex
             | TypeScriptErrorPayloadKind::AssertRejectsObject => {
                 format!("await assert.rejects(..., {})", self.expected)
             }
@@ -740,12 +771,22 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsMatchObject,
     /// chai `expect(...).to.throw("message")` (RIPR-SPEC-0243 rule 10).
     ChaiThrowLiteral,
+    /// chai `expect(...).to.throw(SomeError)` (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClass,
+    /// chai `expect(...).to.throw(SomeError, "message")`: both the class and
+    /// the message substring must match (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClassLiteral,
     /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertThrowsRegex,
+    /// `node:assert` `throws(fn, /text/)`: an unanchored regex of plain text,
+    /// a substring test of `String(err)` (RIPR-SPEC-0243 rule 20).
+    AssertThrowsContainsRegex,
     /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertThrowsObject,
     /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertRejectsRegex,
+    /// `node:assert` `rejects(p, /text/)` (RIPR-SPEC-0243 rule 20).
+    AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,
 }

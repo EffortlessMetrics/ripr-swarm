@@ -54,6 +54,10 @@ pub(in crate::analysis::classify) struct AdaptorTail {
     /// Whether the tail's `collect` relies on the bare name `Vec` meaning
     /// the standard vector, which the owner's file may rebind.
     collects_named_vec: bool,
+    /// Whether that `collect` targets `Result<Vec<..>, ..>` (RIPR-SPEC-0265
+    /// amendment, #9490), which relies on the bare name `Result` meaning the
+    /// standard type as well.
+    collects_named_result: bool,
 }
 
 impl AdaptorTail {
@@ -74,19 +78,32 @@ impl AdaptorTail {
             return false;
         };
         let masked = mask_comments_and_strings(source);
-        let declares = ["struct", "enum", "union", "type", "trait"]
-            .iter()
-            .any(|keyword| {
-                whole_word_offsets(&masked, keyword)
-                    .into_iter()
-                    .any(|offset| {
-                        super::starts_with_word(
-                            masked[offset + keyword.len()..].trim_start(),
-                            "Vec",
-                        )
-                    })
-            });
-        !declares && !super::declaring_file_rebinds(source, "Vec", false, index)
+        let names: &[&str] = if self.collects_named_result {
+            &["Vec", "Result"]
+        } else {
+            &["Vec"]
+        };
+        names.iter().all(|name| {
+            let declares = ["struct", "enum", "union", "type", "trait"]
+                .iter()
+                .any(|keyword| {
+                    whole_word_offsets(&masked, keyword)
+                        .into_iter()
+                        .any(|offset| {
+                            super::starts_with_word(
+                                masked[offset + keyword.len()..].trim_start(),
+                                name,
+                            )
+                        })
+                });
+            !declares && !super::declaring_file_rebinds(source, name, false, index)
+        })
+    }
+
+    /// Whether the tail's `collect` targets `Result<Vec<..>, ..>`, which
+    /// stops at the first `Err`.
+    pub(in crate::analysis::classify) fn collects_result(&self) -> bool {
+        self.collects_named_result
     }
 
     /// Whether `operand` is the closure binding read as one element of `P`:
@@ -249,6 +266,10 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
     let collects_named_vec = terminal
         .as_ref()
         .is_some_and(|terminal| method_name(terminal).as_deref() == Some("collect"));
+    let collects_named_result = collects_named_vec
+        && terminal
+            .as_ref()
+            .is_some_and(|terminal| collect_target(&function, terminal).starts_with("Result<"));
     Some(AdaptorTail {
         parameter,
         position,
@@ -263,6 +284,7 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
         deciding,
         comparison,
         collects_named_vec,
+        collects_named_result,
     })
 }
 
@@ -290,7 +312,11 @@ fn admitted_consumer(
     };
     match (adaptor, name.as_str()) {
         ("filter", "count") => terminal.generic_arg_list().is_none(),
-        ("filter" | "map", "collect") => collects_into_vec(function, terminal),
+        ("filter", "collect") => {
+            collects_into_vec(function, terminal)
+                && !result_of_vec(&collect_target(function, terminal))
+        }
+        ("map", "collect") => collects_into_vec(function, terminal),
         ("map", "sum") => arithmetic_body(closure_body),
         _ => false,
     }
@@ -299,25 +325,41 @@ fn admitted_consumer(
 /// Whether `collect` provably builds a `Vec`: a `collect::<Vec<..>>()`
 /// turbofish, or no turbofish and an owner return type `Vec<..>`.
 fn collects_into_vec(function: &ast::Fn, terminal: &ast::MethodCallExpr) -> bool {
+    let target = collect_target(function, terminal);
+    target.starts_with("Vec<") && target.ends_with('>') || result_of_vec(&target)
+}
+
+/// The type `collect` builds, collapsed: the turbofish argument, else the
+/// owner's return type, with a `std::vec::` / `alloc::vec::` prefix removed.
+fn collect_target(function: &ast::Fn, terminal: &ast::MethodCallExpr) -> String {
     let target = match terminal.generic_arg_list() {
         Some(arguments) => {
             let mut arguments = arguments.generic_args();
             let (Some(argument), None) = (arguments.next(), arguments.next()) else {
-                return false;
+                return String::new();
             };
             argument.syntax().text().to_string()
         }
         None => match function.ret_type().and_then(|ret| ret.ty()) {
             Some(ty) => ty.syntax().text().to_string(),
-            None => return false,
+            None => return String::new(),
         },
     };
     let target = collapse(&target);
-    let target = ["std::vec::", "alloc::vec::"]
+    ["std::vec::", "alloc::vec::"]
         .iter()
         .find_map(|prefix| target.strip_prefix(prefix))
-        .unwrap_or(&target);
-    target.starts_with("Vec<") && target.ends_with('>')
+        .unwrap_or(&target)
+        .to_string()
+}
+
+/// `Result<Vec<..>, ..>`: a short-circuiting collect whose `Ok` keeps every
+/// closure value in order and whose first `Err` is the owner's result, so a
+/// changed closure value still changes what the owner returns (#9490).
+fn result_of_vec(target: &str) -> bool {
+    target
+        .strip_prefix("Result<")
+        .is_some_and(|inner| inner.trim_start().starts_with("Vec<") && inner.ends_with('>'))
 }
 
 /// Whether a `map` body summed by `sum` is arithmetic: no comparison, no
@@ -441,6 +483,139 @@ pub(in crate::analysis::classify) fn pinned_call_runs_closure(
         .is_some_and(|runs| runs.iter().any(|elements| !elements.is_empty()))
 }
 
+/// RIPR-SPEC-0360: whether some run of the pinned owner call walks a
+/// non-empty literal sequence at `position` and pins a nonzero integer
+/// literal. `expected` is the assertion's expected operand: the literal
+/// itself, or (for an assertion borrowed from a test-local helper) one of the
+/// helper's parameters, read at each of the test's eager calls of the helper.
+/// A direct call reads only a literal sequence and a literal expectation;
+/// anything else refuses (fail closed).
+pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    call_text: &str,
+    name: &str,
+    position: usize,
+    expected: &str,
+) -> bool {
+    let Some(argument) =
+        call_argument_texts(call_text, name).and_then(|arguments| arguments.get(position).cloned())
+    else {
+        return false;
+    };
+    let expected = expected.trim();
+    match loan {
+        None if literal_sequence(&argument).is_some() => {
+            literal_sequence(&argument).is_some_and(|elements| !elements.is_empty())
+                && nonzero_integer_literal(expected)
+        }
+        // A constant-row table (`for (xs, want) in [(&[3, 4], 7), ..]`) runs
+        // the call once per row: some row must walk a non-empty sequence and
+        // pin a nonzero literal in the same row. Both columns must be
+        // readable constant-row cells of one table, or the pin refuses.
+        None => table_row_sums_to_nonzero(test, call_text, &argument, expected),
+        Some(loan) => {
+            let parameter =
+                |text: &str| loan.parameters.iter().position(|name| name == text.trim());
+            let Some(walked) = parameter(&argument) else {
+                return false;
+            };
+            let expected_parameter = parameter(expected);
+            loan.call_lines.iter().any(|line| {
+                let Some(text) = line
+                    .checked_sub(test.start_line)
+                    .and_then(|offset| test.body.lines().nth(offset))
+                else {
+                    return false;
+                };
+                if call_count(text, &loan.name) != 1 {
+                    return false;
+                }
+                let Some(arguments) = call_argument_texts(text, &loan.name) else {
+                    return false;
+                };
+                let pinned = match expected_parameter {
+                    Some(index) => arguments.get(index).map(String::as_str),
+                    None => Some(expected),
+                };
+                arguments
+                    .get(walked)
+                    .and_then(|sequence| literal_sequence(sequence))
+                    .is_some_and(|elements| !elements.is_empty())
+                    && pinned.is_some_and(|value| nonzero_integer_literal(value.trim()))
+            })
+        }
+    }
+}
+
+/// [`pinned_run_sums_to_nonzero`] through one constant-row table: both the
+/// walked argument and the expected value are plain identifiers bound by the
+/// same table loop, and some row pairs a non-empty literal sequence with a
+/// nonzero integer literal. A short row, a cell that is not a literal and a
+/// loop that can leave early have no column, so the pin refuses.
+fn table_row_sums_to_nonzero(
+    test: &TestSummary,
+    call_text: &str,
+    argument: &str,
+    expected: &str,
+) -> bool {
+    let (argument, expected) = (argument.trim(), expected.trim());
+    if !super::is_plain_identifier(argument) || !super::is_plain_identifier(expected) {
+        return false;
+    }
+    let mut found = test.body.match_indices(call_text);
+    let Some((at, _)) = found.next().filter(|_| !call_text.is_empty()) else {
+        return false;
+    };
+    if found.next().is_some() {
+        return false;
+    }
+    let (Some(sequences), Some(wanted)) = (
+        constant_table_column_around(&test.body, argument, at),
+        constant_table_column_around(&test.body, expected, at),
+    ) else {
+        return false;
+    };
+    sequences.len() == wanted.len()
+        && sequences
+            .iter()
+            .zip(&wanted)
+            .map(|(cell, want)| literal_sequence(cell).map(|elements| (elements, want)))
+            .collect::<Option<Vec<_>>>()
+            .is_some_and(|rows| {
+                rows.iter()
+                    .any(|(elements, want)| !elements.is_empty() && nonzero_integer_literal(want))
+            })
+}
+
+/// A decimal integer literal other than zero, with an optional sign, digit
+/// separators and a built-in integer suffix (`12`, `-3`, `1_000u32`).
+fn nonzero_integer_literal(text: &str) -> bool {
+    let text = text.strip_prefix('-').unwrap_or(text);
+    let digits_end = text
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '_'))
+        .unwrap_or(text.len());
+    let (digits, suffix) = text.split_at(digits_end);
+    let digits: String = digits.chars().filter(|ch| *ch != '_').collect();
+    !digits.is_empty()
+        && digits.chars().any(|ch| ch != '0')
+        && matches!(
+            suffix,
+            "" | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+        )
+}
+
 /// The element sequences `argument` takes over every run of the call that
 /// passes it, or `None` when any run is unreadable. `site` is the text of
 /// the call (or the assertion holding it); a constant-row table column is
@@ -513,7 +688,10 @@ pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize
 }
 
 /// The top-level argument texts of the first call of `name` in `text`.
-fn call_argument_texts(text: &str, name: &str) -> Option<Vec<String>> {
+pub(in crate::analysis::classify) fn call_argument_texts(
+    text: &str,
+    name: &str,
+) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(text);
     let open = whole_word_offsets(&masked, name)
         .into_iter()
@@ -795,11 +973,23 @@ pub(in crate::analysis::classify) fn literal_sequence(argument: &str) -> Option<
     let mut elements = Vec::new();
     let mut depth = 0i32;
     let mut start = 0usize;
+    // A plain string element (`"1"`) is read whole: no escape, so its
+    // closing quote is the next one and a comma inside it is not a separator.
+    let mut in_string = false;
     for (offset, character) in inner.char_indices() {
+        if in_string {
+            match character {
+                '"' => in_string = false,
+                '\\' => return None,
+                _ => {}
+            }
+            continue;
+        }
         match character {
+            '"' => in_string = true,
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
-            ';' | '"' => return None,
+            ';' => return None,
             ',' if depth == 0 => {
                 elements.push(inner[start..offset].trim());
                 start = offset + 1;
@@ -807,14 +997,28 @@ pub(in crate::analysis::classify) fn literal_sequence(argument: &str) -> Option<
             _ => {}
         }
     }
+    if in_string {
+        return None;
+    }
     let last = inner[start..].trim();
     if !last.is_empty() {
         elements.push(last);
     }
     elements
         .into_iter()
-        .map(|element| literal_element(element).then(|| element.to_string()))
+        .map(|element| {
+            (literal_element(element) || plain_string_element(element)).then(|| element.to_string())
+        })
         .collect()
+}
+
+/// `"text"` with no escape, no inner quote and no raw prefix: a value ripr
+/// can count as a run element but never compares as a boundary.
+fn plain_string_element(element: &str) -> bool {
+    element
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .is_some_and(|body| !body.contains('"') && !body.contains('\\'))
 }
 
 /// A comparison boundary ripr reads as a literal: its trimmed text is one
@@ -1106,6 +1310,7 @@ mod tests {
                 .to_string(),
             parameters: vec!["days".to_string(), "want".to_string()],
             call_lines,
+            eager_call_lines: Vec::new(),
         };
         let runs = |call_lines: Vec<usize>, argument: &str| {
             argument_sequences(
@@ -1180,6 +1385,11 @@ mod tests {
             literal_sequence("&vec![true, 'a']"),
             Some(vec!["true".into(), "'a'".into()])
         );
+        // #9490: a plain string element is a run element, commas included.
+        assert_eq!(
+            literal_sequence("&[\"1\", \"a, b\"]"),
+            Some(vec!["\"1\"".into(), "\"a, b\"".into()])
+        );
         assert_eq!(literal_sequence("&[]"), Some(Vec::new()));
         assert_eq!(literal_sequence("vec![]"), Some(Vec::new()));
         for unreadable in [
@@ -1191,7 +1401,10 @@ mod tests {
             "&[1 + 1]",
             "&[3u32]",
             "&[f(1)]",
-            "&[\"a\"]",
+            "&[\"a\\n\"]",
+            "&[\"a\", b]",
+            "&[\"a]",
+            "&[\"a\"b\"]",
             "0..4",
             "&[1, 2][..]",
             "&[.5]",

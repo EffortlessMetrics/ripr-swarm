@@ -47,12 +47,22 @@ pub fn check_workspace_with_config(
 
 /// [`check_workspace_with_config`] keeping the failure typed, so a caller
 /// (the MCP refresh) can name the recovery route for the failure family
-/// instead of re-reading rendered text.
+/// instead of re-reading rendered text. Also returns the run's crate-private
+/// mixed-language completeness view (#6475), the same sidecar the LSP
+/// refresh receives; the public entry points are unchanged.
 pub(crate) fn check_workspace_with_config_typed(
     input: CheckInput,
     config: &RiprConfig,
-) -> Result<CheckOutput, CoreError> {
-    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+) -> Result<
+    (
+        CheckOutput,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    ),
+    CoreError,
+> {
+    let (output, _, _, view) =
+        check_with_progress_and_origins(input, config, AnalysisProgressScope::Diff, None)?;
+    Ok((output, view))
 }
 
 pub fn check_workspace_worktree_with_config(
@@ -74,7 +84,7 @@ pub(crate) fn check_workspace_worktree_with_origins(
     String,
 > {
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)
-        .map(|(output, origins, _)| (output, origins))
+        .map(|(output, origins, _, _)| (output, origins))
         .map_err(Into::into)
 }
 
@@ -116,6 +126,7 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
@@ -175,7 +186,7 @@ pub(crate) fn check_workspace_repo_with_origins(
     String,
 > {
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Repo, None)
-        .map(|(output, origins, _)| (output, origins))
+        .map(|(output, origins, _, _)| (output, origins))
         .map_err(Into::into)
 }
 
@@ -211,6 +222,7 @@ fn check_with_progress_and_origins(
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
@@ -225,7 +237,7 @@ fn check_with_progress_and_origins(
 }
 
 fn check_with_progress_and_origins_with_open_rust_paths(
-    mut input: CheckInput,
+    input: CheckInput,
     config: &RiprConfig,
     scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
@@ -241,10 +253,63 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
     let mut progress = ProgressRun::new(sink, scope);
+    // #9922: a user-fixable input failure (unresolvable base, unusable root
+    // or config, missing `--diff` file) is reported by the real error the
+    // caller prints; the CLI progress sink must not also project `failed`.
+    let missing_diff_file = input
+        .diff_file
+        .as_ref()
+        .is_some_and(|path| path != std::path::Path::new("-") && !path.exists());
+    let result = check_with_progress_and_origins_run(
+        input,
+        config,
+        scope,
+        open_rust_index_paths,
+        disclosure_probes,
+        &mut progress,
+    );
+    if let Err(error) = &result
+        && (missing_diff_file || error_is_user_fixable_input(error))
+    {
+        progress.fail_user_fixable();
+    }
+    result
+}
+
+fn error_is_user_fixable_input(error: &CoreError) -> bool {
+    use crate::core_error::CheckFailureKind;
+    matches!(
+        error.check_failure_kind(),
+        Some(
+            CheckFailureKind::BaseUnresolvable
+                | CheckFailureKind::RepositoryRootUnusable
+                | CheckFailureKind::ConfigInvalid
+                | CheckFailureKind::SuppressionPolicyInvalid
+        )
+    )
+}
+
+fn check_with_progress_and_origins_run(
+    mut input: CheckInput,
+    config: &RiprConfig,
+    scope: AnalysisProgressScope,
+    open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+    disclosure_probes: crate::analysis::DisclosureProbes,
+    progress: &mut ProgressRun<'_>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    ),
+    CoreError,
+> {
     progress.emit(AnalysisProgressStage::LoadingInput);
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
@@ -397,6 +462,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     let suppression_policy = input.suppression_policy.clone();
     let origins = analysis.rust_diagnostic_origins.clone();
     let consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
+    let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
@@ -411,7 +477,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             .map_err(CoreError::suppression_policy_invalid)?;
     }
     progress.complete();
-    Ok((output, origins, consumed_sources))
+    Ok((output, origins, consumed_sources, language_view))
 }
 
 /// Whether the all-no-path human note could name unlinked Python tests. This
@@ -460,6 +526,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
     output_builder::check_output_from_analysis(
         input,
         AnalysisResult {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             analysis_outcome: None,
             summary: Summary::default(),
@@ -475,6 +542,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            language_view: None,
         },
     )
 }
@@ -699,7 +767,7 @@ impl PerlProducerStaging {
                 Err(error) => {
                     return Err(format!(
                         "failed to create Perl exporter staging `{}`: {error}",
-                        directory.display()
+                        crate::output::path::human_path(&directory)
                     ));
                 }
             }
@@ -717,8 +785,8 @@ impl PerlProducerStaging {
             }
             Err(error) => Err(format!(
                 "partial packet cleanup failed at `{}`: {error}; staging retained at `{}`",
-                self.packet.display(),
-                self.directory.display()
+                crate::output::path::human_path(&self.packet),
+                crate::output::path::human_path(&self.directory)
             )),
         };
         match cleanup {
@@ -745,14 +813,14 @@ impl PerlProducerStaging {
             {
                 return Err(format!(
                     "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
-                    scratch.display()
+                    crate::output::path::human_path(scratch)
                 ));
             }
         }
         std::fs::remove_dir(&self.directory).map_err(|error| {
             format!(
                 "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
-                self.directory.display()
+                crate::output::path::human_path(&self.directory)
             )
         })
     }
@@ -760,7 +828,7 @@ impl PerlProducerStaging {
     fn retained_failure(&self, reason: impl std::fmt::Display) -> String {
         format!(
             "{reason}; unpublished Perl exporter staging retained at `{}`",
-            self.directory.display()
+            crate::output::path::human_path(&self.directory)
         )
     }
 }
@@ -883,7 +951,7 @@ fn invoke_perl_lsp_producer(
         std::fs::write(&staging.diff, diff_text).map_err(|e| {
             staging.settled_failure(format!(
                 "failed to stage the diff for the Perl exporter at `{}`: {e}",
-                staging.diff.display()
+                crate::output::path::human_path(&staging.diff)
             ))
         })?;
         diff_arg = Some(
@@ -906,7 +974,7 @@ fn invoke_perl_lsp_producer(
     let stderr_file = std::fs::File::create(&staging.stderr).map_err(|e| {
         staging.settled_failure(format!(
             "failed to create Perl exporter stderr capture `{}`: {e}",
-            staging.stderr.display()
+            crate::output::path::human_path(&staging.stderr)
         ))
     })?;
     let mut command = Command::new(&executable);
@@ -959,7 +1027,7 @@ fn invoke_perl_lsp_producer(
                 std::fs::rename(tmp_path, &packet_path).map_err(|e| {
                     staging.retained_failure(format!(
                         "failed to finalize Perl facts packet `{}`: {e}",
-                        packet_path.display()
+                        crate::output::path::human_path(&packet_path)
                     ))
                 })?;
                 // Publication already committed. A retained sidecar or a
@@ -970,7 +1038,7 @@ fn invoke_perl_lsp_producer(
                         "{}",
                         terminal_safe(format!(
                             "warning: Perl facts packet published at `{}`; {cleanup}",
-                            packet_path.display()
+                            crate::output::path::human_path(&packet_path)
                         ))
                     );
                 }
@@ -978,7 +1046,7 @@ fn invoke_perl_lsp_producer(
             }
             Err(staging.settled_failure(format!(
                 "Perl facts exporter exited successfully but wrote no packet at `{}`",
-                tmp_path.display()
+                crate::output::path::human_path(tmp_path)
             )))
         }
         crate::git::ChildWait::TimedOut(_) => {
@@ -1015,8 +1083,8 @@ fn root_relative_arg(root: &Path, path: &Path) -> Result<String, String> {
     let relative = path.strip_prefix(root).map_err(|error| {
         format!(
             "Perl exporter staging path `{}` is outside the analysis root `{}`: {error}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(root)
         )
     })?;
     let text = relative.to_string_lossy().replace('\\', "/");
@@ -1350,6 +1418,7 @@ mod tests {
 
     fn minimal_result_with_effective_base(effective_base: Option<String>) -> AnalysisResult {
         AnalysisResult {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             analysis_outcome: None,
             summary: Summary::default(),
@@ -1364,6 +1433,7 @@ mod tests {
             ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            language_view: None,
         }
     }
 

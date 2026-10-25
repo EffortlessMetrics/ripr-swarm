@@ -267,7 +267,7 @@ pub(crate) fn build_diff_report(
         kind: "ripr_diff".to_string(),
         tool: output.tool.clone(),
         run_status: run_status.to_string(),
-        root: output.root.display().to_string(),
+        root: crate::output::path::display_path(&output.root),
         base: base.to_string(),
         head: head.to_string(),
         mode: output.mode.as_str().to_string(),
@@ -515,6 +515,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.probe.location.file = file;
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -641,6 +642,7 @@ mod tests {
     fn diff_report_preserves_diff_complete_full_repo_limited_status() -> Result<(), String> {
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -718,6 +720,7 @@ mod tests {
         )?;
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -803,6 +806,7 @@ mod tests {
         )?;
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -921,6 +925,7 @@ mod tests {
         use crate::analysis::PreviewLanguageAdvisory;
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -981,6 +986,7 @@ mod tests {
     fn diff_report_omits_preview_languages_for_pure_rust_scope() -> Result<(), String> {
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -1013,5 +1019,16 @@ mod tests {
             "pure-Rust scope must not emit preview_languages in JSON; got:\n{json}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn diff_report_root_renders_through_display_path() {
+        // #9806: `ripr_diff.root` uses the check-JSON renderer, which escapes
+        // `%` on every host, so the raw `display()` spelling fails here.
+        let report = report_for(
+            PathBuf::from("repo%41"),
+            PathBuf::from("repo%41/src/lib.rs"),
+        );
+        assert_eq!(report.root, "repo%2541");
     }
 }

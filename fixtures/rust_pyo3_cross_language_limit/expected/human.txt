@@ -19,6 +19,13 @@ Start here:
     external-language test observes the change is not statically known — verify the external oracle
     rather than adding a same-language test
   Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach no: No static test path found for the changed owner
     - infection unknown: No tests were found, so activation/infection cannot be estimated
     - 4 more detail line(s) in --format human-full
@@ -26,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --diff <cwd>/fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast probe:src_lib.rs:predicate:f89fd108
   ripr context --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --diff <cwd>/fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:f89fd108
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:f89fd108 --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --at src/lib.rs:5 --kind predicate
 

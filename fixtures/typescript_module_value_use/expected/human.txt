@@ -19,10 +19,18 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: export const stop = Symbol('stop');
-  Missing discriminator: Only heuristic TypeScript test links were found for `stop`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing discriminator: Only heuristic TypeScript test links were found for `stop`; verify the
+    suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
   Related test: tests/sentinel.test.ts:3 collect halts at the stop sentinel
   Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: 1 related test(s) found for owner `stop`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -30,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_module_value_use/input --diff <cwd>/fixtures/typescript_module_value_use/diff.patch --mode fast probe:src_sentinel.ts:typescript_preview:54306095
   ripr context --root <cwd>/fixtures/typescript_module_value_use/input --diff <cwd>/fixtures/typescript_module_value_use/diff.patch --mode fast --at probe:src_sentinel.ts:typescript_preview:54306095
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_sentinel.ts:typescript_preview:54306095 --root <cwd>/fixtures/typescript_module_value_use/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

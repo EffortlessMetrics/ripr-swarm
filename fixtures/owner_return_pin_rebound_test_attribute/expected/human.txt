@@ -15,12 +15,22 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:4: the test carries `#[test]`, which may change whether or how it runs
   Changed behavior: input * 3
-  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
+    as the standard macro on the path that reaches this change (for example the file did not parse,
+    the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a
+    gap; this is a named limitation, not a coverage claim
   Related test: tests/weight_tests.rs:4 checks_weight (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:4)
     run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares
     the changed value; add a test only if none does
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -28,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:6ea804bb --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

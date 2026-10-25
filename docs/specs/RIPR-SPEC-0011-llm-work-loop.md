@@ -449,7 +449,12 @@ after phase applies) and selects `next_command` in this order:
    check command and the hand step (add or strengthen a test, then rerun
    that check); for a route with `enabled: false` it names the enable step
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
-   also says to rerun pilot if the workspace changed since that run. A
+   also says to rerun pilot if the workspace changed since that run. For an
+   enabled TypeScript-family route, whether the warning says `ripr check`
+   "offers no `ripr agent repair` start" is derived from the same gap-start
+   admission the routed `ripr check` uses (#10001): when check would print a
+   gap-bound start, the warning names that start instead, and a refused or
+   undecidable admission keeps the "offers no start" wording. A
    timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
@@ -495,6 +500,15 @@ interprets it through the receipt owner (`output::agent_receipt`):
   that attempt; the reading is `unconfirmed`, because the earlier outcome cannot
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
+
+One `agent status` call takes at most one successful worktree observation per
+(root, whole edit-cage policy) and reuses it for every finished attempt it
+reevaluates, so equal-policy attempts do not each rescan the worktree (#9823).
+A capture that fails is not retained. The observation is call-scoped: the next
+status call captures again, and an edit made between two readings inside one call
+is retained outside that call's shared observation until the next call. Each
+attempt keeps its own baseline, delta and verdict authority; receipt issuance,
+the after phase and MCP reads capture afresh.
 
 Repair inventories and Git currentness probes ignore the user's
 `diff.orderFile`: a dangling orderfile must not abort the before phase or the

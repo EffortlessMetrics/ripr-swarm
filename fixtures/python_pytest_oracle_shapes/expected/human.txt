@@ -19,9 +19,19 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: logger.warning("coupon expired")
-  Analyzer limit: Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted…
+  Analyzer limit: Static limit `unsupported_syntax`: a related Python test checks `<text> in
+    caplog.text` against the changed logging call; the preview adapter does not evaluate
+    `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit
+    changes the logged text the test reads
   Related test: tests/test_notifications.py:4 test_warn_coupon_logs_expired_message
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `warn_coupon`
     - infection unknown: Static limit `unsupported_syntax` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
@@ -29,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast probe:src_notifications.py:python_preview:5ec908f0
   ripr context --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast --at probe:src_notifications.py:python_preview:5ec908f0
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_notifications.py:python_preview:5ec908f0 --root <cwd>/fixtures/python_pytest_oracle_shapes/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

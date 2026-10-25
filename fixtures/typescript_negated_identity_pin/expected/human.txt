@@ -19,12 +19,22 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return cfg;
-  Missing discriminator (1 of 2): The change to `ready` only replaces the returned `cfg` with a copy of itself (or a copy with the original); structural matchers such as `toEqual` and `deepEqual` pass on both. Add…
+  Missing discriminator (1 of 2): The change to `ready` only replaces the returned `cfg` with a copy
+    of itself (or a copy with the original); structural matchers such as `toEqual` and `deepEqual`
+    pass on both. Add an identity assertion such as `expect(result).toBe(input)` or
+    `assert.strictEqual(result, input)`
   Related test: tests/settings.test.ts:3 ready
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `return value == cfg`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `ready`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -32,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_negated_identity_pin/input --diff <cwd>/fixtures/typescript_negated_identity_pin/diff.patch --mode fast probe:src_settings.ts:typescript_preview:f1269d1b
   ripr context --root <cwd>/fixtures/typescript_negated_identity_pin/input --diff <cwd>/fixtures/typescript_negated_identity_pin/diff.patch --mode fast --at probe:src_settings.ts:typescript_preview:f1269d1b
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_settings.ts:typescript_preview:f1269d1b --root <cwd>/fixtures/typescript_negated_identity_pin/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

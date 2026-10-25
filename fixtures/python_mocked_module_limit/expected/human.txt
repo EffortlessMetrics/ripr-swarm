@@ -22,6 +22,13 @@ Start here:
   Analyzer limit: Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics
   Related test: tests/test_service.py:7 test_fetch_total_uses_client_total
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `fetch_total`
     - infection unknown: Static limit `mocked_module` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
@@ -29,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_mocked_module_limit/input --diff <cwd>/fixtures/python_mocked_module_limit/diff.patch --mode fast probe:src_service.py:python_preview:eb38331d
   ripr context --root <cwd>/fixtures/python_mocked_module_limit/input --diff <cwd>/fixtures/python_mocked_module_limit/diff.patch --mode fast --at probe:src_service.py:python_preview:eb38331d
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_service.py:python_preview:eb38331d --root <cwd>/fixtures/python_mocked_module_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

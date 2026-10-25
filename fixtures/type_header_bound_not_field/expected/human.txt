@@ -15,7 +15,7 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: enum Operator<P, Q: Ord + Copy> {
   Analyzer limit: No strong discriminator was detected
-  Related test: src/lib.rs:13 a_is_one (no call to the changed code found; linked by file location only)
+  Related test: src/lib.rs:13 a_is_one (no established call path to the changed code; linked by file location only)
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
     this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
@@ -23,6 +23,13 @@ Start here:
     project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
     may remain unknown
   Evidence: reach weak · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: No test is seen calling changed owner; tests share only its file or a name token: a_is_one
     - infection unknown: Changed syntax is not mapped to a high-confidence probe family
     - 6 more detail line(s) in --format human-full
@@ -30,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast probe:src_lib.rs:static_unknown:7b804000
   ripr context --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:7b804000
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:static_unknown:7b804000 --root <cwd>/fixtures/type_header_bound_not_field/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

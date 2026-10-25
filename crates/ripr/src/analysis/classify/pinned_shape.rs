@@ -11,7 +11,12 @@
 //! - **returned receiver**: the changed statement is a method call on a value
 //!   the owner then returns (`v.sort_by_key(..); v`);
 //! - **let-else exit**: the changed line is the early exit of a `let ... else`,
-//!   whose pattern the pinned input decides.
+//!   whose pattern the pinned input decides;
+//! - **accumulated local**: the changed statement adds into a zero-initialized
+//!   local the owner returns, once per element of a slice parameter
+//!   (RIPR-SPEC-0360). The owner pin credits it only for a literal non-empty
+//!   input and a nonzero literal total; a pin it cannot read that way (a
+//!   bound input, a computed expectation) is withheld here.
 //!
 //! Reading those as "no assertion references the change" is a certain claim
 //! about a test that may well notice it, so the gap is withheld under
@@ -19,14 +24,16 @@
 //! withholds, so the actionability flip stays fail-closed.
 
 use super::gap_admission::{is_ignored, withhold_gap};
+use super::owner_pin::closure_adaptor::call_argument_texts;
 use super::owner_pin::{CONDITIONAL_COMBINATORS, closure_adaptor::adaptor_tail_of};
 use super::reveal::assertion_comparison_operands;
 use crate::analysis::facts::TestFact;
 use crate::analysis::rust_index::RustIndex;
+use crate::analysis::syntax::loop_accumulator::loop_accumulator_at;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::text_calls;
 use crate::domain::*;
-use ra_ap_syntax::{AstNode, SyntaxNode, WalkEvent, ast};
+use ra_ap_syntax::{AstNode, SyntaxNode, WalkEvent, ast, ast::HasLoopBody};
 use std::ops::Range;
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustPinnedShapeUnresolved;
@@ -39,6 +46,7 @@ enum Shape {
     ClosureTail,
     ReturnedReceiver,
     LetElseExit,
+    AccumulatedLocal,
 }
 
 impl Shape {
@@ -53,6 +61,9 @@ impl Shape {
             Shape::LetElseExit => {
                 "the changed code is the `else` exit of a `let ... else`, and ripr does not decide whether the pinned input takes it"
             }
+            Shape::AccumulatedLocal => {
+                "the changed statement adds into a local the call returns, and ripr cannot read that the pinned input walks the loop and totals to a nonzero value"
+            }
         }
     }
 }
@@ -65,14 +76,19 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     finding: &mut Finding,
     index: &RustIndex,
 ) -> bool {
-    if finding.static_limit_kind.is_some()
-        || finding.class != ExposureClass::WeaklyExposed
-        || !finding
-            .ripr
-            .reveal
-            .discriminate
-            .summary
-            .contains("(observation_unverified)")
+    if finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let summary = &finding.ripr.reveal.discriminate.summary;
+    // RIPR-SPEC-0360: a pin inside a loop the table reader could not establish
+    // reads `reachable_unrevealed` with the assertion context unestablished;
+    // only the accumulator shape, whose table-driven pins credit when
+    // readable, is withheld there (checked below).
+    let loop_unestablished = finding.class == ExposureClass::ReachableUnrevealed
+        && summary.contains("(rust_assertion_context_unestablished)");
+    if !loop_unestablished
+        && (finding.class != ExposureClass::WeaklyExposed
+            || !summary.contains("(observation_unverified)"))
     {
         return false;
     }
@@ -103,6 +119,13 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     ) else {
         return false;
     };
+    if loop_unestablished && shape != Shape::AccumulatedLocal {
+        return false;
+    }
+    // The accumulator's walked argument, so an empty literal elsewhere in the
+    // call does not make the pin degenerate.
+    let walked = loop_accumulator_at(&owner.body, changed_line - owner.start_line)
+        .map(|accumulator| accumulator.walked_position);
     let labels: Vec<String> = finding
         .related_tests
         .iter()
@@ -113,7 +136,7 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
                     && test.file == related.file
                     && test.start_line == related.line
             })?;
-            pins_owner_exactly(test, &owner.name).then(|| {
+            pins_owner_exactly(test, &owner.name, shape, walked).then(|| {
                 format!(
                     "`{}` ({}:{})",
                     related.name,
@@ -135,10 +158,76 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     true
 }
 
-/// Whether `test` is a live test with a plain `assert_eq!` whose one operand
-/// is the owner's call itself (see [`is_whole_call`]) on an input that is not
-/// empty or zero, and whose other operand does not name the owner.
-fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
+/// #9490: an `Err(..)` pin does not reach the `Ok` path of a
+/// `map(..).collect::<Result<Vec<_>, _>>()` owner tail. A `Result` collect
+/// stops at the first `Err` and drops the earlier values, so a test whose
+/// only exact pins on the call are `Err(..)` never observes a changed closure
+/// value on a later element. Withhold an `exposed` finding whose related
+/// direct-call tests carry no `Ok(..)` pin (or `.unwrap()` of the call).
+pub(in crate::analysis) fn withhold_result_collect_err_pin(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some()
+        || finding.class != ExposureClass::Exposed
+        || !matches!(finding.probe.family, ProbeFamily::ReturnValue)
+    {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    let collects_result =
+        super::owner_pin::closure_adaptor::admitted_owner_adaptor_tail(owner, index)
+            .is_some_and(|tail| tail.tail_is(&finding.probe.expression) && tail.collects_result());
+    if !collects_result {
+        return false;
+    }
+    let direct: Vec<&TestFact> = finding
+        .related_tests
+        .iter()
+        .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .filter_map(|related| {
+            index.tests().iter().find(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+            })
+        })
+        .collect();
+    if direct.is_empty() || direct.iter().any(|test| pins_result_ok(test, &owner.name)) {
+        return false;
+    }
+    let labels: Vec<String> = direct
+        .iter()
+        .map(|test| format!("`{}`", test.name))
+        .collect();
+    let next_step = format!(
+        "{} pins this `Result` collect only through an `Err(..)` value, and a collect stops at the first `Err`, so ripr does not report the change as observed. Pin an `Ok(..)` result whose inputs all succeed so every element reaches the changed closure.",
+        labels.join(", ")
+    );
+    withhold_gap(
+        finding,
+        LIMIT,
+        "whether the pinned `Err` is produced before the changed closure value matters",
+        next_step,
+        &labels,
+    );
+    true
+}
+
+/// Whether `test` is a live test whose plain `assert_eq!` compares the
+/// owner's whole call with an `Ok(..)` value, or the call's `.unwrap()` with
+/// anything: every element ran for that pin to hold.
+fn pins_result_ok(test: &TestFact, owner: &str) -> bool {
     if is_ignored(test)
         || test
             .attrs
@@ -151,6 +240,42 @@ fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
     }
     test.assertions.iter().any(|assertion| {
         assertion_runs_unconditionally(&test.body, &assertion.text)
+            && assertion.text.trim_start().starts_with("assert_eq!")
+            && assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
+                let ok_side = |call: &str, other: &str| {
+                    text_calls(call, owner)
+                        && !contains_name(other, owner)
+                        && is_whole_call(call, owner)
+                        && !degenerate_input(call)
+                        && (other.trim_start().starts_with("Ok(")
+                            || call.trim_end().ends_with(".unwrap()"))
+                };
+                ok_side(left, right) || ok_side(right, left)
+            })
+    })
+}
+
+/// Whether `test` is a live test with a plain `assert_eq!` whose one operand
+/// is the owner's call itself (see [`is_whole_call`]) on an input that is not
+/// empty or zero, and whose other operand does not name the owner.
+fn pins_owner_exactly(test: &TestFact, owner: &str, shape: Shape, walked: Option<usize>) -> bool {
+    if is_ignored(test)
+        || test
+            .attrs
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(test.body.as_str()))
+            .any(|text| text.contains("should_panic"))
+    {
+        return false;
+    }
+    test.assertions.iter().any(|assertion| {
+        (assertion_runs_unconditionally(&test.body, &assertion.text)
+            // RIPR-SPEC-0360: a table loop's `assert_eq!` is how this shape is
+            // usually pinned. Credit reads the rows it can; a pin it cannot
+            // read is withheld, never left as a gap.
+            || (shape == Shape::AccumulatedLocal
+                && assertion_is_top_level_loop_statement(&test.body, &assertion.text)))
             && assertion.strength == OracleStrength::Strong
             && assertion.kind == OracleKind::ExactValue
             && assertion.text.trim_start().starts_with("assert_eq!")
@@ -159,7 +284,7 @@ fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
                     text_calls(call, owner)
                         && !contains_name(other, owner)
                         && is_whole_call(call, owner)
-                        && !degenerate_input(call)
+                        && !degenerate_pin(shape, walked, owner, call, other)
                 };
                 pins(left, right) || pins(right, left)
             })
@@ -203,6 +328,64 @@ fn assertion_runs_unconditionally(test_body: &str, assertion: &str) -> bool {
     }
     list.tail_expr()
         .is_some_and(|tail| squash(&tail.syntax().text().to_string()) == wanted)
+}
+
+/// Whether `assertion` is a statement of the body of a `for` loop that is
+/// itself a top-level statement of the test, before any `return`: it runs once
+/// per iteration, which the table-driven pin reads row by row.
+fn assertion_is_top_level_loop_statement(test_body: &str, assertion: &str) -> bool {
+    let squash = |text: &str| -> String {
+        text.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .trim_end_matches(';')
+            .to_string()
+    };
+    let Some(parse) = parse_clean_source_file(test_body) else {
+        return false;
+    };
+    let Some(list) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+        .and_then(|block| block.stmt_list())
+    else {
+        return false;
+    };
+    let wanted = squash(assertion);
+    let in_loop = |table: &ast::ForExpr| {
+        table
+            .loop_body()
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|body| {
+                body.statements()
+                    .any(|inner| squash(&inner.syntax().text().to_string()) == wanted)
+                    || body
+                        .tail_expr()
+                        .is_some_and(|tail| squash(&tail.syntax().text().to_string()) == wanted)
+            })
+    };
+    // An earlier `return`, `?` or `panic` anywhere before the loop, in a
+    // branch too, may leave the test before the table runs: the assertion
+    // is then not established and its gap is not withheld.
+    let may_leave = |text: &str| {
+        let masked = text.replace(char::is_whitespace, "");
+        masked.contains("return") || masked.contains('?') || masked.contains("panic!")
+    };
+    for statement in list.statements() {
+        if let ast::Stmt::ExprStmt(expr) = &statement {
+            match expr.expr() {
+                Some(ast::Expr::ForExpr(table)) if in_loop(&table) => return true,
+                _ => {}
+            }
+        }
+        if may_leave(&statement.syntax().text().to_string()) {
+            return false;
+        }
+    }
+    matches!(list.tail_expr(), Some(ast::Expr::ForExpr(table)) if in_loop(&table))
 }
 
 /// The operand is `owner(..)`, optionally applied again (`owner(..)(..)`) or
@@ -271,6 +454,56 @@ fn is_whole_call(operand: &str, owner: &str) -> bool {
     }
 }
 
+/// The pin `call == other` leaves the usual reading for `shape`. The
+/// accumulator walks every element, so one zero element is no more degenerate
+/// than any other: only an empty input or a zero total (the update then adds
+/// nothing a pin could notice) is.
+fn degenerate_pin(
+    shape: Shape,
+    walked: Option<usize>,
+    owner: &str,
+    call: &str,
+    other: &str,
+) -> bool {
+    if shape != Shape::AccumulatedLocal {
+        return degenerate_input(call);
+    }
+    let is_empty = |text: &str| {
+        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+        ["[]", "::new()", "Vec::new"]
+            .iter()
+            .any(|empty| compact.contains(empty))
+    };
+    // Only the walked argument can be an empty run; other arguments are
+    // read whole when the call cannot be split.
+    let empty_input = match walked.and_then(|at| {
+        call_argument_texts(call, owner).and_then(|arguments| arguments.get(at).cloned())
+    }) {
+        Some(argument) => is_empty(&argument),
+        None => is_empty(call),
+    };
+    empty_input || is_zero_literal(other)
+}
+
+/// `0`, `-0`, `0_u32`, `0x0` and the like: an integer literal that is zero.
+fn is_zero_literal(text: &str) -> bool {
+    let compact: String = text.chars().filter(|ch| *ch != '_').collect();
+    let digits = compact.trim().trim_start_matches('-');
+    let Some(rest) = digits.strip_prefix('0') else {
+        return false;
+    };
+    // `u` and `i` are not digits in any base, so the first one starts the suffix.
+    let (mantissa, suffix) = rest.split_at(rest.find(['u', 'i']).unwrap_or(rest.len()));
+    let radix_digits = match mantissa.chars().next() {
+        Some('x' | 'b' | 'o') => &mantissa[1..],
+        _ => mantissa,
+    };
+    let radix_prefixed = radix_digits.len() != mantissa.len();
+    (!radix_prefixed || !radix_digits.is_empty())
+        && radix_digits.chars().all(|ch| ch == '0')
+        && (suffix.is_empty() || suffix[1..].chars().all(|ch| ch.is_ascii_alphanumeric()))
+}
+
 /// An input the closure or the `else` exit need not see: an empty literal,
 /// `None`, or a bare `0`. Such a pin leaves the gap to the usual reading.
 fn degenerate_input(call: &str) -> bool {
@@ -324,6 +557,9 @@ fn unread_shape(body: &str, line_index: usize, family: &ProbeFamily) -> Option<S
     };
     match family {
         ProbeFamily::ReturnValue => {
+            if loop_accumulator_at(body, line_index).is_some() {
+                return Some(Shape::AccumulatedLocal);
+            }
             if let Some(shape) = let_else_exit(&list, &overlaps) {
                 return Some(shape);
             }

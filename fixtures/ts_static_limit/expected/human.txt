@@ -18,12 +18,21 @@ Start here:
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
   Changed behavior: handlers[key]();
-  Discriminator (observed, advisory): Related test reaches `dispatchAction` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+  Discriminator (observed, advisory): Related test reaches `dispatchAction` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant discriminator
   Related test: tests/cache.test.ts:3 dispatchAction calls the named handler
   Next step — TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect
     the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before
     issuing a repair packet.; no actionable repair packet is emitted
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `dispatchAction`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -31,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_static_limit/input --diff <cwd>/fixtures/ts_static_limit/diff.patch --mode fast probe:src_cache.ts:typescript_preview:bac50022
   ripr context --root <cwd>/fixtures/ts_static_limit/input --diff <cwd>/fixtures/ts_static_limit/diff.patch --mode fast --at probe:src_cache.ts:typescript_preview:bac50022
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_cache.ts:typescript_preview:bac50022 --root <cwd>/fixtures/ts_static_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -104,6 +104,15 @@ and every condition below holds. Anything else keeps the pre-0265 reading.
     tail only while the owner's file binds no other item to `Vec` (a `use`
     renaming or naming it, a glob outside `std`/`core`/`alloc`, or a
     `type`, `struct`, `enum`, `union` or `trait` named `Vec`);
+  - `map` + `collect()` into a `Result<Vec<..>, ..>` (same spelling rules,
+    #9490): the first `Err` is the owner's result, and otherwise every
+    closure value is kept in order. Rules 1 and 2 read such a tail only
+    while the owner's file binds no other item to `Vec` or `Result`. Only
+    an `Ok(..)` pin (or a `.unwrap()` of the call) reaches every element: an
+    `Err(..)` pin stops at the first `Err`, so a test whose only pins are
+    `Err(..)` is withheld under `rust_pinned_shape_unresolved` and the file
+    binding `Ok` or `Err` as a value refuses the pin. A
+    `filter` + `collect` into a `Result` is not read;
   - `map` + `sum()` (a `sum::<u64>()` turbofish is allowed) over an
     arithmetic `E`: no comparison, `!`, `true`, `false` or `as` cast;
   - `any` or `all` with no `T`.
@@ -132,10 +141,12 @@ The binding read as an element of `P` is the binding with at most as many
 
 A **literal sequence** is an argument `&[a, b]`, `[a, b]`, `vec![a, b]` or
 `&vec![a, b]` whose every element is one unsuffixed integer or float
-literal (optionally negated), `true`, `false`, or a char literal. `&[]`
-is the empty literal sequence. A local (`&v`), a repeat (`vec![v; n]`), a
-range, a call, a suffixed element (`3u32`), a string or a slice of a
-literal (`&[1, 2][..]`) is not one.
+literal (optionally negated), `true`, `false`, a char literal, or (#9490)
+a plain string literal with no escape and no inner quote; a string is a
+run element only: it never serves as a comparison boundary. `&[]` is the
+empty literal sequence. A local (`&v`), a repeat (`vec![v; n]`), a range,
+a call, a suffixed element (`3u32`), an escaped or raw string or a slice of
+a literal (`&[1, 2][..]`) is not one.
 
 A **run** of an owner call is the sequence the call passes `P`: the
 argument itself when it is a literal sequence, or, when the argument is a
@@ -216,6 +227,18 @@ owner returns:
 Whether a test's input runs the closure is rules 1 and 2's question, not
 this edge's.
 
+### Rule 4: a spawned thread's closure
+
+A changed `return_value` probe whose expression is the owner's whole tail
+`std::thread::spawn(move || e).join().unwrap()` (a zero-parameter closure,
+the fully qualified `std::thread::spawn` path, and exactly `.join().unwrap()`
+after it) establishes the ordinary owner-return pin. The closure runs once on
+every call and the join returns its value, so the tail evaluates like a
+plain tail whose value is `e`; the closure's own `||` is not a short circuit.
+The change is read inside `e`, so a branch, short circuit, block or macro in
+`e` keeps the earlier reading, as do `thread::spawn` (a path `use` could
+rebind), `unwrap_or`, and any operator applied to the join (#9490).
+
 ### Decisions
 
 1. **Literal sequences only.** Adopted: an element is read only from a
@@ -284,6 +307,16 @@ this edge's.
    `let ages = vec![40; n]` in a `for n in 1..10` loop: the rule does not
    apply; the predicate stays `infection_unknown`.
 
+7. `xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()`
+   with `assert_eq!(parse_all(&["1", "2"]), Ok(vec![1, 2]))`: the return
+   value reads `exposed`. With `&[]`, or when the owner's file declares
+   its own `Result`, it keeps the pre-0265 reading (#9490).
+
+8. `std::thread::spawn(move || 2 * x).join().unwrap()` with
+   `assert_eq!(doubled(5), 10)`: the return value reads `exposed`. With
+   `if x > 0 { 2 * x } else { 0 }` in the closure, or the unqualified
+   `thread::spawn`, it keeps the earlier reading (#9490).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
@@ -295,11 +328,15 @@ this edge's.
   observed, missing, short-circuit and unreadable readings.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs` tests: rule 1's
   same-test pairing, including the constant-boundary refusal.
+- `crates/ripr/tests/pinned_shape_limit.rs`: rule 4's credited pin and its
+  keeping controls (branch or short circuit in the closure, unqualified
+  path, `unwrap_or`, an operator on the join).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
-  5 (`trap-iter-empty-slice`) and 6 (`grid-iter-property`).
+  5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7
+  (`shape-collect-result-short-circuit`) and 8 (`shape-thread-join-result`).
 
 ## Implementation Mapping
 
@@ -307,7 +344,8 @@ this edge's.
   `adaptor_tail_of`, `admitted_consumer`, `literal_sequence`, `argument_sequences`,
   `pinned_call_runs_closure`, `AdaptorTail::run_reaches_boundary`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
-  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`.
+  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`;
+  `spawn_join_body` in `return_path_gate_from` (rule 4).
 - `crates/ripr/src/analysis/classify/activation.rs`:
   `adaptor_element_view`, `element_boundary_discriminator`,
   `element_boundary_observations`.

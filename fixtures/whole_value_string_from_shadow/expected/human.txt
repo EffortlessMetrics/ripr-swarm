@@ -19,6 +19,13 @@ Start here:
   Related test: src/lib.rs:33 builds_config (no assertion pins `name: render(retries)`)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach build: builds_config
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 8 more detail line(s) in --format human-full
@@ -26,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:e9de435c
   ripr context --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:e9de435c
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:field_construction:e9de435c --root <cwd>/fixtures/whole_value_string_from_shadow/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/whole_value_string_from_shadow/input --at src/lib.rs:10 --kind field_construction
 

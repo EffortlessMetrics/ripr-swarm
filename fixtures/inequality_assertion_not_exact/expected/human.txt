@@ -19,6 +19,13 @@ Start here:
   Related test: src/lib.rs:10 score_is_not_zero (assertion too weak to tell the old behavior from the new)
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach score: score_is_not_zero
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -26,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/inequality_assertion_not_exact/input --diff <cwd>/fixtures/inequality_assertion_not_exact/diff.patch --mode fast probe:src_lib.rs:return_value:27ba9fa1
   ripr context --root <cwd>/fixtures/inequality_assertion_not_exact/input --diff <cwd>/fixtures/inequality_assertion_not_exact/diff.patch --mode fast --at probe:src_lib.rs:return_value:27ba9fa1
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value); run `ripr repair probe:src_lib.rs:return_value:27ba9fa1 --root <cwd>/fixtures/inequality_assertion_not_exact/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: return_value; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/inequality_assertion_not_exact/input --at src/lib.rs:2 --kind return_value
 

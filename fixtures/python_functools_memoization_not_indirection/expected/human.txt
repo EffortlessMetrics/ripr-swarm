@@ -20,14 +20,22 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/memo.py:century_index:return_value:return_value:year%1000
   Changed behavior: return year % 1000
-  Missing discriminator (1 of 2): Related Python test reaches `century_index` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value
-  Related test: tests/test_memo.py:8 test_century_index_smoke
+  Missing discriminator (1 of 2): Related Python test reaches `century_index` but the strongest
+    extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value
+  Related test: tests/test_memo.py:8 test_century_index_smoke (has no assertion)
   Suggested test file: tests/test_memo.py
   Suggested test: test_century_index_smoke
   Test node: tests/test_memo.py::test_century_index_smoke
   Verify command: python -m pytest tests/test_memo.py::test_century_index_smoke (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `century_index`
     - infection yes: Changed Python return expression can alter the owner return value: `return year % 1000`
     - 5 more detail line(s) in --format human-full

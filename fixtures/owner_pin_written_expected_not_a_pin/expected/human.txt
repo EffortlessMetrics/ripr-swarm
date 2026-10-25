@@ -17,10 +17,19 @@ Start here:
   Changed behavior: x * 3
   Missing discriminator: No strong discriminator was detected
   Related test (1 of 2 matched rows): src/lib.rs:25 deref_store_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `match_destructuring_is_not_independent` already asserts an exact
-    value; the gap is not the assertion shape. Add a test input where the changed branch behaves
-    differently and keep the exact assertion
+  Next step: The related test `match_destructuring_is_not_independent` already has an exact
+    assertion; this does not establish observation of the returned value. Check whether the change
+    can affect the returned value. If it can, add a separating input and assert the exact returned
+    value. If it cannot, test the changed effect separately; another input cannot distinguish
+    unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 11 more detail line(s) in --format human-full
@@ -28,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_pin_written_expected_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_expected_not_a_pin/diff.patch --mode fast probe:src_lib.rs:return_value:c70c15c1
   ripr context --root <cwd>/fixtures/owner_pin_written_expected_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_expected_not_a_pin/diff.patch --mode fast --at probe:src_lib.rs:return_value:c70c15c1
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:c70c15c1 --root <cwd>/fixtures/owner_pin_written_expected_not_a_pin/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_pin_written_expected_not_a_pin/input --at src/lib.rs:2 --kind return_value
 

@@ -21,6 +21,13 @@ Start here:
     output or effect (its `cargo:` directives or generated files), or move the logic into a library
     function that a test can call
   Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach no: No static test path found for the changed owner
     - infection unknown: No reachable tests were found, so infection cannot be established
     - 4 more detail line(s) in --format human-full
@@ -28,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_build_script_no_test_reach/input --diff <cwd>/fixtures/rust_build_script_no_test_reach/diff.patch --mode fast probe:build.rs:return_value:c35fa4e7
   ripr context --root <cwd>/fixtures/rust_build_script_no_test_reach/input --diff <cwd>/fixtures/rust_build_script_no_test_reach/diff.patch --mode fast --at probe:build.rs:return_value:c35fa4e7
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:build.rs:return_value:c35fa4e7 --root <cwd>/fixtures/rust_build_script_no_test_reach/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

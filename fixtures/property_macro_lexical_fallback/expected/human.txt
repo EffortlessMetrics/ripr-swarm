@@ -18,6 +18,13 @@ Start here:
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Next step: Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test
   Evidence: reach unknown · infection unknown · propagation unknown · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach unknown: Property macro expansion and owner execution are unresolved
     - infection unknown: Property macro expansion and owner execution are unresolved
     - 4 more detail line(s) in --format human-full
@@ -25,7 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/property_macro_lexical_fallback/input --diff <cwd>/fixtures/property_macro_lexical_fallback/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/property_macro_lexical_fallback/input --diff <cwd>/fixtures/property_macro_lexical_fallback/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:c80557eb --root <cwd>/fixtures/property_macro_lexical_fallback/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/property_macro_lexical_fallback/input --at src/lib.rs:2 --kind predicate
 

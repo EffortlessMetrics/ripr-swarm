@@ -17,6 +17,13 @@ Start here:
   Discriminator (observed, advisory): ParseError::InvalidData
   Related test (1 of 2 matched rows): tests/messages.rs:12 rejects_short_payload_with_variant_pattern
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach expect_ready: rejects_short_payload_with_variant_pattern, rejects_unready_kind_with_exact_error_routing
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 13 more detail line(s) in --format human-full
@@ -24,7 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_positive/input --diff <cwd>/fixtures/guarded_result_match_positive/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
   ripr context --root <cwd>/fixtures/guarded_result_match_positive/input --diff <cwd>/fixtures/guarded_result_match_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: error_variant; incomplete evidence stage: propagation); run `ripr repair probe:src_lib.rs:error_path:94d13aee --root <cwd>/fixtures/guarded_result_match_positive/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: error_variant; incomplete evidence stage: propagation; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

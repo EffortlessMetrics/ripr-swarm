@@ -28,18 +28,28 @@ related test row pins the exact label per arm.
   the let-chain evaluator keeps binding tails).
 - The scrutinee resolves through the shared #3295 evaluator
   (`evaluate_initializer`): a bound parameter or any supported
-  family expression, and it must resolve to a string. A non-string
-  scrutinee (a char, an integer) is a named limitation, not a guess.
-- An arm is `"literal" => "value",` or `_ => "value",`. Patterns are
-  plain string literals (non-empty, no quote, backslash, apostrophe,
-  or newline inside — the scanner state rule); values are plain
-  string literals. A guard (`if`), an alternative (`|`), a bare
-  binding, a path, an escape, or a computed value refuses the whole
-  match: an unresolved pattern could match anything and a non-literal
-  value is not an exact return.
+  family expression, and it must resolve to a string or a char. Any
+  other scrutinee (an integer, an enum) is a named limitation, not a
+  guess.
+- An arm is `<pattern> => <value>,` or `_ => <value>,`. A pattern is
+  one literal or `|`-joined alternatives, each a whole string or char
+  literal that evaluates exactly through the shared #3295 literal
+  parser, so an escape decodes the way the caller's argument does and
+  a `|` inside a literal is part of the string. Every literal has the
+  scrutinee's type; a literal of the other type refuses the whole
+  match, as it would not compile. The shared char parser still rejects
+  an escaped char (`'\n'`), so an escaped char pattern or argument
+  refuses; escapes resolve for string literals only. Values are plain string literals or
+  one nested direct call. A guard (`if`), a bare binding, a range, a
+  path, or a value the shared authorities cannot evaluate refuses the
+  whole match: an unresolved pattern could match anything and a
+  non-literal value is not an exact return.
+- A helper whose only body line is one whole literal returns it
+  whatever its inputs are (the nested-call target `fn pick(_k: &str)
+  -> &'static str { "alpha" }`).
 - Arm selection is first-match in source order, exactly like the Rust
-  match: the first arm whose literal equals the scrutinee, or the
-  first `_` arm reached, produces the return. A scrutinee no literal
+  match: the first arm whose literal equals the scrutinee (any
+  alternative), or the first `_` arm reached, produces the return. A scrutinee no literal
   names with no `_` reached stops the evaluation (no arm is invented).
 - On resolution the return is an exact typed value; the boundary
   machinery compares it against the row's other operand exactly as
@@ -55,12 +65,15 @@ related test row pins the exact label per arm.
   provenance, and both non-wildcard arms connect to exact assertions
   (the #3215 literal-match acceptance row).
 - A controls fixture (`fixtures/match_arm_controls`) with four
-  fail-closed variants — a computed arm value (`pick(kind)`), a guard
-  arm, a bare-identifier pattern, and a char scrutinee — each staying
-  at its fail-closed class with zero hop provenance: since #6674 that
+  variants. The guard arm and the bare-identifier pattern stay at
+  their fail-closed class with zero hop provenance: since #6674 that
   is `infection_unknown` with `Changed boundary input is unresolved`
-  naming `final_label` (RIPR-SPEC-0001), not `weakly_exposed` with a
-  missing-discriminator hint over an unknown operand.
+  naming `final_label` (RIPR-SPEC-0001). The literal-callee and char
+  variants resolve their operand, but the fixture's tests pin one row
+  each, so they read `weakly_exposed`, never `exposed`. The corpus
+  cases `spec-b-0164-alternative-pattern`, `-escaped-pattern`,
+  `-char-scrutinee` and `-computed-arm-value` carry the two-row tests
+  that credit them.
 - Unit tests in `match_transfer.rs` pinning per-arm resolution,
   wildcard/duplicate source order, no-match-without-wildcard stop, and
   the fail-closed family.
@@ -84,38 +97,43 @@ related test row pins the exact label per arm.
 
 ## Acceptance Examples
 
-```text
-Given:  pub fn label(kind: &str) -> &'static str {
-            match kind { "word" => "alpha", "text" => "beta", _ => "other" }
-        }
-        pub fn classify(input: &str) -> &'static str {
-            let final_label = label(input);
-            if final_label == "alpha" { "word" } else { "blank" }
-        }
-Diff:   the equality constant changes "alpha" -> "beta"
-Tests:  assert_eq!(classify("word"), "word"); assert_eq!(classify("text"), "blank")
-Then:   exposed — label("word") = "alpha" and label("text") = "beta" are
-        exact per row, the boundary comparison is observed, and the
-        provenance names the helper hop
-Not:    a guard arm, an alternative pattern, a bare binding pattern, a
-        computed arm value, an escaped literal, or a char scrutinee
-        resolves — each refuses the whole match (controls fixture)
-```
+1. Accept: with
+   `pub fn label(kind: &str) -> &'static str { match kind { "word" => "alpha", "text" => "beta", _ => "other" } }`
+   and `classify` comparing `label(input)` with `"alpha"`, a diff changing
+   the constant to `"beta"` under the tests
+   `assert_eq!(classify("word"), "word"); assert_eq!(classify("text"), "blank")`
+   exposes — `label("word")` = `"alpha"` and `label("text")` = `"beta"`
+   are exact per row, the boundary comparison is observed, and the
+   provenance names the helper hop.
+2. Reject: a guard arm refuses the whole match (controls fixture).
+3. Accept: `"word" | "term" => "alpha"` selects the arm for either
+   literal.
+4. Reject: a bare binding pattern refuses the whole match.
+5. Accept: an arm value `pick(kind)` resolves when `pick` is a unique
+   helper whose body is one literal. Reject: an arm value such as
+   `pick(kind.trim())` that the shared authorities cannot evaluate
+   refuses the whole match.
+6. Accept: a pattern `"a\tb"` matches the scrutinee `"a\tb"` (both
+   decode to a tab) and not the two-character text `a\tb`.
+7. Accept: a char scrutinee selects among char-literal arms. Reject:
+   a string-literal arm against a char scrutinee, or a range pattern,
+   refuses the whole match.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/match_transfer.rs::tests` —
   per-arm resolution, source order, no-match stop, fail-closed family.
 - `fixtures/match_arm_positive` — the flip and the hop provenance.
-- `fixtures/match_arm_controls` — four fail-closed variants with zero
-  hop provenance.
+- `fixtures/match_arm_controls` — two fail-closed variants with zero hop
+  provenance and two resolved variants that stay `weakly_exposed`
+  because their tests pin one row.
 
 ## Non-Goals
 
-- Match arms with guards, alternatives, ranges, or paths — these stay
-  named limitations until a corpus case demands them.
-- Non-string scrutinees (char, integer, enum) and non-string arm
-  values: out of scope for this slice.
+- Match arms with guards, ranges, or paths — these stay named
+  limitations until a corpus case demands them.
+- Integer and enum scrutinees and non-string arm values: out of scope
+  for this slice.
 - A match inside a let-chain or a statement position (only the tail
   expression shape is pinned); recursion and multi-hop returns inside
   the match remain the #3296 remainder.

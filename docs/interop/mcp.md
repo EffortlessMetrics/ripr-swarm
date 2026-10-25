@@ -192,8 +192,12 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   completed snapshot identity, last-known-good state, freshness relative to
   the last completed refresh (`current_at_last_refresh`, or
   `stale_after_failed_attempt` once a later attempt fails),
-  the committed snapshot's typed `AnalysisOutcome`, and profile and
-  support facts. Complete-zero and incomplete-zero outcomes stay distinct
+  the committed snapshot's typed `AnalysisOutcome`, an additive
+  `language_completeness` list of `{language, status}` rows from the same
+  analysis run (present only once a snapshot is committed, on the status tool
+  and the status resource; supported readers use the advertised `outputSchema`
+  or tolerate unknown keys), and
+  profile and support facts. Complete-zero and incomplete-zero outcomes stay distinct
   through the typed outcome; a partial outcome keeps its typed limitations;
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
@@ -292,6 +296,14 @@ is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
 `language`, and `repair_ready` (#7314). The server
 returns `-32602` Invalid Params naming the field with the same request ID;
 correct the argument or omit it and retry on the same connection.
+`offset` and `limit` must be whole JSON integers (no fraction or exponent
+form) in `0..=M` and `1..=M`, where `M` is the platform's `usize` width
+(64-bit builds: `18446744073709551615`; 32-bit builds: `4294967295`), and
+`data.maximum`, the message and `data.recovery` all name that one effective
+bound; the `ripr_list_repair_attempts` limit is capped at 256. Each refusal
+names why the value missed (negative, not a number, fractional, larger than the largest
+accepted integer) and carries `data.argument`, `data.minimum`, `data.maximum`
+and `data.recovery` with the accepted range (#9895).
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
 `ripr_list_gaps` call that resumes the walk — pinned to the snapshot

@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-weak-oracle-kit",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for owners reached through an executor or a function value beside an assertion too weak to notice the change",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3c6f7c5f0f52dbcedfa75c24cb5fe27cd2ef3b3e6460c2ab542ce6825e5279e8"
+    },
+    {
+      "path": "src/executors.rs",
+      "sha256": "ba94cd9a3c309f9064f40ddda27bd862aff4d17ad975a2a30e9035fbd66e761a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "ee1c1d9f77f60efec5623e3cd211a595cedb78b821f0d78b33d07b03db728f1b"
+    },
+    {
+      "path": "src/values.rs",
+      "sha256": "08d732b934000aee690f2bc33f85192055b4e99846fc01168b1c82901e77bbad"
+    }
+  ]
+}

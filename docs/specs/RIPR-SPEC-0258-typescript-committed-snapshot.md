@@ -79,7 +79,16 @@ runner's entry for it can be named and is committed:
 
 - the snapshot file is `__snapshots__/<test file name>.snap` beside the
   test file, read under the per-file read cap, and its first line starts
-  with `// Jest Snapshot v1` or `// Vitest Snapshot v1`;
+  with `// Jest Snapshot v1` or `// Vitest Snapshot v1`. When the repository
+  can list its tracked `*.snap` files (one `ls-files` call per run), the file
+  must be one of them: an untracked or ignored snapshot file is a local file
+  CI never sees, so a `--worktree` run no longer credits it. When the
+  repository cannot answer (an export, no repository, the tool unavailable)
+  the file is read as before. The same holds when the repository tracks
+  nothing under the analysis root (a scratch copy, nothing staged yet), or
+  when the nearest `.git` entry is not the work tree git itself discovered
+  (a stub), or an inherited `GIT_DIR` / `GIT_WORK_TREE` selects another
+  repository;
 - no `package.json`, `jest.config.*`, `vitest.config.*`, `vite.config.*`
   or `vitest.workspace.*` in the test file's directory or any ancestor up
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
@@ -93,7 +102,11 @@ runner's entry for it can be named and is committed:
   `package.json` names `projects`, `workspace` or `root` as a key (plain,
   quoted, computed `["projects"]:`, JS shorthand, or a member assignment
   `config.projects = ...`), since those keys delegate to config files this
-  walk does not read, no `package.json` passes a config, project list or root
+  walk does not read (a Jest `projects: [...]` whose elements are all inline
+  object literals with no `rootDir`, `roots`, `root`, `workspace` or
+  `projects` key and no `preset` other than a `ts-jest` preset delegates to
+  nothing and is read, whether the key is bare or quoted and wherever a
+  comment mentions the word, and a regex literal such as `globals: { tag: /a(b)/ }` is a value, not a call, #10139), and a quoted property value (`displayName: "projects"`) is a value, not a key, while a string passed to a call or bound by `=` (`Object.defineProperty(c, 'root', ..)`) keeps the refusal, while a config holding a template literal, a `/` (regex or division) or an unterminated string keeps the refusal (#10295), no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
@@ -198,13 +211,20 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 
 - The snapshot file and configs are read from the working tree. A
   committed-history run refuses when one differs from `HEAD`; a
-  `--worktree` run reads the working tree throughout.
+  `--worktree` run reads the working tree throughout, except that the
+  snapshot file must be tracked when the repository can say. A tracked file
+  whose staged or working-tree bytes differ from `HEAD` is read as it is in
+  a `--worktree` run; the tracked check does not compare content.
+- The config walk is memoized per analysis run, so a config edited while
+  the run is in flight (an LSP session between two files of one run) is
+  seen by the next run, not the current one.
 - A test registered from a template title (`%s`, `%#`, a non-literal
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
 - A runner config passed by path is not read; a `package.json` script that
   passes one refuses instead. A config that names `projects`, `workspace` or
-  `root` is not followed into the files it names; it refuses instead. A
+  `root` is not followed into the files it names; it refuses instead, except
+  a plain inline `projects` array (#10139). A
   computed key built at run time (`["pro" + "jects"]`) is not read and a
   delegating config written that way keeps the credit. A config above the
   repository boundary is not read.
@@ -314,7 +334,12 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `__snapshots__` directory: medium.
 8. A `jest.config.js` with `projects: [...]` or `["projects"]: [...]`, a
    `vitest.config.ts` with `workspace`, `root` or `config.test.root = ...`:
-   medium. A `const root = process.cwd()` declaration, a Jest `roots` or
+   medium. A `jest.config.js` whose `projects` holds only inline objects
+   (`projects: [{ displayName: "unit", preset: "ts-jest" }]`): strong; the
+   same array with a path, glob, identifier or spread element, a project
+   setting `rootDir` or `roots`, or a package preset
+   (`preset: "review-snapshot-preset"`, which Jest merges from a file this
+   walk never reads): medium. A `const root = process.cwd()` declaration, a Jest `roots` or
    `rootDir` option: strong. A package whose `.git` file is a submodule
    pointer (`gitdir: ../../.git/modules/app`) under a superproject whose
    `jest.config.js` sets a `snapshotResolver`: medium; the same package with a
@@ -350,9 +375,15 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `symlinked_test_directory_stays_medium` pin example 7;
   `computed_and_member_spellings_of_delegating_keys_stay_medium`,
   `json_escaped_whitespace_before_the_update_flag_stays_medium`,
+  `plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses`,
+  `vitest_string_values_are_not_keys_but_real_keys_still_refuse`,
   `submodule_git_file_does_not_end_the_walk` and
   `only_a_submodule_pointer_is_not_a_boundary` pin example 8 and the
-  #8768 spellings.
+  #8768 spellings;
+  `untracked_or_ignored_snapshot_file_stays_medium` and
+  `snapshot_file_outside_a_repository_is_read_as_before` pin the tracked-file
+  check, and `config_walk_and_tracked_list_are_memoized_per_run_only` and
+  `memoized_config_verdict_is_per_directory` pin the per-run memo (#7708).
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
   `porcelain_parser_records_unrouted_snapshot_inputs` and
   `snapshot_inputs_differ_only_in_their_own_directory` pin the

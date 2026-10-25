@@ -19,6 +19,13 @@ Start here:
   Related test: tests/big.rs:4 small_is_not_big (no test input reaches `n == 0xFF`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach is_big: small_is_not_big
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 7 more detail line(s) in --format human-full
@@ -26,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast probe:src_lib.rs:predicate:7432bf5c
   ripr context --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast --at probe:src_lib.rs:predicate:7432bf5c
-  no repair start offered: repair route not ready (missing evidence: incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:7432bf5c --root <cwd>/fixtures/radix_literal_boundary_off/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/radix_literal_boundary_off/input --at src/lib.rs:2 --kind predicate
 

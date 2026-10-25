@@ -19,10 +19,19 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Canonical gap: gap:python:src/cart.py:doubled:return_value:return_value:x*2
   Changed behavior: return x * 2
-  Discriminator (observed, advisory): Related Python test reaches `doubled` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Discriminator (observed, advisory): Related Python test reaches `doubled` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value
+    discriminator
   Related test: tests/test_cart.py:12 test_doubled_doubles
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `doubled`
     - infection yes: Changed Python return expression can alter the owner return value: `return x * 2`
     - 5 more detail line(s) in --format human-full

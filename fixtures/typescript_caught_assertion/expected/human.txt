@@ -19,12 +19,21 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: throw "TOKEN_REQUIRED";
-  Missing discriminator (1 of 2): Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form…
+  Missing discriminator (1 of 2): Related test reaches `load` but the strongest extracted oracle is
+    `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or
+    a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/load.test.ts:4 missing token
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `throws error matching "TOKEN_REQUIRED"`; no actionable repair packet is emitted
     until verify, receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `load`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -32,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_caught_assertion/input --diff <cwd>/fixtures/typescript_caught_assertion/diff.patch --mode fast probe:src_load.ts:typescript_preview:fd09bc48
   ripr context --root <cwd>/fixtures/typescript_caught_assertion/input --diff <cwd>/fixtures/typescript_caught_assertion/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:fd09bc48
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_load.ts:typescript_preview:fd09bc48 --root <cwd>/fixtures/typescript_caught_assertion/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

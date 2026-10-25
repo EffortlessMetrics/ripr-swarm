@@ -1,7 +1,7 @@
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{
-    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, RelatedTest,
+    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, ProbeFamily, RelatedTest,
     StageEvidence, ValueFact,
 };
 use crate::output::agent_seam_packets::{
@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::finding_alignment;
+use super::findings_priority;
 use super::{array_field, escape, field, float_field, number_field};
 
 /// Cap on `related_tests` serialized per finding in the diff-check JSON output.
@@ -95,15 +96,17 @@ fn analyzed_revisions_json(out: &mut String, output: &CheckOutput) {
 }
 
 /// Carries a findings-array byte-budget truncation so the JSON renderer can
-/// self-declare the rendered prefix (#5203). `rendered + omitted == total`
+/// self-declare the rendered subset (#5203). `rendered + omitted == total`
 /// always reconciles (#5091): `summary.findings` keeps the full analysis
-/// count while `findings[]` holds the `rendered` prefix.
+/// count while `findings[]` holds the `rendered` bounded subset.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FindingsBoundInfo {
     pub(crate) rendered: usize,
     pub(crate) total: usize,
     pub(crate) budget: usize,
     pub(crate) source: FindingsBudgetSource,
+    /// Counts per class and file of what the budget dropped (#10093).
+    pub(crate) omitted: String,
 }
 
 impl FindingsBoundInfo {
@@ -119,8 +122,11 @@ impl FindingsBoundInfo {
             ),
         };
         format!(
-            "rendered {} of {} findings within the findings-array byte budget ({setting})",
-            self.rendered, self.total
+            "rendered {} of {} findings within the findings-array byte budget ({setting}); \
+             kept the highest-priority findings (candidate-current first, then \
+             reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, \
+             exposed last, then a recommended next step) in sort order; {}",
+            self.rendered, self.total, self.omitted
         )
     }
 }
@@ -240,9 +246,8 @@ pub(crate) fn render_with_config(
         out.push_str("\n  },\n");
     }
     out.push_str("  \"findings\": [\n");
-    let findings_array_start = out.len();
     // Full-set group totals: `canonical_gap_group_size` describes the analyzed
-    // group (like `related_tests_total`), not the rendered prefix (#5203).
+    // group (like `related_tests_total`), not the rendered subset (#5203).
     let canonical_gap_counts = canonical_gap_counts(&output.findings);
     let suppressed_selectors: BTreeMap<&str, &str> = output
         .suppression
@@ -258,32 +263,66 @@ pub(crate) fn render_with_config(
     // deterministic `sort_findings` order; once the emitted array bytes
     // (payloads plus separators) exceed the budget, the rest is disclosed
     // rather than rendered. The first finding always renders so a nonempty
-    // analysis never yields an empty prefix; worst case is budget plus one
+    // analysis never yields an empty bounded subset; worst case is budget plus one
     // finding. Unbounded (`None`) renders everything. The cutoff is evaluated
     // after each finding so separators stay exactly as before when the
     // budget does not engage.
-    let mut rendered_findings = 0usize;
-    for (idx, finding) in output.findings.iter().enumerate() {
+    // #10093: findings render in priority order (see `findings_priority`) so
+    // the budget keeps the most actionable ones; the kept set is then emitted
+    // in the unchanged sort order. Without an engaged budget every finding
+    // renders and the output is byte-identical to the sort-order stream.
+    let render_payload = |out: &mut String, idx: usize| {
         finding_json_with_config_and_counts(
-            &mut out,
-            finding,
+            out,
+            &output.findings[idx],
             2,
             config,
             &canonical_gap_counts,
-            suppressed_selectors.get(finding.id.as_str()).copied(),
+            suppressed_selectors
+                .get(output.findings[idx].id.as_str())
+                .copied(),
             &output.root,
         );
-        rendered_findings += 1;
-        let last_analysis_finding = idx + 1 == output.findings.len();
-        let over_budget =
-            findings_budget.is_some_and(|(budget, _)| out.len() - findings_array_start > budget);
-        if !last_analysis_finding && !over_budget {
-            out.push(',');
+    };
+    // Indices of the rendered findings in emission (sort) order; only built
+    // when a budget is configured, since only a budget can omit findings.
+    let mut kept_indices: Vec<usize> = Vec::new();
+    let rendered_findings;
+    if let Some((budget, _)) = findings_budget {
+        let mut kept: Vec<(usize, String)> = Vec::new();
+        let mut array_bytes = 0usize;
+        for idx in findings_priority::priority_order(&output.findings) {
+            let mut payload = String::new();
+            render_payload(&mut payload, idx);
+            // Payload plus the `,\n` separator that precedes every later finding.
+            array_bytes += payload.len() + if kept.is_empty() { 0 } else { 2 };
+            kept.push((idx, payload));
+            if array_bytes > budget {
+                break;
+            }
         }
-        out.push('\n');
-        if over_budget {
-            break;
+        kept.sort_by_key(|(idx, _)| *idx);
+        rendered_findings = kept.len();
+        for (position, (idx, payload)) in kept.iter().enumerate() {
+            out.push_str(payload);
+            if position + 1 != rendered_findings {
+                out.push(',');
+            }
+            out.push('\n');
+            kept_indices.push(*idx);
         }
+    } else {
+        // Unbounded (`=0`): stream directly in sort order, no priority sort and
+        // no buffering.
+        let total = output.findings.len();
+        for idx in 0..total {
+            render_payload(&mut out, idx);
+            if idx + 1 != total {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        rendered_findings = total;
     }
     out.push_str("  ]");
     let findings_bound = if rendered_findings < output.findings.len() {
@@ -292,6 +331,7 @@ pub(crate) fn render_with_config(
             total: output.findings.len(),
             budget,
             source,
+            omitted: findings_priority::omitted_summary(&output.findings, &kept_indices),
         })
     } else {
         None
@@ -299,7 +339,7 @@ pub(crate) fn render_with_config(
     // #9010: a budget-bounded document must not read as a complete outcome.
     // `analysis_complete` stays the analysis verdict (no new outcome kind);
     // this additive, only-when-bounded disclosure sits beside it so the shared
-    // incomplete-outcome predicate can fail closed on a findings prefix.
+    // incomplete-outcome predicate can fail closed on a findings subset.
     if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
         // `at` was recorded before the findings array was appended, so it must
         // sit on a char boundary inside the buffer.
@@ -577,7 +617,7 @@ pub(crate) fn render_with_config(
         out.push_str("  ]");
     }
     // Additive run-state block — emitted only when the findings-array byte
-    // budget engaged and the rendered findings are a strict prefix (#5203).
+    // budget engaged and the rendered findings are a strict bounded subset (#5203).
     // Absent otherwise, so unbounded runs keep byte-identical output. Uses the
     // `run_limitations[]` vocabulary (`limited_*` run status,
     // `downstream_consumable: false`) so a bounded document never presents as
@@ -601,10 +641,19 @@ pub(crate) fn render_with_config(
         out.push_str("  ]");
     }
     // Alignment rows must resolve inside the document: compute over the
-    // rendered prefix so a bounded run never references omitted findings.
+    // rendered subset so a bounded run never references omitted findings.
     // Unbounded runs pass the full set, exactly as before.
-    let finding_alignment =
-        finding_alignment::report_for_findings(&output.findings[..rendered_findings]);
+    let kept_findings: Vec<Finding>;
+    let aligned_findings: &[Finding] = if findings_bound.is_some() {
+        kept_findings = kept_indices
+            .iter()
+            .map(|idx| output.findings[*idx].clone())
+            .collect();
+        &kept_findings
+    } else {
+        &output.findings
+    };
+    let finding_alignment = finding_alignment::report_for_findings(aligned_findings);
     if let Some(report) = finding_alignment.as_ref() {
         out.push_str(",\n");
         out.push_str("  \"finding_alignment\": ");
@@ -811,6 +860,12 @@ fn finding_json_with_config_and_counts(
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
+    // #5531: carry the typed scope for repo findings only, so ledger consumers
+    // of the rendered check JSON read the scope, not an evidence line. Omitted
+    // for diff scope to keep diff-mode bytes identical.
+    if finding.analysis_scope == crate::domain::AnalysisScope::Repo {
+        field(out, indent + 1, "analysis_scope", "repo", true);
+    }
     out.push_str(&format!("{}\"probe\": {{\n", "  ".repeat(indent + 1)));
     field(out, indent + 2, "id", &finding.probe.id.0, true);
     field(
@@ -915,12 +970,7 @@ fn finding_json_with_config_and_counts(
         .take(related_rendered)
         .enumerate()
     {
-        related_test_json(
-            out,
-            test,
-            &finding.activation.missing_discriminators,
-            indent + 2,
-        );
+        related_test_json(out, test, &finding.probe.family, indent + 2);
         if idx + 1 != related_rendered {
             out.push(',');
         }
@@ -1678,7 +1728,7 @@ fn typescript_repair_packet_json(record: &crate::output::gap_decision_ledger::Ga
 pub(super) fn related_test_json(
     out: &mut String,
     test: &RelatedTest,
-    missing_discriminators: &[MissingDiscriminatorFact],
+    family: &ProbeFamily,
     indent: usize,
 ) {
     let sp = "  ".repeat(indent);
@@ -1711,8 +1761,7 @@ pub(super) fn related_test_json(
     // TypeScript preview findings and on legacy callers that set None.
     // #5344: `miss` and `why` say why this test would not notice the change;
     // both are omitted when the analyzer established no miss.
-    let why =
-        crate::output::related_test_miss::related_test_miss_reason(test, missing_discriminators);
+    let why = crate::output::related_test_miss::related_test_miss_reason(test, family);
     let has_miss = test.miss.is_some();
     let has_reason = test.relation_reason.is_some();
     let has_confidence = test.relation_confidence.is_some();
@@ -1757,7 +1806,6 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
-            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -1851,6 +1899,7 @@ mod harness_projection_tests {
 
     fn output_with(projections: Vec<TestHarnessProjection>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: projections,
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2045,6 +2094,8 @@ mod evidence_path_separator_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,

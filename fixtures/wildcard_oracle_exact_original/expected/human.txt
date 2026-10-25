@@ -16,6 +16,13 @@ Start here:
   Changed behavior: value + 1
   Related test: src/lib.rs:8 observes_score
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach score: observes_score
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -23,7 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/wildcard_oracle_exact_original/input --diff <cwd>/fixtures/wildcard_oracle_exact_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root <cwd>/fixtures/wildcard_oracle_exact_original/input --diff <cwd>/fixtures/wildcard_oracle_exact_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:519eff0d --root <cwd>/fixtures/wildcard_oracle_exact_original/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -91,8 +91,10 @@ pub(super) fn attach_fixture_defs(
             if test.direct_parametrized.contains(parameter) {
                 continue;
             }
-            if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST {
-                break;
+            // An override of `caplog` is always resolved: the log reading
+            // depends on it however many other fixtures the test requests.
+            if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST && parameter != "caplog" {
+                continue;
             }
             if let Some(def) = resolve(&test.file, parameter, defs_by_file) {
                 attached.push(def.clone());
@@ -151,5 +153,117 @@ pub(super) fn taint_admission_by_conftest(
         }) {
             test.assertion_admission = PythonAssertionAdmission::Unresolved;
         }
+    }
+}
+
+/// Mark every test whose directory chain holds a conftest declaring any
+/// fixture or hook, or one RIPR could not read, as implicitly reachable
+/// (#5491 `missing_input` fails closed by existence).
+pub(super) fn mark_implicit_reach_by_conftest(
+    tests: &mut [PythonTest],
+    reach_conftests: &BTreeSet<PathBuf>,
+    mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
+) {
+    for test in tests {
+        if conftest_chain(&test.file).any(|conftest| {
+            reach_conftests.contains(&conftest) || is_unreadable_conftest(&conftest)
+        }) {
+            test.constant_rebinding.implicit_reach = true;
+        }
+    }
+}
+
+/// A conftest that declares any fixture or hook, has top-level effects, or
+/// could not be read can change what a test does without the test naming it:
+/// override a built-in fixture (`def tmp_path()`, `@pytest.fixture(name=...)`),
+/// append fixtures in `pytest_generate_tests`, add `filterwarnings` in
+/// `pytest_configure`, or call `warnings.simplefilter("error")` at import.
+/// Withhold `extraction_complete_no_assertion` from every test below such a
+/// conftest (#5491). Fails closed by existence, like the implicit-reach pass,
+/// and only downgrades: a conftest never grants the state.
+pub(super) fn taint_admission_by_conftest_declarations(
+    tests: &mut [PythonTest],
+    reach_conftests: &BTreeSet<PathBuf>,
+    mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
+) {
+    for test in tests {
+        if test.assertion_admission != PythonAssertionAdmission::NoAssertionLike {
+            continue;
+        }
+        if conftest_chain(&test.file).any(|conftest| {
+            reach_conftests.contains(&conftest) || is_unreadable_conftest(&conftest)
+        }) {
+            test.assertion_admission = PythonAssertionAdmission::Unresolved;
+        }
+    }
+}
+
+/// Record, per test, the modules it imports by a bare name that exist in a
+/// directory pytest puts on `sys.path` for it (#5491): the test file's own
+/// directory and, while a directory is a package (`__init__.py`), each parent
+/// up to and including the first directory that is not (the rootdir pytest's
+/// prepend import mode inserts), and always the repository root. `is_present` answers for a
+/// workspace-relative path. Single-file modules are recorded by file and
+/// packages by directory; the row pass exempts only the owner's own module
+/// or package.
+pub(super) fn record_bare_sibling_imports(
+    tests: &mut [PythonTest],
+    mut is_present: impl FnMut(&Path) -> bool,
+) {
+    let mut resolved: BTreeMap<(PathBuf, String), Option<PathBuf>> = BTreeMap::new();
+    let mut dirs_by_file: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for test in tests {
+        if test.assertion_admission != PythonAssertionAdmission::NoAssertionLike {
+            continue;
+        }
+        let dirs = dirs_by_file
+            .entry(test.file.clone())
+            .or_insert_with(|| {
+                let mut dirs = Vec::new();
+                let mut dir = test.file.parent().unwrap_or(Path::new("")).to_path_buf();
+                loop {
+                    dirs.push(dir.clone());
+                    if dir.as_os_str().is_empty() || !is_present(&dir.join("__init__.py")) {
+                        break;
+                    }
+                    dir = dir.parent().unwrap_or(Path::new("")).to_path_buf();
+                }
+                // The repository root is on `sys.path` through a root
+                // conftest, `python -m pytest` or an editable install, so a
+                // root-level module is bare-importable too (fail-closed).
+                if !dirs.iter().any(|dir| dir.as_os_str().is_empty()) {
+                    dirs.push(PathBuf::new());
+                }
+                dirs
+            })
+            .clone();
+        let mut found: BTreeSet<PathBuf> = BTreeSet::new();
+        for import in &test.imports {
+            let module = if import.source_module.is_empty() {
+                import.imported.as_str()
+            } else {
+                import.source_module.as_str()
+            };
+            let Some(root) = module.split('.').next().filter(|root| !root.is_empty()) else {
+                continue;
+            };
+            for dir in &dirs {
+                let hit = resolved
+                    .entry((dir.clone(), root.to_string()))
+                    .or_insert_with(|| {
+                        let file = dir.join(format!("{root}.py"));
+                        if is_present(&file) {
+                            return Some(file);
+                        }
+                        let package = dir.join(root);
+                        is_present(&package).then_some(package)
+                    })
+                    .clone();
+                if let Some(path) = hit {
+                    found.insert(path);
+                }
+            }
+        }
+        test.bare_sibling_modules = found.into_iter().collect();
     }
 }

@@ -19,9 +19,18 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: if amount >= threshold:
-  Analyzer limit: Static limit `property_based_test`: a related Python test uses property-based generated inputs such as `@given(...)`; syntax-first preview evidence cannot prove whether the…
+  Analyzer limit: Static limit `property_based_test`: a related Python test uses property-based
+    generated inputs such as `@given(...)`; syntax-first preview evidence cannot prove whether the
+    generated cases include the changed discriminator
   Related test: tests/test_pricing.py:6 test_apply_discount_property
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `apply_discount`
     - infection unknown: Static limit `property_based_test` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
@@ -29,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_property_based_limit/input --diff <cwd>/fixtures/python_property_based_limit/diff.patch --mode fast probe:src_pricing.py:python_preview:ca00849b
   ripr context --root <cwd>/fixtures/python_property_based_limit/input --diff <cwd>/fixtures/python_property_based_limit/diff.patch --mode fast --at probe:src_pricing.py:python_preview:ca00849b
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.py:python_preview:ca00849b --root <cwd>/fixtures/python_property_based_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

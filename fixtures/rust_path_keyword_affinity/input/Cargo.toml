@@ -1,0 +1,8 @@
+[package]
+name = "rust_path_keyword_affinity_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_path_keyword_affinity_fixture"
+path = "src/lib.rs"

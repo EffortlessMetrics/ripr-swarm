@@ -117,6 +117,7 @@ fn literal_json_namespace_in_another_source_file_stays_uncredited() {
     for parent in [
         "extern crate foreign as serde_json;",
         "use foreign as serde_json;",
+        "use foreign::serde_json;",
         "mod serde_json {}",
     ] {
         assert!(

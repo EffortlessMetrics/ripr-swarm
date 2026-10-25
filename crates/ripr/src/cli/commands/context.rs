@@ -287,7 +287,17 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 explicit.mode,
                 progress_sink,
             )
-            .map_err(&refuse)?
+            .map_err(|error| {
+                // #9244 item 9: a selector miss is user-fixable usage, not an
+                // internal failure, so the held-success sink must not project
+                // `ripr progress: failed` beside the real error.
+                if error.is_selector_miss()
+                    && let Some(sink) = &progress
+                {
+                    app::AnalysisProgressSink::user_fixable_failure(sink);
+                }
+                refuse(error)
+            })?
         }
     };
     // #7352 review: commit the held `completed` terminal before the sink
@@ -296,8 +306,27 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     if let Some(progress) = &progress {
         progress.commit_success();
     }
+    // #9244: a newcomer who runs `ripr context` at a prompt otherwise sees a
+    // bare JSON blob. Frame it on stderr only, and only when stdout is an
+    // attached terminal, so piped, redirected and captured stdout stay
+    // byte-identical machine JSON.
+    if let Some(note) =
+        terminal_stdout_note(std::io::IsTerminal::is_terminal(&std::io::stdout()), quiet)
+    {
+        eprintln!("{note}");
+    }
     println!("{rendered}");
     Ok(())
+}
+
+/// One-line stderr framing printed above the packet when it is about to land
+/// on an interactive terminal (#9244). The packet is JSON for a coding agent
+/// or script; the note says so and names the way to keep it. Pure so both
+/// arms can be pinned without a tty.
+pub(crate) const TERMINAL_STDOUT_NOTE: &str = "ripr: the JSON below is a context packet for a coding agent or script, not a report to read; save it with `ripr context --at <finding> > context.json` or pipe it to your agent, and run `ripr explain <finding>` for a human reading";
+
+pub(crate) fn terminal_stdout_note(stdout_is_terminal: bool, quiet: bool) -> Option<&'static str> {
+    (stdout_is_terminal && !quiet).then_some(TERMINAL_STDOUT_NOTE)
 }
 
 fn positional_selector_hint(arg: &str) -> String {
@@ -310,6 +339,19 @@ fn positional_selector_hint(arg: &str) -> String {
 mod tests {
     use super::super::tests::args;
     use super::*;
+
+    /// #9244: the framing appears only for an interactive stdout. A piped or
+    /// redirected stdout (the machine contract) and `--quiet` stay silent.
+    #[test]
+    fn terminal_stdout_note_frames_json_only_for_an_interactive_stdout() {
+        let note = terminal_stdout_note(true, false);
+        assert!(
+            matches!(note, Some(text) if text.contains("JSON") && text.contains("ripr explain")),
+            "an interactive stdout must get the framing: {note:?}"
+        );
+        assert_eq!(terminal_stdout_note(false, false), None);
+        assert_eq!(terminal_stdout_note(true, true), None);
+    }
 
     #[test]
     fn context_rejects_invalid_max_related_tests() {

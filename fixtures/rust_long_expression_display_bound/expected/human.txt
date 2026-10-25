@@ -15,15 +15,25 @@ Start here:
   Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:blocking_reason:predicate_boundary:predicate:decisions.iter_.filter_d_d.decision==lit626c6f636b696e67_.count==1
   Changed behavior: decisions.iter().filter(|d| d.decision == "blocking").count() == 1
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: the changed comparison's
+    operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of
+    the boundary a test reaches; activation/infection is unknown
   Related test: src/lib.rs:25 single_blocking_decision_reports_its_reason
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason
     - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of…
     - 6 more detail line(s) in --format human-full
@@ -31,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_long_expression_display_bound/input --diff <cwd>/fixtures/rust_long_expression_display_bound/diff.patch --mode fast probe:src_lib.rs:predicate:cbead9b7
   ripr context --root <cwd>/fixtures/rust_long_expression_display_bound/input --diff <cwd>/fixtures/rust_long_expression_display_bound/diff.patch --mode fast --at probe:src_lib.rs:predicate:cbead9b7
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:cbead9b7 --root <cwd>/fixtures/rust_long_expression_display_bound/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
