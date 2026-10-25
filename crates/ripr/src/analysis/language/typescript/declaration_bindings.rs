@@ -211,20 +211,41 @@ impl DeclarationBindings {
     // Mutable/previously written aliases cannot establish dormancy, but can
     // still carry the runner into a mutation or an opaque call.
     fn potential_runner(&self, path: &Alias, remaining: usize) -> bool {
+        self.potential_runner_memo(path, remaining, &mut BTreeMap::new())
+    }
+
+    fn potential_runner_memo(
+        &self,
+        path: &Alias,
+        remaining: usize,
+        memo: &mut BTreeMap<(usize, String), Option<bool>>,
+    ) -> bool {
         if remaining == 0 {
             return true;
         }
         if self.resolve(path, remaining).is_some() {
             return true;
         }
-        self.binding_scope(&path.name, path.at)
-            .and_then(|scope| self.scopes[scope].bindings.get(&path.name))
+        let Some(scope) = self.binding_scope(&path.name, path.at) else {
+            return false;
+        };
+        let key = (scope, path.name.clone());
+        if let Some(cached) = memo.get(&key) {
+            return cached.unwrap_or(true);
+        }
+        // None is an in-progress binding; a cycle remains possible mutation.
+        memo.insert(key.clone(), None);
+        let possible = self.scopes[scope]
+            .bindings
+            .get(&path.name)
             .is_some_and(|binding| {
                 binding
                     .potential
                     .iter()
-                    .any(|alias| self.potential_runner(alias, remaining - 1))
-            })
+                    .any(|alias| self.potential_runner_memo(alias, remaining - 1, memo))
+            });
+        memo.insert(key, Some(possible));
+        possible
     }
 
     fn binding_scope(&self, name: &str, at: u32) -> Option<usize> {

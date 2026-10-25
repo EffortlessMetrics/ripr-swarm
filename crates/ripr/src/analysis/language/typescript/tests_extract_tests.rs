@@ -1329,7 +1329,18 @@ fn skipped_suite_bindings_cover_alias_options_and_block_locals() {
 #[test]
 fn skipped_suite_bindings_isolate_mutation_provenance_and_dormant_values() {
     let file = Path::new("test/binding.test.ts");
+    let mut diamond = String::from("let a0 = custom; ");
+    for index in 1..=28 {
+        diamond.push_str(&format!(
+            "let a{index} = a{}; a{index} = a{}; ",
+            index - 1,
+            index - 1
+        ));
+    }
+    diamond
+        .push_str("a28.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });");
     for source in [
+        diamond.as_str(),
         "const d = {}; { const d = describe; } d.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });",
         "const d = {}; function f() { var d = describe; } d.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });",
         "describe.skip('off', flag ? () => { it('dormantA', () => {}); } : () => { it('dormantB', () => {}); });",
