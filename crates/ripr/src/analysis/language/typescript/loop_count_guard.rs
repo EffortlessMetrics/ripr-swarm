@@ -1197,24 +1197,92 @@ fn without_receiver_casts(receiver: &str) -> String {
             .rsplit(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
             .next()
             .unwrap_or("");
-        // `=>` and a `)` or `]` after a space lead a body or statement, not a call.
+        // `=>`, a comparison `>` and a `)` that closes `if (…)` lead a body or an
+        // operand, not a call; `f<T>(…)` and `f(a)(…)` are adjacent calls.
         let call_like = before.ends_with(['.'])
-            || (before.ends_with('>') && !before.ends_with("=>"))
-            || (before.ends_with([')', ']']) && !spaced)
+            || (before.ends_with('>') && !before.ends_with("=>") && !spaced)
+            || (before.ends_with([')', ']']) && !spaced && !closes_statement_head(before))
             || (!word.is_empty()
                 && !before.ends_with(['>', ')', ']'])
                 && !is_expression_keyword(word));
         if call_like {
             break;
         }
-        match inner.find(" as ") {
-            Some(at) if !inner[at..].contains(['(', ')']) => {
-                text = format!("{}{}", &end[..open], &inner[..at]);
-            }
-            _ => break,
-        }
+        let Some(reduced) = reduced_group(inner) else {
+            break;
+        };
+        let glue = if before.len() == end[..open].len()
+            && before.ends_with(is_word_char)
+            && reduced.starts_with(is_word_char)
+        {
+            " "
+        } else {
+            ""
+        };
+        text = format!("{}{glue}{reduced}", &end[..open]);
     }
     text
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// The expression a cast or non-null group stands for, or `None` when the group
+/// is a comma list or reduces to nothing.
+fn reduced_group(inner: &str) -> Option<String> {
+    let flat = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut head = flat.as_str();
+    let mut depth = 0usize;
+    for (at, ch) in flat.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return None,
+            ' ' if depth == 0 => {
+                let rest = &flat[at..];
+                if rest.starts_with(" as ") || rest.starts_with(" satisfies ") {
+                    head = &flat[..at];
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let head = head.trim();
+    let head = match head.strip_prefix('<') {
+        Some(rest) => rest.split_once('>').map_or(head, |(_, tail)| tail.trim()),
+        None => head,
+    };
+    let reduced = without_receiver_casts(head);
+    (!reduced.is_empty() && reduced != flat).then_some(reduced)
+}
+
+/// Whether the `)` ending `text` closes the head of `if`, `while`, `for`,
+/// `switch`, `with` or `catch`.
+fn closes_statement_head(text: &str) -> bool {
+    let Some(end) = text.strip_suffix(')') else {
+        return false;
+    };
+    let mut depth = 1usize;
+    let open = end.char_indices().rev().find_map(|(i, ch)| match ch {
+        ')' => {
+            depth += 1;
+            None
+        }
+        '(' => {
+            depth -= 1;
+            (depth == 0).then_some(i)
+        }
+        _ => None,
+    });
+    let Some(open) = open else { return false };
+    let word = end[..open]
+        .trim_end()
+        .rsplit(|c: char| !is_word_char(c))
+        .next()
+        .unwrap_or("");
+    matches!(word, "if" | "while" | "for" | "switch" | "with" | "catch")
 }
 
 /// Keywords after which a parenthesized expression is a group, not an argument list.
