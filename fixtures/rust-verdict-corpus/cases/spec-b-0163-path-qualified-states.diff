@@ -1,0 +1,12 @@
+diff --git a/src/s_path.rs b/src/s_path.rs
+--- a/src/s_path.rs
++++ b/src/s_path.rs
+@@ -21,7 +21,7 @@
+ 
+ pub fn classify_path(input: &str) -> &'static str {
+     let final_state = scan_path(input);
+-    if final_state == Scan::Word {
++    if final_state == Scan::Text {
+         "word"
+     } else {
+         "blank"

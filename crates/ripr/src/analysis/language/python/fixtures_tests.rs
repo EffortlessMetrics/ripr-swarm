@@ -575,3 +575,96 @@ fn given_a_replaced_or_unrelated_caplog_rename_then_the_builtin_caplog_is_still_
     }
     Ok(())
 }
+
+#[test]
+fn given_a_fixture_declared_through_an_aliased_pytest_import_then_it_is_recorded()
+-> Result<(), String> {
+    // #10454: `from pytest import fixture as fx` registers the same fixture.
+    let aliased = SAME_MODULE
+        .replace("import pytest", "from pytest import fixture as fx")
+        .replace("@pytest.fixture", "@fx");
+    assert_eq!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/test_utils.py", &aliased)
+        ])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    // An alias of something else is not a fixture.
+    let other = SAME_MODULE
+        .replace("import pytest", "from functools import cache as fx")
+        .replace("@pytest.fixture", "@fx");
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &other)])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_an_aliased_fixture_overriding_caplog_then_the_logged_text_abstains() -> Result<(), String>
+{
+    let conftest =
+        "from pytest import fixture as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    let renamed = "from pytest import fixture as fx\n\n\n@fx(name=\"caplog\")\ndef custom_recorder():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", renamed),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // `pytest_asyncio.fixture` is recognized the same way.
+    let asyncio = conftest.replace("from pytest import", "from pytest_asyncio import");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &asyncio),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // An alias bound to another module's `fixture` is not pytest's.
+    let foreign = conftest.replace("from pytest import", "from tools import");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &foreign),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn given_an_alias_rebound_by_a_later_import_then_it_is_not_a_fixture_decorator()
+-> Result<(), String> {
+    // `fx` ends up bound to functools.cache, so `@fx def caplog` is no fixture.
+    let shadowed = "from pytest import fixture as fx\nfrom functools import cache as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", shadowed),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    // The pytest import coming last keeps the alias a fixture decorator.
+    let kept = "from functools import cache as fx\nfrom pytest import fixture as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", kept),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    Ok(())
+}

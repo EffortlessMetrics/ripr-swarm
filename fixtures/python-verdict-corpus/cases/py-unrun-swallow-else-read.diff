@@ -1,0 +1,12 @@
+diff --git a/unrun/core.py b/unrun/core.py
+--- a/unrun/core.py
++++ b/unrun/core.py
+@@ -27,7 +27,7 @@
+ 
+ 
+ def swallow_else(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def swallow_finally(a, b):

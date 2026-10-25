@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr` now evaluates a match guard that resolves exactly over the bound inputs — one comparison whose operands each evaluate through the shared literal evaluator, or `str::len()` on an exact string — and selects the arm only when the guard is true. A guard that does not evaluate still refuses the whole match, and the wire value is unchanged. Earns the `spec-b-0164-guard-arm` corpus row (#10304).

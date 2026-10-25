@@ -61,6 +61,11 @@ struct FunctionAssertions {
     /// Why every assertion in this test is refused, when the refusal is a
     /// property of the whole test rather than of one invocation.
     refusal: Option<AssertionContextRefusal>,
+    /// Set when `refusal` is `MacroOperandExit` and the function is clean once
+    /// the [`COMPARISON_NESTED_MACROS`] count as plain expansions: `assertions`
+    /// then holds the per-assertion verdicts (#10389). The strict `refusal`
+    /// still answers every other query.
+    comparison_clean: bool,
     assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
     /// Assertions of test-local check helpers this test calls on an eager
@@ -210,6 +215,32 @@ impl OwnerPinAssertions {
         assertion: (usize, &str),
         ambiguous_macros: &BTreeSet<String>,
     ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, false)
+    }
+
+    /// [`Self::refusal`] with the [`COMPARISON_NESTED_MACROS`] read as plain
+    /// expansions: the first gate that refuses this assertion for a reason
+    /// other than the opaque nested comparison macro itself (#10389). The
+    /// function-level macro scan reports `MacroOperandExit` before any
+    /// per-assertion gate, which would hide a dead context.
+    pub(crate) fn refusal_trusting_comparison_macros(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+    ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, true)
+    }
+
+    fn refusal_trusting(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+        trust_comparison_macros: bool,
+    ) -> Option<AssertionContextRefusal> {
         let Some(facts) = self
             .functions
             .get(&(function.0, function.1, function.2.to_string()))
@@ -220,7 +251,11 @@ impl OwnerPinAssertions {
                 AssertionContextRefusal::UnparsedFile
             });
         };
-        if let Some(refusal) = &facts.refusal {
+        if let Some(refusal) = &facts.refusal
+            && !(trust_comparison_macros
+                && facts.comparison_clean
+                && matches!(refusal, AssertionContextRefusal::MacroOperandExit(_)))
+        {
             return Some(refusal.clone());
         }
         if facts.body != BodyFingerprint::of(body) {
@@ -2255,15 +2290,35 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         } else {
             item_context_refusal(function.syntax())
         };
-        if let Some(refusal) = refusal {
+        // #10389: a function refused only for a nested comparison macro keeps
+        // its per-assertion verdicts, so a caller that trusts those macros
+        // still sees a dead context the function-level scan reported first.
+        let comparison_clean =
+            matches!(refusal, Some(AssertionContextRefusal::MacroOperandExit(_)))
+                && has_escape_among(
+                    body.syntax(),
+                    trusted,
+                    &empty_macros,
+                    &json_uses,
+                    COMPARISON_NESTED_MACROS,
+                )
+                .is_none()
+                && function
+                    .attrs()
+                    .all(|attr| runs_body_unchanged(&attr, function.syntax()))
+                && item_context_refusal(function.syntax()).is_none();
+        if let (Some(refusal), false) = (&refusal, comparison_clean) {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
-            // a refused helper still counts toward duplicate detection.
-            if is_test_function(&function) {
+            // a refused helper still counts toward duplicate detection. A
+            // refused `#[test_case]` function stays unidentified: the
+            // `=> expected` form generates an assertion no scan reads, so
+            // it must keep reading as unknown rather than as a gap.
+            if is_test_function(&function) && !is_test_case_function(&function) {
                 insert_function(
                     &mut result.functions,
                     key,
                     FunctionAssertions {
-                        refusal: Some(refusal),
+                        refusal: Some(refusal.clone()),
                         ..FunctionAssertions::default()
                     },
                 );
@@ -2397,7 +2452,8 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             key,
             FunctionAssertions {
                 body: BodyFingerprint::of(&body_source),
-                refusal: None,
+                refusal,
+                comparison_clean,
                 assertions,
                 macros,
                 helper_assertions,
@@ -2446,13 +2502,24 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
 }
 
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
-/// `test`: the functions the admission is queried for.
+/// `test`, plus the `#[rstest]` and `#[test_case]` parameterizers: the
+/// functions the admission is queried for.
 fn is_test_function(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         attr.path()
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
-            .is_some_and(|name| name.text() == "test" || name.text() == "rstest")
+            .is_some_and(|name| matches!(name.text(), "test" | "rstest" | "test_case"))
+    })
+}
+
+/// A function carrying a `#[test_case]` attribute, in either spelling.
+fn is_test_case_function(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| {
+        attr.path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text() == "test_case")
     })
 }
 
@@ -3060,6 +3127,9 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
     }
+    if is_test_case_path(&path, &module) {
+        return test_case_runs_body(attr, test, &module);
+    }
     let admitted = if path.contains("::") {
         serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
     } else {
@@ -3348,6 +3418,96 @@ fn rstest_leaf_bound(name: &str, module: &SyntaxNode) -> Option<&'static str> {
     bound
 }
 
+/// Whether `path` names the `test_case` crate's attribute in `module`:
+/// `test_case::test_case` (rooted or not), or a bare `test_case` bound to it
+/// by exactly one explicit unrenamed `use test_case::test_case`. A rename is
+/// not discovered as a test, so it is not admitted here either; the caller
+/// still checks that `test_case` in that path is the crate.
+fn is_test_case_path(path: &str, module: &SyntaxNode) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "test_case::test_case"
+        || (path == "test_case" && test_case_leaf_bound(module))
+}
+
+/// Whether the bare name `test_case` is bound in `module` by exactly one
+/// explicit `use test_case::test_case`; globs and any second binding of the
+/// name refuse (compare [`rstest_leaf_bound`]).
+fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != "test_case" {
+            continue;
+        }
+        if bound || leaf.path != ["test_case", "test_case"] {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+/// Whether a `test_case` attribute on `test` leaves each generated test
+/// running the body unchanged with literal row values. `test_case` turns
+/// `#[test_case(3, 6)] fn t(n: u64, expected: u64)` into one `#[test]` per
+/// row that calls the function with the row's values. Admitted only when
+/// `test_case` is the crate in the test's module, every parameter is a plain
+/// immutable binding, and every row holds exactly one scalar literal per
+/// parameter. The `=> expected` form (which wraps the body in a generated
+/// comparison), `matches`/`with` forms, `;` descriptions, string or computed
+/// values (which could call the owner) all refuse.
+fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    extern_crate_path_holds(module, "test_case")
+        && test_case_parameters(&function)
+            .is_some_and(|parameters| case_row_literals(attr) == Some(parameters))
+}
+
+/// The number of parameters of a `#[test_case]` function when every one is a
+/// plain immutable `ident: Type` binding without attributes; `None`
+/// otherwise. Unlike rstest there are no fixtures: every parameter is filled
+/// from the row, and a `mut` one could be reassigned in the body where no
+/// binding scan sees it.
+fn test_case_parameters(function: &ast::Fn) -> Option<usize> {
+    if function.generic_param_list().is_some() || function.where_clause().is_some() {
+        return None;
+    }
+    let list = function.param_list()?;
+    if list.self_param().is_some() {
+        return None;
+    }
+    let mut count = 0;
+    for param in list.params() {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
+            return None;
+        };
+        if pat.ref_token().is_some()
+            || pat.mut_token().is_some()
+            || pat.pat().is_some()
+            || matches!(param.ty(), Some(ast::Type::ImplTraitType(_)))
+            || param.attrs().next().is_some()
+        {
+            return None;
+        }
+        count += 1;
+    }
+    Some(count)
+}
+
+/// Whether `attr` is the `test_case` crate's attribute, which emits a module
+/// named after the function it decorates and nothing else.
+fn test_case_attribute_trusted(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    attr.path().is_some_and(|path| {
+        is_test_case_path(&path.syntax().text().to_string().replace(' ', ""), module)
+    })
+}
+
 fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
@@ -3583,7 +3743,7 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest", "test_case"];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -3603,6 +3763,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
                 || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
+                || (krate == "test_case" && test_case_attribute_trusted(&attr, module))
         })
 }
 
@@ -3614,15 +3775,16 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
         {
             return false;
         }
-        // `#[rstest]` and `#[fixture]` emit items named after the function
-        // they decorate (a module of cases, a fixture struct).
+        // `#[rstest]`, `#[fixture]` and `#[test_case]` emit items named after
+        // the function they decorate (a module of cases, a fixture struct).
         if let ast::Item::Fn(function) = &item
             && function
                 .name()
                 .is_some_and(|name| unraw(name.text()) == krate)
-            && function
-                .attrs()
-                .any(|attr| rstest_attribute_trusted(&attr, module))
+            && function.attrs().any(|attr| {
+                rstest_attribute_trusted(&attr, module)
+                    || test_case_attribute_trusted(&attr, module)
+            })
         {
             return false;
         }
@@ -3655,10 +3817,11 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
     for leaf in module_use_leaves(module) {
         match &leaf.binding {
             UseBinding::Name(binding) => {
-                // `use rstest::rstest` binds the attribute macro, which
+                // `use rstest::rstest` (or `use test_case::test_case`) binds the attribute macro, which
                 // leaves the crate's path in the type namespace untouched.
                 let real = (leaf.path.len() == 1 && leaf.path[0] == krate)
-                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"]);
+                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"])
+                    || (krate == "test_case" && leaf.path == ["test_case", "test_case"]);
                 if unraw(binding) == krate && !real {
                     return false;
                 }
@@ -3733,6 +3896,9 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
+    }
+    if test_case_attribute_trusted(attr, module) {
+        return trusted.contains(&"test_case");
     }
     if path == "derive" {
         let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
@@ -3918,6 +4084,18 @@ fn has_escape(
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
 ) -> Option<AssertionContextRefusal> {
+    has_escape_among(body, trusted, empty, json_uses, &[])
+}
+
+/// [`has_escape`] with `plain_nested` names also read as plain nested
+/// expansions in a macro operand.
+fn has_escape_among(
+    body: &SyntaxNode,
+    trusted: &[&str],
+    empty: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
+    plain_nested: &[&str],
+) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             // Discarded arguments are not executed. Cross-file/import/shadow
@@ -3943,7 +4121,11 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && json_visible,
+                    plain_nested,
+                )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3983,10 +4165,14 @@ pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false)
+    opaque_macro_operand_with_json(tree, false, &[])
 }
 
-fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
+fn opaque_macro_operand_with_json(
+    tree: &ast::TokenTree,
+    literal_json: bool,
+    plain_nested: &[&str],
+) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
@@ -3994,7 +4180,10 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || nested_invocations(&tokens).any(|(name, plain)| {
-        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+        !(plain
+            && (NESTED_EXPANSIONS.contains(&name)
+                || plain_nested.contains(&name)
+                || name == "json" && literal_json))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"
@@ -4008,6 +4197,13 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
 /// token scan above already reads for exits; its binding is checked with the
 /// invoking macros'.
 const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
+
+/// Pure comparison macros of `float_cmp` and `approx` (#10389). They expand
+/// to a boolean over their operands, but ripr does not expand third-party
+/// macros, so the nested spelling is only read as plain by the return-value
+/// boolean-assert carve-out, which also proves the import by name.
+pub(crate) const COMPARISON_NESTED_MACROS: &[&str] =
+    &["approx_eq", "relative_eq", "abs_diff_eq", "ulps_eq"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
