@@ -9433,6 +9433,74 @@ where
     ))
 }
 
+const SAVE_DIGEST_BARRIER_METHOD: &str = "test/saveDigestBarrier";
+const SAVE_DIGEST_BARRIER_LOG: &str = "test: save digest notifications settled";
+
+#[tokio::test(start_paused = true)]
+async fn save_digest_log_collection_waits_for_late_events_before_barrier() -> Result<(), String> {
+    let (client_io, mut server_io) = tokio::io::duplex(8192);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    write_lsp_message(
+        &mut server_io,
+        serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 3, "message": "ripr didSave deduplicated"}}),
+    )
+    .await?;
+    let producer = tokio::spawn(async move {
+        // Virtual time challenges both the former 3s window and an early
+        // return at the dedup log: a forbidden queue event arrives later.
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        for message in [
+            "ripr analysis refresh queued: generation=1",
+            SAVE_DIGEST_BARRIER_LOG,
+        ] {
+            write_lsp_message(
+                &mut server_io,
+                serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+                    "params": {"type": 3, "message": message}}),
+            )
+            .await?;
+        }
+        Ok::<(), String>(())
+    });
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let logs = save_and_collect_logs(&mut reader, &mut writer, &uri, "fn same() {}").await?;
+    producer
+        .await
+        .map_err(|error| format!("log producer: {error}"))??;
+    if !logs_contain(&logs, "refresh queued")
+        || logs.last().map(String::as_str) != Some(SAVE_DIGEST_BARRIER_LOG)
+    {
+        return Err(format!(
+            "collection returned before the settled event: {logs:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn save_digest_log_collection_rejects_dedup_without_barrier() -> Result<(), String> {
+    let (client_io, mut server_io) = tokio::io::duplex(8192);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    write_lsp_message(
+        &mut server_io,
+        serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 3, "message": "ripr didSave deduplicated"}}),
+    )
+    .await?;
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let Err(error) = save_and_collect_logs(&mut reader, &mut writer, &uri, "fn same() {}").await
+    else {
+        return Err("a dedup log without the settled event must hit the hang guard".to_string());
+    };
+    if !error.contains("timed out waiting for expected log")
+        || !error.contains("didSave deduplicated")
+    {
+        return Err(format!("missing barrier lost timeout/log context: {error}"));
+    }
+    Ok(())
+}
+
 fn logs_contain(logs: &[String], prefix: &str) -> bool {
     logs.iter().any(|message| message.contains(prefix))
 }
