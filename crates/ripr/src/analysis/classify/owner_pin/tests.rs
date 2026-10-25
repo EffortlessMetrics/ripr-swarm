@@ -3261,7 +3261,7 @@ fn a_test_case_table_with_literal_rows_runs_the_body_once_per_row() {
         (
             "use test_case::test_case;",
             "#[test_case(4 => 12)]",
-            "x: u32",
+            params,
             "weighs",
         ),
         (
