@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_user_macro_guard (3)
+
+Reason:
+RIPR-SPEC-0186 regenerate for #10382 repair-route wording on merged main
+
+Command:
+`cargo xtask goldens bless rust_wrapper_user_macro_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

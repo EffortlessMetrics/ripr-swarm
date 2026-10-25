@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:41e056ec --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --at src/lib.rs:2 --kind predicate
 
