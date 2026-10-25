@@ -21,6 +21,11 @@ jobs:
     name: windows-shard-${{ matrix.shard }}
     runs-on: windows-latest
     timeout-minutes: 80
+    env:
+      # Tests that need a real NTFS deny ACL (#9688). Git for Windows bash enables
+      # SeBackupPrivilege and SeRestorePrivilege and every child inherits them,
+      # which bypass an icacls (AD) deny, so they run in the pwsh step below.
+      ACL_TESTS: test(/denies_creation|denying_subdirectories|real_unreadable_subtree/)
     strategy:
       fail-fast: false
       matrix:
@@ -79,7 +84,7 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
@@ -106,6 +111,19 @@ jobs:
           cat target/shard-$shard.log
           exit "$status"
 
+      # pwsh starts with both privileges disabled and its children inherit that,
+      # so the deny is enforced and the tests establish their precondition. A
+      # filter that matches nothing makes nextest exit nonzero.
+      - name: Run the real-ACL tests outside bash (shard 1 only)
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        shell: pwsh
+        run: |
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
+          $code = $LASTEXITCODE
+          Set-Content target/acl.status $code
+          Get-Content target/acl.log
+          exit $code
+
       # nextest colors its status rows; strip the escapes for the filter only, the
       # uploaded log stays raw.
       - name: Summarize failures
@@ -124,6 +142,8 @@ jobs:
             target/shard-${{ matrix.shard }}.status
             target/shard-${{ matrix.shard }}.watchdog
             target/shard-${{ matrix.shard }}.processes
+            target/acl.log
+            target/acl.status
           if-no-files-found: warn
           retention-days: 7
 
