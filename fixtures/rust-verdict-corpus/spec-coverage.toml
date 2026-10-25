@@ -22,7 +22,7 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # 149 = 147 on main + 2 new measured rows (spec0096-named-binding-used,
 # spec0048-label-rendered-observed) whose initializer-call and const shapes
 # abstain today; analyzer fix tracked in #9871.
-missed_credit_ceiling = 149
+missed_credit_ceiling = 148
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
