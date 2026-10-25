@@ -116,8 +116,11 @@ impl MacroVisibility {
         let mut blanked_prefixes = Vec::new();
         let calls = generator_calls(source, &self.generators).unwrap_or_default();
         let local: BTreeSet<&str> = own.macros.iter().map(|m| m.name.as_str()).collect();
-        let imported_by_use: BTreeSet<&str> =
-            own.uses.iter().map(|import| import.name.as_str()).collect();
+        let imported_by_use: BTreeSet<&str> = own
+            .uses
+            .iter()
+            .flat_map(|import| import.names.iter().map(String::as_str))
+            .collect();
         for (name, calls) in &calls {
             let by_use = imported_by_use.contains(name.as_str());
             // A bare call with no `use` could be a glob import or an
@@ -732,11 +735,13 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_grouped_or_orphan_path_import_resolves_nothing() {
+    fn a_renamed_glob_cfgd_or_orphan_path_import_resolves_nothing() {
         let lib = "mod macros;\nmod cases;\n";
         for cases in [
             "use crate::t as u;\nt!(a);\n",
-            "use crate::{t};\nt!(a);\n",
+            "use crate::{t as u};\nt!(a);\n",
+            "use crate::{t, nested::u};\nt!(a);\n",
+            "pub use crate::{t, u};\nt!(a);\n",
             "use crate::*;\nt!(a);\n",
             "#[cfg(unix)]\nuse crate::t;\nt!(a);\n",
         ] {
@@ -761,6 +766,34 @@ mod tests {
             path_imported(&files, "src/cases.rs"),
             (String::new(), Vec::new())
         );
+    }
+
+    #[test]
+    fn a_group_of_exported_macros_resolves_each_member_and_keeps_the_rest() {
+        let both = format!(
+            "{EXPORTED}{}",
+            EXPORTED.replace("macro_rules! t ", "macro_rules! u ")
+        );
+        let files = [
+            ("src/lib.rs", "mod macros;\nmod cases;\n"),
+            ("src/macros.rs", both.as_str()),
+            (
+                "src/cases.rs",
+                "use crate::{t, helper, u};\nt!(a);\nu!(b);\n",
+            ),
+        ];
+        let (definitions, imports) = path_imported(&files, "src/cases.rs");
+        assert!(definitions.contains("macro_rules! t ") && definitions.contains("macro_rules! u "));
+        assert_eq!(imports, vec!["t".to_string(), "u".to_string()]);
+        // A member that does not resolve stays imported; the other is hoisted.
+        let one = [
+            ("src/lib.rs", "mod macros;\nmod cases;\n"),
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "use crate::{t, u};\nt!(a);\nu!(b);\n"),
+        ];
+        let (definitions, imports) = path_imported(&one, "src/cases.rs");
+        assert!(definitions.contains("macro_rules! t "), "{definitions}");
+        assert_eq!(imports, vec!["t".to_string()]);
     }
 
     #[test]

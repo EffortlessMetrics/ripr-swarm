@@ -1,0 +1,13 @@
+use crate::{NOTE, grouped_table};
+use macro_modules::fits_grouped;
+
+grouped_table! {
+    group_under(3, 5, true)
+    group_at(5, 5, true)
+    group_over(6, 5, false)
+}
+
+#[test]
+fn group_note_is_present() {
+    assert!(!NOTE.is_empty());
+}

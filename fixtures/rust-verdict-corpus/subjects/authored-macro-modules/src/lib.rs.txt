@@ -28,3 +28,7 @@ pub fn fits_shadowed(width: usize, limit: usize) -> bool {
 pub fn fits_crate_call(width: usize, limit: usize) -> bool {
     width <= limit
 }
+
+pub fn fits_grouped(width: usize, limit: usize) -> bool {
+    width <= limit
+}

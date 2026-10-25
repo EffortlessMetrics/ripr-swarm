@@ -12,7 +12,7 @@
 //! files; the facts pass owns which files that is and refuses what it
 //! cannot resolve.
 
-use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName};
+use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, HasVisibility};
 use ra_ap_syntax::{AstNode, SyntaxKind, ast};
 
 use super::nesting::parse_clean_source_file;
@@ -30,13 +30,17 @@ pub(crate) struct ScopedMacro {
     pub exported: bool,
 }
 
-/// A top-level `use crate::name;` with no attribute, rename or group.
+/// A top-level `use crate::name;` or `use crate::{a, b};` of plain names,
+/// with no attribute, rename, nesting or glob.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ScopedUse {
-    pub name: String,
+    pub names: Vec<String>,
     /// Byte range of the whole item.
     pub start: usize,
     pub end: usize,
+    /// For a group, each name with the byte range of its identifier and the
+    /// comma that follows it, so one name can be blanked and the rest kept.
+    pub members: Vec<(String, usize, usize)>,
 }
 
 /// A top-level out-of-line `mod name;`.
@@ -115,12 +119,13 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
                 });
             }
             ast::Item::Use(item) => {
-                if let Some(name) = crate_path_import(&item) {
+                if let Some((names, members)) = crate_path_import(&item) {
                     let range = item.syntax().text_range();
                     scope.uses.push(ScopedUse {
-                        name,
+                        names,
                         start: usize::from(range.start()),
                         end: usize::from(range.end()),
+                        members,
                     });
                 }
             }
@@ -211,29 +216,73 @@ pub(crate) fn generator_calls(
     Some(calls)
 }
 
-/// The `name` of an attribute-free `use crate::name;`.
-fn crate_path_import(item: &ast::Use) -> Option<String> {
+/// The names of an attribute-free `use crate::name;` or `use crate::{a, b};`,
+/// and for the group form each member's byte range.
+fn crate_path_import(item: &ast::Use) -> Option<(Vec<String>, Vec<(String, usize, usize)>)> {
     if item.attrs().next().is_some() {
         return None;
     }
     let tree = item.use_tree()?;
-    if tree.rename().is_some() || tree.use_tree_list().is_some() || tree.star_token().is_some() {
+    if tree.rename().is_some() || tree.star_token().is_some() {
         return None;
     }
-    let text: String = tree
-        .path()?
-        .syntax()
-        .text()
-        .to_string()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    let (head, name) = text.split_once("::")?;
-    let identifier = !name.is_empty()
-        && !name.contains("::")
-        && !matches!(name, "self" | "super" | "crate")
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_');
-    (head == "crate" && identifier).then(|| name.to_string())
+    let plain = |name: &str| {
+        !name.is_empty()
+            && !matches!(name, "self" | "super" | "crate")
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    let squeeze =
+        |text: String| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+    let Some(list) = tree.use_tree_list() else {
+        let text = squeeze(tree.path()?.syntax().text().to_string());
+        let (head, name) = text.split_once("::")?;
+        let identifier = plain(name) && !name.contains("::");
+        return (head == "crate" && identifier).then(|| (vec![name.to_string()], Vec::new()));
+    };
+    // A group's rewrite would drop a visibility, so only private groups.
+    if item.visibility().is_some() || squeeze(tree.path()?.syntax().text().to_string()) != "crate" {
+        return None;
+    }
+    let mut members = Vec::new();
+    let mut pending: Option<(String, usize)> = None;
+    for element in list.syntax().children_with_tokens() {
+        match element {
+            ra_ap_syntax::NodeOrToken::Node(node) => {
+                let member = ast::UseTree::cast(node)?;
+                if member.rename().is_some()
+                    || member.star_token().is_some()
+                    || member.use_tree_list().is_some()
+                    || pending.is_some()
+                {
+                    return None;
+                }
+                let name = squeeze(member.path()?.syntax().text().to_string());
+                if !plain(&name) {
+                    return None;
+                }
+                pending = Some((name, usize::from(member.syntax().text_range().start())));
+            }
+            ra_ap_syntax::NodeOrToken::Token(token) if token.kind() == SyntaxKind::COMMA => {
+                let (name, start) = pending.take()?;
+                members.push((name, start, usize::from(token.text_range().end())));
+            }
+            ra_ap_syntax::NodeOrToken::Token(_) => {}
+        }
+    }
+    if let Some((name, start)) = pending {
+        // The last member has no comma after it; a preceding comma stays as
+        // a trailing one when it is blanked, so its range ends at the name.
+        let end = list
+            .syntax()
+            .children()
+            .filter_map(ast::UseTree::cast)
+            .last()
+            .map(|last| usize::from(last.syntax().text_range().end()))?;
+        members.push((name, start, end));
+    }
+    let names: Vec<String> = members.iter().map(|(name, ..)| name.clone()).collect();
+    let distinct: std::collections::BTreeSet<&String> = names.iter().collect();
+    (!names.is_empty() && distinct.len() == names.len()).then_some((names, members))
 }
 
 /// Whether the macro is `#[macro_export]`, and whether every attribute it
@@ -371,36 +420,39 @@ pub(crate) fn splice_imported_macros(source: &str, imported: &ImportedMacros) ->
     // `use crate::name;` named the macro by path; the definition now precedes
     // the file, so the import is blanked (newlines kept) instead of left to
     // read as a second, ambiguous source of the same name.
-    if !imported.path_imports.is_empty()
-        && let Some(scope) = macro_scope(source)
-    {
-        for import in scope
-            .uses
-            .iter()
-            .filter(|import| imported.path_imports.contains(&import.name))
-        {
-            let blanked: String = source
-                .get(import.start..import.end)?
-                .chars()
-                .flat_map(|c| {
-                    // One space per byte keeps every later byte range valid.
-                    let fill = if c == '\n' { '\n' } else { ' ' };
-                    std::iter::repeat_n(fill, c.len_utf8())
-                })
-                .collect();
-            body.replace_range(import.start..import.end, &blanked);
-        }
-    }
-    for &(start, end) in &imported.blanked_prefixes {
+    let blank = |body: &mut String, start: usize, end: usize| -> Option<()> {
         let blanked: String = source
             .get(start..end)?
             .chars()
             .flat_map(|c| {
+                // One space per byte keeps every later byte range valid.
                 let fill = if c == '\n' { '\n' } else { ' ' };
                 std::iter::repeat_n(fill, c.len_utf8())
             })
             .collect();
         body.replace_range(start..end, &blanked);
+        Some(())
+    };
+    if !imported.path_imports.is_empty()
+        && let Some(scope) = macro_scope(source)
+    {
+        for import in &scope.uses {
+            let hoisted = |name: &String| imported.path_imports.contains(name);
+            if import.names.iter().all(hoisted) {
+                blank(&mut body, import.start, import.end)?;
+            } else {
+                // The rest of a group stays imported; a comma left behind by
+                // the last member is a valid trailing comma.
+                for (name, start, end) in &import.members {
+                    if hoisted(name) {
+                        blank(&mut body, *start, *end)?;
+                    }
+                }
+            }
+        }
+    }
+    for &(start, end) in &imported.blanked_prefixes {
+        blank(&mut body, start, end)?;
     }
     let mut spliced = String::with_capacity(body.len() + imported.definitions.len() + 1);
     spliced.push_str(body.get(..offset)?);
@@ -523,6 +575,56 @@ mod tests {
             .filter_map(|&(start, end)| source.get(start..end))
             .collect();
         assert_eq!(prefixes, vec!["crate::", "crate :: "]);
+    }
+
+    fn uses_of(source: &str) -> Vec<Vec<String>> {
+        macro_scope(source)
+            .map(|scope| scope.uses.into_iter().map(|import| import.names).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_group_of_plain_crate_names_is_a_path_import() {
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(uses_of("use crate::{a, b};\n"), vec![names(&["a", "b"])]);
+        assert_eq!(uses_of("use crate::{a, b,};\n"), vec![names(&["a", "b"])]);
+        assert_eq!(uses_of("use crate::a;\n"), vec![names(&["a"])]);
+        for refused in [
+            "use crate::{a, b as c};\n",
+            "use crate::{a, nested::b};\n",
+            "use crate::{a, *};\n",
+            "use crate::{a, self};\n",
+            "use crate::{a, a};\n",
+            "use crate::{};\n",
+            "pub use crate::{a, b};\n",
+            "#[cfg(test)]\nuse crate::{a, b};\n",
+            "use other::{a, b};\n",
+            "use crate::m::{a, b};\n",
+        ] {
+            assert!(uses_of(refused).is_empty(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn blanking_one_group_member_keeps_the_rest_valid() {
+        let source = "use crate::{t, helper, u};\nt!(a);\nu!(b);\n";
+        let imported = |names: &[&str]| ImportedMacros {
+            definitions: "macro_rules! t { () => {} } macro_rules! u { () => {} }".to_string(),
+            path_imports: names.iter().map(|n| n.to_string()).collect(),
+            ..ImportedMacros::default()
+        };
+        let both = splice_imported_macros(source, &imported(&["t", "u"])).unwrap_or_default();
+        assert!(both.contains("use crate::{   helper,  "), "{both}");
+        assert!(parse_clean_source_file(&both).is_some());
+        let first = splice_imported_macros(source, &imported(&["t"])).unwrap_or_default();
+        assert!(first.contains("use crate::{   helper, u};"), "{first}");
+        let all = "use crate::{t, u,};\nt!(a);\n";
+        let blanked = splice_imported_macros(all, &imported(&["t", "u"])).unwrap_or_default();
+        assert!(!blanked.contains("use crate"), "{blanked}");
+        assert_eq!(
+            blanked.len(),
+            all.len() + imported(&[]).definitions.len() + 1
+        );
     }
 
     #[test]
