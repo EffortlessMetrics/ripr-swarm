@@ -28,6 +28,9 @@ pub(super) fn standard_base(base: &Expr, imports: &[PythonImport]) -> bool {
         (matches!(import.source_module.as_str(), "unittest" | "unittest.case")
             && import.imported == "TestCase"
             && name == import.alias)
+            || (import.source_module == "unittest"
+                && import.imported == "case"
+                && name == format!("{}.TestCase", import.alias))
             || (import.source_module.is_empty()
                 && matches!(import.imported.as_str(), "unittest" | "unittest.case")
                 && (name == format!("{}.TestCase", import.alias)

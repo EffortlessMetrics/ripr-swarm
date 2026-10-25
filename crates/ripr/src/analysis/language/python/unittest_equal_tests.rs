@@ -213,6 +213,35 @@ fn visible_class_override_withholds_authority_but_ordinary_setup_does_not() -> R
 }
 
 #[test]
+fn unittest_case_from_module_alias_preserves_genuine_authority() -> Result<(), String> {
+    for import in [
+        "from unittest import case as uc",
+        "import unittest.case as uc",
+    ] {
+        let source = test_class(
+            import,
+            "uc.TestCase",
+            "        self.assertEqual(fee(10), 12)",
+        );
+        let finding = analyzed(&source, "")?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
+    let shadowed = "from unittest import case as uc\nfrom types import SimpleNamespace\nfrom helpers import Fake\nfrom shop import fee\n\nuc = SimpleNamespace(TestCase=Fake)\n\nclass TestPricing(uc.TestCase):\n    def test_fee(self):\n        self.assertEqual(fee(10), 12)\n";
+    let helper = "import unittest\n\nclass Fake(unittest.TestCase):\n    @staticmethod\n    def assertEqual(*args, **kwargs):\n        return None\n";
+    let finding = analyzed(shadowed, helper)?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    Ok(())
+}
+
+#[test]
 fn unrelated_helper_and_standard_module_captures_preserve_authority() -> Result<(), String> {
     let cases = [
         "import unittest.case\nfrom shop import fee\n\ncase = unittest.case.TestCase()\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.case.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",

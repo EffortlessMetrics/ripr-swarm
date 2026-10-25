@@ -16628,6 +16628,7 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/unittest_equal_tests.rs::unittest_case_from_module_alias_preserves_genuine_authority",
   "crates/ripr/src/analysis/language/python/unittest_equal_tests.rs::unrelated_helper_and_standard_module_captures_preserve_authority",
   "crates/ripr/src/analysis/language/python/unittest_equal_tests.rs::replaced_module_capture_or_equality_dispatch_stays_unresolved",
   "crates/ripr/src/analysis/language/python/unittest_equal_tests.rs::rebound_or_unrelated_assert_equal_cannot_promote",
