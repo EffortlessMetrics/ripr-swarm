@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_cfg_alt_reexport (6)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless module_reach_cfg_alt_reexport --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
