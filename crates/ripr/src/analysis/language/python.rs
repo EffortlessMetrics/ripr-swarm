@@ -60,6 +60,7 @@ mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
+mod caplog_text;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
@@ -69,7 +70,7 @@ mod message_pin;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
-use classify::{classify_change, classify_change_with_old};
+use classify::{classify_change, classify_change_with_old, classify_change_with_source};
 mod discriminators;
 mod effect_alignment;
 mod hypothesis;
@@ -236,6 +237,9 @@ struct PythonOwner {
     imports: Vec<PythonImport>,
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
+    /// Lowercase HTTP verbs each `route_paths` entry accepts, index-aligned;
+    /// an empty entry means the verb is not statically known.
+    route_methods: Vec<Vec<String>>,
     dynamic_route_decorators: Vec<String>,
     /// Decorator names whose binding is not the plain name they spell: a
     /// decorator written as a call (`@final(wrapper)`) or one whose first
