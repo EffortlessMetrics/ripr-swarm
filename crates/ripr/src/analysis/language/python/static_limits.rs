@@ -958,6 +958,9 @@ pub(super) enum CaplogRead {
 pub(super) struct CaplogMembership {
     pub(super) literal: String,
     pub(super) read: CaplogRead,
+    /// `"<text>" not in ...` or `not any(...)`: the assertion holds while no
+    /// captured text matches the literal.
+    pub(super) negated: bool,
 }
 
 /// The string literals an assertion checks against the captured log records
@@ -1071,14 +1074,17 @@ fn caplog_records_any(call: &ast::ExprCall) -> Option<CaplogMembership> {
         ast::CmpOp::In if is_record_message(other, name) => Some(CaplogMembership {
             literal: string_constant(&compare.left)?,
             read: CaplogRead::MessageContains,
+            negated: false,
         }),
         ast::CmpOp::Eq if is_record_message(&compare.left, name) => Some(CaplogMembership {
             literal: string_constant(other)?,
             read: CaplogRead::MessageEquals,
+            negated: false,
         }),
         ast::CmpOp::Eq if is_record_message(other, name) => Some(CaplogMembership {
             literal: string_constant(&compare.left)?,
             read: CaplogRead::MessageEquals,
+            negated: false,
         }),
         _ => None,
     }
@@ -1099,8 +1105,18 @@ fn collect_caplog_membership_literals(
             }
         }
         Expr::Call(call) => out.extend(caplog_records_any(call)),
+        // `assert not any(...)`: the same read, asserted absent.
+        Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
+            if let Expr::Call(call) = unary.operand.as_ref() {
+                out.extend(caplog_records_any(call).map(|membership| CaplogMembership {
+                    negated: true,
+                    ..membership
+                }));
+            }
+        }
         Expr::Compare(compare)
-            if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::In) =>
+            if compare.ops.len() == 1
+                && matches!(compare.ops[0], ast::CmpOp::In | ast::CmpOp::NotIn) =>
         {
             let comparator = compare.comparators.first();
             let read = match comparator.and_then(expr_full_name).as_deref() {
@@ -1110,7 +1126,11 @@ fn collect_caplog_membership_literals(
                 _ => return,
             };
             if let Some(literal) = string_constant(&compare.left) {
-                out.push(CaplogMembership { literal, read });
+                out.push(CaplogMembership {
+                    literal,
+                    read,
+                    negated: matches!(compare.ops[0], ast::CmpOp::NotIn),
+                });
             }
         }
         _ => {}
@@ -1396,6 +1416,7 @@ mod tests {
             cli_receiver_names: Vec::new(),
             route_paths: Vec::new(),
             route_methods: Vec::new(),
+            route_receivers: Vec::new(),
             dynamic_route_decorators: Vec::new(),
             unplain_decorators: Vec::new(),
             decorator_lines: None,
@@ -1410,6 +1431,8 @@ mod tests {
             class_path: String::new(),
             term_facts: Default::default(),
             class_facts: Default::default(),
+            foreign_writes: Default::default(),
+            version_conditional: false,
         }
     }
 

@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0246 rule 9: a ternary-condition comparison edit keeps `exposed`
+//! RIPR-SPEC-0246 rule 11: a ternary-condition comparison edit keeps `exposed`
 //! only when a tested input makes the two comparisons differ.
 
 use super::*;
@@ -199,10 +199,10 @@ fn an_unreadable_call_keeps_the_credit() -> Result<(), String> {
 
 #[test]
 fn an_argument_only_the_unexercised_reader_folds_demotes_generically() -> Result<(), String> {
-    // `1 + 1` is not a plain numeric literal, so the rule 9 reader refuses it
+    // `1 + 1` is not a plain numeric literal, so the rule 11 reader refuses it
     // and the post-ladder hook stands down; the #9497 unexercised returned-
     // expression arm folds the same input and demotes at the ladder with the
-    // generic changed-arm note, not the rule 9 wording.
+    // generic changed-arm note, not the rule 11 wording.
     let finding = plural(
         "plural-expression",
         &[("1", "\"1 item\""), ("1 + 1", "\"2 items\"")],

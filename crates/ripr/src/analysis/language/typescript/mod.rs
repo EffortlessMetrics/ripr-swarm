@@ -749,9 +749,14 @@ impl TypeScriptAdapter {
             let file_has_decorators = source_by_normalized
                 .get(&normalized_path(&changed.path))
                 .is_none_or(|source| {
-                    source
-                        .lines()
-                        .any(|line| line.trim_start().starts_with('@'))
+                    // Fast path: no '@' byte at all means no line can start
+                    // with one; only pay the line-anchored scan when the
+                    // byte is present (a full `lines()` walk on a multi-MB
+                    // file runs per changed file).
+                    source.contains('@')
+                        && source
+                            .lines()
+                            .any(|line| line.trim_start().starts_with('@'))
                 });
             // Ambient declarations are type-only; their lines are found from
             // the syntax tree, since `declare` is also a legal runtime
@@ -1239,6 +1244,7 @@ impl TypeScriptAdapter {
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
         dedup_typescript_probe_ids(&mut findings);
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,

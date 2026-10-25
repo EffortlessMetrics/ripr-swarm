@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0246 rule 9: an edit to a ternary condition's comparison needs a
+//! RIPR-SPEC-0246 rule 11: an edit to a ternary condition's comparison needs a
 //! tested input the two comparisons treat differently.
 //!
 //! `return \`${n} item${n === 1 ? "" : "s"}\`` becoming `n <= 1` changes the
@@ -329,7 +329,7 @@ impl ComparisonEdit {
             .find(|candidate| self.differs_at(*candidate as f64))
     }
 
-    /// The rule 9 limitation: what the change did and the input that would
+    /// The rule 11 limitation: what the change did and the input that would
     /// tell the two comparisons apart.
     pub(crate) fn limitation(&self, owner_name: &str) -> String {
         let add = match self.differing_value() {
@@ -366,12 +366,12 @@ pub(crate) fn ts_comparison_witness(
     .unwrap_or(ComparisonWitness::Discriminates)
 }
 
-/// RIPR-SPEC-0246 rule 9 wording inside the #9497 unexercised returned-
+/// RIPR-SPEC-0246 rule 11 wording inside the #9497 unexercised returned-
 /// expression limitation: the ladder already demotes a same-outcome returned
 /// expression, and when the edit is a ternary comparison every observed owner
 /// call proves with a plain numeric literal, the ladder names the condition
 /// and a differing value instead of the generic changed-arm note. `None`
-/// keeps the generic note: any piece the rule 9 reader cannot read (a
+/// keeps the generic note: any piece the rule 11 reader cannot read (a
 /// variable or expression argument, a rebound parameter, a call it cannot
 /// see) fails open to the generic limitation.
 pub(crate) fn ts_unexercised_comparison_limitation(
