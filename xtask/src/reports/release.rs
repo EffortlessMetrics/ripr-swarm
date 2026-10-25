@@ -2442,35 +2442,133 @@ fn repo_exposure_latency_status_reasons(artifact: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The latency report's `output_parity` (`pass`, `mismatch`, `not_checked`),
+/// or `None` when the report is unreadable or predates the field.
+fn repo_exposure_latency_output_parity(artifact: &Path) -> Option<String> {
+    read_json_value(artifact)
+        .ok()?
+        .get("output_parity")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Readiness verdict for a non-`pass` latency report: `(status, required,
+/// summary, details)`. A served output that differs from the cold one
+/// (`mismatch`) or a served run that failed after a passing cold run (`fail`)
+/// is a correctness failure of the cache path and a required `fail`; every
+/// other non-pass state (unchecked parity, cache store errors, timeouts, a
+/// report without the field) stays a non-required `warn`.
+fn latency_readiness_from(
+    status: &str,
+    parity: Option<&str>,
+    contradiction: Option<String>,
+    reasons: Vec<String>,
+) -> (&'static str, bool, &'static str, Vec<String>) {
+    let mut details = vec![format!("report status: {status}")];
+    if let Some(parity) = parity {
+        details.push(format!("output parity: {parity}"));
+    }
+    if let Some(contradiction) = &contradiction {
+        details.push(format!("parity contradiction: {contradiction}"));
+    }
+    details.extend(reasons);
+    if matches!(parity, Some("mismatch" | "fail")) || contradiction.is_some() {
+        (
+            "fail",
+            true,
+            "repo-exposure latency report found a cache-served output that differs from, or failed where, a cold recomputation succeeded",
+            details,
+        )
+    } else {
+        (
+            "warn",
+            false,
+            "repo-exposure latency report exists but is not passing",
+            details,
+        )
+    }
+}
+
+/// A report whose per-format `output_parity_checks[]` disagree with its
+/// summary, or that carries a failing check under any summary, is edited or
+/// broken: it is never trusted as `pass`. Returns what disagrees.
+fn latency_parity_contradiction(report: &Value) -> Option<String> {
+    let checks = report
+        .get("output_parity_checks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for check in checks {
+        let format = check.get("format").and_then(Value::as_str).unwrap_or("?");
+        if let Some(status @ ("mismatch" | "fail")) = check.get("status").and_then(Value::as_str) {
+            return Some(format!("{format} check is {status}"));
+        }
+    }
+    if report.get("output_parity").and_then(Value::as_str) != Some("pass") {
+        return None;
+    }
+    for format in ["repo-exposure-json", "repo-exposure-md"] {
+        let matching: Vec<&Value> = checks
+            .iter()
+            .filter(|check| check.get("format").and_then(Value::as_str) == Some(format))
+            .collect();
+        if matching.len() != 1 || matching[0].get("status").and_then(Value::as_str) != Some("pass")
+        {
+            return Some(format!(
+                "summary is pass but {format} is not exactly one passing check"
+            ));
+        }
+    }
+    None
+}
+
+fn repo_exposure_latency_contradiction(artifact: &Path) -> Option<String> {
+    latency_parity_contradiction(&read_json_value(artifact).ok()?)
+}
+
 fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
     let command = "cargo xtask repo-exposure-latency-report";
     let artifact = "target/ripr/reports/repo-exposure-latency.json";
     match crate::repo_exposure_latency_report_impl() {
         Ok(()) => match read_json_status(Path::new(artifact)) {
-            Ok(status) if status == "pass" => readiness_check(
-                "repo-exposure-latency",
-                "pass",
-                true,
-                command,
-                "repo-exposure latency report exists and passes",
-                vec![
-                    artifact.to_string(),
-                    "target/ripr/reports/repo-exposure-latency.md".to_string(),
-                ],
-                Vec::new(),
-            ),
-            Ok(status) => {
-                // The report cannot say `pass` while output parity is unchecked
-                // (#9503), so release-readiness carries a non-required `warn`
-                // and names the report's own status reasons.
-                let mut details = vec![format!("report status: {status}")];
-                details.extend(repo_exposure_latency_status_reasons(Path::new(artifact)));
+            Ok(status)
+                if status == "pass"
+                    && repo_exposure_latency_contradiction(Path::new(artifact)).is_none() =>
+            {
                 readiness_check(
                     "repo-exposure-latency",
-                    "warn",
-                    false,
+                    "pass",
+                    true,
                     command,
-                    "repo-exposure latency report exists but is not passing",
+                    "repo-exposure latency report exists and passes",
+                    vec![
+                        artifact.to_string(),
+                        "target/ripr/reports/repo-exposure-latency.md".to_string(),
+                    ],
+                    Vec::new(),
+                )
+            }
+            Ok(status) => {
+                // `pass` is reachable now that output parity is a real
+                // comparison (#9633). A cache-served output that differs from
+                // a cold recomputation is a correctness failure of the cache
+                // path and blocks readiness; every other non-pass state
+                // (unchecked parity, cache store errors, timeouts) stays a
+                // non-required `warn` naming the report's own reasons.
+                let parity = repo_exposure_latency_output_parity(Path::new(artifact));
+                let reasons = repo_exposure_latency_status_reasons(Path::new(artifact));
+                let (check_status, required, summary, details) = latency_readiness_from(
+                    &status,
+                    parity.as_deref(),
+                    repo_exposure_latency_contradiction(Path::new(artifact)),
+                    reasons,
+                );
+                readiness_check(
+                    "repo-exposure-latency",
+                    check_status,
+                    required,
+                    command,
+                    summary,
                     vec![
                         artifact.to_string(),
                         "target/ripr/reports/repo-exposure-latency.md".to_string(),
@@ -3503,14 +3601,16 @@ mod tests {
         CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
         create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
-        init_pin_version_check_from, latest_released_version_in, missing_required_needles,
-        package_version, packaged_archive_commit, parse_release_readiness_args, read_crate_version,
-        readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, repo_exposure_latency_status_reasons, validate_binary_identity,
-        validate_doctor_result, validate_installed_version, validate_installed_version_result,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        init_pin_version_check_from, latency_parity_contradiction, latency_readiness_from,
+        latest_released_version_in, missing_required_needles, package_version,
+        packaged_archive_commit, parse_release_readiness_args, read_crate_version, readiness_check,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
+        validate_binary_identity, validate_doctor_result, validate_installed_version,
+        validate_installed_version_result, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3530,6 +3630,110 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(reasons, vec!["status reason: output_parity_not_checked"]);
         assert!(missing.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn latency_readiness_blocks_only_on_parity_mismatch_or_failure() {
+        let reasons = vec!["status reason: x".to_string()];
+        for parity in ["mismatch", "fail"] {
+            let (status, required, _, details) =
+                latency_readiness_from("fail", Some(parity), None, reasons.clone());
+            assert_eq!((status, required), ("fail", true), "{parity}");
+            assert!(details.contains(&format!("output parity: {parity}")));
+            assert!(details.contains(&"status reason: x".to_string()));
+        }
+        for parity in [Some("not_checked"), Some("pass"), None] {
+            let (status, required, _, _) =
+                latency_readiness_from("warn", parity, None, reasons.clone());
+            assert_eq!((status, required), ("warn", false), "{parity:?}");
+        }
+        let (status, required, _, details) = latency_readiness_from(
+            "pass",
+            Some("pass"),
+            Some("repo-exposure-md check is mismatch".to_string()),
+            Vec::new(),
+        );
+        assert_eq!((status, required), ("fail", true));
+        assert!(details.iter().any(|d| d.contains("parity contradiction")));
+    }
+
+    /// A report whose summary says pass while a per-format check disagrees (an
+    /// edited or broken report) is a contradiction, never a pass.
+    #[test]
+    fn latency_parity_contradiction_catches_edited_reports() {
+        let check = |format: &str, status: &str| json!({"format": format, "status": status});
+        let report = |summary: &str, checks: Vec<Value>| json!({"status": "pass", "output_parity": summary, "output_parity_checks": checks});
+        let clean = report(
+            "pass",
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "pass"),
+            ],
+        );
+        assert_eq!(latency_parity_contradiction(&clean), None);
+        // Summary pass, one check mismatch.
+        let edited = report(
+            "pass",
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "mismatch"),
+            ],
+        );
+        assert!(latency_parity_contradiction(&edited).is_some());
+        // Summary pass, a check not_checked / missing / duplicated / absent.
+        for checks in [
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "not_checked"),
+            ],
+            vec![check("repo-exposure-json", "pass")],
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "pass"),
+            ],
+            Vec::new(),
+        ] {
+            assert!(latency_parity_contradiction(&report("pass", checks)).is_some());
+        }
+        // A failing check under a not_checked summary still contradicts.
+        let hidden = report(
+            "not_checked",
+            vec![
+                check("repo-exposure-json", "fail"),
+                check("repo-exposure-md", "not_checked"),
+            ],
+        );
+        assert!(latency_parity_contradiction(&hidden).is_some());
+        // An honest not_checked report is not a contradiction.
+        let honest = report(
+            "not_checked",
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "not_checked"),
+            ],
+        );
+        assert_eq!(latency_parity_contradiction(&honest), None);
+    }
+
+    #[test]
+    fn latency_output_parity_is_read_from_the_report() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-9633-parity-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let report = dir.join("latency.json");
+        fs::write(&report, r#"{"status":"fail","output_parity":"mismatch"}"#)
+            .map_err(|err| err.to_string())?;
+        let mismatch = repo_exposure_latency_output_parity(&report);
+        fs::write(&report, r#"{"status":"pass","output_parity":"pass"}"#)
+            .map_err(|err| err.to_string())?;
+        let pass = repo_exposure_latency_output_parity(&report);
+        fs::write(&report, r#"{"status":"warn"}"#).map_err(|err| err.to_string())?;
+        let absent = repo_exposure_latency_output_parity(&report);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(mismatch.as_deref(), Some("mismatch"));
+        assert_eq!(pass.as_deref(), Some("pass"));
+        assert_eq!(absent, None);
         Ok(())
     }
 
