@@ -15,11 +15,11 @@
     },
     {
       "path": "shop/order.py",
-      "sha256": "072930f2a51e691f657ab905d7ef19eac4954c53d7350003d48f61aec3b12760"
+      "sha256": "cf824634f5bdedc1d8c539d38ed12341578022110c65d83dff19bdbfacc41ddd"
     },
     {
       "path": "shop/other.py",
-      "sha256": "358ceba75700861526db3f34442d8703eee430304d8d89c7f9cd3be5251b433a"
+      "sha256": "cc80c7b34224e4e2801eeb9fb57cc1742e219a118560ca028c25fbc7c5a56f79"
     },
     {
       "path": "shop/pricing.py",
@@ -43,7 +43,7 @@
     },
     {
       "path": "tests/test_rival_alias.py",
-      "sha256": "73e632a6bf77b411043212cea092d17b9620dc5b6d59e337b4f23faa06d7f58d"
+      "sha256": "1408db4e267dc35b7f086cd55bb1d9be7d52661ee17cd878b705a9b6313adadc"
     }
   ]
 }

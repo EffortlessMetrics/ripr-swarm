@@ -4,7 +4,7 @@
   "diff": "cases/py-mocker-patch-caller-arithmetic.diff",
   "anchor": {
     "file": "shop/order.py",
-    "line": 6
+    "line": 5
   },
   "edit_kind": "behavior_change",
   "behavior_family": "arithmetic_operator",
@@ -39,5 +39,8 @@
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#29"
+  ]
 }

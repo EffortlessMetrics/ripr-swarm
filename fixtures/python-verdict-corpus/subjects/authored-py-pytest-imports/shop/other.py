@@ -1,2 +1,2 @@
-def quote(cents, tax):
+def total(cents, tax):
     return cents * tax

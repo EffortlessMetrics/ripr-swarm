@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Python verdict corpus: 7 `py-rivals-*` / `py-mocker-*` cases on `authored-py-pytest-imports` covering RIPR-SPEC-0238 rules 7 (rival import) and 8 (`mocker.patch` as `mocked_module`), labelled by real pytest runs with pytest-mock; the Python missed-credit ceiling rises 26 to 27 for the documented conservative `mocker.patch` abstention (#9412).
+- Python verdict corpus: 5 `py-rivals-*` / `py-mocker-*` cases on `authored-py-pytest-imports` covering RIPR-SPEC-0238 rules 7 (same-name rival import; example 25 already covers the base shape) and 8 (`mocker.patch` as `mocked_module`), labelled by real pytest runs with pytest-mock; the Python missed-credit ceiling rises 26 to 27 for the documented conservative `mocker.patch` abstention (#9412).

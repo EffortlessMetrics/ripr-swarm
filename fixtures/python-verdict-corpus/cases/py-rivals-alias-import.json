@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The only test binding total imports quote as total from a rival module, so the edit to pricing.total is never exercised.",
+  "reasoning": "RIPR-SPEC-0238 rule 7: the only test binding total imports shop.other.total, a rival module's same-name definition, so the edit to pricing.total passes. The rule says not related, no_static_path (limited, acceptable); the ideal gap needs the rival guard to stay off.",
   "labeling_observation": {
     "ripr_commit": "b6491843",
     "full_checkout_verdict": "limited",

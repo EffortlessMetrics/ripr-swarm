@@ -2,7 +2,7 @@
   "case_id": "py-mocker-patch-caller-arithmetic",
   "subject_id": "authored-py-pytest-imports",
   "origin": "authored",
-  "anchor": "shop/order.py:6",
+  "anchor": "shop/order.py:5",
   "behavior_family": "arithmetic_operator",
   "test_shape": "pytest_mocker_patch_exact_total",
   "hard_case": false,
