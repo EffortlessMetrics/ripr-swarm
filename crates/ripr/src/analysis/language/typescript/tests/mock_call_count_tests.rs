@@ -82,6 +82,36 @@ fn a_call_count_does_not_see_the_arguments_of_a_changed_call() -> Result<(), Str
 }
 
 #[test]
+fn an_aliased_mock_call_count_is_not_an_argument_pin() -> Result<(), String> {
+    let source = node_test("const calls = fn.mock.calls; assert.equal(calls.length, 1);");
+    assert_eq!(
+        notify_class("count-alias", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn an_optional_mock_call_count_is_not_an_argument_pin() -> Result<(), String> {
+    let source = node_test("assert.equal(fn?.mock.calls.length, 1);");
+    assert_eq!(
+        notify_class("count-optional", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_computed_mock_call_count_is_not_an_argument_pin() -> Result<(), String> {
+    let source = node_test("assert.equal(fn[\"mock\"][\"calls\"][\"length\"], 1);");
+    assert_eq!(
+        notify_class("count-computed", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
 fn an_added_call_keeps_the_count_because_the_count_sees_it() -> Result<(), String> {
     let source = node_test("assert.equal(fn.mock.callCount(), 1);");
     assert_eq!(
@@ -111,7 +141,7 @@ fn only_the_classifier_demotes_a_count_so_other_families_keep_it() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].oracle_kind, OracleKind::ExactValue);
     assert_eq!(assertions[0].oracle_strength, OracleStrength::Strong);
-    assert!(mock_call_count_assertion(assertions[0]));
+    assert!(mock_call_count_assertion(assertions[0], &tests[0]));
 }
 
 #[test]
@@ -120,7 +150,6 @@ fn an_expression_that_is_not_a_plain_mock_count_is_left_alone() {
         "assert.equal(counter.callCount(), 1);",
         "assert.equal(fn.callCount(), 1);",
         "assert.equal(fn.mock.callCount() + 1, 2);",
-        "assert.equal(fn?.mock.calls.length, 1);",
         "assert.equal(fn.mock.calls[0].arguments.length, 1);",
     ] {
         let tests = extract_tests(Path::new("tests/notify.test.ts"), &node_test(assertion));
@@ -129,6 +158,84 @@ fn an_expression_that_is_not_a_plain_mock_count_is_left_alone() {
             .flat_map(|test| test.assertions.iter())
             .collect();
         assert_eq!(found.len(), 1, "{assertion}");
-        assert!(!mock_call_count_assertion(found[0]), "{assertion}");
+        assert!(
+            !mock_call_count_assertion(found[0], &tests[0]),
+            "{assertion}"
+        );
     }
+}
+
+#[test]
+fn more_mock_call_count_paths_and_aliases_are_not_argument_pins() -> Result<(), String> {
+    for (index, assertion) in [
+        "const m = fn.mock; const calls = m.calls; const n = calls.length; assert.equal(n, 1);",
+        "const m = fn[\"mock\"]; assert.equal(m.callCount(), 1);",
+        "assert.equal(fn.mock?.callCount?.(), 1);",
+        "assert.equal(fn?.[\"mock\"]?.calls?.length, 1);",
+        "assert.equal(fn[\"mo\\u0063k\"].calls.length, 1);",
+        "const calls = fn.mock.calls; { assert.equal(calls.length, 1); }",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            notify_class(&format!("count-path-{index}"), &node_test(assertion))?,
+            ExposureClass::WeaklyExposed,
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn new_mock_call_count_spellings_preserve_added_call_credit() -> Result<(), String> {
+    for assertion in [
+        "const calls = fn.mock.calls; assert.equal(calls.length, 1);",
+        "assert.equal(fn?.mock.calls.length, 1);",
+        "assert.equal(fn[\"mock\"].calls.length, 1);",
+    ] {
+        assert_eq!(
+            notify_class_for("added-count-path", &node_test(assertion), None)?,
+            ExposureClass::Exposed,
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn mock_call_count_aliases_do_not_absorb_argument_pins_or_other_values() -> Result<(), String> {
+    let source =
+        node_test("const calls = fn[\"mock\"].calls; assert.deepEqual(calls[0].arguments, [8]);");
+    assert_eq!(
+        notify_class("alias-argument-pin", &source)?,
+        ExposureClass::Exposed
+    );
+    for assertion in [
+        "const calls = [8]; assert.equal(calls.length, 1);",
+        "const calls = \"fn.mock.calls\"; assert.equal(calls.length, 13);",
+        "const calls = fn.mock.calls; { const calls = [8]; assert.equal(calls.length, 1); }",
+        "const key = \"arguments\"; assert.equal(fn.mock.calls[0][key].length, 1);",
+    ] {
+        let tests = extract_tests(Path::new("tests/notify.test.ts"), &node_test(assertion));
+        assert_eq!(tests.len(), 1, "{assertion}");
+        assert_eq!(tests[0].assertions.len(), 1, "{assertion}");
+        assert!(
+            !mock_call_count_assertion(&tests[0].assertions[0], &tests[0]),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn called_times_matchers_already_keep_mock_call_count_evidence_weak() -> Result<(), String> {
+    assert_eq!(
+        notify_class(
+            "called-times",
+            &jest_test("expect(fn).toHaveBeenCalledTimes(1);")
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
 }

@@ -2533,39 +2533,183 @@ fn normalized_token_sequence(text: &str) -> String {
     out
 }
 
-/// `assert.equal(send.mock.callCount(), 1)` and
-/// `expect(send.mock.calls.length).toBe(1)` compare how many times a mock ran,
-/// not what it was called with. For a change to the arguments of a call the
-/// owner makes (a side-effect probe) they read like `toHaveBeenCalledTimes`,
-/// `mock_expectation` / weak, never the `exact_value` the equality matcher
-/// gives a computed result (#9684). A deleted call, or a value that decides
-/// how many calls run, is exactly what a count sees, so other families keep
-/// the assertion's own reading.
-pub(crate) fn mock_call_count_assertion(assertion: &TypeScriptAssertion) -> bool {
-    assertion.mock_payload.is_none()
-        && assertion
-            .observed_expression
-            .as_deref()
-            .is_some_and(is_mock_call_count_expression)
-}
-
-/// `<path>.mock.callCount()` or `<path>.mock.calls.length` on a plain
-/// identifier path (no optional chaining, indexing or alias).
-fn is_mock_call_count_expression(text: &str) -> bool {
-    let text = text.trim();
-    let Some(path) = text
-        .strip_suffix(".mock.callCount()")
-        .or_else(|| text.strip_suffix(".mock.calls.length"))
-    else {
+/// A count-only observation is weaker than a pin on a changed call's
+/// arguments. Resolve literal member keys, optional chains and test-local
+/// `const` aliases without replacing the original oracle evidence (#10174).
+/// The classifier owns the SideEffect/removed-counterpart boundary.
+pub(crate) fn mock_call_count_assertion(
+    assertion: &TypeScriptAssertion,
+    test: &TypeScriptTest,
+) -> bool {
+    let Some(observed) = assertion.observed_expression.as_ref() else {
         return false;
     };
-    !path.is_empty()
-        && path.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-        })
+    if assertion.mock_payload.is_some() {
+        return false;
+    }
+    let observed = observed.clone();
+    let before_line = assertion.line.saturating_sub(test.line) + 1;
+    parse_on_worker(
+        &test.file,
+        &test.body_text,
+        move |file, source, allocator| {
+            let Ok(expression) =
+                Parser::new(allocator, &observed, source_type_for(file)).parse_expression()
+            else {
+                return false;
+            };
+            let aliases = mock_count_aliases(file, source, allocator, before_line);
+            let Some(path) = mock_count_path(&expression, &aliases, 0) else {
+                return false;
+            };
+            path.ends_with(&["mock".into(), "calls".into(), "length".into()])
+                || path.ends_with(&["mock".into(), "callCount".into(), "()".into()])
+        },
+    )
+    .unwrap_or(false)
+}
+
+type MockCountAliases = Vec<(String, Vec<String>)>;
+
+/// Only straight-line callback-local constants are followed. Counting every
+/// binding in the registration also refuses a name shadowed in a nested
+/// block/function. Mutable, destructured, outer-scope and late bindings retain
+/// their existing reading rather than borrowing another binding's count.
+fn mock_count_aliases(
+    file: &Path,
+    source: &str,
+    allocator: &Allocator,
+    before_line: usize,
+) -> MockCountAliases {
+    use oxc_ast_visit::Visit;
+    #[derive(Default)]
+    struct Bindings(std::collections::BTreeMap<String, usize>);
+    impl<'a> Visit<'a> for Bindings {
+        fn visit_binding_identifier(&mut self, node: &oxc_ast::ast::BindingIdentifier<'a>) {
+            *self.0.entry(node.name.to_string()).or_default() += 1;
+        }
+    }
+    let parsed = Parser::new(allocator, source, source_type_for(file)).parse();
+    if !parsed.errors.is_empty() {
+        return Vec::new();
+    }
+    let mut bindings = Bindings::default();
+    bindings.visit_program(&parsed.program);
+    let mut aliases = Vec::new();
+    for statement in &parsed.program.body {
+        let Statement::ExpressionStatement(statement) = statement else {
+            continue;
+        };
+        let Expression::CallExpression(call) = statement.expression.get_inner_expression() else {
+            continue;
+        };
+        for body in call
+            .arguments
+            .iter()
+            .filter_map(function_body_statements_from_argument)
+        {
+            for statement in body {
+                let Statement::VariableDeclaration(declaration) = statement else {
+                    continue;
+                };
+                if !declaration.kind.is_const() {
+                    continue;
+                }
+                for declarator in &declaration.declarations {
+                    let BindingPattern::BindingIdentifier(name) = &declarator.id else {
+                        continue;
+                    };
+                    let line = source[..declarator.span.end as usize]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count()
+                        + 1;
+                    if line > before_line || bindings.0.get(name.name.as_str()) != Some(&1) {
+                        continue;
+                    }
+                    if let Some(init) = &declarator.init
+                        && let Some(path) = mock_count_path(init, &aliases, 0)
+                    {
+                        aliases.push((name.name.to_string(), path));
+                    }
+                }
+            }
+        }
+    }
+    aliases
+}
+
+/// Keep the complete member/call path so `calls[0].arguments.length` cannot
+/// be confused with `mock.calls.length`. Unknown receiver expressions and
+/// dynamic keys stay opaque path segments; only literal suffixes count.
+fn mock_count_path(
+    expression: &Expression<'_>,
+    aliases: &MockCountAliases,
+    depth: usize,
+) -> Option<Vec<String>> {
+    if depth > 64 {
+        return None;
+    }
+    let (object, key) = match expression.get_inner_expression() {
+        Expression::Identifier(name) => {
+            return Some(
+                aliases
+                    .iter()
+                    .find(|(alias, _)| alias == name.name.as_str())
+                    .map_or_else(|| vec![name.name.to_string()], |(_, path)| path.clone()),
+            );
+        }
+        Expression::StaticMemberExpression(member) => {
+            (&member.object, member.property.name.to_string())
+        }
+        Expression::ComputedMemberExpression(member) => {
+            (&member.object, mock_count_key(&member.expression))
+        }
+        Expression::CallExpression(call) => (
+            &call.callee,
+            if call.arguments.is_empty() {
+                "()"
+            } else {
+                "(?)"
+            }
+            .into(),
+        ),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                (&member.object, mock_count_key(&member.expression))
+            }
+            oxc_ast::ast::ChainElement::CallExpression(call) => (
+                &call.callee,
+                if call.arguments.is_empty() {
+                    "()"
+                } else {
+                    "(?)"
+                }
+                .into(),
+            ),
+            oxc_ast::ast::ChainElement::TSNonNullExpression(inner) => {
+                return mock_count_path(&inner.expression, aliases, depth + 1);
+            }
+            _ => return Some(vec!["?".into()]),
+        },
+        _ => return Some(vec!["?".into()]),
+    };
+    let mut path = mock_count_path(object, aliases, depth + 1)?;
+    if path.len() >= 64 {
+        return None;
+    }
+    path.push(key);
+    Some(path)
+}
+
+fn mock_count_key(expression: &Expression<'_>) -> String {
+    match expression.get_inner_expression() {
+        Expression::StringLiteral(key) => key.value.to_string(),
+        _ => "?".into(),
+    }
 }
 
 pub(crate) fn mock_payload_from_assertion(

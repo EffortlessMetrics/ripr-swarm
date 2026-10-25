@@ -5382,7 +5382,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 // changes the count, so it keeps the exact reading.
                 _ if matches!(probe_family, ProbeFamily::SideEffect)
                     && !mock_facts.line_added()
-                    && mock_call_count_assertion(assertion) =>
+                    && mock_call_count_assertion(assertion, candidate.test) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Weak)
                 }

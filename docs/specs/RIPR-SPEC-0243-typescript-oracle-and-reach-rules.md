@@ -1255,15 +1255,24 @@ the masker.
 22. **Mock call counts (2026-10-22, #9684).**
     Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
-    expression is a plain identifier path ending `.mock.callCount()` or
-    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    expression ends in `.mock.callCount()` or `.mock.calls.length`,
+    including optional chains, literal computed keys, and unambiguously bound
+    callback-local `const` aliases of those paths, counts calls and reads
+    `mock_expectation` / weak (#10174),
     like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
     this; extraction still labels the equality `exact_value`). Rejected:
     crediting the count as an exact value of the arguments the changed call
     sends. Not demoted: a deleted call, an added call (a changed line with
     no removed counterpart, which a count sees), or a value that decides
-    how many calls run (a count sees both), an aliased or optional-chained count,
-    and `mock.calls[0].arguments` pins, which keep their reading.
+    how many calls run (a count sees both), and `mock.calls[0].arguments`
+    pins, which keep their reading. Alias resolution follows straight-line
+    callback-local constants declared before the assertion and refuses names
+    bound more than once anywhere in the registration. Mutable, destructured,
+    outer-scope, late and ambiguous aliases, dynamic keys within the count
+    suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
+    properties retain their existing reading; they are not covered by this
+    bounded recognizer. `toHaveBeenCalledTimes` already reads weak mock
+    evidence without an exact-value equality.
 
 ## Required Evidence
 
@@ -1603,7 +1612,10 @@ keys); do not take the next number.
 
 - #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
-  credited to gap.
+  credited to gap. #10174 adds runtime-labeled alias, optional-chain and
+  computed-key rows plus an argument-pin control, live golden fixtures and
+  independent RIPR-SPEC-0108 invariants. The count-only rows move from
+  credited to gap; the argument pin keeps credit. No coverage floor changes.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak

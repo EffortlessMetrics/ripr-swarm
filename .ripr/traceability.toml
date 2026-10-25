@@ -17176,6 +17176,18 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::a_call_count_does_not_see_the_arguments_of_a_changed_call",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::an_aliased_mock_call_count_is_not_an_argument_pin",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::an_optional_mock_call_count_is_not_an_argument_pin",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::a_computed_mock_call_count_is_not_an_argument_pin",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::an_added_call_keeps_the_count_because_the_count_sees_it",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::a_pin_on_the_recorded_arguments_still_exposes_the_change",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::only_the_classifier_demotes_a_count_so_other_families_keep_it",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::an_expression_that_is_not_a_plain_mock_count_is_left_alone",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::more_mock_call_count_paths_and_aliases_are_not_argument_pins",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::new_mock_call_count_spellings_preserve_added_call_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::mock_call_count_aliases_do_not_absorb_argument_pins_or_other_values",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::called_times_matchers_already_keep_mock_call_count_evidence_weak",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",
@@ -17417,6 +17429,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
 ]
 fixtures = [
+  "typescript_mock_count_alias",
+  "typescript_mock_count_optional",
+  "typescript_mock_count_computed",
+  "typescript_mock_count_arguments",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",
