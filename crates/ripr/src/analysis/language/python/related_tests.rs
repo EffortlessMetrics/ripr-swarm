@@ -2160,8 +2160,7 @@ fn client_app_source<'a>(
 ) -> Option<(String, &'a [PythonImport])> {
     if let Some(app) = super::route_client::client_app_name(&test.body_text, receiver) {
         // An application name bound in the test body is not the import it spells.
-        if super::route_client::rebinds_name(&test.body_text, &app)
-            || test.fixtures.iter().any(|name| *name == app)
+        if super::route_client::rebinds_name(&test.body_text, &app) || test.fixtures.contains(&app)
         {
             return None;
         }
@@ -2179,7 +2178,7 @@ fn client_app_source<'a>(
     let def = test
         .fixture_defs
         .iter()
-        .find(|def| def.name == root && test.fixtures.iter().any(|name| *name == root))?;
+        .find(|def| def.name == root && test.fixtures.contains(&root))?;
     let app = super::route_client::fixture_client_app_name(&def.body_text)?;
     // The fixture's own parameters and local bindings are not module imports.
     if super::route_client::rebinds_name(&def.body_text, &app)
