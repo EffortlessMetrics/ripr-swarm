@@ -384,12 +384,33 @@ pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet
 /// made the whole workspace analysis partial (#9794). An unterminated fence
 /// is not skipped and keeps its old estimate.
 fn frontmatter_end(text: &str) -> usize {
+    // The parser's whitespace set (Pattern_White_Space), narrower than
+    // `char::is_whitespace`: a skip must never exceed what it lexes.
+    fn pattern_ws(c: char) -> bool {
+        matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | '\r'
+                | '\u{b}'
+                | '\u{c}'
+                | '\u{85}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+        )
+    }
     let mut offset = 0;
-    if text.starts_with("#!") && !text.starts_with("#![") {
+    // A `#!` line is a shebang only when the parser would not read it as
+    // the start of an inner attribute (`#! [..]`, `#!\n[..]`).
+    if let Some(after) = text.strip_prefix("#!")
+        && !after.trim_start_matches(pattern_ws).starts_with('[')
+    {
         offset = text.find('\n').map_or(text.len(), |n| n + 1);
     }
     let rest = &text[offset..];
-    let body_start = rest.len() - rest.trim_start().len();
+    let body_start = rest.len() - rest.trim_start_matches(pattern_ws).len();
     // The opening fence starts its line (column 0), the only shape the
     // parser lexes as frontmatter.
     let line_start = rest[..body_start].rfind('\n').map_or(0, |n| n + 1);
@@ -400,21 +421,30 @@ fn frontmatter_end(text: &str) -> usize {
     let Some(opening) = lines.next() else {
         return 0;
     };
-    let fence = opening
-        .trim_start()
-        .bytes()
-        .take_while(|b| *b == b'-')
-        .count();
+    let fence = opening.bytes().take_while(|b| *b == b'-').count();
     if fence < 3 {
         return 0;
     }
     let mut end = offset + line_start + opening.len();
     for line in lines {
         end += line.len();
-        let closing = line.trim();
-        if closing.len() == fence && closing.bytes().all(|b| b == b'-') {
-            return end;
+        let dashes = line.bytes().take_while(|b| *b == b'-').count();
+        if dashes < fence {
+            continue;
         }
+        // The first line that starts with the fence closes the block, and
+        // only if it is the fence and nothing else; the parser rejects the
+        // block otherwise (extra dashes, trailing text) or when a second
+        // fence follows.
+        let tail = line[dashes..].trim_end_matches([' ', '\t', '\r', '\n']);
+        let second = text[end..]
+            .trim_start_matches(pattern_ws)
+            .starts_with("---");
+        return if dashes == fence && tail.is_empty() && !second {
+            end
+        } else {
+            0
+        };
     }
     0
 }
@@ -747,6 +777,18 @@ mod tests {
             format!("---\n[dependencies]\n----\n{run}\nfn main() {{}}\n"),
             // A BOM before the fence keeps it from lexing as frontmatter.
             format!("\u{feff}{run}\n[dependencies]\n{run}\nfn main() {{}}\n"),
+            // The parser rejects a block whose closing line has extra
+            // dashes or trailing text, or that is followed by a second one.
+            format!("---\nA\n----\n{run}\n---\n"),
+            format!("---\n---x\n{run}\n---\n"),
+            format!("---\n{run}\n---\n\n---\n"),
+            format!("#! [x]\n---\n{run}\n---\n"),
+            format!("\u{a0}\n---\n{run}\n---\n"),
+            // Too short to be a fence, and an inner attribute is not a shebang.
+            format!("--\n[dependencies]\n--\n{run}\n"),
+            format!("#![feature(frontmatter)]\n---\n{run}\n---\n"),
+            // Code after a skipped block is still estimated.
+            format!("---\n[dependencies]\n---\nfn f() -> i32 {{ {run}1 }}\n"),
             // An indented fence is not frontmatter to the parser.
             format!("  {run}\n[dependencies]\n  {run}\nfn main() {{}}\n"),
         ] {
