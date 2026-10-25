@@ -236,6 +236,171 @@ pub(super) fn python_guarded_arm_gap(
     })
 }
 
+/// Whether every strong related call provably enters every `if` guard around a
+/// changed line (#9833), so an effect written there runs under each observed
+/// input. This is the credit-side twin of `python_guarded_arm_gap`: that gate
+/// excludes with a fail-open reading, which would credit wrongly if reused
+/// here, so this reader is strict instead. Only plain `if X:` ancestors are
+/// accepted (an `elif` is reached only when an earlier arm was not taken, and
+/// `else`, `for`, `try` and the like add reachability this reader does not
+/// model), and no line before the change may leave the owner or loop
+/// forever. Anything else answers `false`, which keeps the abstention.
+pub(super) fn python_guard_entered_by_every_call(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    let Some(conditions) = entered_if_conditions(owner, owner_source, changed_line) else {
+        return false;
+    };
+    if !guarded_channel_retained(owner, owner_source, changed_line, related_candidates, focus) {
+        return false;
+    }
+    let constants = unrebound_constants(owner, related_candidates);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+    if rows.is_empty() || gaps {
+        return false;
+    }
+    rows.iter().all(|row| {
+        conditions.iter().all(|(condition_line, condition)| {
+            super::guard_credit::condition_literals_supported(condition, row, &constants)
+                && condition_holds(
+                    condition,
+                    *condition_line,
+                    row,
+                    &constants,
+                    owner_source,
+                    owner.start_line,
+                ) == Some(true)
+        })
+    })
+}
+
+/// Guard entry is useful only while an explicit later write has not replaced
+/// the channel observed by the selected assertion. Direct statements keep their
+/// existing contract; this veto applies only to newly granted guarded credit.
+fn guarded_channel_retained(
+    owner: &PythonOwner,
+    source: &str,
+    changed_line: usize,
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    use super::assertion_selection::select_relevant_assertion;
+    use super::effect_alignment::{owner_calls, self_attribute_mutation, self_attribute_write};
+    use super::guard_credit::field_retained_after;
+
+    let Some(line) = source.lines().nth(changed_line.saturating_sub(1)) else {
+        return false;
+    };
+    let Some(attr) =
+        self_attribute_write(line.trim()).or_else(|| self_attribute_mutation(line.trim()))
+    else {
+        return false;
+    };
+    let offset =
+        |text: &str, lines: usize| text.split_inclusive('\n').take(lines).map(str::len).sum();
+    if !field_retained_after(
+        source,
+        offset(source, changed_line),
+        offset(source, owner.end_line),
+        attr,
+    ) {
+        return false;
+    }
+    candidates.iter().all(|candidate| {
+        let test = candidate.test;
+        let Some(assertion) = select_relevant_assertion(&test.assertions, Some(focus)).assertion()
+        else {
+            return true;
+        };
+        if assertion.oracle_strength != crate::domain::OracleStrength::Strong {
+            return true;
+        }
+        let Some(start) = owner_calls(test, owner)
+            .first()
+            .map(|(offset, _)| *offset)
+            .or_else(|| {
+                super::related_tests::with_entry(test, owner).map(|entry| {
+                    if owner.name == "__exit__" {
+                        entry.after_block_offset
+                    } else {
+                        entry.statement_offset
+                    }
+                })
+            })
+        else {
+            return false;
+        };
+        let line_start = offset(&test.body_text, assertion.line.saturating_sub(test.line));
+        let Some(relative) = test
+            .body_text
+            .get(line_start..)
+            .and_then(|tail| tail.find(&assertion.text))
+        else {
+            return false;
+        };
+        field_retained_after(&test.body_text, start, line_start + relative, attr)
+    })
+}
+
+/// The plain `if` conditions enclosing `changed_line`, outermost first, when
+/// nothing between the owner header and the line can stop it running once
+/// they hold. `None` for any other enclosing or preceding shape.
+fn entered_if_conditions(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+) -> Option<Vec<(usize, String)>> {
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let changed_index = changed_line.checked_sub(1)?;
+    if owner.start_line == 0 || owner.start_line > changed_index || changed_index >= lines.len() {
+        return None;
+    }
+    let changed = lines.get(changed_index)?;
+    if changed.trim().is_empty() {
+        return None;
+    }
+    let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;
+    // Python expands tabs and resets indentation on form-feed. Only code
+    // indentation matters; comments and string interiors cannot add ancestors.
+    if (owner.start_line..=changed_index).any(|index| {
+        (index == changed_index || ends[index].is_some())
+            && lines[index]
+                .chars()
+                .take_while(|ch| ch.is_whitespace())
+                .any(|ch| ch != ' ')
+    }) {
+        return None;
+    }
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            owner_source
+                .match_indices('\n')
+                .map(|(offset, _)| offset + 1),
+        )
+        .collect();
+    let mut threshold = leading_whitespace(changed);
+    let mut conditions = Vec::new();
+    for index in (owner.start_line..changed_index).rev() {
+        let Some(end) = ends[index] else { continue };
+        let raw = owner_source.get(starts[index]..end)?;
+        let trimmed = raw.trim();
+        if leading_whitespace(raw) >= threshold {
+            continue;
+        }
+        let condition = trimmed.strip_prefix("if ")?;
+        let condition = condition.trim_end().strip_suffix(':')?.trim();
+        conditions.push((index, condition.to_string()));
+        threshold = leading_whitespace(raw);
+    }
+    conditions.reverse();
+    (!conditions.is_empty()).then_some(conditions)
+}
+
 /// The text of the left operand of a condition's first comparison, used to
 /// name the observed values the strong related calls bind to it.
 fn condition_lhs(condition: &str) -> String {
@@ -646,7 +811,7 @@ fn is_block_opener(trimmed: &str) -> bool {
 /// `Some(false)` means the row provably fails the guard; `None` means the
 /// guard (or one conjunct) is unreadable for this row, which never excludes
 /// the row.
-fn condition_holds(
+pub(super) fn condition_holds(
     condition: &str,
     condition_line: usize,
     row: &CallRow,

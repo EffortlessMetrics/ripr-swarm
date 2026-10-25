@@ -685,3 +685,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_parametrize_basic (26)
+
+Reason:
+RIPR-SPEC-0224: Python no_assertion row miss on an extraction-complete assertion-free call-bearing test (#5491)
+
+Command:
+`cargo xtask goldens bless python_parametrize_basic --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

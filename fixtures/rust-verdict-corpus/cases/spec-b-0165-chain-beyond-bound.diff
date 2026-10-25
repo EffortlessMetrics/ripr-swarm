@@ -1,0 +1,12 @@
+diff --git a/src/r_deep.rs b/src/r_deep.rs
+--- a/src/r_deep.rs
++++ b/src/r_deep.rs
+@@ -12,7 +12,7 @@
+ 
+ pub fn classify_deep(input: &str) -> &'static str {
+     let final_label = label_deep(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

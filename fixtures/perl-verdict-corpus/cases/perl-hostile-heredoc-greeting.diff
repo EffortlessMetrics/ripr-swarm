@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..d21ae98 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -31,7 +31,7 @@ sub greet {
+     my ($name) = @_;
+     return <<"END_TPL";
+ sub fake_total { return 0 }
+-Hello, $name!
++Hello, ${name}!
+ END_TPL
+ }
+ 

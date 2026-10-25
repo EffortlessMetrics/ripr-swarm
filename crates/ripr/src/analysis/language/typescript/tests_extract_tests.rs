@@ -201,6 +201,57 @@ describe.sequential("serial suite", () => {
 }
 
 #[test]
+fn recurses_playwright_describe_members_of_the_test_root() {
+    let tests = extract_tests(
+        Path::new("tests/pricing.spec.ts"),
+        r#"
+test.describe("plain suite", () => {
+    test("plain case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.serial("serial suite", () => {
+    test("serial case", () => {
+        expect(add(1, 2)).toBe(3);
+    });
+});
+test.describe.parallel.only("focused suite", () => {
+    test("focused case", () => {
+        expect(normalize("x")).toBe("x");
+    });
+});
+test.describe.skip("skipped suite", () => {
+    test("skipped case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.fixme("fixme suite", () => {
+    test("fixme case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.only.skip("active then disabled suite", () => {
+    test("disabled case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.configure({ mode: "serial" });
+runner.describe("unknown root", () => {
+    test("unknown case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+"#,
+    );
+
+    assert_eq!(tests.len(), 3);
+    assert_eq!(tests[0].name, "plain suite plain case");
+    assert_eq!(tests[1].name, "serial suite serial case");
+    assert_eq!(tests[2].name, "focused suite focused case");
+    assert!(tests.iter().all(|test| test.describe_names.len() == 1));
+}
+
+#[test]
 fn recurses_bare_and_modified_parameterized_suites() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -375,7 +426,14 @@ test.only("discount boundary", () => {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -770,7 +828,7 @@ fn report_snippet_partial_owner_disclosure_preserves_selected_source_identity() 
             "class Decoy {{ ordinary() {{ return 0; }} }}{newline}class Selected {{{newline}  chosen = ({newline}{}value: number{newline}  ) => value + 1;{newline}}}{newline}",
             " ".repeat(100)
         );
-        let gap = detect_owner_extraction_gap(file, &source, &[4])
+        let gap = detect_owner_extraction_gap(file, &source, &[4], Path::new("."), None)
             .ok_or_else(|| "expected a real unsupported class-field owner".to_string())?;
         assert_eq!(gap.file, file);
         assert_eq!(gap.sample_line, 4);
