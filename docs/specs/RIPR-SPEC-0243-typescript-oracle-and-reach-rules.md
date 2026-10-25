@@ -1115,8 +1115,9 @@ and `const { f } = lib` record source `<module>`, imported `f`. The namespace
 must be a `const` declared earlier; a `let`/`var` namespace, an alias of the
 namespace (`const again = lib`), a call on the member, an optional chain and a
 deeper member record nothing. A namespace whose members the file may replace
-(`lib.f = stub`, `lib["f"] = stub`, `delete lib.f`, or `lib` passed bare to a
-call such as `Object.assign(lib, stubs)`) no longer holds the module's export
+(`lib.f = stub`, `lib["f"] = stub`, `delete lib.f`, or any use of `lib` beyond
+reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
+`const alias = lib` or `{ lib }`) no longer holds the module's export
 there, so members read off it record nothing.
 
 Two bindings this rule and the destructured form share are refused (#10401).

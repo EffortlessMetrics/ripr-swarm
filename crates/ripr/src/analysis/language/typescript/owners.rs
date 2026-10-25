@@ -2142,7 +2142,7 @@ fn collect_ambient_ranges(
 
 /// Every identifier whose members the statements may replace: the root of a
 /// member assignment target (`lib.f = v`, `lib.a.b = v`, `lib[k] = v`), of a
-/// `delete lib.f`, or the bare identifier passed to any call
+/// `delete lib.f`, or any use of the bare namespace beyond a member read
 /// (`Object.assign(lib, ...)`, `Object.defineProperty(lib, ...)`).
 fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     use oxc_ast::ast::Expression;
@@ -2156,8 +2156,15 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
             }
         }
     }
+    // A namespace used any way but as the object of a member read or a
+    // destructuring initializer (`const again = lib`, `f(lib)`, `{ lib }`)
+    // escapes, and what it reaches can replace members.
     #[derive(Default)]
-    struct Mutations(std::collections::HashSet<String>);
+    struct Mutations {
+        mutated: std::collections::HashSet<String>,
+        refs: std::collections::HashMap<String, usize>,
+        safe: std::collections::HashMap<String, usize>,
+    }
     impl<'a> oxc_ast_visit::Visit<'a> for Mutations {
         fn visit_simple_assignment_target(
             &mut self,
@@ -2165,10 +2172,10 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
         ) {
             match target {
                 oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.0.extend(root(&member.object));
+                    self.mutated.extend(root(&member.object));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
-                    self.0.extend(root(&member.object));
+                    self.mutated.extend(root(&member.object));
                 }
                 _ => {}
             }
@@ -2177,30 +2184,59 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 
         fn visit_unary_expression(&mut self, unary: &oxc_ast::ast::UnaryExpression<'a>) {
             if unary.operator == oxc_ast::ast::UnaryOperator::Delete {
-                self.0.extend(root(&unary.argument));
+                self.mutated.extend(root(&unary.argument));
             }
             oxc_ast_visit::walk::walk_unary_expression(self, unary);
         }
 
-        fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
-            for argument in &call.arguments {
-                // Only the namespace itself escapes; `f(lib.member)` passes a
-                // member value.
-                if let Some(Expression::Identifier(id)) = argument
-                    .as_expression()
-                    .map(Expression::get_inner_expression)
-                {
-                    self.0.insert(id.name.to_string());
-                }
+        fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
+            *self.refs.entry(id.name.to_string()).or_default() += 1;
+        }
+
+        // `lib.f` / `lib[k]` read a member: the namespace does not escape.
+        fn visit_static_member_expression(
+            &mut self,
+            member: &oxc_ast::ast::StaticMemberExpression<'a>,
+        ) {
+            self.read_of(&member.object);
+            oxc_ast_visit::walk::walk_static_member_expression(self, member);
+        }
+
+        fn visit_computed_member_expression(
+            &mut self,
+            member: &oxc_ast::ast::ComputedMemberExpression<'a>,
+        ) {
+            self.read_of(&member.object);
+            oxc_ast_visit::walk::walk_computed_member_expression(self, member);
+        }
+
+        // `const { f } = lib` reads members too.
+        fn visit_variable_declarator(&mut self, declarator: &oxc_ast::ast::VariableDeclarator<'a>) {
+            if matches!(declarator.id, BindingPattern::ObjectPattern(_))
+                && let Some(init) = &declarator.init
+            {
+                self.read_of(init);
             }
-            oxc_ast_visit::walk::walk_call_expression(self, call);
+            oxc_ast_visit::walk::walk_variable_declarator(self, declarator);
+        }
+    }
+    impl Mutations {
+        fn read_of(&mut self, object: &Expression<'_>) {
+            if let Expression::Identifier(id) = object.get_inner_expression() {
+                *self.safe.entry(id.name.to_string()).or_default() += 1;
+            }
         }
     }
     let mut mutations = Mutations::default();
     for statement in statements {
         oxc_ast_visit::walk::walk_statement(&mut mutations, statement);
     }
-    mutations.0
+    for (name, count) in &mutations.refs {
+        if mutations.safe.get(name).copied().unwrap_or(0) < *count {
+            mutations.mutated.insert(name.clone());
+        }
+    }
+    mutations.mutated
 }
 
 /// Every identifier the statements assign to: plain and destructuring

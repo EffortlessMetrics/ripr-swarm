@@ -422,3 +422,21 @@ fn a_namespace_whose_members_are_replaced_yields_no_member_import() {
             .any(|import| !import.3 && import.0 == "./lib" && import.1.as_deref() == Some("f")),
     );
 }
+
+#[test]
+fn an_escaping_namespace_yields_no_member_import() {
+    // An alias, wrapper or argument can reach the namespace's members even
+    // though `lib` itself is never assigned through (#10464 review).
+    for source in [
+        "const lib = require('./lib');\nconst alias = lib;\nalias.f = () => 1;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nconst box = { lib };\nbox.lib.f = () => 1;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nmutate([lib]);\nconst s = lib.f;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+}
