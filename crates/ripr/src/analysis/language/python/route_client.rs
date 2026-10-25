@@ -7,53 +7,120 @@
 
 use super::related_tests::is_python_identifier_char;
 
-/// Statements of `text`, each continued physical line joined, with `#` comments
-/// removed.
+/// `text` with string contents blanked (quotes kept, newlines kept inside
+/// triple-quoted strings) and `#` comments removed, so brackets, `as`, `:=` and
+/// `#` inside a string or docstring cannot be read as code.
+fn blank_strings_and_comments(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut idx = 0;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        match ch {
+            '#' => {
+                while idx < chars.len() && chars[idx] != '\n' {
+                    idx += 1;
+                }
+            }
+            '\'' | '"' => {
+                let triple = chars.get(idx + 1) == Some(&ch) && chars.get(idx + 2) == Some(&ch);
+                let width = if triple { 3 } else { 1 };
+                for _ in 0..width {
+                    out.push(ch);
+                }
+                idx += width;
+                while idx < chars.len() {
+                    let inner = chars[idx];
+                    if inner == '\\' {
+                        out.push(' ');
+                        idx += 1;
+                        if idx < chars.len() {
+                            out.push(if chars[idx] == '\n' { '\n' } else { ' ' });
+                            idx += 1;
+                        }
+                        continue;
+                    }
+                    if inner == ch
+                        && (!triple
+                            || (chars.get(idx + 1) == Some(&ch) && chars.get(idx + 2) == Some(&ch)))
+                    {
+                        for _ in 0..width {
+                            out.push(ch);
+                        }
+                        idx += width;
+                        break;
+                    }
+                    if inner == '\n' && !triple {
+                        // An unterminated single-quoted string ends at the line.
+                        break;
+                    }
+                    out.push(if inner == '\n' { '\n' } else { ' ' });
+                    idx += 1;
+                }
+            }
+            _ => {
+                out.push(ch);
+                idx += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Statements of `text`: continued physical lines (inside brackets or after a
+/// trailing backslash) joined, `;`-separated statements split, string contents
+/// and comments removed.
 fn logical_lines(text: &str) -> Vec<String> {
-    let mut lines = Vec::new();
+    let cleaned = blank_strings_and_comments(text);
+    let mut statements = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
-    for physical in text.lines() {
-        let code = strip_comment(physical);
+    for physical in cleaned.lines() {
+        let code = physical.trim_end();
+        let (code, continued) = code
+            .strip_suffix('\\')
+            .map_or((code, false), |rest| (rest, true));
         if !current.is_empty() {
             current.push(' ');
         }
         current.push_str(code.trim());
         depth = bracket_depth(code, depth);
-        if depth == 0 {
-            lines.push(std::mem::take(&mut current));
+        if depth == 0 && !continued {
+            push_statements(&mut statements, &std::mem::take(&mut current));
         }
     }
-    if !current.is_empty() {
-        lines.push(current);
-    }
-    lines
+    push_statements(&mut statements, &current);
+    statements
 }
 
-/// `line` without a trailing `#` comment (a `#` inside a string stays).
-fn strip_comment(line: &str) -> &str {
-    let mut quote: Option<char> = None;
+/// Split one logical line at top-level `;`.
+fn push_statements(statements: &mut Vec<String>, line: &str) {
+    let mut depth = 0usize;
+    let mut start = 0;
     for (idx, ch) in line.char_indices() {
-        match (quote, ch) {
-            (Some(open), _) if ch == open => quote = None,
-            (None, '\'' | '"') => quote = Some(ch),
-            (None, '#') => return line.get(..idx).unwrap_or(line),
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                statements.push(line.get(start..idx).unwrap_or_default().trim().to_string());
+                start = idx + 1;
+            }
             _ => {}
         }
     }
-    line
+    let last = line.get(start..).unwrap_or_default().trim();
+    if !last.is_empty() || start == 0 && !line.is_empty() {
+        statements.push(last.to_string());
+    }
 }
 
-/// Bracket depth after `code`, starting from `depth`, outside strings.
+/// Bracket depth after `code`, starting from `depth` (strings are already
+/// blanked).
 fn bracket_depth(code: &str, mut depth: usize) -> usize {
-    let mut quote: Option<char> = None;
     for ch in code.chars() {
-        match (quote, ch) {
-            (Some(open), _) if ch == open => quote = None,
-            (Some(_), _) => {}
-            (None, '\'' | '"') => quote = Some(ch),
-            (None, '(' | '[' | '{') => depth += 1,
-            (None, ')' | ']' | '}') => depth = depth.saturating_sub(1),
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
             _ => {}
         }
     }
@@ -63,6 +130,15 @@ fn bracket_depth(code: &str, mut depth: usize) -> usize {
 /// Byte offsets of the top-level `=` signs of an assignment statement: plain
 /// and augmented, never `==`, `!=`, `<=`, `>=`, `:=` or a keyword argument.
 fn assignment_equals(line: &str) -> Vec<usize> {
+    // A `lambda` parameter default (`lambda api=1: api`) is not an assignment.
+    let line = line
+        .match_indices("lambda")
+        .find(|(at, _)| {
+            line.get(..*at)
+                .and_then(|before| before.chars().next_back())
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+        })
+        .map_or(line, |(at, _)| line.get(..at).unwrap_or(line));
     let bytes = line.as_bytes();
     let mut found = Vec::new();
     let mut depth = 0usize;
@@ -131,23 +207,26 @@ fn bare_names(region: &str) -> Vec<String> {
 
 /// Whether `line` (one logical statement) binds `name`: assignment targets
 /// (plain, augmented, annotated, chained, tuple), `for` targets, `as` names,
-/// walrus, `def`/`class`/`import` names and function parameters.
+/// walrus, `def`/`class`/`import` names and function parameters, including the
+/// body of a one-line compound statement (`if flag: api = other()`).
 fn line_binds(line: &str, name: &str) -> bool {
     let line = line.trim();
+    let line = line.strip_prefix("async ").unwrap_or(line);
     let first = line.split_whitespace().next().unwrap_or_default();
+    let first = first.trim_end_matches(':');
     match first {
-        "for" | "async" => {
-            if let Some(targets) = line
-                .split_once("for ")
-                .and_then(|(_, rest)| rest.split_once(" in "))
-                .map(|(targets, _)| targets)
+        "def" => return def_binds(line, name),
+        "class" | "import" | "from" | "del" => {
+            return bare_names(line).iter().any(|bound| bound == name);
+        }
+        "for" => {
+            if let Some((targets, _)) = line
+                .strip_prefix("for ")
+                .and_then(|rest| rest.split_once(" in "))
                 && bare_names(targets).iter().any(|bound| bound == name)
             {
                 return true;
             }
-        }
-        "def" | "class" | "import" | "from" | "del" => {
-            return bare_names(line).iter().any(|bound| bound == name);
         }
         _ => {}
     }
@@ -159,8 +238,20 @@ fn line_binds(line: &str, name: &str) -> bool {
     {
         return true;
     }
-    if line.replace(' ', "").contains(&format!("{name}:=")) {
+    if walrus_binds(line, name) {
         return true;
+    }
+    // A compound statement's one-line body binds like a statement of its own.
+    if matches!(
+        first,
+        "if" | "elif" | "else" | "try" | "except" | "finally" | "while" | "with" | "for"
+    ) && let Some(colon) = header_colon(line)
+    {
+        let body = line.get(colon + 1..).unwrap_or_default().trim();
+        if !body.is_empty() && line_binds(body, name) {
+            return true;
+        }
+        return false;
     }
     let equals = assignment_equals(line);
     let mut start = 0;
@@ -178,6 +269,64 @@ fn line_binds(line: &str, name: &str) -> bool {
         && line
             .split_once(':')
             .is_some_and(|(target, _)| target.trim() == name)
+}
+
+/// Byte offset of the colon that ends a compound statement's header.
+fn header_colon(line: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (idx, ch) in line.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0
+                && line
+                    .get(idx + 1..)
+                    .is_none_or(|rest| !rest.starts_with('=')) =>
+            {
+                return Some(idx);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `name := value` appears with `name` as the whole target.
+fn walrus_binds(line: &str, name: &str) -> bool {
+    line.match_indices(":=").any(|(at, _)| {
+        let before = line.get(..at).unwrap_or_default().trim_end();
+        let tail: String = before
+            .chars()
+            .rev()
+            .take_while(|ch| is_python_identifier_char(*ch))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        tail == name
+    })
+}
+
+/// `def name(params)` binds the function name and each parameter name.
+fn def_binds(line: &str, name: &str) -> bool {
+    let rest = line.strip_prefix("def ").unwrap_or(line).trim_start();
+    let Some(open) = rest.find('(') else {
+        return rest.trim_end_matches(':').trim() == name;
+    };
+    if rest
+        .get(..open)
+        .is_some_and(|defined| defined.trim() == name)
+    {
+        return true;
+    }
+    let params = rest.get(open + 1..).unwrap_or_default();
+    split_arguments(params).iter().any(|param| {
+        param
+            .trim_start_matches('*')
+            .split(['=', ':', ')'])
+            .next()
+            .is_some_and(|bound| bound.trim() == name)
+    })
 }
 
 /// How many statements of the body bind `name`.
@@ -318,16 +467,21 @@ fn application_argument(arguments: &str) -> Option<&str> {
 /// receiver, or from a client construction.
 pub(super) fn client_receivers(body_text: &str) -> Vec<String> {
     let lines = logical_lines(body_text);
+    let bindings: Vec<(&str, &str)> = lines
+        .iter()
+        .filter_map(|line| simple_binding(line))
+        .collect();
     let mut receivers = vec!["client".to_string()];
     // Repeat so a long alias chain resolves whatever order its links appear in.
-    for _ in 0..=lines.len() {
+    for _ in 0..=bindings.len() {
         let before = receivers.len();
-        for (name, value) in lines.iter().filter_map(|line| simple_binding(line)) {
-            if receivers.iter().any(|known| known == name) || binding_count(&lines, name) != 1 {
+        for &(name, value) in &bindings {
+            if receivers.iter().any(|known| known == name) {
                 continue;
             }
-            if receivers.iter().any(|known| known == value) || client_construction(value).is_some()
-            {
+            let from_client = receivers.iter().any(|known| known == value)
+                || client_construction(value).is_some();
+            if from_client && binding_count(&lines, name) == 1 {
                 receivers.push(name.to_string());
             }
         }

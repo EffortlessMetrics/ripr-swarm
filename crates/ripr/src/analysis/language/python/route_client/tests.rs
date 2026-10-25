@@ -114,3 +114,72 @@ fn a_wrapped_keyword_argument_line_is_not_an_assignment() {
     let body = "result = call(\n    session=client\n)\n";
     assert!(!receivers(body).contains(&"session".to_string()));
 }
+
+#[test]
+fn a_docstring_with_an_open_bracket_does_not_hide_later_bindings() {
+    let body = "\"\"\"\nSmoke (see issue\n\"\"\"\napi = client\nother = TestClient(rival)\n";
+    assert!(receivers(body).contains(&"api".to_string()));
+    assert!(receivers(body).contains(&"other".to_string()));
+    let body = "\"\"\"\nopen (\n\"\"\"\nclient = TestClient(rival)\n";
+    assert_eq!(client_app_name(body, "client").as_deref(), Some("rival"));
+}
+
+#[test]
+fn strings_and_comments_are_not_code() {
+    for statement in [
+        "msg = 'rest as api'",
+        "assert 'behaves as api'",
+        "label = f'{api:=^10}'",
+        "if (myapi := make()):",
+        "def helper(): return api.get('/x')",
+        "f = lambda api=1: api",
+        "text = \"api = Store()\"",
+        "other = 1  # api = Store()",
+    ] {
+        let body = format!("api = client\n{statement}\n");
+        assert!(receivers(&body).contains(&"api".to_string()), "{statement}");
+    }
+}
+
+#[test]
+fn a_one_line_compound_rebinding_withdraws_the_alias() {
+    for rebinding in [
+        "if flag: api = requests.Session()",
+        "try: api = other()",
+        "else: api = other()",
+        "while go: api = other()",
+        "async def api(): pass",
+        "def helper(api): pass",
+        "api = client; api = other()",
+    ] {
+        let body = format!("api = client\n{rebinding}\n");
+        assert!(
+            !receivers(&body).contains(&"api".to_string()),
+            "{rebinding}"
+        );
+    }
+}
+
+#[test]
+fn a_rebound_client_is_not_identified_by_one_branch() {
+    let body = "client = TestClient(rival)\nif flag: client = TestClient(app)\n";
+    assert_eq!(client_app_name(body, "client"), None);
+}
+
+#[test]
+fn backslash_continuations_and_semicolons_read_like_plain_statements() {
+    let body = "api = \\\n    TestClient(app)\n";
+    assert_eq!(client_app_name(body, "api").as_deref(), Some("app"));
+    let body = "client = TestClient(app); x = 1\n";
+    assert_eq!(client_app_name(body, "client").as_deref(), Some("app"));
+}
+
+#[test]
+fn a_large_body_resolves_without_quadratic_rescans() {
+    let mut body = String::from("api = TestClient(app)\n");
+    for index in 0..3000 {
+        body.push_str(&format!("v{index} = f({index})\n"));
+    }
+    assert!(receivers(&body).contains(&"api".to_string()));
+    assert_eq!(client_app_name(&body, "api").as_deref(), Some("app"));
+}
