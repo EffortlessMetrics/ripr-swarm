@@ -216,12 +216,12 @@ pub(crate) fn generator_calls(
     Some(calls)
 }
 
-/// The names of an attribute-free `use crate::name;` or `use crate::{a, b};`,
-/// and for the group form each member's byte range.
 /// The plain names a `use crate::..` item imports, with each member's byte
 /// span.
 type CratePathImport = (Vec<String>, Vec<(String, usize, usize)>);
 
+/// The names of an attribute-free `use crate::name;` or `use crate::{a, b};`,
+/// and for the group form each member's byte range.
 fn crate_path_import(item: &ast::Use) -> Option<CratePathImport> {
     if item.attrs().next().is_some() {
         return None;
