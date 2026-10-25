@@ -44,7 +44,8 @@ with the braces of a newly added function or branch. A structural line that
 closes a block opened outside its run (a lone inserted or removed
 `} else {`, or one inserted with other lines between existing statements)
 moves existing code between branches, so it keeps its probe and the change
-never reads as "no behavioral candidates" (#4216 row 5).
+never reads as "no behavioral candidates" (#4216 row 5). The one exception is
+a braces-only added line outside every indexed function span (#10090, below).
 
 A line that Git reports as both removed and added inside one replacement block
 seeds no probe on either side when its text is byte-identical (leading
@@ -660,11 +661,16 @@ word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
 not make an uncalled owner read `weakly_exposed`. Words inside string literals
 remain name tokens; that residual is tracked in #9172.
 
-A changed line of only closing braces (`}`, `};`, `},`) outside every indexed
-function closes a `trait`, `impl`, `mod` or `struct` body and seeds no probe
-(#10090): diff alignment reports an existing item's closer as added when items
-are appended after it. A closer inside a function body keeps its probe (#4216),
-and so does any file with no indexed function.
+An added line of only closing braces (`}`, `};`, `},`) that lies outside every
+indexed function span, in a file that has indexed functions, seeds no probe
+(#10090). It is an exception to the structural-line rule above (a line closing
+a block opened outside its run keeps its probe): at item level such a closer
+delimits a `trait`, `impl`, `mod` or `struct` body, and diff alignment often
+reports an existing item's closer as added when items are appended after it. A
+closer on or inside a function span (including its `end_line`) keeps its probe
+(#4216), and so does any file with no indexed function or no file facts. The
+helper checks the line's position, not the kind of item it closes. The removed
+side is unchanged.
 
 ## Implementation Mapping
 

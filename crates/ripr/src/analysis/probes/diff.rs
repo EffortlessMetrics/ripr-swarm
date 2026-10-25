@@ -934,14 +934,16 @@ fn join_tokens(lines: &[&str]) -> String {
     out
 }
 
-/// A changed line that is only closing braces (`}`, `};`, `},`) and sits
-/// outside every indexed function body (#10090). It closes a `trait`, `impl`,
-/// `mod` or `struct` body (diff alignment often reports an existing item's
-/// closer as added when new items are appended after it), so it holds no
-/// expression and the items it delimits are probed through their own changed
-/// lines. A closer inside a function body can end a branch that moves existing
-/// code, so it keeps its probe (#4216); so does any file with no indexed
-/// functions, where "outside every function" is not established.
+/// A changed line that is only closing braces (`}`, `};`, `},`) and lies
+/// outside every indexed function span, in a file that has indexed functions
+/// (#10090). Typically it closes a `trait`, `impl`, `mod` or `struct` body
+/// (diff alignment often reports an existing item's closer as added when new
+/// items are appended after it); the check is positional and does not look at
+/// the kind of item. It holds no expression, and the items it delimits are
+/// probed through their own changed lines. A closer on or inside a function
+/// span can end a branch that moves existing code, so it keeps its probe
+/// (#4216); so does a file with no indexed functions or no file facts, where
+/// "outside every function" is not established.
 fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let body = masked.trim().trim_end_matches([';', ',']).trim_end();
@@ -2447,8 +2449,14 @@ mod tests {
         let body_index = index(vec![function("f", 1, 6)]);
         let lines = probe_lines(&body_index, &[(3, "        a();"), (4, "    }")]);
         assert!(lines.contains(&4), "{lines:?}");
+        // A closer exactly on a function's `end_line` is inside its span.
+        let lines = probe_lines(&body_index, &[(6, "}")]);
+        assert!(lines.contains(&6), "{lines:?}");
         // A file with no indexed function cannot show "outside every function".
         let lines = probe_lines(&index(vec![]), &[(9, "}")]);
+        assert!(lines.contains(&9), "{lines:?}");
+        // Nor can a file with no file facts at all.
+        let lines = probe_lines(&RustIndex::default(), &[(9, "}")]);
         assert!(lines.contains(&9), "{lines:?}");
     }
 
