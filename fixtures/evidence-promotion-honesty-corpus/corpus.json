@@ -12064,6 +12064,30 @@
       ]
     },
     {
+      "id": "python_assert_equal_binding_identity",
+      "language": "python",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/python-assert-equal-binding.json",
+      "vector": "rebound_receiver_method_and_import_alias_cannot_grant_assert_equal_authority",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 4
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "python_assertion_helper_field",
       "language": "python",
       "tier": "pure",
@@ -13369,30 +13393,6 @@
         },
         {
           "type": "must_not_report_clean"
-        }
-      ]
-    },
-    {
-      "id": "python_assert_equal_binding_identity",
-      "language": "python",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/python-assert-equal-binding.json",
-      "vector": "rebound_receiver_method_and_import_alias_cannot_grant_assert_equal_authority",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 4
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
         }
       ]
     }
