@@ -235,6 +235,81 @@ fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(),
             "def test_defaults():\n    callable = len\n    assert callable(score)\n".to_string(),
         ),
         (
+            "module decorator that is the owner",
+            "@score\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module decorator calling the owner",
+            "@score(1)\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module decorator through an import alias",
+            "from src.subject import score as g\n\n@g\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module decorator through a module alias",
+            "import src.subject as m\n\n@m.score\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "imported project decorator",
+            "from src.other import deco\n\n@deco\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "default argument calling the owner",
+            "def helper(x=score(1)):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "parameter annotation calling the owner",
+            "def helper(x: score(1) = 0):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "return annotation calling the owner",
+            "def helper() -> score(1):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "return annotation through a module alias",
+            "import src.subject as m\n\ndef helper() -> m.score(1):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "class base calling the owner",
+            "class Box(score(1)):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level try import",
+            "try:\n    import src.other\nexcept ImportError:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "import inside the test body",
+            "",
+            format!("def test_defaults():\n    import src.other\n{REF}"),
+        ),
+        (
+            "attribute of an imported project object",
+            "from src.other import OBJ\n",
+            format!("def test_defaults():\n{REF}    assert OBJ.attr == 1\n"),
+        ),
+        (
+            "comparison on an imported project object",
+            "from src.other import OBJ\n",
+            format!("def test_defaults():\n{REF}    assert OBJ == 1\n"),
+        ),
+        (
+            "with an imported project object",
+            "from src.other import OBJ\n",
+            format!("def test_defaults():\n{REF}    with OBJ:\n        pass\n"),
+        ),
+        (
             "owner called directly",
             "",
             format!("def test_defaults():\n{REF}    assert len([score(0)]) == 1\n"),
@@ -251,7 +326,14 @@ fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(),
     }
     // Controls: the module prefixes alone do not withhold; each shape's own
     // construct does.
-    for prefix in ["", "import pytest\n\n", "import sys\n"] {
+    for prefix in [
+        "",
+        "import pytest\n\n",
+        "import sys\n",
+        "import pytest\n\n@pytest.mark.slow\ndef helper():\n    pass\n\n",
+        "def helper(x=1, y: int = 0) -> int:\n    return 0\n\n",
+        "from src.other import OBJ\n",
+    ] {
         let finding = closed_row_case(prefix, NO_CALL_PATH_CONTROL)?;
         assert_eq!(
             miss_of(&finding, "test_defaults"),
@@ -1630,6 +1712,24 @@ mod direct {
             "    return amount + 2",
         )?;
         let rows = run(&fixture, &ExposureClass::WeaklyExposed, false);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, PythonRelationKind::FixtureName);
+        assert_eq!(rows[0].1, None);
+        // The relation gate: a fixture-name row with an otherwise inert body
+        // stays unclaimed. (Admitting `FixtureName` to the gate is an
+        // equivalent mutant: the relation requires a fixture parameter, and
+        // the closed-body proof rejects every fixture parameter itself; this
+        // pins both halves.)
+        let inert_fixture = case_in(
+            "src/pricing.py",
+            "tests/test_checkout.py",
+            "def calculate_fee(amount):\n    return amount + 2\n",
+            "from src.pricing import calculate_fee\n\n\ndef test_checkout_total(pricing):\n    assert callable(calculate_fee)\n",
+            2,
+            "    return amount + 1",
+            "    return amount + 2",
+        )?;
+        let rows = run(&inert_fixture, &ExposureClass::WeaklyExposed, false);
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0].0, PythonRelationKind::FixtureName);
         assert_eq!(rows[0].1, None);

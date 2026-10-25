@@ -289,8 +289,12 @@ fn closed_body_scan(
 /// rule out. Invisible limits (ini/`addopts` plugins, `sitecustomize`, import
 /// side effects) stay documented in the spec.
 pub(super) fn row_cannot_reach_owner(owner: &PythonOwner, test: &PythonTest) -> bool {
+    // A module header or conditional import runs at import; an `import` inside
+    // the test body can load a module that calls the owner.
     if owner.owner_kind != Some(OwnerKind::Function)
         || owner.is_module_owner()
+        || test.constant_rebinding.header_reach
+        || contains_word(&test.body_text, "import")
         || test
             .decorators
             .iter()
@@ -298,7 +302,24 @@ pub(super) fn row_cannot_reach_owner(owner: &PythonOwner, test: &PythonTest) -> 
     {
         return false;
     }
-    closed_body_scan(owner, test, &[], true)
+    // An imported project object used without a call (`OBJ.attr`, `OBJ == x`,
+    // `OBJ[0]`, `with OBJ:`, `for x in OBJ`) can run its dunders and
+    // properties, so any use of an import other than the owner, `pytest` and
+    // `unittest` withholds.
+    let Some(code) = code_only(&test.body_text) else {
+        return false;
+    };
+    let bound_import_used = test.imports.iter().any(|import| {
+        let bound = if import.alias.is_empty() {
+            import.imported.split('.').next().unwrap_or("")
+        } else {
+            import.alias.as_str()
+        };
+        !matches!(bound, "" | "pytest" | "unittest")
+            && bound != owner.name
+            && (bound == "*" || contains_word(&code, bound))
+    });
+    !bound_import_used && closed_body_scan(owner, test, &[], true)
 }
 
 /// `code` (comments removed, strings blanked) with each inert reference to the

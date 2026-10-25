@@ -1947,6 +1947,106 @@ pub(super) fn module_implicit_reach(
         || module_level_effects(source, statements)
 }
 
+/// Whether module-import-time code can reach the owner through a `def` or
+/// `class` header or a conditional import (#10040 `no_call_path`): the header
+/// runs when the module loads, so a decorator (`@score`, `@m.score`,
+/// `@g(1)`), a default or annotation holding a call, or a class base or
+/// keyword holding a call is a call path the test body never shows. Any
+/// decorator outside a short inert list, any `(` in a parameter list, return
+/// annotation, class base or keyword, and any module-level compound statement
+/// (`try`, `if`, `with`, `for`, `while`, `match`) that holds an import or a
+/// call, is an effect. Nested class bodies are walked like the module.
+/// Subscripted annotations (`Foo[int]`) and attribute reads stay invisible
+/// limits.
+pub(super) fn module_header_effects(source: &str, statements: &[Stmt]) -> bool {
+    use rustpython_parser::text_size::TextRange;
+    let text = |range: TextRange| -> &str {
+        source
+            .get(usize::from(range.start())..usize::from(range.end()))
+            .unwrap_or("(")
+    };
+    let bad_decorator = |decorator: &Expr| {
+        let spelled = text(decorator.range());
+        let head = spelled.split('(').next().unwrap_or(spelled).trim();
+        let inert = head.starts_with("pytest.mark.")
+            || head == "pytest.fixture"
+            || matches!(
+                head,
+                "staticmethod"
+                    | "classmethod"
+                    | "unittest.skip"
+                    | "unittest.skipIf"
+                    | "unittest.skipUnless"
+                    | "unittest.expectedFailure"
+            );
+        !inert || spelled.matches('(').count() > 1
+    };
+    let has_call = |range: TextRange| text(range).contains('(');
+    fn arguments_hold_call(
+        args: &ast::Arguments,
+        has_call: &dyn Fn(rustpython_parser::text_size::TextRange) -> bool,
+    ) -> bool {
+        let annotated = |arg: &ast::Arg| {
+            arg.annotation
+                .as_ref()
+                .is_some_and(|annotation| has_call(annotation.range()))
+        };
+        args.posonlyargs
+            .iter()
+            .chain(&args.args)
+            .chain(&args.kwonlyargs)
+            .any(|param| {
+                annotated(&param.def)
+                    || param
+                        .default
+                        .as_ref()
+                        .is_some_and(|default| has_call(default.range()))
+            })
+            || args.vararg.as_deref().is_some_and(annotated)
+            || args.kwarg.as_deref().is_some_and(annotated)
+    }
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(function) => {
+            function.decorator_list.iter().any(bad_decorator)
+                || arguments_hold_call(&function.args, &has_call)
+                || function
+                    .returns
+                    .as_ref()
+                    .is_some_and(|r| has_call(r.range()))
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            function.decorator_list.iter().any(bad_decorator)
+                || arguments_hold_call(&function.args, &has_call)
+                || function
+                    .returns
+                    .as_ref()
+                    .is_some_and(|r| has_call(r.range()))
+        }
+        Stmt::ClassDef(class) => {
+            class.decorator_list.iter().any(bad_decorator)
+                || class.bases.iter().any(|base| has_call(base.range()))
+                || class
+                    .keywords
+                    .iter()
+                    .any(|keyword| has_call(keyword.range()))
+                || module_header_effects(source, &class.body)
+        }
+        Stmt::If(_)
+        | Stmt::Try(_)
+        | Stmt::TryStar(_)
+        | Stmt::With(_)
+        | Stmt::AsyncWith(_)
+        | Stmt::For(_)
+        | Stmt::AsyncFor(_)
+        | Stmt::While(_)
+        | Stmt::Match(_) => {
+            let body = text(statement.range());
+            body.contains('(') || body.contains("import")
+        }
+        _ => false,
+    })
+}
+
 /// A function defined in the module whose name suggests an assertion helper
 /// (`assert_*`, `check_*`, `verify_*`): a test calling it through `self` hides
 /// the owner call inside it.

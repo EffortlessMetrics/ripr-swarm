@@ -171,7 +171,7 @@ mocked or spied owner call with an admitted assertion (an
 unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
 strong assertion of another behavior family, and a strong row whose own
 boundary input misses the pinned boundary or whose changed-sink observation is
-unproven. Four reasons are withheld on purpose (the renderer words a TypeScript or JavaScript `missing_input` row as "no input this test passes was seen ..." rather than "no test input ...", so a future producer cannot over-claim by prose, #10040): `no_call_path` (a single-file
+unproven. Four reasons are withheld on purpose. The renderer already words a TypeScript or JavaScript `missing_input` row as "no input this test passes was seen ...", so a future producer cannot over-claim by prose (#10040). The four are: `no_call_path` (a single-file
 reading cannot prove a call path absent: a heuristic-only row may reach the
 owner through an alias, callback or table, and a shadow or unrelated-import
 rejection refutes only the apparent call, not hooks, helpers or re-exports),
@@ -296,6 +296,11 @@ Python does not yet write:
   directory chain declares a fixture or hook, has a top-level effect, or is
   unreadable; no dynamic construct (`getattr`, `eval`, `exec`, `globals`,
   `importlib`, `__import__`, `lambda`, `partial`, `builtins`) appears; and
+  no module-level `def`/`class` header (decorator outside the inert list,
+  call in a default, annotation, return annotation, base or keyword) or
+  module-level compound statement holding an import or call runs code at
+  import; no `import` appears in the test body; no import other than the
+  owner, `pytest` and `unittest` is used in the body; and
   every mention of the owner, strings and comments included, is one of
   `callable(owner)`, `owner is [not] None`, `owner.__name__`/`__qualname__`/
   `__module__`/`__doc__` or a bare `assert owner`. Only a function owner is
@@ -307,7 +312,9 @@ Python does not yet write:
   dunder-protocol, helper-owner, fixture-owner or activation-limited
   relation, and every call-bearing row (its call path exists). Residual
   limits that stay invisible, so the reason is explanation only and never a
-  proof: plugins or `usefixtures` set by `-p`, ini/`addopts` or entry points,
+  proof: subscripted annotations (`Foo[int]`) and attribute reads in headers,
+  a bare module-level `import` of a module that calls the owner at load,
+  plugins or `usefixtures` set by `-p`, ini/`addopts` or entry points,
   `sitecustomize`, import-time effects of imported modules and
   `__init__.py` files, and an autouse fixture imported by name into the test
   module.

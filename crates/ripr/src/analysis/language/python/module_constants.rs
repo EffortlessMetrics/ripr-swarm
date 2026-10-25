@@ -133,6 +133,9 @@ pub(super) struct PythonTestRebinding {
     /// the directory chain that declares a fixture or hook. Decided by
     /// existence, never by reading what that code calls.
     pub(super) implicit_reach: bool,
+    /// A module `def`/`class` header (decorator, default, annotation, base) or
+    /// a conditional import can run code at import (#10040 `no_call_path`).
+    pub(super) header_reach: bool,
 }
 
 impl PythonTestRebinding {
@@ -170,6 +173,7 @@ pub(super) fn python_test_rebinding(
         module_opaque: false,
         attributes: Vec::new(),
         implicit_reach: false,
+        header_reach: false,
     }
 }
 
