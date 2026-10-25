@@ -346,6 +346,11 @@ fn boolean_assert_with_nested_macro_operand_credits_only_when_it_runs_and_cannot
             true,
         ),
         (
+            "shadowing_use_of_the_macro_name",
+            "use other::approx_eq;\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
             "uncalled_fn_holding_nested_macro",
             "fn never() {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
             false,
