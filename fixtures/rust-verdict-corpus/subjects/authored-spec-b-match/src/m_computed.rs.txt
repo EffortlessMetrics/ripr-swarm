@@ -1,0 +1,37 @@
+//! One arm's value is a call, not a literal.
+
+fn pick(_kind: &str) -> &'static str {
+    "alpha"
+}
+
+fn pick_second(_kind: &str) -> &'static str {
+    "beta"
+}
+
+pub fn label_mc(kind: &str) -> &'static str {
+    match kind {
+        "word" => pick(kind),
+        "text" => pick_second(kind),
+        _ => "other",
+    }
+}
+
+pub fn classify_mc(input: &str) -> &'static str {
+    let final_label = label_mc(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_arm_has_its_own_label_m_computed() {
+        assert_eq!(classify_mc("word"), "word");
+        assert_eq!(classify_mc("text"), "blank");
+    }
+}
