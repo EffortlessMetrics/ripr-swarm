@@ -3374,6 +3374,52 @@
       ]
     },
     {
+      "id": "rust_owner_self_body_same_name_no_unseen_reach",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_self_body_same_name_no_unseen_reach",
+      "vector": "a_same_named_call_inside_the_owners_own_body_is_not_an_unseen_caller",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_owner_self_body_same_name_with_caller_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_self_body_same_name_with_caller_control",
+      "vector": "a_caller_outside_the_owners_body_keeps_reach_undecided",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_split_test_boundary_oracle",
       "language": "rust",
       "tier": "pure",

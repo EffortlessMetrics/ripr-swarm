@@ -134,6 +134,15 @@ pub(in crate::analysis) fn reach_evidence(
 /// when no workspace source names the owner outside its own `fn` line,
 /// nothing can reach it; when anything does, reach stays undecided.
 ///
+/// A name inside the owner's own body is not such a source (#10160). Running
+/// the owner's body needs the owner to have been entered already, and the
+/// entry spells the owner's name outside that body, so `fn get(&self) -> u32
+/// { self.inner.get() }` (a call of `Cell::get`, or even real recursion) is no
+/// path to `get`. Only parser-backed owners qualify (`item.has_body`: the body
+/// is the verbatim `fn`-to-end source slice), and every other naming (a
+/// caller, a same-named method elsewhere, a doc, a macro) still keeps reach
+/// undecided; a same-named call in a sibling is not told apart from the owner's.
+///
 /// The trait-impl allowance covers a trait the workspace does not declare
 /// (`Display`, `Add`, `Deref`): the language dispatches those without
 /// spelling the method. A method of a workspace-declared trait is called
@@ -145,10 +154,33 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
     index: &RustIndex,
 ) -> bool {
     (is_trait_impl_method(owner) && !implements_workspace_trait(owner, index))
-        || index.files().values().any(|file| {
-            names_identifier_outside_fn_definition(&file.source, &owner.name)
-                || includes_external_docs(&file.source)
-        })
+        || named_outside_own_body(
+            owner,
+            index
+                .files()
+                .values()
+                .map(|file| count_identifier_outside_fn_definition(&file.source, &owner.name))
+                .sum(),
+        )
+        || index
+            .files()
+            .values()
+            .any(|file| includes_external_docs(&file.source))
+}
+
+/// Whether the workspace names `owner` anywhere but inside its own body, given
+/// `total` namings across every source. A body count above the total cannot
+/// come from an indexed verbatim body, so it reads as named (fail closed).
+fn named_outside_own_body(owner: &FunctionSummary, total: usize) -> bool {
+    if owner.name.is_empty() {
+        return false;
+    }
+    let own = if owner.item.has_body {
+        count_identifier_outside_fn_definition(&owner.body, &owner.name)
+    } else {
+        0
+    };
+    total.checked_sub(own).is_none_or(|outside| outside > 0)
 }
 
 /// [`owner_may_be_reached_unseen`] answered from one scan of the workspace,
@@ -172,8 +204,8 @@ pub(in crate::analysis) struct UnseenReachNames {
     member_traits: OnceLock<HashSet<String>>,
     /// The workspace member directories those sources live under.
     member_dirs: Vec<PathBuf>,
-    /// Every identifier some source names other than directly after `fn`.
-    named: HashSet<String>,
+    /// How often sources name each identifier other than directly after `fn`.
+    named: HashMap<String, usize>,
     /// Some file pulls external docs in as doctests.
     external_docs: bool,
 }
@@ -193,29 +225,36 @@ impl UnseenReachNames {
         let external_docs = includes_external_docs_many(&sources)
             .into_iter()
             .any(|includes| includes);
-        fn collect_names<'a>(mut names: HashSet<&'a str>, source: &'a str) -> HashSet<&'a str> {
-            names.extend(identifiers_outside_fn_definition(source));
+        fn collect_names<'a>(
+            mut names: HashMap<&'a str, usize>,
+            source: &'a str,
+        ) -> HashMap<&'a str, usize> {
+            for name in identifiers_outside_fn_definition(source) {
+                *names.entry(name).or_insert(0) += 1;
+            }
             names
         }
         fn merge_names<'a>(
-            mut left: HashSet<&'a str>,
-            mut right: HashSet<&'a str>,
-        ) -> HashSet<&'a str> {
+            mut left: HashMap<&'a str, usize>,
+            mut right: HashMap<&'a str, usize>,
+        ) -> HashMap<&'a str, usize> {
             if left.len() < right.len() {
                 std::mem::swap(&mut left, &mut right);
             }
-            left.extend(right);
+            for (name, count) in right {
+                *left.entry(name).or_insert(0) += count;
+            }
             left
         }
-        let named: HashSet<&str> = if super::owner_pin::nested_parallelism_allowed() {
+        let named: HashMap<&str, usize> = if super::owner_pin::nested_parallelism_allowed() {
             sources
                 .par_iter()
-                .fold(HashSet::new, |names, source| collect_names(names, source))
-                .reduce(HashSet::new, merge_names)
+                .fold(HashMap::new, |names, source| collect_names(names, source))
+                .reduce(HashMap::new, merge_names)
         } else {
             sources
                 .iter()
-                .fold(HashSet::new(), |names, source| collect_names(names, source))
+                .fold(HashMap::new(), |names, source| collect_names(names, source))
         };
         let workspace_traits = workspace_trait_names(index);
         let workspace_crates = index.workspace_member_crates().clone();
@@ -248,7 +287,10 @@ impl UnseenReachNames {
             workspace_crates,
             member_traits: OnceLock::new(),
             member_dirs: index.workspace_member_dirs.clone(),
-            named: named.into_iter().map(str::to_string).collect(),
+            named: named
+                .into_iter()
+                .map(|(name, count)| (name.to_string(), count))
+                .collect(),
             external_docs,
         }
     }
@@ -278,7 +320,7 @@ impl UnseenReachNames {
                 },
             ))
             || self.external_docs
-            || (!owner.name.is_empty() && self.named.contains(&owner.name))
+            || named_outside_own_body(owner, self.named.get(&owner.name).copied().unwrap_or(0))
     }
 }
 
@@ -576,6 +618,17 @@ pub(in crate::analysis) fn names_identifier_outside_fn_definition(
     name: &str,
 ) -> bool {
     !name.is_empty() && identifiers_outside_fn_definition(source).any(|ident| ident == name)
+}
+
+/// How many times `source` names `name` as a whole identifier outside a `fn`
+/// definition (see [`names_identifier_outside_fn_definition`]).
+fn count_identifier_outside_fn_definition(source: &str, name: &str) -> usize {
+    if name.is_empty() {
+        return 0;
+    }
+    identifiers_outside_fn_definition(source)
+        .filter(|ident| *ident == name)
+        .count()
 }
 
 /// Each whole identifier in `source` (a Unicode alphanumeric or `_` run, so
@@ -1377,6 +1430,68 @@ mod tests {
             "// trait Step\nconst S: &str = \"trait Step\";\n",
             vec![owner.clone()]
         ));
+    }
+
+    /// #10160: a name inside the owner's own body is no unseen caller (the body
+    /// cannot run before the owner is entered, and the entry spells the name
+    /// elsewhere); every naming outside that body still keeps reach undecided.
+    #[test]
+    fn a_name_inside_the_owners_own_body_is_not_an_unseen_caller() {
+        let own = "pub fn get(&self) -> u32 { self.inner.get() }";
+        let verdicts = |source: &str, parser_backed: bool| {
+            // The owner's body is the `fn get` item, up to its closing brace.
+            let start = source.find("fn get").unwrap_or(0);
+            let end = start + source[start..].find('}').map_or(0, |close| close + 1);
+            let mut owner = function("get");
+            owner.body = source[start..end].into();
+            owner.item.has_body = parser_backed;
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(
+                    PathBuf::from("src/lib.rs"),
+                    FileFacts {
+                        path: PathBuf::from("src/lib.rs"),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions: vec![owner.clone()],
+                ..Default::default()
+            });
+            let single = owner_may_be_reached_unseen(&owner, &index);
+            let batch = UnseenReachNames::build(&index).may_reach_unseen(&owner);
+            assert_eq!(single, batch, "{source}");
+            single
+        };
+        // Discriminating negative: the field call `Cell::get` and a plain
+        // recursion are the only namings, both inside the owner's body.
+        assert!(!verdicts(&format!("impl W {{ {own} }}\n"), true));
+        assert!(!verdicts(
+            "impl W { pub fn get(&self) -> u32 { self.get() } }\n",
+            true
+        ));
+        // Positive controls, each differing from the negative in one respect.
+        // A caller elsewhere names it.
+        assert!(verdicts(
+            &format!("impl W {{ {own} fn peek(&self) -> u32 {{ self.get() }} }}\n"),
+            true
+        ));
+        assert!(verdicts(
+            &format!("impl W {{ {own} }}\nfn t(w: W) {{ W::get(&w); }}\n"),
+            true
+        ));
+        // A same-named call on another receiver elsewhere is not told apart
+        // from a call of the owner (fail closed).
+        assert!(verdicts(
+            &format!("impl W {{ {own} }}\nfn other(c: Cell<u32>) {{ c.get(); }}\n"),
+            true
+        ));
+        // External docs may call it.
+        assert!(verdicts(
+            &format!("#![doc = include_str!(\"../README.md\")]\nimpl W {{ {own} }}\n"),
+            true
+        ));
+        // Without parser facts the body is not trusted, so the allowance stays.
+        assert!(verdicts(&format!("impl W {{ {own} }}\n"), false));
     }
 
     #[test]
