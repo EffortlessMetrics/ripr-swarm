@@ -4671,3 +4671,32 @@ fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// TypeScript rows (#10338): the small one is a complete sample; the larger
+/// one is pinned knowing it is partial today, so its note must say so rather
+/// than let the row read as a gated population.
+#[test]
+fn corpus_pins_typescript_commits() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let typescript: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "typescript")
+        .collect();
+    let ids: Vec<_> = typescript.iter().map(|entry| entry.id.as_str()).collect();
+    if ids != ["defu-typescript", "zod-typescript"] {
+        return Err(format!(
+            "expected defu and zod TypeScript rows, got {ids:?}"
+        ));
+    }
+    if typescript[0].heavy || !typescript[1].heavy {
+        return Err("defu must be the light row and zod the heavy one".to_string());
+    }
+    if !typescript[1].note.contains("partial today") {
+        return Err("zod-typescript must say it is a partial, incomplete sample".to_string());
+    }
+    Ok(())
+}

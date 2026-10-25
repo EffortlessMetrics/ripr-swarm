@@ -119,6 +119,27 @@ language = "python"
 note = "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test"
 heavy = true
 
+# TypeScript diffs. `defu` is complete under `--mode draft`. The larger
+# TypeScript repositories tried (zod, ky, h3, execa) all report
+# `partial_with_limitations` today (`typescript_test_extraction_partial`,
+# unfollowed workspace links), so `zod-typescript` is recorded as an
+# incomplete sample: it keeps its raw time and memory but is not in the
+# comparable population or gated until those limitations close.
+[[corpus]]
+id = "defu-typescript"
+url = "https://github.com/unjs/defu"
+sha = "11ba02213d4b1c6b02dd686041f75edc479c98e9"
+language = "typescript"
+note = "small TypeScript library; commit edits src/defu.ts and its test"
+
+[[corpus]]
+id = "zod-typescript"
+url = "https://github.com/colinhacks/zod"
+sha = "311cd74b2765ff7c7b58add60e37c5a0ea7a1972"
+language = "typescript"
+note = "larger TypeScript monorepo (~500 .ts files); commit edits packages/zod/src/v4/core/compile.ts and tests; partial today, so an incomplete sample"
+heavy = true
+
 # ---------------------------------------------------------------- speed ----
 
 [[metric]]
