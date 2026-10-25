@@ -1984,11 +1984,36 @@ fn untyped_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), Strin
 }
 
 #[test]
+fn annotated_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), String> {
+    // An annotation does not reject a custom __mul__/__rmul__ argument at
+    // runtime. Defaults and one typed operand do not establish numerics either.
+    for signature in [
+        "a: int, b: int",
+        "a: float, b: float",
+        "a: int, b",
+        "a=3, b=7",
+    ] {
+        let owner = format!("def area({signature}):\n    return b * a\n");
+        assert_eq!(
+            classify(&owner, 2, "    return a * b", AREA_TABLE)?,
+            ExposureClass::WeaklyExposed,
+            "{signature}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
-    // `a * b` -> `b * a` changes no value, so rows that agree on both sides
-    // say nothing about an operand the table fails to vary.
+    // Actual numeric literals establish the equivalence; parameter names do
+    // not. The table still has a strong exact-value oracle for this product.
     assert_eq!(
-        classify(AREA, 2, "    return a * b", AREA_TABLE)?,
+        classify(
+            "def area(a, b):\n    return 7 * 3\n",
+            2,
+            "    return 3 * 7",
+            AREA_TABLE
+        )?,
         ExposureClass::Exposed
     );
     // A sum reorders strings, so it keeps the unvaried-operand reading.

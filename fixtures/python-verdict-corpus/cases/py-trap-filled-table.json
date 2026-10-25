@@ -6,41 +6,33 @@
     "file": "trapkit/core.py",
     "line": 125
   },
-  "edit_kind": "behavior_preserving_rewrite",
+  "edit_kind": "behavior_change",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "parametrize_filled_table_control",
   "hard_case": null,
   "truth": {
-    "state": "discriminated",
+    "state": "not_discriminated",
     "method": "runtime_mutant_kill",
-    "test_command": "python -m pytest -q -p no:cacheprovider",
-    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "test_command": "python3 fixtures/python_factor_reorder/runtime_control.py -v",
+    "toolchain": "Python 3.12.14, unittest/AST replay, Linux x86_64",
     "mutants": [
       {
-        "replacement": "return b + a",
-        "mutated_line": "return b + a",
-        "outcome": "tests_failed",
-        "failing_test": "test_filled_table",
-        "equivalence_review": "not equivalent: 7 + 3 is 10, not 21"
-      },
-      {
-        "replacement": "return b / a",
-        "mutated_line": "return b / a",
-        "outcome": "tests_failed",
-        "failing_test": "test_filled_table",
-        "equivalence_review": "not equivalent: 7 / 3 is not 21"
+        "replacement": "return b * a",
+        "mutated_line": "return b * a",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "Not globally equivalent: noncommutative __mul__/__rmul__ objects distinguish the swap, including when parameters are annotated int/float. The unchanged numeric table passes both orders."
       }
     ]
   },
   "expected": {
-    "ideal_verdict": "credited",
+    "ideal_verdict": "gap",
     "acceptable_verdicts": [
-      "credited",
-      "limited",
-      "silent"
+      "gap",
+      "limited"
     ]
   },
-  "reasoning": "Control for empty_table: one row pins 3 * 7.",
+  "reasoning": "The actual factor swap is not discriminated by the unchanged numeric rows. Native stdlib replay executes the original test assertion and literal rows on baseline and swapped functions; all pass, while addition is rejected. Historical + and / kills tested other operator edits, not the factor swap (#9815); original source and labeling_observation are preserved.",
   "labeling_observation": {
     "ripr_commit": "3608bb9a",
     "full_checkout_verdict": "gap",

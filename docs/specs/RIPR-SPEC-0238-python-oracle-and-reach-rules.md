@@ -1358,6 +1358,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
   that only ends in `classmethod`, a same-named method of another class
   and a class name the test rebinds (#7634).
 
+## Numeric factor reorders
+
+A factor swap involving named operands retains the ordinary table-row reading
+(#9815). Python `int`/`float` annotations and numeric defaults do not enforce
+runtime operand types: custom `__mul__`/`__rmul__` methods can make the swap a
+behavior change. Numeric test rows alone cannot establish global commutativity.
+Literal-only products have no named table operand and keep their ordinary
+exact-oracle reading. This rule does not infer local or module runtime types.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,

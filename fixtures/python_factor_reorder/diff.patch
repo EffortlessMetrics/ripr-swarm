@@ -1,0 +1,7 @@
+diff --git a/src/shop.py b/src/shop.py
+--- a/src/shop.py
++++ b/src/shop.py
+@@ -1,2 +1,2 @@
+ def area(a, b):
+-    return a * b
++    return b * a

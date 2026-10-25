@@ -5,6 +5,20 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "python_factor_reorder_unknown_operands",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_factor_reorder",
+      "vector": "numeric_table_rows_cannot_establish_runtime_commutativity_of_named_operands",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "rust_operand_callee_later_binding",
       "language": "rust",
       "tier": "pure",
