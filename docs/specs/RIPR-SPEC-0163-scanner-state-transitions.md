@@ -102,10 +102,10 @@ even when every related test row pins the exact state.
    (`"ab"` -> `"word"`, `"ab "` -> `"text"`), the boundary equality is
    observed, and the finding exposes with the hop in the provenance.
 2. Accept: `Scan::Text`/`Scan::Word` qualified-path states evaluate
-   identically to string states
-   Limitation (#10108): the scanner resolves the qualified state, but a
-   compared enum variant path is not yet an exact operand, so the
-   boundary finding abstains.
+   identically to string states, including against the compared enum
+   variant (`final_state == Scan::Word`): the operand reads as the
+   scanner's `"Scan::Word"` token, so the boundary equality is observed and
+   the finding exposes.
 3. Reject: a computed argument (`scan_state(input.trim())`) keeps the
    operand unknown and the finding at its fail-closed class.
 4. Reject: a computed next state (`=> next_for(input)`) keeps the operand
@@ -135,9 +135,10 @@ local-with-call-initializer operand jump); fixtures
   unresolved, matching the #3295 `Unsupported` precedent; the shared
   RIPR-SPEC-0001 unresolved boundary input wording names it.
 - No enum-type semantics: qualified-path states compare as normalized
-  text tokens, and the right-hand operand still binds only through the
-  existing literal machinery (a bare path operand on the right remains
-  unresolved — a named limitation of this slice).
+  text tokens. The right-hand operand binds through the existing literal
+  machinery, or, when the left side evaluated to a quoted path token, as
+  that path spelled (`Scan::Word`, #10108). A SCREAMING_CASE tail stays a
+  constant, and a path beside any other left value stays unresolved.
 - No change to the helper-chain relation stage (RIPR-SPEC-0159 owns
   reach and rows; this spec only consumes them).
 

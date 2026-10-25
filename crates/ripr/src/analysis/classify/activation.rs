@@ -432,7 +432,8 @@ fn observed_discriminator_values(
             .and_then(|resolved| {
                 exact_operand_for_row(resolved, &row, &inputs, index, workspace_complete)
             })
-            .or_else(|| visible_operand(&right, right_constant.as_ref()));
+            .or_else(|| visible_operand(&right, right_constant.as_ref()))
+            .or_else(|| scanner_state_path_operand(&right, left_exact.as_slice()));
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
             && exact_values_equal(&left_value.value, &right_value.value)
         {
@@ -1776,6 +1777,7 @@ fn missing_boundary_discriminator(
                     exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
                 })
                 .or_else(|| visible_operand(&right, right_constant.as_ref()))
+                .or_else(|| scanner_state_path_operand(&right, &lefts))
                 .into_iter()
                 .collect::<Vec<_>>();
             (lefts, rights)
@@ -4909,6 +4911,51 @@ fn visible_operand(operand: &str, constant: Option<&BoundaryConstant>) -> Option
         provenance: format!("constant {operand} = {value} (same-file const)"),
         value,
     })
+}
+
+/// RIPR-SPEC-0163 example 2 (#10108): a path-qualified scanner state such as
+/// `Scan::Word` is compared as a normalized text token, so the right operand
+/// `Scan::Word` of `final_state == Scan::Word` reads as that token when the
+/// left side evaluated to one. The token form is the left value's own
+/// (`"Scan::Word"`), never a guess from the operand's spelling alone: a left
+/// that is not a quoted path token (an integer, a plain string state, an
+/// unresolved side) leaves the operand unresolved as before, and a
+/// SCREAMING_CASE tail stays a constant, not a state.
+fn scanner_state_path_operand(operand: &str, lefts: &[ExactOperand]) -> Option<ExactOperand> {
+    let identifier = |segment: &str| {
+        let mut chars = segment.chars();
+        chars
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    let is_path = |text: &str| {
+        let segments: Vec<&str> = text.split("::").collect();
+        segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
+    };
+    let token = operand.trim();
+    // A `crate::`, `self::` or `super::` prefix is a spelling the scanner
+    // never returns, so it could only miss; leave such an operand unresolved.
+    if !is_path(token)
+        || token.starts_with("crate::")
+        || token.starts_with("self::")
+        || token.starts_with("super::")
+        || super::text::path_value_is_constant(token)
+    {
+        return None;
+    }
+    lefts
+        .iter()
+        .any(|left| {
+            left.value
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .is_some_and(is_path)
+        })
+        .then(|| ExactOperand {
+            provenance: format!("scanner state path {token}"),
+            value: format!("\"{token}\""),
+        })
 }
 
 /// Direct owner calls in related tests whose argument for the compared
@@ -8100,6 +8147,62 @@ assert_eq!(input.amount, 100);"#
                     .all(|found| found.as_deref() == Some(std::path::Path::new(file))),
             "{file}: {files:?}"
         );
+    }
+
+    fn scanner_left(value: &str) -> ExactOperand {
+        ExactOperand {
+            value: value.to_string(),
+            provenance: "scanner".to_string(),
+        }
+    }
+
+    // RIPR-SPEC-0163 example 2 (#10108): the variant operand reads as the
+    // quoted token the scanner returns, and only beside such a token.
+    #[test]
+    fn scanner_state_path_operand_reads_a_variant_beside_a_path_state() {
+        let lefts = [scanner_left("\"Scan::Word\"")];
+        let operand = scanner_state_path_operand(" Scan::Word ", &lefts);
+        assert_eq!(
+            operand.map(|operand| operand.value),
+            Some("\"Scan::Word\"".to_string())
+        );
+        // A prefixed spelling can never equal the scanner's token.
+        assert!(scanner_state_path_operand("crate::Scan::Word", &lefts).is_none());
+    }
+
+    #[test]
+    fn scanner_state_path_operand_stays_unresolved_without_a_path_state_left() {
+        // No left, an integer, a plain string state and an unquoted path
+        // are not scanner path states: the operand keeps its old reading.
+        for left in ["", "7", "\"word\"", "Scan::Word", "\"error: a::b\""] {
+            let lefts = if left.is_empty() {
+                Vec::new()
+            } else {
+                vec![scanner_left(left)]
+            };
+            assert!(
+                scanner_state_path_operand("Scan::Word", &lefts).is_none(),
+                "left {left:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanner_state_path_operand_refuses_constants_and_non_paths() {
+        let lefts = [scanner_left("\"Scan::Word\"")];
+        for operand in [
+            "Word",
+            "u64::MAX",
+            "limits::MAX",
+            "Scan::Word()",
+            "a + Scan::Word",
+            "Scan::",
+        ] {
+            assert!(
+                scanner_state_path_operand(operand, &lefts).is_none(),
+                "operand {operand:?}"
+            );
+        }
     }
 
     fn test_with_call(name: &str, call: &str) -> TestSummary {

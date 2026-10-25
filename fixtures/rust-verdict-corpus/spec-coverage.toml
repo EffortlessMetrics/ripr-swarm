@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 227
+floor = 228
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
@@ -799,10 +799,6 @@ reason = "a partially indexed workspace; an authored crate is stored whole, so n
 [[spec]]
 id = "RIPR-SPEC-0163"
 scope = "in"
-
-[[spec.waived]]
-example = 2
-reason = "a compiling path-qualified scanner compares against an enum variant path, and an enum variant is not an exact operand (path_value_is_constant refuses it), so the finding abstains instead of exposing; spec-b-0163-path-qualified-states records the abstention (#10108) and the unit tests pin the qualified-state evaluation"
 
 # Bounded literal match-arm transfer
 [[spec]]
