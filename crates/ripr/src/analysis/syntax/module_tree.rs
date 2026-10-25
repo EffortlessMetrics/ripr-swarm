@@ -92,7 +92,7 @@ const BODY_MACROS_WITHOUT_MODULES: [&str; 35] = [
 ];
 
 /// One out-of-line module-tree edge declared by a Rust file.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum RustModuleTreeEdge {
     /// `mod name;` with default resolution. `inline` names the enclosing
     /// inline modules, outermost first (`mod a { mod b; }` → `["a"]`).
@@ -120,7 +120,7 @@ pub(crate) enum RustModuleTreeEdge {
 }
 
 /// The module-tree edges of one file and whether the scan saw every edge.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RustModuleTreeScan {
     pub(crate) edges: Vec<RustModuleTreeEdge>,
     pub(crate) complete: bool,

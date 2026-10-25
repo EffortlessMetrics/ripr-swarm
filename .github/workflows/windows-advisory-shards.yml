@@ -20,7 +20,7 @@ jobs:
   windows-shard:
     name: windows-shard-${{ matrix.shard }}
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 80
     strategy:
       fail-fast: false
       matrix:
@@ -55,18 +55,56 @@ jobs:
       # cold runner it rebuilds about six minutes of dependencies inside a test
       # (and the 6-minute kill fires). Running the same spawns here warms them.
       - name: Warm the cargo builds the policy tests spawn
-        timeout-minutes: 30
+        timeout-minutes: 20
         shell: bash
         run: cargo xtask check-covered-by
 
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded and replayed so a failed test still fails the
       # job, and the log is uploaded even when it does.
+      #
+      # Shard 3 of run 39854834481 outlived GNU `timeout` and the step cap and the
+      # job was cancelled with no log. The cause is not established. nextest now
+      # runs in the background with a watchdog scoped to its own process tree:
+      # after 44 minutes it records that subtree's command lines and force-kills
+      # it by native PID. This is intended to leave a log and a status to upload;
+      # only a forced stall on the runner proves it. The watchdog polls every 10
+      # seconds and exits when nextest does, so nothing outlives the step.
+      # The MSYS PID of the background job is not a native PID. Only a PID read from
+      # /proc/<pid>/winpid reaches taskkill; with no mapping the watchdog records
+      # that and kills the MSYS job only.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
-        timeout-minutes: 50
+        timeout-minutes: 55
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:${{ matrix.shard }}/4 > target/shard-${{ matrix.shard }}.log 2>&1; status=$?; printf '%s\n' "$status" > target/shard-${{ matrix.shard }}.status; cat target/shard-${{ matrix.shard }}.log; exit "$status"
+          mkdir -p target
+          shard=${{ matrix.shard }}
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
+          nextest_pid=$!
+          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
+          (
+            set +e
+            for _ in $(seq 1 264); do
+              sleep 10
+              kill -0 "$nextest_pid" 2> /dev/null || exit 0
+            done
+            if [ -z "$winpid" ]; then
+              echo "fired unmapped msys_pid=$nextest_pid; no native PID, no taskkill" > target/shard-$shard.watchdog
+              kill -9 "$nextest_pid" > /dev/null 2>&1
+            else
+              echo "fired winpid=$winpid" > target/shard-$shard.watchdog
+              powershell -NoProfile -Command "\$root = $winpid; \$all = Get-CimInstance Win32_Process; \$keep = @(\$root); do { \$new = \$all | Where-Object { \$keep -contains \$_.ParentProcessId -and \$keep -notcontains \$_.ProcessId }; \$keep += \$new.ProcessId } while (\$new); \$all | Where-Object { \$keep -contains \$_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
+              taskkill //F //T //PID "$winpid" > /dev/null 2>&1
+            fi
+          ) > /dev/null 2>&1 &
+          watchdog_pid=$!
+          set +e
+          wait "$nextest_pid"; status=$?
+          wait "$watchdog_pid"
+          if [ -f target/shard-$shard.watchdog ]; then status=124; fi
+          printf '%s\n' "$status" > target/shard-$shard.status
+          cat target/shard-$shard.log
+          exit "$status"
 
       # nextest colors its status rows; strip the escapes for the filter only, the
       # uploaded log stays raw.
@@ -84,6 +122,8 @@ jobs:
           path: |
             target/shard-${{ matrix.shard }}.log
             target/shard-${{ matrix.shard }}.status
+            target/shard-${{ matrix.shard }}.watchdog
+            target/shard-${{ matrix.shard }}.processes
           if-no-files-found: warn
           retention-days: 7
 

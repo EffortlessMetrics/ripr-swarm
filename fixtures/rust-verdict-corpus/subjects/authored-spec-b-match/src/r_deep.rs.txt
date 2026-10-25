@@ -1,0 +1,31 @@
+//! A chain of four helper evaluations, one beyond the bound.
+
+pub fn label_deep(kind: &str) -> &'static str {
+    match kind {
+        "a" => "alpha",
+        "b" => label_deep("a"),
+        "c" => label_deep("b"),
+        "d" => label_deep("c"),
+        _ => "other",
+    }
+}
+
+pub fn classify_deep(input: &str) -> &'static str {
+    let final_label = label_deep(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_longest_chain_reaches_alpha_r_deep() {
+        assert_eq!(classify_deep("d"), "word");
+        assert_eq!(classify_deep("z"), "blank");
+    }
+}
