@@ -245,3 +245,31 @@ fn a_default_import_passing_the_mock_is_unknown() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_local_canonical_name_beside_a_renamed_import_is_not_the_owner_call() -> Result<(), String> {
+    let head = HEAD.replace("{ withRetry }", "{ withRetry as retry }");
+    let wrap = |body: &str| format!("{head}\nit(\"x\", async () => {{\n{body}\n}});\n");
+    let shadowed = wrap(
+        "  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  const withRetry = (f: unknown, n: number) => n;\n  assert.equal(await retry(real, 3), \"ok\");\n  withRetry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);",
+    );
+    let finding = run("loop-alias-local-canonical", RETRY, OLD, NEW, &shadowed)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    // The same test with the lawful alias call counted still abstains.
+    let lawful = wrap(
+        "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  const withRetry = (f: unknown, n: number) => n;\n  await assert.rejects(retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);",
+    );
+    let finding = run("loop-alias-local-lawful", RETRY, OLD, NEW, &lawful)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

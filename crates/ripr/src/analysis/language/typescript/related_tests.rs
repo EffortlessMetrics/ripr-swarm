@@ -1678,7 +1678,7 @@ pub(crate) fn class_method_owner_call_relation(
 /// scope (a `describe` body or parameter, a loop header, a hook write, a
 /// test callback parameter) rebinds `name` for this test, so a call through
 /// `name` reaches that binding rather than an import or owner of the name.
-fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+pub(crate) fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
     test.scope_bindings
         .iter()
         .any(|binding| binding.name == name && !binding.file_level)

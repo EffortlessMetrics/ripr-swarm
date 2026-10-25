@@ -211,8 +211,23 @@ fn counts_mock_calls(
             )
         })
         .any(|candidate| {
-            let names =
-                super::classifier::ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+            // The shared union always lists the canonical name, but a test
+            // that reaches the owner through a renamed import can declare
+            // its own unrelated `owner` (or shadow it in an enclosing scope):
+            // keep that spelling only where it is the binding that gave the
+            // test its relation.
+            let canonical_is_the_binding = candidate.relation
+                != TypeScriptRelationKind::ImportAliasOwnerCall
+                && !super::related_tests::local_identifier_declared_in_test_body(
+                    &candidate.test.body_text,
+                    &owner.name,
+                )
+                && !super::related_tests::enclosing_scope_shadows(candidate.test, &owner.name);
+            let names: Vec<&str> =
+                super::classifier::ts_owner_call_names(candidate, owner, alias_map, workspace_root)
+                    .into_iter()
+                    .filter(|name| *name != owner.name || canonical_is_the_binding)
+                    .collect();
             let masked = ts_mask_literals_and_comments(&candidate.test.body_text);
             candidate
                 .test
