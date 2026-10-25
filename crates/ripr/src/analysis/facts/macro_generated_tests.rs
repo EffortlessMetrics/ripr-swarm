@@ -230,8 +230,8 @@ mod tests {
 
     /// Resolving each file's imported macro definitions re-parses it, so the
     /// registration loop must observe the run's token (#1604). A token whose
-    /// budget is already spent has to abort it and leave the index without
-    /// generated tests. One file and an already-spent budget do not pin where
+    /// budget is already spent has to abort it and leave the index unchanged
+    /// (the test count must not grow). One file and an already-spent budget do not pin where
     /// in the loop the checkpoint sits.
     #[test]
     fn registration_observes_an_expired_budget_per_file() -> Result<(), Box<dyn Error>> {
