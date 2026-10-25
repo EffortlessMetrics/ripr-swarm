@@ -56,10 +56,12 @@ impl Clone for MacroVisibility {
 /// Whether `source` could contain a call `name!` of one of `names`. A
 /// superset of what `first_macro_call` finds, so a `false` skips its parse
 /// without changing the answer: the name at identifier boundaries, followed
-/// by `!`, or by `/` for a comment before the `!`, past any whitespace.
+/// by `!`, or by `/` for a comment before the `!`, past any whitespace. Any
+/// non-ASCII byte next to the name counts as a maybe, since the lexer reads
+/// some Unicode characters (U+200E, U+0085, ...) as whitespace there.
 fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
     let bytes = source.as_bytes();
-    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric() || byte >= 0x80;
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
     names.iter().any(|name| {
         source.match_indices(name.as_str()).any(|(start, _)| {
             if start > 0 && is_ident(bytes[start - 1]) {
@@ -70,7 +72,7 @@ fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
                 return false;
             };
             // `next` begins an identifier when the name was only a prefix.
-            next == b'!' || next == b'/'
+            next == b'!' || next == b'/' || next >= 0x80
         })
     })
 }
