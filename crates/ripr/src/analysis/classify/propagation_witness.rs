@@ -199,6 +199,7 @@ pub(in crate::analysis) fn current_path_witness_with(
     let sink_identity = normalize_semantic_text(&sink.text);
     let edge_status = if is_question_mark_sink(sink)
         || returns_itself_on_its_line(probe, sink)
+        || accumulates_into_returned_local(probe, sink)
         || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
     {
         EdgeStatus::Established
@@ -837,6 +838,35 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         && source.strip_prefix("return ").is_some_and(|payload| {
             let payload = payload.trim();
             call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
+}
+
+/// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) the
+/// local that the flow producer named as the owner's returned tail on the
+/// statement's own line. Only `loop_accumulator_at` makes flow emit that
+/// sink for an update statement, so equal names bind the update to the
+/// return. Whether a test observes the sum is reveal's question.
+fn accumulates_into_returned_local(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    if probe.family != ProbeFamily::ReturnValue
+        || sink.kind != FlowSinkKind::ReturnValue
+        || sink.line != probe.location.line
+    {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let local = normalize_semantic_text(&sink.text);
+    ["+=", "-="].iter().any(|op| {
+        source
+            .strip_prefix(local.as_str())
+            .is_some_and(|rest| rest.trim_start().starts_with(op))
+    }) || source
+        .strip_prefix(local.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix('='))
+        .is_some_and(|rest| {
+            rest.trim_start()
+                .strip_prefix(local.as_str())
+                .is_some_and(|rest| rest.trim_start().starts_with(['+', '-']))
         })
 }
 

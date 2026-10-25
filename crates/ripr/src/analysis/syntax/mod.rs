@@ -3,6 +3,7 @@ pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
 mod local_test_macros;
+pub(crate) mod loop_accumulator;
 mod macro_scope;
 mod module_tree;
 mod mut_parameter;
