@@ -690,7 +690,14 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "language_facts",
     )?;
-    let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
+    // Owner attribution builds a Rust index over every changed file. Run it
+    // under the same token as the other analysis phases so a large diff
+    // cannot spend the budget here with no interior checkpoint to stop it
+    // (#1604); an expiry inside it surfaces at the deadline check below.
+    let (changed_owners, enclosing_owners) =
+        analysis::cancellation::with_token(&cancellation, || {
+            attribute_owners(&input.root, &changed_lines)
+        });
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -2034,6 +2041,65 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    /// Owner attribution builds a Rust index over every changed file, so it
+    /// must run under the run's cancellation token like the other analysis
+    /// phases (#1604). Without the token its interior checkpoints are inert
+    /// and a large diff can spend the whole budget here before any phase
+    /// boundary notices.
+    #[test]
+    fn review_comments_owner_attribution_runs_under_the_run_token() -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fixture_path = unique_command_test_dir("review-owner-attribution-token");
+        std::fs::create_dir(&fixture_path)
+            .map_err(|error| format!("claim attribution fixture root: {error}"))?;
+        let fixture = OwnedDeadlineFixture(fixture_path);
+        let root = &fixture.0;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create attribution fixture: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_owner_attribution\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write attribution fixture manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write attribution fixture source: {error}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let saw_token = AtomicBool::new(false);
+        let start = Instant::now();
+        let _ = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+            move || start,
+            GuidancePayloadCeiling::from_env,
+            |_root, _lines| {
+                saw_token.store(
+                    analysis::cancellation::current_token().is_some(),
+                    Ordering::SeqCst,
+                );
+                (Vec::new(), Vec::new())
+            },
+        );
+        if !saw_token.load(Ordering::SeqCst) {
+            return Err(
+                "owner attribution ran without the run's cancellation token installed".to_string(),
+            );
+        }
         Ok(())
     }
 
