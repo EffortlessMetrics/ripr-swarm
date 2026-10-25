@@ -144,6 +144,7 @@ fn setup(statement: &ast::Stmt, sink: &str, known: &mut Inputs) -> Option<()> {
             return None;
         }
     }
+    known.slices.remove(&name);
     known.integers.insert(name);
     Some(())
 }

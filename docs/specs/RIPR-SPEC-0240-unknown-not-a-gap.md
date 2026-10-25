@@ -433,7 +433,8 @@ non-ignored related test matches one of these shapes:
   This supplies assertion-local observation, without changing reach or strength.
 
   Owner execution is bounded to primitive integer inputs, literal setup or an
-  explicitly typed primitive slice `iter().sum()`, and direct sends. A later
+  explicitly typed primitive slice `iter().sum()`, and direct sends. A scalar
+  binding that shadows a slice removes that slice provenance. A later
   primitive comparison may guard further append-only sends. Format arguments
   are parsed out of their token tree: only primitive names or numeric literals
   and plain named/positional placeholders are admitted. Hidden calls, operators
@@ -466,7 +467,8 @@ method name, not the receiver, and only related tests (the first eight per
 finding) are judged; either can withhold a gap, which only costs an advisory.
 
 It runs after the should-panic rule and before `withhold_unsupported_gap`,
-and writes the finding the same way. Nothing is credited. Corpus effect:
+and writes the finding the same way. This withholding route credits nothing.
+Historical corpus effect before bounded recording credit (#9766):
 `lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
 `lib-expect-test-assert-debug-eq-variant-payload` and
 `lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
@@ -707,7 +709,9 @@ Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
 `missing_argument_transfer_is_never_credited`,
 `recording_credit_preserves_observer_and_receiver_refusals`,
 `user_read_methods_do_not_supply_recording_credit`, and
-`hidden_execution_and_module_value_twins_cannot_supply_credit`.
+`hidden_execution_and_module_value_twins_cannot_supply_credit`,
+`a_scalar_shadow_drops_slice_provenance`, and
+`the_changed_call_cannot_hide_execution_in_format_arguments`.
 The existing framework suite retains the concrete/collection/count/order controls.
 
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:

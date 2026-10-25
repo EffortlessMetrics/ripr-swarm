@@ -53,7 +53,28 @@ mod tests {{
 }
 const SETUP: &str = "let mut recorder = Recorder { lines: vec![], other: vec![] };\n        report(&mut recorder, 3);";
 fn assert_reading(label: &str, source: &str, exposed: bool) -> Result<(), String> {
+    assert_reading_with_probe(label, source, exposed, None)
+}
+fn assert_reading_with_probe(
+    label: &str,
+    source: &str,
+    exposed: bool,
+    after: Option<&str>,
+) -> Result<(), String> {
     let subject = Subject::new(source)?;
+    if let Some(after) = after {
+        let path = subject.0.join("edit.diff");
+        let diff = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let changed = diff.replace(
+            "+    sink.send(format!(\"n={n}\"));",
+            &format!("+    {after}"),
+        );
+        assert_ne!(
+            diff, changed,
+            "the alternate changed call must reach the diff producer"
+        );
+        std::fs::write(path, changed).map_err(|e| e.to_string())?;
+    }
     let output = check_workspace(CheckInput {
         root: subject.0.clone(),
         diff_file: Some(subject.0.join("edit.diff")),
@@ -243,4 +264,28 @@ fn primitive_slice_setup_and_later_append_keep_the_exact_pin() -> Result<(), Str
             "\n    if n > 100 { sink.send(\"over budget\".to_string()); }\n}\n#[cfg(test)]",
         );
     assert_reading("typed slice sum and later append", &candidate, true)
+}
+
+#[test]
+fn a_scalar_shadow_drops_slice_provenance() -> Result<(), String> {
+    let body = "let mut recorder = Recorder { lines: vec![], other: vec![] };\n        report(&mut recorder, &[1, 2]);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);";
+    let candidate = source("self.lines.push(line);", "&mut dyn Sink", body).replace(
+        "n: u32) {",
+        "items: &[u32]) { let items: u32 = 3; let n: u32 = items.iter().sum();",
+    ) + "\nstruct Stop; trait Iter { fn iter(&self) -> Stop; } impl Iter for u32 { fn iter(&self) -> Stop { std::process::exit(0); } } impl Stop { fn sum(self) -> u32 { 3 } }\n";
+    assert_reading("shadowed slice invokes user iter", &candidate, false)
+}
+#[test]
+fn the_changed_call_cannot_hide_execution_in_format_arguments() -> Result<(), String> {
+    let candidate = source(
+        "self.lines.push(line);",
+        "&mut dyn Sink",
+        &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+    );
+    assert_reading_with_probe(
+        "hostile changed call with clean indexed source",
+        &candidate,
+        false,
+        Some("sink.send(format!(\"n={}\", { std::process::exit(0); n }));"),
+    )
 }

@@ -17623,6 +17623,8 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/recording_double_credit.rs::a_scalar_shadow_drops_slice_provenance",
+  "crates/ripr/tests/recording_double_credit.rs::the_changed_call_cannot_hide_execution_in_format_arguments",
   "crates/ripr/tests/recording_double_credit.rs::a_double_declared_in_the_test_module_is_credited",
   "crates/ripr/tests/recording_double_credit.rs::exact_recorded_argument_is_credited",
   "crates/ripr/tests/recording_double_credit.rs::hidden_execution_and_module_value_twins_cannot_supply_credit",
