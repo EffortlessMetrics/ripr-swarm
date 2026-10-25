@@ -190,6 +190,9 @@ pub(crate) fn collect_callback_assertions(
         returns_to_runner,
         literal_consts: &literal_consts,
         match_object_consts: &match_object_consts,
+        receiver_named_once: receiver.is_some_and(|name| {
+            identifier_occurrences(statements_text(statements, source), name) == 1
+        }),
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -326,6 +329,7 @@ pub(crate) fn statements_collect_assertion_probe(
         returns_to_runner: false,
         literal_consts: &[],
         match_object_consts: &[],
+        receiver_named_once: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -355,6 +359,10 @@ pub(crate) struct AssertionContext<'a> {
     /// The test body's top-level object `const`s a `toMatchObject` argument
     /// may read (RIPR-SPEC-0250 rule 1). Empty inside a nested statement.
     match_object_consts: &'a [MatchObjectConst],
+    /// Whether the receiver (`done`) is named exactly once in the whole test
+    /// body, so the one call that settles the test is the one a credited
+    /// callback holds (RIPR-SPEC-0246 rule 9).
+    receiver_named_once: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -370,6 +378,7 @@ impl<'a> AssertionContext<'a> {
             returns_to_runner: self.returns_to_runner,
             literal_consts: &[],
             match_object_consts: &[],
+            receiver_named_once: self.receiver_named_once,
             table_consts: &[],
         }
     }
@@ -739,6 +748,9 @@ fn collect_nested_callback_assertions(
     let Expression::CallExpression(call) = expr else {
         return;
     };
+    if !awaited && !returned {
+        collect_done_callback_assertions(call, source, context, out);
+    }
     let Some(member) = call.callee.as_member_expression() else {
         return;
     };
@@ -912,6 +924,7 @@ fn collect_nested_callback_assertions(
                 returns_to_runner: true,
                 literal_consts: &literal_consts,
                 match_object_consts: &match_object_consts,
+                receiver_named_once: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
@@ -949,6 +962,110 @@ fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
             _ => return false,
         };
     }
+}
+
+/// RIPR-SPEC-0246 rule 9: the assertions of a callback handed to a call in a
+/// test that takes a `done` callback, read as the test's own when the
+/// callback must settle the test.
+///
+/// The test callback's first parameter (`done`) is called with no arguments
+/// as a top-level statement of the callback, after only expression and
+/// declaration statements. A runner cannot pass the test unless that call
+/// runs, and the statements before it either finish or throw, so every
+/// assertion among them has to hold for the test to pass. A callback the
+/// callee never invokes times out instead of passing.
+///
+/// Refused (fail closed, nothing collected): an `async` or generator
+/// callback, a `done` that takes arguments or sits behind a branch, a
+/// `return`, `throw`, `if`, `try` or loop before it, a callback parameter or
+/// declaration that shadows `done`, and a test without a callback parameter.
+fn collect_done_callback_assertions(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    let Some(done) = context.receiver else {
+        return;
+    };
+    // `done` is named only inside one callback: not beside it in the test
+    // body (a second settle path), not in a sibling callback or branch.
+    if !context.receiver_named_once {
+        return;
+    }
+    for argument in &call.arguments {
+        if callback_is_async_or_generator(argument) {
+            continue;
+        }
+        let Some(statements) = function_body_statements_from_argument(argument) else {
+            continue;
+        };
+        if super::tests_extract::argument_parameter_names(argument)
+            .iter()
+            .any(|parameter| parameter == done)
+        {
+            continue;
+        }
+        let mut declared = Vec::new();
+        super::tests_extract::collect_block_declared_names(statements, &mut declared);
+        if declared.iter().any(|name| name == done) {
+            continue;
+        }
+        let mut settles_at = None;
+        for (index, statement) in statements.iter().enumerate() {
+            match statement {
+                Statement::ExpressionStatement(expression)
+                    if is_bare_call_of(&expression.expression, done) =>
+                {
+                    settles_at = Some(index);
+                    break;
+                }
+                Statement::ExpressionStatement(_) | Statement::VariableDeclaration(_) => {}
+                _ => break,
+            }
+        }
+        let Some(settles_at) = settles_at else {
+            continue;
+        };
+        for statement in statements.iter().take(settles_at) {
+            collect_expect_assertions_in_statement(statement, source, &context.nested(), out);
+        }
+    }
+}
+
+/// The source text spanning `statements`.
+fn statements_text<'s>(statements: &[Statement<'_>], source: &'s SourceText<'_>) -> &'s str {
+    let text: &str = source;
+    let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
+        return "";
+    };
+    text.get(first.span().start as usize..last.span().end as usize)
+        .unwrap_or("")
+}
+
+/// Whole-word occurrences of `name` in `text`, counting any in strings and
+/// comments too (over-counting only refuses credit).
+fn identifier_occurrences(text: &str, name: &str) -> usize {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            !text[..*at].chars().next_back().is_some_and(is_word)
+                && !text[at + name.len()..].chars().next().is_some_and(is_word)
+        })
+        .count()
+}
+
+/// `name()`: a call of the bare identifier with no arguments.
+fn is_bare_call_of(expression: &Expression<'_>, name: &str) -> bool {
+    let Expression::CallExpression(call) = expression.get_inner_expression() else {
+        return false;
+    };
+    call.arguments.is_empty()
+        && !call.optional
+        && matches!(
+            call.callee.get_inner_expression(),
+            Expression::Identifier(identifier) if identifier.name == name
+        )
 }
 
 /// `true` for an `async` or generator arrow or function callback.

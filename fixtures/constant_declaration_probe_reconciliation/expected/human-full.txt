@@ -37,6 +37,7 @@ Weakness
 
 Stop reasons:
   - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
+    Next: Make sure the changed line sits inside a function (not a macro body or item attribute); if it does, report the shape in an issue.
 
 Next step
   Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
