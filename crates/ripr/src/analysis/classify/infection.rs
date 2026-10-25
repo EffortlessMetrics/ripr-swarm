@@ -71,7 +71,9 @@ fn owner_literal_runs(
     // check covers helpers and macros), unless it calls another related test.
     // Such a bystander contributes no run, and its own table rows and
     // arguments are not inputs to the owner.
-    let reaches = |test: &TestSummary| !word_call_offsets(&test.body, &owner.name).is_empty();
+    // Any whole-word mention counts, not only a call: `let g = owner;` holds
+    // the owner as a value and a later `g(..)` is a call this scan cannot see.
+    let reaches = |test: &TestSummary| mentions_word(&test.body, &owner.name);
     let bystander = |test: &TestSummary| {
         !reaches(test)
             && !test.calls.iter().any(|call| {
@@ -99,7 +101,9 @@ fn owner_literal_runs(
                 && fact.file.as_ref().is_none_or(|file| *file == test.file)
         })
     };
-    let mut lines: BTreeMap<usize, BTreeMap<String, Option<String>>> = BTreeMap::new();
+    // Keyed by file too: two test files can put an owner call on the same line.
+    let mut lines: BTreeMap<(Option<std::path::PathBuf>, usize), BTreeMap<String, Option<String>>> =
+        BTreeMap::new();
     for fact in &activation.observed_values {
         if in_bystander(fact) {
             continue;
@@ -123,7 +127,7 @@ fn owner_literal_runs(
             return None;
         }
         // The same parameter twice on a line is two calls; neither is read.
-        let line = lines.entry(fact.line).or_default();
+        let line = lines.entry((fact.file.clone(), fact.line)).or_default();
         let read = if line.contains_key(name) {
             None
         } else {
@@ -136,10 +140,13 @@ fn owner_literal_runs(
     let empty = BTreeMap::new();
     let runs = readers
         .iter()
-        .flat_map(|test| test.body_calls())
-        .filter(|call| call.name == owner.name)
-        .map(|call| {
-            let line = lines.get(&call.line).unwrap_or(&empty);
+        .flat_map(|test| test.body_calls().map(move |call| (*test, call)))
+        .filter(|(_, call)| call.name == owner.name)
+        .map(|(test, call)| {
+            let line = lines
+                .get(&(Some(test.file.clone()), call.line))
+                .or_else(|| lines.get(&(None, call.line)))
+                .unwrap_or(&empty);
             parameters
                 .iter()
                 .map(|name| line.get(name).cloned().flatten())
@@ -204,7 +211,7 @@ fn only_bare_row_assertions(test: &TestSummary, owner: &str) -> bool {
     let is_call = |text: &str| {
         let text = text.trim();
         text.strip_prefix(owner)
-            .is_some_and(|rest| rest.starts_with('(') && rest.ends_with(')'))
+            .is_some_and(|rest| closes_at_end(rest))
             && owner_call_has_plain_literal_arguments(text, owner)
     };
     statements.iter().all(|statement| {
@@ -292,6 +299,39 @@ fn test_reaches_owner_only_directly(test: &TestSummary, owner: &str) -> bool {
                 false
             }
         })
+}
+
+/// `text` holds a whole-word `name` (an identifier boundary on both sides).
+fn mentions_word(text: &str, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(name).any(|(at, _)| {
+        (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(at + name.len())
+                .is_none_or(|byte| !is_ident_byte(*byte))
+    })
+}
+
+/// `rest` is one parenthesized group whose closing parenthesis is its last
+/// byte: `(true, false)` but not `(false, true) || (true)`.
+fn closes_at_end(rest: &str) -> bool {
+    if !rest.starts_with('(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return index + 1 == rest.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn is_ident_byte(byte: u8) -> bool {

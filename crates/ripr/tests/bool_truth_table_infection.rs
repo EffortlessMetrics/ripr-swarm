@@ -303,6 +303,7 @@ fn rows_that_do_not_run_or_cannot_fail_are_not_counted() -> Result<(), String> {
         "#[test]\nfn two() {\n    let r = can_ship(true, false);\n    assert!(r == r);\n}",
         "#[test]\nfn two() {\n    assert!(!can_ship(true, false) || true);\n    assert!(!can_ship(false, true) || true);\n}",
         "#[test]\nfn two() {\n    assert!(can_ship(true, false) || true);\n}",
+        "#[test]\nfn two() {\n    assert!(can_ship(false, true) || (true));\n    assert!(can_ship(true, false) || (true));\n}",
     ] {
         let lib = lib_with("    in_stock && paid\n", "");
         let predicates = predicate_findings(&lib, &split_rows(second))?;
@@ -315,5 +316,31 @@ fn rows_that_do_not_run_or_cannot_fail_are_not_counted() -> Result<(), String> {
             "{second}: {returned:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn rows_in_separate_test_files_on_the_same_line_are_both_read() -> Result<(), String> {
+    // Both files put their owner calls on the same lines, so a line-only key
+    // would merge their arguments and refuse the table.
+    let (diff, line) = diff_at(
+        "src/lib.rs",
+        &lib_with("    in_stock && paid\n", ""),
+        "    in_stock && paid",
+        "    paid && in_stock",
+    )?;
+    let lib = lib_with("    in_stock && paid\n", "");
+    let one = "use truth_table::can_ship;\n\n#[test]\nfn one() {\n    assert!(can_ship(true, true));\n    assert!(!can_ship(true, false));\n}\n";
+    let two = "use truth_table::can_ship;\n\n#[test]\nfn two() {\n    assert!(!can_ship(false, true));\n    assert!(!can_ship(false, false));\n}\n";
+    let repo = TempRepo::create(&lib, &[("tests/two.rs", two)], one, &diff)?;
+    let findings = repo
+        .check()?
+        .findings
+        .into_iter()
+        .filter(|finding| {
+            finding.probe.location.line == line && finding.probe.family.as_str() == "predicate"
+        })
+        .collect::<Vec<_>>();
+    assert!(infection_credited(&findings), "{findings:?}");
     Ok(())
 }
