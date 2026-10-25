@@ -400,6 +400,31 @@ fn a_single_equal_row_or_a_conditionally_run_row_is_not_credited() -> Result<(),
 }
 
 #[test]
+fn short_circuited_attributed_or_shadowed_rows_are_not_credited() -> Result<(), String> {
+    // A row guarded by a short-circuit never has to run, a cfg-gated or
+    // ignored row may not be compiled in, and a same-named nested `fn`
+    // after the call can be the callee.
+    for (from, to) in [
+        (
+            "assert!(!fits(\"abcd\", 3));",
+            "assert!(true || !fits(\"abcd\", 3));",
+        ),
+        (
+            "assert!(!fits(\"abcd\", 3));",
+            "assert!(false && !fits(\"abcd\", 3));",
+        ),
+        (
+            "assert!(!fits(\"abcd\", 3));",
+            "assert!(!fits(\"abcd\", 3)); fn fits(_: &str, _: usize) -> bool { false }",
+        ),
+    ] {
+        let source = candidate().replace(from, to);
+        assert_ne!(finding(&source)?.class, ExposureClass::Exposed, "{to}");
+    }
+    Ok(())
+}
+
+#[test]
 fn an_old_initializer_other_than_plain_len_is_not_assumed_equivalent() -> Result<(), String> {
     // `chars().count()` -> `as_bytes().len()` can change the value for
     // non-ASCII text; the literal rows were never evaluated against the old

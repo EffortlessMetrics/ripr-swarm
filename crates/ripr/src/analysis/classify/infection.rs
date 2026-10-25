@@ -456,15 +456,6 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
     )
 }
 
-/// [`infection_evidence_with_boundary_input`] given the changed owner, which
-/// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
-/// parameters and that its body is the whole chain. Without an owner, or when
-/// any function other than the related tests calls the owner by name
-/// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
-/// that reading declines. The truth-table reading (#6488) also declines when
-/// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
-/// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
-/// a shadowing `macro_rules!` compares nothing.
 /// The changed owner and the literal byte-length read of its boundary, which
 /// travel together: both come from the owner's own source.
 #[derive(Clone, Copy, Default)]
@@ -474,6 +465,15 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
 }
 
+/// [`infection_evidence_with_boundary_input`] given the changed owner, which
+/// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
+/// parameters and that its body is the whole chain. Without an owner, or when
+/// any function other than the related tests calls the owner by name
+/// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
+/// that reading declines. The truth-table reading (#6488) also declines when
+/// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
+/// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
+/// a shadowing `macro_rules!` compares nothing.
 pub(in crate::analysis) fn infection_evidence_for_owner(
     probe: &Probe,
     related_tests: &[&TestSummary],

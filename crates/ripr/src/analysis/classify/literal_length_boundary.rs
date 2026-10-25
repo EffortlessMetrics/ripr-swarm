@@ -407,6 +407,18 @@ fn straight_line_call(source: &str, test_start_line: usize, call: &Range<usize>)
         return false;
     }
     let body = masked.get(open + 1..close).unwrap_or_default();
+    // A row on the right of `||` or `&&` in its own statement is
+    // short-circuited and may never run (`assert!(true || !fits(..))`).
+    let statement_start = masked
+        .get(open + 1..call.start)
+        .and_then(|before| before.rfind(';').map(|at| open + 1 + at + 1))
+        .unwrap_or(open + 1);
+    if masked
+        .get(statement_start..call.start)
+        .is_none_or(|before| before.contains("||") || before.contains("&&"))
+    {
+        return false;
+    }
     if body.contains(['{', '}']) && {
         // Only the macro-invocation parentheses/brackets of straight-line
         // statements are expected; any inner brace is a block or branch.

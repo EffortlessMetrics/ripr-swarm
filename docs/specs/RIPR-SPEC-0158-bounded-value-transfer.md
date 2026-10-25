@@ -108,6 +108,8 @@ exercised boundary from a missing one.
   assertion message or foreign owner cannot supply it. A row is admitted only
   when its call is a direct statement of a test body that has no branch, loop,
   closure, `?` or early exit, so an assertion under `if false` supplies none.
+  A call to the right of `||` or `&&` in its own statement is short-circuited
+  and supplies none (`assert!(true || !f(..))`).
   The edit's old initializer must be the plain `text.len()`, the known no-op
   rewrite; any other old spelling is not assumed equivalent and gets no row.
   The owner AST
