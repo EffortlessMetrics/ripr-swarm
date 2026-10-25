@@ -1,0 +1,8 @@
+diff --git a/src/hop/util.ts b/src/hop/util.ts
+--- a/src/hop/util.ts
++++ b/src/hop/util.ts
+@@ -1,3 +1,3 @@
+ export function isHopNetworkError(e: { code?: string }): boolean {
+-  return e.code === "ECONNRESET";
++  return e.code === "ECONNREFUSED";
+ }

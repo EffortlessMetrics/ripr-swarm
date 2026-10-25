@@ -88,6 +88,7 @@ mod schema_producer_sweep;
 mod verification_contracts;
 mod version;
 mod windows_advisory;
+mod windows_advisory_run;
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
@@ -13407,7 +13408,12 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
+        (
+            "crates/ripr/src/output/related_test_role_tests.rs",
+            "\"#[cfg(test)]\"",
+            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
+        ),
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -13477,7 +13483,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 13] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -13506,6 +13512,10 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9982: a facade crate's integration test is a file under `tests/**`
+        // of the facade package; the layout authority stays `is_test_file`
+        // and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/facade_reach.rs",
     ];
 
     let files = tracked_files()?;
@@ -13984,6 +13994,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "value_context"
             | "oracle_alignment"
             | "related_test_miss"
+            | "related_test_role"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"
@@ -21655,6 +21666,12 @@ fn split_top_level_commas(content: &str) -> Vec<&str> {
             index = attribute_string_end(bytes, index);
             continue;
         }
+        if bytes[index] == b'\''
+            && let Some(end) = attribute_char_end(bytes, index)
+        {
+            index = end;
+            continue;
+        }
         match bytes[index] {
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth = depth.saturating_sub(1),
@@ -21699,6 +21716,31 @@ fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
     bytes.len()
 }
 
+/// End (exclusive) of a char literal starting at the opening tick, or `None`
+/// when the tick is not one (for example a lifetime), so callers keep scanning.
+fn attribute_char_end(bytes: &[u8], tick: usize) -> Option<usize> {
+    let first = *bytes.get(tick + 1)?;
+    if first == b'\\' {
+        // Escape (`'\''`, `'\n'`, `'\x41'`, `'\u{1F980}'`): the closing tick is
+        // the first one after the escaped character, within a short window.
+        let limit = (tick + 12).min(bytes.len());
+        return (tick + 3..limit)
+            .find(|&i| bytes[i] == b'\'')
+            .map(|i| i + 1);
+    }
+    if first == b'\'' || first == b'\n' {
+        return None;
+    }
+    let width = match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    };
+    let close = tick + 1 + width;
+    (bytes.get(close) == Some(&b'\'')).then_some(close + 1)
+}
+
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
     let mut depth = 0usize;
     let mut index = open;
@@ -21710,6 +21752,14 @@ fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usiz
             b'"' => {
                 index = attribute_string_end(bytes, index);
                 continue;
+            }
+            // A char literal such as `')'` or `'"'` is not attribute syntax;
+            // a lifetime tick has no closing quote and falls through.
+            b'\'' => {
+                if let Some(end) = attribute_char_end(bytes, index) {
+                    index = end;
+                    continue;
+                }
             }
             b'(' => depth += 1,
             b')' => {

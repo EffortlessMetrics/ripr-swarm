@@ -5,7 +5,7 @@ use super::{
     parse_clean_source_file,
 };
 use crate::analysis::classify::{
-    includes_external_docs, invokes_opaque_macro, names_identifier_outside_fn_definition,
+    includes_external_docs_with, invokes_opaque_macro, names_identifier_outside_fn_definition,
 };
 use ra_ap_syntax::{
     AstNode, SyntaxKind,
@@ -16,7 +16,8 @@ use ra_ap_syntax::{
 /// function pointers, recursion and opaque macro tokens are additional uses.
 pub(crate) fn owner_reference_count(source: &str, owner: &str) -> Option<usize> {
     let parse = parse_clean_source_file(source)?;
-    if includes_external_docs(source)
+    // `parse_clean_source_file` above already established a clean parse.
+    if includes_external_docs_with(source, true)
         || invokes_opaque_macro(source)
         || macro_binding_candidates(&parse.tree()).may_bind_any_trusted()
         || parse.tree().syntax().descendants().any(|node| {

@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0098-ex2-return-value-control",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0098-ex2-return-value-control.diff",
+  "anchor": {
+    "file": "src/auditedFlat.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_expect_tobe_return_value_at_threshold",
+  "hard_case": "control: the changed value is the return the assertion observes",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return amount - 12;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/auditedFlat.test.ts > charge takes the flat amount at the threshold",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`chargeFlat(100, 100)` returns `90` and the test pins it; the edit returns `88` and fails. RIPR-SPEC-0098 example 2 (control 1): a return-value owner observation stays `exposed`, so the guard must not over-correct.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0098#2"
+  ]
+}
