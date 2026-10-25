@@ -1,0 +1,5 @@
+// A private macro of the same name in another module of this test crate.
+// It is never invoked, but it is a second definition of the name.
+macro_rules! shadowed_table {
+    () => {};
+}
