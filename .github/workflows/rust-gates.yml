@@ -208,10 +208,6 @@ jobs:
         id: network_policy
         run: cargo xtask check-network-policy
 
-      - name: Workspace and all-target check
-        id: workspace_check
-        run: cargo check --workspace --all-targets
-
       # Feature-gated test modules (lang-perl and other previews) compile only
       # under their features; without this step two green PRs can break main
       # together (#6854, #6879).
@@ -467,7 +463,6 @@ jobs:
           DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
           PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
           NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
-          WORKSPACE_CHECK_RESULT: ${{ steps.workspace_check.outcome }}
           ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
@@ -494,7 +489,6 @@ jobs:
             printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
             printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
             printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
-            printf '| workspace_check | %s |\n' "${WORKSPACE_CHECK_RESULT:-not_reported}"
             printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"

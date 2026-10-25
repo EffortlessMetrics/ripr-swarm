@@ -1,0 +1,18 @@
+{
+  "id": "rust_const_expectation_literal_control",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_const_expectation_literal_control",
+  "vector": "an_independent_literal_const_expectation_keeps_its_credit",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    }
+  ]
+}

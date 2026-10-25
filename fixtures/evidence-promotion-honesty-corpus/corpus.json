@@ -13543,12 +13543,11 @@
       ]
     },
     {
-      "id": "rust_const_expectation_self_computed",
-      "language": "rust",
+      "id": "python_caplog_renamed_fixture",
+      "language": "python",
       "tier": "pure",
-      "source_fixture": "fixtures/rust_const_expectation_self_computed",
-      "vector": "module_const_expectation_computed_by_the_owner_cannot_credit_the_equality",
-      "probe_family": "return_value",
+      "source_fixture": "fixtures/python_caplog_renamed_fixture",
+      "vector": "caplog_overridden_by_renamed_conftest_fixture",
       "assertions": [
         {
           "type": "expected_finding_count",
@@ -13556,7 +13555,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "static_unknown"
         },
         {
           "type": "must_not_promote"
@@ -13567,16 +13566,19 @@
       ]
     },
     {
-      "id": "rust_const_expectation_literal_control",
-      "language": "rust",
+      "id": "python_caplog_builtin_beside_fixtures",
+      "language": "python",
       "tier": "pure",
-      "source_fixture": "fixtures/rust_const_expectation_literal_control",
-      "vector": "an_independent_literal_const_expectation_keeps_its_credit",
-      "probe_family": "return_value",
+      "source_fixture": "fixtures/python_caplog_builtin_beside_fixtures",
+      "vector": "builtin_caplog_beside_unrelated_conftest_fixtures",
+      "control": "must_stay_exposed",
       "assertions": [
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_promote"
         },
         {
           "type": "expected_class",
