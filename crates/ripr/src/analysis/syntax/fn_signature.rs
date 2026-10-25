@@ -377,22 +377,60 @@ pub(crate) fn shadows_type_name(source: &str, name: &str) -> bool {
     let Some(parse) = parse_clean_source_file(source) else {
         return true;
     };
+    let outside_tests = |node: &ra_ap_syntax::SyntaxNode| {
+        !node
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module_attributes_require_test(&module))
+    };
+    // A standard-looking import can name a local module or an extern-crate
+    // rename. Propagate rebinding through imports to a fixed point over
+    // these three names before exempting any standard-looking import.
+    let mut rebound_roots = Vec::new();
+    for _ in 0..3 {
+        let before = rebound_roots.len();
+        for root in ["std", "core", "alloc"] {
+            if rebound_roots.contains(&root) {
+                continue;
+            }
+            let rebound = parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter(&outside_tests)
+                .any(|node| {
+                    ast::Module::cast(node.clone())
+                        .and_then(|module| module.name())
+                        .or_else(|| ast::Rename::cast(node.clone()).and_then(|item| item.name()))
+                        .or_else(|| ast::Adt::cast(node.clone()).and_then(|item| item.name()))
+                        .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|item| item.name()))
+                        .or_else(|| ast::TypeParam::cast(node.clone()).and_then(|item| item.name()))
+                        .is_some_and(|ident| ident.text().trim_start_matches("r#") == root)
+                        || ast::UseTree::cast(node)
+                            .is_some_and(|tree| use_tree_binds(&tree, root, &rebound_roots))
+                });
+            if rebound {
+                rebound_roots.push(root);
+            }
+        }
+        if before == rebound_roots.len() {
+            break;
+        }
+    }
     parse.tree().syntax().descendants().any(|node| {
         let named = ast::Adt::cast(node.clone())
             .and_then(|adt| adt.name())
             .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|alias| alias.name()))
-            .is_some_and(|ident| ident.text() == name)
-            || ast::UseTree::cast(node.clone()).is_some_and(|tree| use_tree_binds(&tree, name));
-        named
-            && !node
-                .ancestors()
-                .filter_map(ast::Module::cast)
-                .any(|module| module_attributes_require_test(&module))
+            .or_else(|| ast::TypeParam::cast(node.clone()).and_then(|param| param.name()))
+            .is_some_and(|ident| ident.text().trim_start_matches("r#") == name)
+            || ast::UseTree::cast(node.clone())
+                .is_some_and(|tree| use_tree_binds(&tree, name, &rebound_roots));
+        named && outside_tests(&node)
     })
 }
 
 /// Whether one leaf of a `use` binds `name` from outside std.
-fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
+fn use_tree_binds(tree: &ast::UseTree, name: &str, rebound_roots: &[&str]) -> bool {
     if tree.use_tree_list().is_some() {
         return false;
     }
@@ -402,7 +440,11 @@ fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
     while let Some(tree) = current {
         if let Some(path) = tree.path() {
             let text = path.syntax().text().to_string();
-            segments.splice(0..0, text.split("::").map(|s| s.trim().to_string()));
+            segments.splice(
+                0..0,
+                text.split("::")
+                    .map(|s| s.trim().trim_start_matches("r#").to_string()),
+            );
         }
         current = tree
             .syntax()
@@ -415,14 +457,18 @@ fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
         .iter()
         .find(|segment| !segment.is_empty())
         .map(|segment| segment.trim_start_matches("::"));
-    let from_std = matches!(root, Some("std" | "core" | "alloc"));
+    let from_std = root.is_some_and(|root| {
+        matches!(root, "std" | "core" | "alloc") && !rebound_roots.contains(&root)
+    });
     if tree.star_token().is_some() {
         return !from_std;
     }
     match tree.rename() {
         // `use std::sync::Mutex as Vec` shadows `Vec` as surely as a local
         // import does.
-        Some(rename) => rename.name().is_some_and(|ident| ident.text() == name),
+        Some(rename) => rename
+            .name()
+            .is_some_and(|ident| ident.text().trim_start_matches("r#") == name),
         // A std path keeps its own name; the same-named std types ripr
         // assumes (`Result` aside, which needs both arguments) compare.
         // `use a::Name::{self}` binds the segment before `self`.

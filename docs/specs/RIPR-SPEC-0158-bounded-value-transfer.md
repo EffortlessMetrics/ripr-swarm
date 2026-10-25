@@ -26,7 +26,7 @@ exercised boundary from a missing one.
 - Evaluated families: `find`/`rfind` (present, absent, empty,
   multibyte), `len`, `starts_with`/`ends_with`/`contains`,
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
-  `char::len_utf8`, `map_or` with a literal default and the identity
+  `char::len_utf8`, `map_or` with a bounded default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
   from exact indices. Exact integer arithmetic (`+ - * / %`, with
   precedence and parentheses, failing closed on a leading sign,
@@ -51,7 +51,23 @@ exercised boundary from a missing one.
   evaluates it; a computed local keeps its existing any-row semantics
   (#3295), where one evaluable row suffices. The difference is
   deliberate: the direct form is new and fails closed on a row that may
-  sit on the other side.
+  sit on the other side. A local initializer retains the declared types of
+  owner parameters it reads: bounded arithmetic uses the same wide-integer
+  gate, and `checked_add`/`checked_sub` over integer parameters require
+  `usize`. A different integer width or signedness, or an unknown type,
+  stays unresolved instead of borrowing `usize` overflow semantics. String
+  lengths and char-derived indices keep their intrinsic `usize` semantics.
+  A same-file type alias, import rename or unresolved glob that can shadow
+  an intrinsic type spelling refuses integer evaluation too, including raw
+  identifier spellings. Alias resolution is not inferred from a name.
+- `map_or` evaluates its default once before selecting `Some` or `None`.
+  A refused default (including division by zero or an unsupported call)
+  leaves either arm unresolved. An evaluated default contributes its
+  provenance on both arms, even when the identity closure supplies the
+  selected value. This does not add any evaluated operation families.
+  Receiver and default failures precede closure-shape refusal, matching
+  their evaluation order; arbitrary closures and opaque defaults stay
+  unsupported.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);
@@ -290,6 +306,9 @@ exercised boundary from a missing one.
 `activation_evidence_resolves_computed_local_boundary_operands`,
 `exact_values_compare_plain_decimals_by_digits_only` and
 `an_integer_local_meets_only_an_integer_counterpart_cell`;
+`crates/ripr/tests/local_value_transfer_semantics.rs` and fixture
+`binding_value_semantics_fail_closed` (declared integer widths and eager
+`map_or` defaults, with intrinsic-index and safe-default controls);
 `rust-verdict-corpus` cases `local-boundary-flag-hit`,
 `local-boundary-flag-trap`, `local-boundary-flag-negated`,
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and

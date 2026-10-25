@@ -588,8 +588,10 @@ pub(crate) enum ResolvedOperand {
     /// A local binding's initializer plus the same-file constants it names
     /// (`let unit = if si { KIB } else { KB };`), each declared once with
     /// a plain decimal value. They join the row's exact inputs so the
-    /// bounded evaluator reads them like any other named value.
-    Local(String, String, Vec<(String, String)>),
+    /// bounded evaluator reads them like any other named value. The final
+    /// field retains declared types of referenced owner parameters so
+    /// integer operations cannot inherit the host index width by accident.
+    Local(String, String, Vec<(String, String)>, Vec<Option<String>>),
     /// A direct call to a unique helper (`is_word_start(input, 0)`)
     /// whose return value is evaluated over the row's bound inputs
     /// (#3296 boolean-predicate helper family).
@@ -613,41 +615,47 @@ const WIDE_INTEGER_TYPES: [&str; 8] =
 /// patterns, `mut`/`ref` bindings and every other type answer `None`, so a
 /// `.len()` is read only on the intrinsic string method.
 fn exact_scalar_parameter(owner: &FunctionSummary, name: &str) -> bool {
+    plain_parameter_type(owner, name).is_some_and(|text| {
+        // Only types wide enough to hold every bounded arithmetic result.
+        WIDE_INTEGER_TYPES.contains(&text.as_str())
+            || matches!(text.as_str(), "&str" | "String" | "&String")
+    })
+}
+
+/// The declared type is retained before row literals erase integer width.
+/// This is syntax evidence, not inference from a decimal argument.
+fn plain_parameter_type(owner: &FunctionSummary, name: &str) -> Option<String> {
     use ra_ap_syntax::{
         AstNode,
         ast::{self, HasGenericParams, HasName},
     };
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&owner.body) else {
-        return false;
-    };
-    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
-        return false;
-    };
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
     if function.generic_param_list().is_some()
         || function.async_token().is_some()
         || function
             .param_list()
             .is_none_or(|params| params.self_param().is_some())
     {
-        return false;
+        return None;
     }
-    let Some(params) = function.param_list() else {
-        return false;
-    };
-    params.params().any(|param| {
+    let params = function.param_list()?;
+    params.params().find_map(|param| {
         let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
-            return false;
+            return None;
         };
         if pattern.name().is_none_or(|bound| bound.text() != name)
             || pattern.mut_token().is_some()
             || pattern.ref_token().is_some()
             || pattern.at_token().is_some()
         {
-            return false;
+            return None;
         }
-        let Some(ty) = param.ty() else {
-            return false;
-        };
+        let ty = param.ty()?;
         let text: String = ty
             .syntax()
             .text()
@@ -655,10 +663,33 @@ fn exact_scalar_parameter(owner: &FunctionSummary, name: &str) -> bool {
             .chars()
             .filter(|ch| !ch.is_whitespace())
             .collect();
-        // Only types wide enough to hold every bounded arithmetic result:
-        // `u8`/`i8`/`u16`/`i16` could overflow where the evaluator is exact.
-        WIDE_INTEGER_TYPES.contains(&text.as_str())
-            || matches!(text.as_str(), "&str" | "String" | "&String")
+        Some(text)
+    })
+}
+
+/// Bounded arithmetic fits every admitted wide integer, but checked methods
+/// use `usize` overflow/underflow semantics and cannot stand in for another
+/// integer type. Text/char methods produce intrinsic indices; boolean flags
+/// select an arm without supplying an integer receiver. Unknown types refuse
+/// only an evaluated integer operation, preserving the other transfer families.
+fn local_integer_operations_supported(
+    parameter_types: &[Option<String>],
+    provenance: &[super::value_transfer::EvalStep],
+) -> bool {
+    let checked = provenance
+        .iter()
+        .any(|step| matches!(step.operation.as_str(), "checked_add" | "checked_sub"));
+    let arithmetic = provenance.iter().any(|step| step.operation == "arith");
+    if !checked && !arithmetic {
+        return true;
+    }
+    parameter_types.iter().all(|ty| {
+        ty.as_deref().is_some_and(|ty| {
+            matches!(
+                ty,
+                "usize" | "&str" | "String" | "&String" | "char" | "bool"
+            ) || (!checked && WIDE_INTEGER_TYPES.contains(&ty))
+        })
     })
 }
 
@@ -752,7 +783,7 @@ fn uses_credit_only_family(
     resolved: &ResolvedOperand,
     call_values: &[Vec<ParameterValue>],
 ) -> bool {
-    let ResolvedOperand::Local(_, initializer, constants) = resolved else {
+    let ResolvedOperand::Local(_, initializer, constants, _) = resolved else {
         return false;
     };
     call_values.iter().any(|row| {
@@ -839,10 +870,32 @@ fn resolve_boundary_operand(
             return None;
         }
         let constants = initializer_constants(owner, &initializer, parameters, index);
+        let source_facts = index.files().get(&owner.file);
+        let source = source_facts
+            .as_ref()
+            .map_or(owner.body.as_str(), |facts| facts.source.as_ref());
+        let standard_root_alias = ["std", "core", "alloc"].iter().any(|root| {
+            super::owner_pin::targeted_name_is_alias(index, root)
+                || super::owner_pin::targeted_name_is_alias(index, &format!("r#{root}"))
+        });
+        let parameter_types = free_identifiers(&initializer)
+            .iter()
+            .filter(|name| parameters.contains(name))
+            .map(|name| {
+                plain_parameter_type(owner, name).filter(|ty| {
+                    !standard_root_alias
+                        && !crate::analysis::syntax::fn_signature::shadows_type_name(
+                            source,
+                            ty.trim_start_matches('&'),
+                        )
+                })
+            })
+            .collect();
         return Some(ResolvedOperand::Local(
             operand.to_string(),
             initializer,
             constants,
+            parameter_types,
         ));
     }
     if let Some(parameter) = parameters
@@ -952,7 +1005,7 @@ fn exact_operand_for_row(
     workspace_complete: bool,
 ) -> Option<ExactOperand> {
     match resolved {
-        ResolvedOperand::Local(name, initializer, constants) => {
+        ResolvedOperand::Local(name, initializer, constants, parameter_types) => {
             let mut with_constants = inputs.clone();
             for (constant, value) in constants {
                 with_constants
@@ -960,9 +1013,16 @@ fn exact_operand_for_row(
                     .or_insert_with(|| value.clone());
             }
             match super::value_transfer::evaluate_initializer(initializer, &with_constants) {
-                super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
-                    exact_operand_from_evaluation(name, &value, &provenance, &with_constants),
-                ),
+                super::value_transfer::EvalOutcome::Exact { value, provenance }
+                    if local_integer_operations_supported(parameter_types, &provenance) =>
+                {
+                    Some(exact_operand_from_evaluation(
+                        name,
+                        &value,
+                        &provenance,
+                        &with_constants,
+                    ))
+                }
                 _ => None,
             }
         }
@@ -5751,8 +5811,12 @@ mod tests {
 
     #[test]
     fn an_equality_fact_names_the_integer_a_local_evaluated_to() {
-        let local =
-            ResolvedOperand::Local("unit".into(), "if si { KIB } else { KB }".into(), vec![]);
+        let local = ResolvedOperand::Local(
+            "unit".into(),
+            "if si { KIB } else { KB }".into(),
+            vec![],
+            vec![],
+        );
         let side =
             |text, value, parameter, resolved| EqualitySide::new(text, value, parameter, resolved);
         // A parameter against an evaluated local reads like the literal
@@ -5772,7 +5836,12 @@ mod tests {
             ("bytes == 1024".to_string(), true)
         );
         // A boolean local, or two non-parameter operands, keep their text.
-        let open = ResolvedOperand::Local("open".into(), "label.starts_with(\"p\")".into(), vec![]);
+        let open = ResolvedOperand::Local(
+            "open".into(),
+            "label.starts_with(\"p\")".into(),
+            vec![],
+            vec![],
+        );
         assert_eq!(
             equality_value(
                 &side("open", "true", None, Some(&open)),

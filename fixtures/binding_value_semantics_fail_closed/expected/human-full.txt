@@ -1,0 +1,126 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/binding_value_semantics_fail_closed/input
+
+Summary: 4 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 2 infection_unknown, 0 propagation_unknown, 0 static_unknown; 4 of 4 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 probe(s), 4 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach signed: below_zero_is_not_the_boundary
+  E2 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E3 [findings 1, 2]: local flow reaches returned value: k <= 0 (line 3)
+  E4 [findings 1, 2]: related test tests/semantics.rs:4 below_zero_is_not_the_boundary uses strong relational check oracle: assert!(signed(0));
+  E5 [findings 1, 2]: source function argument value n = 0 at line 5
+  E6 [findings 3, 4]: reach yes: Related tests appear to reach eager: a_present_option_still_evaluates_its_default
+  E7 [findings 3, 4]: observation yes: A related test observes a value or effect near the changed behavior
+  E8 [findings 3, 4]: local flow reaches returned value: k <= 1 (line 8)
+  E9 [findings 3, 4]: related test tests/semantics.rs:9 a_present_option_still_evaluates_its_default uses strong relational check oracle: assert!(eager(0));
+  E10 [findings 3, 4]: source function argument value n = 0 at line 10
+
+Finding 1: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:predicate:a615756a
+Changed
+  before: k < 0
+  after:  k <= 0
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::signed
+  canonical gap: gap:rust:src/lib.rs:signed:predicate_boundary:predicate:k==0
+Static exposure
+  infection_unknown (warning, confidence 0.66)
+Evidence
+  shared evidence: E1
+  - infection unknown: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - propagation yes: Changed behavior appears to influence returned value: k <= 0
+  shared evidence: E2
+  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  shared evidence: E3, E4, E5
+Weakness
+  - Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - No detected boundary input for the changed predicate
+Stop reasons:
+  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+Next step
+  - Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:a615756a
+  ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:a615756a
+
+Finding 2: INFO ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:eba9e1df
+Changed
+  before: k < 0
+  after:  k <= 0
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::signed
+  canonical gap: gap:rust:src/lib.rs:signed:return_value:return_value:k<=0
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E1
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: k <= 0
+  shared evidence: E2
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  shared evidence: E3, E4, E5
+Drill in:
+  ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:eba9e1df
+  ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:eba9e1df
+
+Finding 3: WARNING ./src/lib.rs:8
+  id: probe:src_lib.rs:predicate:ebb90f41
+Changed
+  before: k < 1
+  after:  k <= 1
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::eager
+  canonical gap: gap:rust:src/lib.rs:eager:predicate_boundary:predicate:k==1
+Static exposure
+  infection_unknown (warning, confidence 0.66)
+Evidence
+  shared evidence: E6
+  - infection unknown: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - propagation yes: Changed behavior appears to influence returned value: k <= 1
+  shared evidence: E7
+  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  shared evidence: E8, E9, E10
+Weakness
+  - Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - No detected boundary input for the changed predicate
+Stop reasons:
+  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+Next step
+  - Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:ebb90f41
+  ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:ebb90f41
+
+Finding 4: INFO ./src/lib.rs:8
+  id: probe:src_lib.rs:return_value:2eace75a
+Changed
+  before: k < 1
+  after:  k <= 1
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::eager
+  canonical gap: gap:rust:src/lib.rs:eager:return_value:return_value:k<=1
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E6
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: k <= 1
+  shared evidence: E7
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  shared evidence: E8, E9, E10
+Drill in:
+  ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:2eace75a
+  ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:2eace75a
