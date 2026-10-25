@@ -364,3 +364,51 @@ fn walrus_target_names_match_walrus_targets_for_every_name() {
     }
     assert!(compared > 40, "{compared}");
 }
+
+#[test]
+fn attribute_write_facts_distinguish_assignments_from_version_comparisons() {
+    assert!(super::assigned_attributes(
+        "if sys.version_info >= (3, 0):\n    pass\nif sys.version_info <= (2, 7):\n    pass\nassert sys.version_info == (3, 0)\n"
+    ).is_some_and(|attributes| attributes.is_empty()));
+    for source in [
+        "sys.version_info = (2, 7)",
+        "sys.version_info: tuple = (2, 7)",
+        "sys.version_info += (0,)",
+        "receiver.version_info >>= 1",
+        "receiver.version_info **= 2",
+    ] {
+        assert_eq!(
+            super::assigned_attributes(source),
+            Some(vec!["version_info".to_string()]),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn structural_attribute_targets_cover_replacements_without_confusing_reads() {
+    for source in [
+        "import sys\n(sys.version_info) = (2, 7)\n",
+        "import sys\n(sys . version_info,) = ((2, 7),)\n",
+        "import sys\nsys.version_info, other = (2, 7), 0\n",
+        "import sys\ndef rewrite():\n    sys.version_info: tuple = (2, 7)\n",
+        "for receiver.version_info in versions:\n    pass\n",
+    ] {
+        assert_eq!(
+            super::assigned_attributes(source),
+            Some(vec!["version_info".to_string()]),
+            "{source}"
+        );
+    }
+    for source in [
+        "import sys\nversions = {sys.version_info: 'current'}\n",
+        "import sys\nsys.version_info: tuple\n",
+        "import sys\nassert sys.version_info >= (3, 0)\n",
+    ] {
+        assert!(
+            super::assigned_attributes(source).is_some_and(|attributes| attributes.is_empty()),
+            "{source}"
+        );
+    }
+    assert_eq!(super::assigned_attributes("def broken("), None);
+}
