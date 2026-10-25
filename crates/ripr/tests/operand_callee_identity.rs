@@ -142,6 +142,20 @@ fn a_shadowed_callee_cannot_erase_an_observed_operator_effect() -> Result<(), St
 }
 
 #[test]
+fn an_enclosing_module_import_cannot_borrow_an_unrelated_primitive_return() -> Result<(), String> {
+    // The bare call names the imported function; the indexed primitive one
+    // lives in an unrelated module. The source is analyzed, never compiled.
+    let moved = replace_once(
+        SHADOW,
+        "pub fn shipping_cents(_: u64) -> u64 {\n    0\n}\n",
+        "mod elsewhere {\n    pub fn shipping_cents(_: u64) -> u64 {\n        0\n    }\n}\n",
+    );
+    let imported = replace_once(&moved, "    let shipping_cents = flat_rate;\n", "");
+    assert_operator_credit(&format!("use external_rates::shipping_cents;\n{imported}"))?;
+    Ok(())
+}
+
+#[test]
 fn an_import_alias_cannot_borrow_a_method_return_type() -> Result<(), String> {
     assert_operator_credit(METHOD)?;
     assert_operator_credit(&replace_once(

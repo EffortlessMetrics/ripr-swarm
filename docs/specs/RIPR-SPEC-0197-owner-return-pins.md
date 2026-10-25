@@ -894,8 +894,11 @@ wrong credits.
    A qualified call such as `crate::shipping_cents(..)` is not shadowed by a
    local value named `shipping_cents`. Same-named associated functions and
    methods refuse proof even when their returns are primitive. This bounded
-   check refuses local imports rather than resolving their targets; it does
-   not resolve arbitrary module paths or expand macros. Anything else - a string, char literal or block
+   check refuses local imports rather than resolving their targets, and
+   refuses an unqualified name that a `use` in the owner's enclosing module
+   or file binds (unreadable enclosing scopes refuse too); it does not
+   resolve arbitrary module paths, globs outside the function body or expand
+   macros. Anything else - a string, char literal or block
    comment anywhere in the owner body, a callee missing from or ambiguous
    in the index, a non-primitive return, a binding that is not established — keeps the
    credit: a custom type can overload the operator, and an overloaded

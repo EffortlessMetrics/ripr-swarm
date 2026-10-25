@@ -12,9 +12,10 @@
 //! change.
 
 use super::super::rust_index::{RustIndex, TestSummary};
-use crate::analysis::facts::FunctionContainer;
-use crate::analysis::syntax::fn_call_has_local_binding;
+use crate::analysis::facts::{FunctionContainer, FunctionSummary};
+use crate::analysis::syntax::{fn_call_has_local_binding, name_scopes_for_fn};
 use crate::domain::{OracleKind, RelationReason};
+use std::collections::BTreeSet;
 
 /// Token carried in the discriminate summary when [`operand_only_pin`] holds.
 pub(in crate::analysis) const FIELD_PINNED_EQUAL_TO_OPERAND: &str = "field_pinned_equal_to_operand";
@@ -57,12 +58,13 @@ pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
     owner_name: &str,
     owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
     tests: &[(&TestSummary, RelationReason)],
     index: &RustIndex,
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
-    if !operand_established_primitive(left, owner_body, index)
-        || !operand_established_primitive(right, owner_body, index)
+    if !operand_established_primitive(left, owner_body, outer_imports, index)
+        || !operand_established_primitive(right, owner_body, outer_imports, index)
     {
         return None;
     }
@@ -194,7 +196,12 @@ fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
 /// free and declares one bare primitive return. A string, char literal or
 /// block comment anywhere in the owner body, or anything else unreadable,
 /// proves nothing.
-fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIndex) -> bool {
+fn operand_established_primitive(
+    operand: &str,
+    owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
+    index: &RustIndex,
+) -> bool {
     // Comments are dropped first. A string, char literal or block comment
     // could hide a binding or a type this proof would misread, so such an
     // owner is not read at all.
@@ -239,7 +246,14 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
                 .filter(|(bound, _, _, _)| bound == name)
                 .all(|(_, bound_expr, annotation, offset)| match annotation {
                     Some(ty) => primitive_type_token(ty),
-                    None => expression_established(bound_expr, *offset, &basis, &text, index),
+                    None => expression_established(
+                        bound_expr,
+                        *offset,
+                        &basis,
+                        &text,
+                        outer_imports,
+                        index,
+                    ),
                 });
             if all {
                 established.push(name.clone());
@@ -260,6 +274,7 @@ fn expression_established(
     offset: usize,
     established: &[String],
     owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
 ) -> bool {
     let expr = expr.trim();
@@ -267,7 +282,7 @@ fn expression_established(
         return expr == "true" || expr == "false" || established.iter().any(|name| name == expr);
     }
     if let Some(callee) = call_callee(expr) {
-        return call_established_primitive(callee, offset, owner_body, index);
+        return call_established_primitive(callee, offset, owner_body, outer_imports, index);
     }
     arithmetic_established(expr, established)
 }
@@ -310,6 +325,25 @@ fn call_callee(expr: &str) -> Option<CallCallee<'_>> {
     })
 }
 
+/// The names the `use` items of `owner`'s enclosing modules and file bind,
+/// or `None` when those scopes cannot be read (the caller then proves no
+/// bare call).
+pub(in crate::analysis) fn outer_imported_names(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<BTreeSet<String>> {
+    let facts = index.files().get(&owner.file)?;
+    let scopes = name_scopes_for_fn(&facts.data().source, owner.start_line, &owner.name)?;
+    Some(
+        scopes
+            .scopes
+            .iter()
+            .filter(|scope| !scope.fn_body)
+            .flat_map(|scope| scope.imports.iter().map(|import| import.bound.clone()))
+            .collect(),
+    )
+}
+
 /// Whether every indexed declaration named `callee` is a free function with
 /// one bare primitive return (optionally behind one reference), and a bare
 /// call is not intercepted by an owner-local binding. This is not general
@@ -321,8 +355,16 @@ fn call_established_primitive(
     callee: CallCallee<'_>,
     offset: usize,
     owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
 ) -> bool {
+    // A `use` in the owner's enclosing module or file can bind the bare name
+    // to a function other than the indexed one. Unreadable enclosing scopes
+    // prove nothing. Glob imports and same-named sibling-module items are
+    // general module resolution and stay out of scope.
+    if !callee.qualified && outer_imports.is_none_or(|imports| imports.contains(callee.name)) {
+        return false;
+    }
     // Keep the spelled qualification: a value named `fee` cannot shadow
     // `crate::fee(..)`. For a bare call, settle bindings at this initializer,
     // including hoisted imports/items and preceding declaration-only lets.
@@ -945,6 +987,7 @@ mod tests {
             "total_cents: subtotal + shipping",
             "quote",
             OWNER,
+            Some(&BTreeSet::new()),
             &refs,
             index,
         )
@@ -1121,6 +1164,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &[
                     (&paired, RelationReason::DirectOwnerCall),
                     (&unrelated, RelationReason::SameModule),
@@ -1186,6 +1230,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &[
                     (&paired, RelationReason::DirectOwnerCall),
                     (&through_helper, reason),
@@ -1199,6 +1244,7 @@ mod tests {
             "total_cents: subtotal + shipping",
             "quote",
             OWNER,
+            Some(&BTreeSet::new()),
             &[
                 (&paired, RelationReason::DirectOwnerCall),
                 (&hands_to_helper, RelationReason::DirectOwnerCall),
@@ -1351,6 +1397,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &[(&paired, RelationReason::DirectOwnerCall)],
                 &index,
             )
@@ -1393,6 +1440,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 index,
             )
@@ -1437,6 +1485,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1472,6 +1521,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &custom,
             ),
@@ -1482,6 +1532,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &absent,
             ),
@@ -1515,6 +1566,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             )
@@ -1538,6 +1590,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &refs,
                 &tier,
             ),
@@ -1548,6 +1601,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &refs,
                 &result,
             ),
@@ -1579,6 +1633,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             )
@@ -1610,6 +1665,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             )
@@ -1643,6 +1699,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1665,6 +1722,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &refs,
                 &reference,
             )
@@ -1696,6 +1754,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1730,6 +1789,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1765,6 +1825,7 @@ mod tests {
             "total_cents: subtotal + shipping",
             &owner.name,
             owner.body.as_str(),
+            Some(&BTreeSet::new()),
             &tests,
             &index,
         ))
