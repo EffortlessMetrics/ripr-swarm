@@ -489,10 +489,12 @@ fn without_plain_inline_projects(text: &str) -> Option<String> {
 /// not read. A Jest config whose only such key is a plain inline `projects`
 /// array (#10139) does not: the walk reads that array itself.
 fn delegates_beyond_plain_projects(file_name: &str, text: &str) -> bool {
-    if file_name.starts_with("jest") {
-        if let Some(rest) = without_plain_inline_projects(text) {
-            return delegates_to_other_config(&rest);
-        }
+    if let Some(rest) = file_name
+        .starts_with("jest")
+        .then(|| without_plain_inline_projects(text))
+        .flatten()
+    {
+        return delegates_to_other_config(&rest);
     }
     delegates_to_other_config(text)
 }
