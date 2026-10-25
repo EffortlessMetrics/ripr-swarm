@@ -83,7 +83,7 @@ fn closed_scope(
             .filter_map(|module| {
                 module
                     .name()
-                    .map(|name| normal_name(&name.text()).to_string())
+                    .map(|name| normal_name(name.text()).to_string())
             })
             .collect();
         modules.reverse();

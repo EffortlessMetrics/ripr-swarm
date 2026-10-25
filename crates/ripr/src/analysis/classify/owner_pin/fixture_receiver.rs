@@ -40,7 +40,7 @@ impl FixtureReceiver {
         }
         let function = function(&owner.body)?;
         let params = function.param_list()?;
-        if params.self_param()?.syntax().text().to_string() != "&self"
+        if params.self_param()?.syntax().text() != "&self"
             || params.params().next().is_some()
             || !plain_function(&function)
         {
