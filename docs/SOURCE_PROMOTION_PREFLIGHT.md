@@ -29,13 +29,17 @@ cargo xtask source-promotion preflight \
   --source-main origin/main \
   --swarm-main origin/main \
   --version 0.11.0 \
-  --controller-root "$PACKET_ROOT" \
-  --candidate-manifest live-head-selection.json \
+  --controller-root "$CONTROLLER_ROOT" \
+  --candidate-manifest "$MANIFEST_OUTPUT/manifest.json" \
   --selection-decision "$SELECTION_DECISION" \
   --qualification-bundle qualification-bundle.json \
   --qualification-decision "$QUALIFICATION_DECISION" \
   --out target/ripr/source-promotion
 ```
+
+`CONTROLLER_ROOT` and `MANIFEST_OUTPUT` are the values the
+[transaction runbook](RELEASE_TRANSACTION.md) used to produce the #1609
+manifest proposal; the manifest path is relative to that controller root.
 
 The parent arguments must be complete 40-character commit IDs. The source
 parent must equal the declared current source main. The swarm parent must be

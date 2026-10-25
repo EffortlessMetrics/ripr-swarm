@@ -256,3 +256,34 @@ fn proposal_partial_write_retains_the_incomplete_directory_and_existing_bytes() 
     );
     Ok(())
 }
+
+#[test]
+fn proposal_dispatch_refuses_a_compact_manifest_that_pretty_prints_past_the_per_file_budget()
+-> Result<(), String> {
+    // A compact input under 16 MiB whose pretty serialization exceeds it,
+    // while the aggregate stays far under 64 MiB, so only the per-file branch
+    // can refuse it (#10251). Each one-character non-claim is `"x",` compact
+    // and `    "x",\n` pretty, so the emitted file more than doubles.
+    let mut fixture = Fixture::new()?;
+    let count = (input::MAX_INPUT_BYTES as usize * 9 / 16) / 4;
+    fixture.document["non_claims"] = json!(vec!["x"; count]);
+    let compact = serde_json::to_vec(&fixture.document).map_err(|e| e.to_string())?;
+    let pretty_len = serde_json::to_vec_pretty(&fixture.document)
+        .map_err(|e| e.to_string())?
+        .len() as u64;
+    assert!((compact.len() as u64) < input::MAX_INPUT_BYTES);
+    assert!(pretty_len > input::MAX_INPUT_BYTES);
+    assert!(pretty_len + compact.len() as u64 + 4096 < input::MAX_RETAINED_BYTES);
+    fs::write(fixture.root.join("manifest.json"), &compact).map_err(|e| e.to_string())?;
+    drop(compact);
+    match produce(&fixture, "proposal") {
+        Err(error) if error.contains("16 MiB per file") => {}
+        Err(error) => return Err(format!("wrong refusal: {error}")),
+        Ok(()) => return Err("pretty growth past 16 MiB must be refused".to_string()),
+    }
+    assert!(
+        !fixture.root.join("proposal").exists(),
+        "a refused proposal must create no output directory"
+    );
+    Ok(())
+}
