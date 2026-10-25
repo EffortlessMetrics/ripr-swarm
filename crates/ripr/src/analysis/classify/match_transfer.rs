@@ -173,14 +173,15 @@ fn parse_arm(line: &str) -> Option<MatchArm> {
         None
     } else {
         // An alternative pattern: every `|`-separated component must be
-        // a plain string literal. Splitting on `|` cannot cut inside a
-        // literal: a literal containing `|` still splits into fragments
-        // that fail `literal_string`'s balanced-quote rule, so the arm
-        // refuses conservatively instead of mis-parsing.
-        let literals: Vec<String> = pattern
-            .split('|')
-            .map(str::trim)
-            .map(literal_string)
+        // a plain string literal. Only split at pipes OUTSIDE quotes: a
+        // pipe inside a literal (`"a|b"`) is string content, not an
+        // alternative separator, and must keep its exact-match credit.
+        // Quotes are tracked plainly because `literal_string` rejects
+        // any inner quote or backslash anyway, so unbalanced toggles
+        // still refuse at validation.
+        let literals: Vec<String> = split_alternatives(pattern)
+            .iter()
+            .map(|part| literal_string(part))
             .collect::<Option<Vec<_>>>()?;
         Some(literals)
     };
@@ -191,6 +192,30 @@ fn parse_arm(line: &str) -> Option<MatchArm> {
         MatchValue::Call(value.to_string())
     };
     Some(MatchArm { pattern, value })
+}
+
+/// Split a pattern into `|`-separated alternatives, honoring quotes:
+/// a pipe inside a string literal does not split. The returned parts
+/// are trimmed; every part is still validated by `literal_string`.
+fn split_alternatives(pattern: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in pattern.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            '|' if !in_quotes => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    parts.push(current.trim().to_string());
+    parts
 }
 
 /// A single direct-call shape: `name(args)` with an identifier callee
@@ -381,6 +406,37 @@ mod tests {
         // A value only the later literal arm names still reaches it.
         assert_eq!(returned(&helper, "\"text\"")?, "beta");
         assert_eq!(returned(&helper, "\"zz\"")?, "other");
+        Ok(())
+    }
+
+    #[test]
+    fn pipe_inside_a_literal_is_content_not_an_alternative() -> Result<(), String> {
+        // A `|` inside the quotes is string content, not an alternative
+        // separator: `"a|b"` stays one literal and keeps its exact-match
+        // credit (devin review on #10311 flagged the naive split).
+        let body = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"a|b\" => \"alpha\",",
+        );
+        assert_ne!(body, BODY, "the pipe-literal substitution must apply");
+        let helper = match_fn("label", &body);
+        assert_eq!(returned(&helper, "\"a|b\"")?, "alpha");
+        // A scrutinee that merely starts with the literal's text does
+        // not match: `a` is not `a|b`.
+        assert_eq!(returned(&helper, "\"a\"")?, "other");
+
+        // A pipe inside one alternative's literal also stays content:
+        // `"a" | "b|c"` is two literals, the second being `b|c`.
+        let mixed = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"a\" | \"b|c\" => \"alpha\",",
+        );
+        assert_ne!(mixed, BODY, "the mixed-alternative substitution must apply");
+        let helper2 = match_fn("label", &mixed);
+        assert_eq!(returned(&helper2, "\"a\"")?, "alpha");
+        assert_eq!(returned(&helper2, "\"b|c\"")?, "alpha");
+        // `b` alone matches neither alternative nor `"text"`: wildcard.
+        assert_eq!(returned(&helper2, "\"b\"")?, "other");
         Ok(())
     }
 
