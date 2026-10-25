@@ -131,6 +131,8 @@ jobs:
         shell: bash
         run: |
           { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # The real-ACL step (shard 1 only) is reported on its own so an ACL-only failure still names its rows.
+          [ ! -f target/acl.status ] || { echo "### Real-ACL tests (pwsh, shard 1)"; echo "cargo nextest exit status: $(cat target/acl.status)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/acl.log | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload shard logs
         if: ${{ !cancelled() }}
