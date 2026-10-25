@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 220
+floor = 227
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
@@ -21,7 +21,8 @@ floor = 220
 # 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
 # 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-missed_credit_ceiling = 146
+# 153: plus the seven abstentions the RIPR-SPEC-0163 cases add. Measured on the combined tree.
+missed_credit_ceiling = 153
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -795,9 +796,13 @@ example = 6
 reason = "a partially indexed workspace; an authored crate is stored whole, so no case can present an incomplete index to ripr"
 
 # Bounded scanner-state transitions
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0163"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "a compiling path-qualified scanner compares against an enum variant path, and an enum variant is not an exact operand (path_value_is_constant refuses it), so the finding abstains instead of exposing; spec-b-0163-path-qualified-states records the abstention (#10108) and the unit tests pin the qualified-state evaluation"
 
 # Bounded literal match-arm transfer
 [[spec]]

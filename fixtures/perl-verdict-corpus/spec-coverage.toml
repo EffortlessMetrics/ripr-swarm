@@ -663,6 +663,12 @@ id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case cannot label it"
 
+# Rust bounded scanner-state transitions
+[[spec]]
+id = "RIPR-SPEC-0163"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case cannot label it"
+
 # Rust spec 0164
 [[spec]]
 id = "RIPR-SPEC-0164"
