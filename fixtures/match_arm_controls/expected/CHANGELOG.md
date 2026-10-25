@@ -388,7 +388,19 @@ Updated:
 ## Pending — match_arm_controls (33)
 
 Reason:
-RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+RIPR-SPEC-0164: guard-variant probe moves infection_unknown -> weakly_exposed because an exactly evaluable match guard (spec-b-0164-guard-arm) now resolves the helper operand; the bare-identifier variant stays fail-closed; mirrors the #10196 literal-callee/char moves
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (34)
+
+Reason:
+RIPR-SPEC-0164: guard-variant probe credits on the combined tree; union-resolve the pending-entry reason with main's #10426 evidence-legend rewording
 
 Command:
 `cargo xtask goldens bless match_arm_controls --reason "..."`
