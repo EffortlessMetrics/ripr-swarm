@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-hostile-unicode-sub-name",
+  "subject_id": "authored-perl-hostile-source",
+  "origin": "authored",
+  "anchor": "lib/Hostile.pm:57",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "hostile_unicode_identifier",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}

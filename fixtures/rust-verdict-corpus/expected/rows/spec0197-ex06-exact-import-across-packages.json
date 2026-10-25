@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0197-ex06-exact-import-across-packages",
+  "subject_id": "authored-spec0197-6",
+  "origin": "authored",
+  "anchor": "meter/src/lib.rs:7",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_exact_import_across_packages",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
