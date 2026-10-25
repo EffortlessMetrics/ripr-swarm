@@ -506,7 +506,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// scalar owner return (RIPR-SPEC-0115/0197, #9478). Old entries lack the pin.
 /// `1.99`: a one-line `else if` ladder tail flows its first arm to the
 /// returned value (#9630). Old entries keep the unknown propagation.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.99";
+/// `1.100`: arms that return the first arm's value leave the first condition
+/// without a returned-value sink (#9843). Old entries keep the exposed verdict.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.100";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -652,7 +654,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.99";
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
 /// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
 /// `0.106`: same one-line ladder tail as full `1.99`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.107";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -800,7 +803,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
 /// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
 /// `0.106`: same one-line ladder tail as full `1.99`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.107";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4919,7 +4923,8 @@ mod tests {
         // 1.96 -> 1.97: effect assertions require execution admission (#8927).
         // 1.97 -> 1.98: typed function-pointer owner pins (#9478).
         // 1.98 -> 1.99: one-line `else if` ladder tail (#9630).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.99");
+        // 1.99 -> 1.100: equal-valued arms leave the first condition without a sink (#9843).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.100");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5007,8 +5012,9 @@ mod tests {
         // 0.103 -> 0.104: same effect assertion admission as full 1.97 (#8927).
         // 0.104 -> 0.105: same typed function-pointer pins as full 1.98.
         // 0.105 -> 0.106: same one-line ladder tail as full 1.99.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.106");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.106");
+        // 0.106 -> 0.107: same equal-arm sink limit as full 1.100.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.107");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.107");
     }
 
     #[test]
