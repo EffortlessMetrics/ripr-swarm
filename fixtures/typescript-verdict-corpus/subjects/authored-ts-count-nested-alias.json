@@ -6,7 +6,7 @@
   "shared_corpus": null,
   "retained_files": [
     {
-      "path": "bridge.mjs",
+      "path": "bridge.ts",
       "sha256": "4d32a6856a0ffd3d4ffa11fa7b6e850e808726a02df816abcdd713a562b84318"
     },
     {

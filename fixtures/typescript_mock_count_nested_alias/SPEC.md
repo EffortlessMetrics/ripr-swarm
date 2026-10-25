@@ -14,7 +14,7 @@ The alias is unique, straight-line and local to that nested callback.
 
 Run `cargo xtask fixtures typescript_mock_count_nested_alias`.
 Runtime truth was executed with Node v24.19.0 using
-`node --experimental-strip-types --test bridge.mjs` from `input/`.
+`node --experimental-strip-types --test bridge.ts` from `input/`.
 The retained bridge uses Node built-in test/assert and an explicit minimal
 `it/jest.fn/expect.toBe` shim for this numeric count. It is not stock Jest.
 Original, equivalent rewrite and wrong `id + 1` arguments all pass after load.

@@ -13,7 +13,7 @@
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
-    "test_command": "node --experimental-strip-types --test bridge.mjs",
+    "test_command": "node --experimental-strip-types --test bridge.ts",
     "toolchain": "Node v24.19.0 built-in test/assert; retained explicit minimal it/jest.fn/expect.toBe compatibility shim, not stock Jest; full authored package original/rewrite/wrong argument executed",
     "mutants": [
       {
