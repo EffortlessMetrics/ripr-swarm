@@ -17404,6 +17404,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::a_swallowing_or_transforming_wrapper_is_not_eligible",
   "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::a_call_in_any_other_shape_leaves_the_wrapper_unexpanded",
   "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::one_unreplaceable_mention_keeps_every_call_as_written",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::a_changed_bound_far_from_the_asserted_input_still_separates",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::an_operator_edit_names_no_new_number_and_stays_unknown_far_from_the_bound",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::an_equivalent_rewrite_is_still_not_reported_as_unexercised",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
 ]
 fixtures = [
   "fixtures/typescript_enum_wrong_export",
