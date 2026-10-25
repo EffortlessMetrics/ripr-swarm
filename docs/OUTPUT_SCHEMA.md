@@ -1916,6 +1916,12 @@ JSON fields:
 - `status` is `advisory` when the supplied check output parsed, even when no
   TypeScript-family limitation signals were found. It is `blocked` when the
   artifact is missing, unreadable, malformed, or lacks a `findings` array.
+- A findings-bounded input retains `advisory` status but adds a warning in both
+  JSON and Markdown: the leaderboard is incomplete, its counts cover only the
+  supplied findings, and omitted findings may change counts and rankings.
+  Re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` and regenerate the
+  report. Both the legacy `limited_findings_bound` run limitation and the
+  `analysis_outcome.document_complete` disclosure are recognized.
 - `limitations[].kind` is counted once per finding per kind. Duplicate evidence
   lines in the same finding do not inflate counts.
 - `sources[]` names where the limitation signal came from:

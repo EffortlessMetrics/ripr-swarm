@@ -411,6 +411,9 @@ PR 13 reports          TypeScript limitation leaderboard + route-quality slice
 - `typescript_limitation_leaderboard_reports` — `ripr reports ts-limitations`
   can aggregate existing check-output limitation evidence by kind without
   rerunning analysis or promoting TypeScript/JavaScript preview authority.
+  A findings-bounded input must disclose incomplete counts and rankings in
+  both report formats, retain the supplied findings as its denominator, and
+  name `RIPR_CHECK_FINDINGS_BYTES=0` as the full-document recovery route.
 - `language_adapter_typescript_false_actionable_audit` — the checked
   TypeScript-family preview false-actionable audit corpus and the dogfood/report
   projections track whether rows that must remain non-actionable accidentally
