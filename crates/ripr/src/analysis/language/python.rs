@@ -64,6 +64,7 @@ mod caplog_text;
 mod classify;
 mod conditional_defs;
 mod deleted_lines;
+mod dunder_truthiness;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
@@ -1322,6 +1323,8 @@ mod fixtures_tests;
 
 #[cfg(test)]
 mod dunder_entry_tests;
+#[cfg(test)]
+mod dunder_truthiness_tests;
 
 #[cfg(test)]
 mod module_field_tests;
