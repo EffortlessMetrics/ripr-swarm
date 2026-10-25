@@ -218,9 +218,17 @@ fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
                     .strip_prefix(&format!("{krate}::"))
                     .is_some_and(|rest| {
                         let rest = rest.trim();
+                        // A nested group (`{inner::{x, name}}`) is not a direct
+                        // item list, so it is refused rather than split.
                         rest.strip_prefix('{')
                             .and_then(|group| group.strip_suffix('}'))
-                            .map_or(vec![rest], |group| group.split(',').collect())
+                            .map_or(vec![rest], |group| {
+                                if group.contains(['{', '}']) {
+                                    Vec::new()
+                                } else {
+                                    group.split(',').collect()
+                                }
+                            })
                             .iter()
                             .any(|item| item.trim() == *name)
                     });

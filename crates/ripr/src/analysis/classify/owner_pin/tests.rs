@@ -12699,4 +12699,5 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::other::approx_eq;\n"));
     assert!(!imported("use float_cmp::approx_eq::other;\n"));
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
+    assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }
