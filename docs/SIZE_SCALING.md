@@ -20,24 +20,33 @@ existing root and fails if it cannot remove its own.
 ## Matrix
 
 Rust, Python and TypeScript, each in production and test roles, each as one
-long line and as one item per line: twelve cells. In each cell the large file
+long line and as one item per line: eleven cells. A Python test is a `def`
+and cannot share a line with the next, so there is no one-line Python test cell. In each cell the large file
 sits beside a small changed file, and the diff touches only the small one, so
 the large file is read as an unchanged neighbour, as it would be in a real
 repository. The test cells carry many tests per file, which is the shape that
 hid both fixed terms. `--languages rust,python` narrows the run.
+
+Every step is run from a private copy of the binary, and its sha256 is recorded
+in the report as `binary_sha256`, so a rebuild during the run cannot change what
+was measured.
 
 ## Decision
 
 For each cell the judge takes the wall time at the three sizes and fails the
 cell when:
 
+- a step exits 0 or 1 but its JSON report has no finding for the small changed
+  file, or a limitation names the large file (`not_analyzed`). A fast exit that
+  never read the file is not a pass;
 - any step reaches the three-minute deadline, ends on a signal, or exits
   with a code other than 0 or 1;
 - the largest step takes longer than `--ceiling-secs` (default 60);
 - the cost of the largest step over the smallest, measured from at least 250 ms,
   exceeds `--max-doubling-ratio` (default 2.45) raised to the number of
   doublings. Linear is 2.0, so four times the size may cost up to six times as
-  much.
+  much. The middle step has no verdict of its own: the endpoint ratio over 4x
+  the size is less noisy than a single doubling.
 
 A cell whose largest step finishes in under one second carries no growth
 signal and passes. The thresholds are `Limits` in `size_scaling/judge.rs`, and

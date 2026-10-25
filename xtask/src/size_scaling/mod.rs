@@ -66,6 +66,7 @@ pub(crate) struct RowSample {
 pub(crate) struct Packet {
     schema: &'static str,
     binary: String,
+    binary_sha256: String,
     host: String,
     base_kib: usize,
     max_doubling_ratio: f64,
@@ -153,6 +154,9 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
     if options.base_kib == 0 {
         return Err("--base-kib must be at least 1".to_string());
     }
+    if !options.limits.max_doubling_ratio.is_finite() {
+        return Err("--max-doubling-ratio must be a finite number".to_string());
+    }
     if options.limits.max_doubling_ratio < 2.0 {
         return Err(
             "--max-doubling-ratio below 2.0 would fail a perfectly linear cost".to_string(),
@@ -191,9 +195,20 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
             run_root.display()
         ));
     }
+    fs::create_dir_all(&run_root)
+        .map_err(|error| format!("failed to create {}: {error}", run_root.display()))?;
+    // Measure a private copy so a rebuild during the run cannot change the
+    // binary under test, and record exactly which bytes were measured.
+    let snapshot = run_root.join("ripr-under-test");
+    fs::copy(&binary, &snapshot)
+        .map_err(|error| format!("failed to copy {}: {error}", binary.display()))?;
+    let bytes = fs::read(&snapshot)
+        .map_err(|error| format!("failed to read {}: {error}", snapshot.display()))?;
+    let binary_sha256 = crate::blind_journey::sha256_hex(&bytes);
+    drop(bytes);
     let mut rows = Vec::new();
     for cell in cells(&options.languages) {
-        let row = measure(&binary, &run_root, &cell, options);
+        let row = measure(&snapshot, &run_root, &cell, options);
         eprintln!(
             "size-scaling: {} {} ({})",
             row.cell, row.verdict, row.detail
@@ -210,6 +225,7 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
     Ok(Packet {
         schema: SCHEMA,
         binary: binary.to_string_lossy().to_string(),
+        binary_sha256,
         host: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
         base_kib: options.base_kib,
         max_doubling_ratio: options.limits.max_doubling_ratio,
@@ -322,7 +338,13 @@ fn run_step(
         Outcome::Deadline
     } else {
         match timed.status.and_then(|status| status.code()) {
-            Some(0 | 1) => Outcome::Completed,
+            Some(0 | 1) => match analyzed(&timed.stdout, cell) {
+                Ok(()) => Outcome::Completed,
+                Err(reason) => {
+                    eprintln!("size-scaling: {} at {bytes} bytes: {reason}", cell.id());
+                    Outcome::NotAnalyzed
+                }
+            },
             Some(code) => Outcome::Exit(code),
             None => Outcome::Signalled,
         }
@@ -332,6 +354,44 @@ fn run_step(
         millis: timed.duration.as_millis(),
         outcome,
     })
+}
+
+/// A fast exit proves nothing if the analyzer never read the file. The report
+/// must carry a finding for the changed file and must not name the large file
+/// in a limitation (a skipped or refused file is cheap, not scaled).
+fn analyzed(stdout: &[u8], cell: &Cell) -> Result<(), String> {
+    let report: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|error| format!("stdout is not a JSON report: {error}"))?;
+    let changed = cell.changed_path();
+    let has_finding = report
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|findings| {
+            findings.iter().any(|finding| {
+                ["/canonical_gap/file", "/probe/file"]
+                    .iter()
+                    .any(|pointer| {
+                        finding
+                            .pointer(pointer)
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|file| file.trim_start_matches("./") == changed)
+                    })
+            })
+        });
+    if !has_finding {
+        return Err(format!("no finding for {changed}; nothing was analyzed"));
+    }
+    let big = cell.big_path();
+    let limited = ["/analysis_outcome/outcome/limitations", "/limitations"]
+        .iter()
+        .filter_map(|pointer| report.pointer(pointer))
+        .any(|limitations| limitations.to_string().contains(big));
+    if limited {
+        return Err(format!(
+            "a limitation names {big}; the file was not analyzed"
+        ));
+    }
+    Ok(())
 }
 
 /// Ambient `RIPR_*` configuration (including the file-read cap) must not

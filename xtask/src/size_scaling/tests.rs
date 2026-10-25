@@ -73,10 +73,16 @@ fn no_samples_or_flat_sizes_fail_closed() {
 #[test]
 fn the_matrix_covers_every_language_role_and_shape() {
     let all = cells(&[]);
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), 11);
     let only = cells(&["python".to_string()]);
-    assert_eq!(only.len(), 4);
+    assert_eq!(only.len(), 3);
     assert!(only.iter().all(|cell| cell.language == "python"));
+    assert!(
+        !only
+            .iter()
+            .any(|cell| cell.role == "test" && cell.shape == "one-line"),
+        "a Python test cannot be a single line"
+    );
 }
 
 #[test]
@@ -116,6 +122,7 @@ fn arguments_are_validated() {
     assert!(refusal(&["--binary", "x", "--base-kib", "0"]).contains("at least 1"));
     assert!(refusal(&["--binary", "x", "--languages", "perl"]).contains("unknown language"));
     assert!(refusal(&["--binary", "x", "--max-doubling-ratio", "1.5"]).contains("below 2.0"));
+    assert!(refusal(&["--binary", "x", "--max-doubling-ratio", "NaN"]).contains("finite number"));
     assert!(refusal(&["--binary", "x", "--nonsense"]).contains("unknown size-scaling argument"));
     let accepted: Vec<String> = ["--binary", "x", "--languages", "rust"]
         .iter()
@@ -159,6 +166,10 @@ mod stub {
         parse_args(&args)
     }
 
+    /// A report with one finding for the changed Rust file, as the real
+    /// binary prints for these workspaces.
+    const REPORT: &str = "printf '%s' '{\"findings\":[{\"probe\":{\"file\":\"src/lib.rs\"}}],\"analysis_outcome\":{\"outcome\":{\"limitations\":[]}}}'";
+
     fn scratch(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("ripr-size-scaling-{name}-{}", std::process::id()))
     }
@@ -166,7 +177,7 @@ mod stub {
     #[test]
     fn a_fast_binary_passes_every_cell_and_leaves_no_workspace() -> TestResult {
         let dir = scratch("fast");
-        let binary = stub(&dir, "exit 0")?;
+        let binary = stub(&dir, &format!("{REPORT}\nexit 0"))?;
         let packet = build_packet(&options(&dir, binary)?)?;
         let leftover = fs::read_dir(dir.join("work"))
             .map_err(|error| error.to_string())?
@@ -174,7 +185,43 @@ mod stub {
         let _ = fs::remove_dir_all(&dir);
         assert!(packet.passed);
         assert_eq!(packet.rows.len(), 4);
+        assert_eq!(packet.binary_sha256.len(), 64);
         assert_eq!(leftover, 0, "workspaces were not removed");
+        Ok(())
+    }
+
+    #[test]
+    fn a_fast_exit_that_analyzed_nothing_fails_every_cell() -> TestResult {
+        let dir = scratch("empty");
+        let binary = stub(&dir, "printf '%s' '{\"findings\":[]}'\nexit 0")?;
+        let packet = build_packet(&options(&dir, binary)?)?;
+        let _ = fs::remove_dir_all(&dir);
+        assert!(!packet.passed);
+        assert!(packet.rows.iter().all(|row| row.verdict == "fail"));
+        assert!(
+            packet
+                .rows
+                .iter()
+                .all(|row| row.samples.iter().all(|s| s.outcome == "not_analyzed"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_limitation_naming_the_large_file_fails_the_cell() -> TestResult {
+        let dir = scratch("limited");
+        let script = "printf '%s' '{\"findings\":[{\"probe\":{\"file\":\"src/lib.rs\"}}],\"analysis_outcome\":{\"outcome\":{\"limitations\":[{\"path\":\"src/big.rs\"}]}}}'\nexit 0";
+        let binary = stub(&dir, script)?;
+        let mut opts = options(&dir, binary)?;
+        opts.languages = vec!["rust".to_string()];
+        let packet = build_packet(&opts)?;
+        let _ = fs::remove_dir_all(&dir);
+        let production = packet
+            .rows
+            .iter()
+            .filter(|row| row.role == "production")
+            .all(|row| row.verdict == "fail");
+        assert!(production, "a refused production file passed as fast");
         Ok(())
     }
 
@@ -194,8 +241,10 @@ mod stub {
         // Sleeps in proportion to the square of the largest file's size, so a
         // regression of this shape cannot pass as noise.
         let dir = scratch("quadratic");
-        let script = "size=$(cat src/big.rs tests/big.rs 2>/dev/null | wc -c)\nsleep $(awk -v s=\"$size\" 'BEGIN{printf \"%.3f\", (s/1024)*(s/1024)*0.05}')\nexit 0";
-        let binary = stub(&dir, script)?;
+        let script = format!(
+            "size=$(cat src/big.rs tests/big.rs 2>/dev/null | wc -c)\nsleep $(awk -v s=\"$size\" 'BEGIN{{printf \"%.3f\", (s/1024)*(s/1024)*0.05}}')\n{REPORT}\nexit 0"
+        );
+        let binary = stub(&dir, &script)?;
         let mut opts = options(&dir, binary)?;
         opts.limits.quiet_ms = 100;
         opts.limits.noise_floor_ms = 50;

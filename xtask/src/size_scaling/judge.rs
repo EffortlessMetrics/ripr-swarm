@@ -7,6 +7,9 @@ pub(crate) enum Outcome {
     Deadline,
     Signalled,
     Exit(i32),
+    /// Exited normally but reported nothing for the changed file, or named
+    /// the large file in a limitation: the row measured a refusal or nothing.
+    NotAnalyzed,
 }
 
 impl Outcome {
@@ -16,6 +19,7 @@ impl Outcome {
             Self::Deadline => "deadline",
             Self::Signalled => "ended_by_signal",
             Self::Exit(_) => "unexpected_exit",
+            Self::NotAnalyzed => "not_analyzed",
         }
     }
 }

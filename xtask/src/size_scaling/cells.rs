@@ -16,6 +16,28 @@ impl Cell {
         format!("{}-{}-{}", self.language, self.role, self.shape)
     }
 
+    /// The small file the diff changes; `ripr check` must report a finding
+    /// for it, or the row measured nothing.
+    pub(crate) fn changed_path(&self) -> &'static str {
+        match self.language {
+            "rust" => "src/lib.rs",
+            "python" => "src/pkg/small.py",
+            _ => "src/small.ts",
+        }
+    }
+
+    /// The large unchanged file whose cost is being measured.
+    pub(crate) fn big_path(&self) -> &'static str {
+        match (self.language, self.role) {
+            ("rust", "production") => "src/big.rs",
+            ("rust", _) => "tests/big.rs",
+            ("python", "production") => "src/pkg/big.py",
+            ("python", _) => "tests/test_big.py",
+            (_, "production") => "src/big.ts",
+            _ => "src/big.test.ts",
+        }
+    }
+
     /// Workspace files (relative path, bytes) with the large file at about
     /// `bytes` bytes.
     pub(crate) fn files(&self, bytes: usize) -> Vec<(String, Vec<u8>)> {
@@ -39,6 +61,11 @@ pub(crate) fn cells(languages: &[String]) -> Vec<Cell> {
         }
         for role in ["production", "test"] {
             for shape in ["one-line", "lines"] {
+                // A Python test is a `def`, which cannot share a line with the
+                // next one, so there is no one-line test file to generate.
+                if language == "python" && role == "test" && shape == "one-line" {
+                    continue;
+                }
                 out.push(Cell {
                     language,
                     role,
@@ -70,11 +97,10 @@ fn unit(cell: &Cell, multi: bool, index: usize) -> String {
             " ",
         ),
         ("python", "production") => (format!("a{index} = {index}"), ";"),
-        ("python", _) if multi => (
+        ("python", _) => (
             format!("def test_{index}():\n    assert {index} == {index}"),
             "",
         ),
-        ("python", _) => (format!("a{index} = {index}"), ";"),
         (_, "production") => (
             format!("export function f{index}() {{ return {index}; }}"),
             " ",
