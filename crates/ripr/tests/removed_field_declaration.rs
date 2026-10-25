@@ -358,3 +358,11 @@ fn removed_item_macro_body_constructor_keeps_runtime_probe() -> Result<(), Strin
     }
     Ok(())
 }
+
+#[test]
+fn removed_item_macro_identifier_element_list_keeps_field_construction() -> Result<(), String> {
+    let old = "pin_project! {\n    pub struct Task {\n        value: [A, B],\n        ok: [T; N],\n    }\n}\n";
+    removed_only(old, 3, "value: [A, B],", ProbeFamily::FieldConstruction)?;
+    let finding = removed_only(old, 4, "ok: [T; N],", ProbeFamily::StaticUnknown)?;
+    require_declaration_unknown(&finding)
+}

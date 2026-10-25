@@ -625,6 +625,7 @@ fn item_macro_struct_field_holding_an_expression_keeps_field_construction() -> R
         "f: a < b,",
         "f: (1, 2),",
         "f: [1, 2],",
+        "f: [A, B],",
         "f: [0u8; 3],",
     ] {
         let source =
@@ -796,6 +797,36 @@ fn observes_long() { let value = Long::<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, 
             .iter()
             .any(|probe| probe.family == ProbeFamily::StaticUnknown),
         "wrong retained family: {probes:?}"
+    );
+    Ok(())
+}
+
+/// External-review control (#10290): an identifier-only element list is a
+/// value in a DSL (`array_factory!`), not a slice type, so it keeps its probe.
+#[test]
+fn macro_field_identifier_element_list_retains_runtime_probe() -> Result<(), String> {
+    let source = r###"const A: usize = 1;
+const B: usize = 2;
+macro_rules! array_factory {
+    (struct $name:ident { $field:ident: $value:expr, }) => {
+        struct $name { $field: [usize; 2] }
+        fn make() -> $name { $name { $field: $value } }
+    };
+}
+array_factory! {
+    struct Task {
+        value: [A, B],
+    }
+}
+#[test]
+fn observes_list() { assert_eq!(make().value, [1, 2]); }
+"###;
+    let probes = probes_at(source, 11)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "element list lost field_construction: {probes:?}"
     );
     Ok(())
 }

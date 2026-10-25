@@ -443,6 +443,10 @@ fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
         return false;
     };
     let mut after_semicolon = false;
+    // A slice/array type holds exactly one element type: a comma outside any
+    // `<..>` (`[A, B]`) makes it an element list, which keeps its probe.
+    let mut angle_depth = 0usize;
+    let mut previous = None;
     for element in tree.children_with_tokens() {
         let Some(token) = element.as_token() else {
             if after_semicolon {
@@ -450,6 +454,19 @@ fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
             }
             continue;
         };
+        let kind = token.kind();
+        match kind {
+            SyntaxKind::L_ANGLE => angle_depth += 1,
+            // `->` inside a bracketed fn type is `-` then `>`, not a close.
+            SyntaxKind::R_ANGLE if previous != Some(SyntaxKind::MINUS) => {
+                angle_depth = angle_depth.saturating_sub(1);
+            }
+            SyntaxKind::COMMA if angle_depth == 0 => return false,
+            _ => {}
+        }
+        if !matches!(kind, SyntaxKind::WHITESPACE | SyntaxKind::COMMENT) {
+            previous = Some(kind);
+        }
         match token.kind() {
             SyntaxKind::SEMICOLON => after_semicolon = true,
             SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | SyntaxKind::R_BRACK => {}
@@ -644,6 +661,11 @@ mod tests {
             "c: [A; N],",
             "m: HashMap<K, V>,",
             "p: *const u8,",
+            "s: [T],",
+            "s: [T; N],",
+            "s: [T; 4],",
+            "s: [Foo<A, B>],",
+            "s: [fn(u8) -> u8],",
             "q: &&'a str,",
             "pub(super) x: u8,",
             "pub(self) z: u8,",
@@ -667,6 +689,8 @@ mod tests {
             "a: u8 = 3,",
             "a: u8; b",
             "f: pub_fn(x),",
+            "f: [A, B],",
+            "f: [A, B; 3],",
             "f: a * b,",
             "f: a - b,",
             "f: a & b,",

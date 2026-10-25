@@ -126,14 +126,16 @@ an allowlist of type syntax: identifiers and paths, lifetimes, balanced `<..>`,
 a reference `&` or raw-pointer `*const`/`*mut` prefix, `dyn`/`impl`/`fn`/`for`/
 `mut`/`const`/`unsafe`/`extern`, `->`, `pub` with `(crate|super|self|in path)`,
 `+` joining bound names, a paren group only as a `fn`/`Fn*` argument list or
-tuple type, and a bracket whose length is a literal or a path. Everything else
+tuple type, and a bracket holding exactly one element type (no comma
+outside `<..>`) whose length, if any, is a literal or a path. Everything else
 keeps `field_construction`: a construction (`Task { buffered: None }`), a
 literal, closure, `|`, `.`, `as`, `?`, `..`, unary or binary operator, call
-(`compute()`), macro `!`, nested brace, array element list or non-path length
+(`compute()`), macro `!`, nested brace, array element list (`[A, B]`, `[1, 2]`) or non-path length
 (`[u8; N + 1]`, `[compute(); 3]`), a second field on the line, and an
 initializer or discriminant `=`. Declared limit: a bare path such as `None` or
 `Foo` is indistinguishable from a type, so `value: None,` inside an item macro
-reads as a declaration; so does `A + B` between two bound names.
+reads as a declaration; so does `A + B` between two bound names and a
+parenthesised single path `(a)`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
