@@ -12669,6 +12669,29 @@
       ]
     },
     {
+      "id": "rust_out_parameter_named_empty_writer",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/out_parameter_named_empty_no_promote",
+      "vector": "named_empty_payload_does_not_make_an_unchanged_prefix_pin_observe_the_changed_write",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_out_parameter_empty_expected_value",
       "language": "rust",
       "tier": "pure",

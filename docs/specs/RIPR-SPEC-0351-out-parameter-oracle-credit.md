@@ -107,15 +107,20 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   `push_back`, `push_front`, `write_char` and two-argument `insert` always;
   `push_str`, `write_str`, `insert_str` and `write_all` with a non-empty
   literal, `&format!(..)` whose template has non-placeholder text or an
-  explicit width, or a plain identifier (data-dependent: a named limit);
+  explicit width;
   `extend`/`extend_from_slice` with a non-empty array literal or
-  `"lit".chars()`/`.bytes()` (a data-dependent argument is also accepted);
+  `"lit".chars()`/`.bytes()`;
   `write!` with such a template; `writeln!`. `append`, capacity-only
   operations (`reserve`, `shrink_to_fit`), empty literals, `format!("")`,
   `None` and empty constructors are not writes. A format template containing
   `$` or `*` is never certainly non-empty, and a string literal with a
   backslash-newline or an escape other than `\n \t \\ \" \'` is not a
   non-empty literal; raw literals are plain.
+- Identifier-valued text and collection arguments, including references to
+  empty `String`/`Vec` locals, do not establish that a writer adds data and
+  are refused (#10058). The helper has no local value model, so named
+  nonempty values also refuse. This does not resolve data-dependent
+  `format!`/`write!` arguments or width padding on a user `Display`.
 - Writes must be straight-line top-level statements with no `return`,
   `break`, `continue` or non-trailing `?` before the last one, and the changed
   expression must itself be such a write with no branch, loop, closure or
@@ -168,8 +173,8 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   and `Deref` impls, owner and test side); a helper hidden in the owner call's
   receiver or arguments beyond the scan above; macros from other crates;
   traits from external crates; `#[cfg(test)]`/`#[cfg(not(test))]` callee
-  twins; data-dependent empties and width padding on a user `Display`; a std
-  `Write` import counting for the whole file scope. `write!(out.clone(), "+")`
+  twins; data-dependent formatted empties and width padding on a user
+  `Display`; a std `Write` import counting for the whole file scope. `write!(out.clone(), "+")`
   with expected `"+"` can still be credited by a pre-existing literal-match
   route outside this helper; that is not a false promotion (the native test
   fails on the original) and is unverified against main.
@@ -193,7 +198,8 @@ assertion reads the call's out-parameter; it grants no strength or reach.
 
 - `crates/ripr/tests/out_parameter_oracle.rs`.
 - `fixtures/out_parameter_unrelated_write_no_promote` and
-  `fixtures/out_parameter_empty_expected_no_promote`, pinned as
+  `fixtures/out_parameter_empty_expected_no_promote`, plus
+  `fixtures/out_parameter_named_empty_no_promote`, pinned as
   RIPR-SPEC-0108 non-promotion cases in
   `fixtures/evidence-promotion-honesty-corpus/corpus.json`.
 

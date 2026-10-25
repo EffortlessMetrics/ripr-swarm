@@ -18929,6 +18929,10 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::an_enclosing_item_attribute_or_a_same_named_twin_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_generic_or_trait_typed_output_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_user_type_named_like_a_std_buffer_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::identifier_valued_text_writes_are_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::identifier_valued_byte_writes_are_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::named_empty_collection_writes_remain_uncredited",
+  "crates/ripr/tests/out_parameter_oracle.rs::nonempty_literal_writers_keep_out_parameter_credit",
   "crates/ripr/tests/out_parameter_oracle.rs::only_certainly_non_empty_write_arguments_are_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_helper_call_between_setup_and_assertion_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_trait_resolved_writer_needs_a_std_write_import_and_no_user_trait",
@@ -18947,6 +18951,7 @@ tests = [
 fixtures = [
   "fixtures/out_parameter_unrelated_write_no_promote",
   "fixtures/out_parameter_empty_expected_no_promote",
+  "fixtures/out_parameter_named_empty_no_promote",
 ]
 code = [
   "crates/ripr/src/analysis/classify/out_parameter.rs",
