@@ -1210,3 +1210,10 @@ content commitment, dependent verify commitments and receipt byte hashes only.
 The same snapshots follow corpus cache generation 1.99 to 1.100 for the
 equal-valued arm sink limit (#9843), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
+
+### multi-line equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.100 to 1.101 for the
+rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.

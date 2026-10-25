@@ -62,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 34
+trap_floor = 35
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
