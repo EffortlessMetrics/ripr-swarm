@@ -1544,14 +1544,34 @@ fn pattern_position_binds_before(
         let region = &prefix[pair[0] + 1..pair[1]];
         !region.contains([';', '{', '}']) && has_name_token(region, name)
     });
-    // Match arm pattern regions: back from each `=>` to the previous block
-    // delimiter or earlier arm arrow.
+    // Match arm pattern regions: back from each `=>` to the match's own `{`,
+    // a `;` or the previous arm's `=>`. Braces are balanced on the way back so
+    // a struct pattern (`Foo { n, .. }`) stays inside the region; an earlier
+    // arm's block body is crossed as well, which over-declines but never
+    // misses a binding.
     let arm_binds = prefix.match_indices("=>").any(|(arrow, _)| {
         let head = &prefix[..arrow];
-        let start = head
-            .rfind(['{', '}', ';'])
-            .map_or(0, |at| at + 1)
-            .max(head.rfind("=>").map_or(0, |at| at + 2));
+        let mut depth = 0usize;
+        let mut start = 0;
+        for (at, ch) in head.char_indices().rev() {
+            match ch {
+                '}' => depth += 1,
+                '{' if depth == 0 => {
+                    start = at + 1;
+                    break;
+                }
+                '{' => depth -= 1,
+                ';' if depth == 0 => {
+                    start = at + 1;
+                    break;
+                }
+                '>' if depth == 0 && head[..at].ends_with('=') => {
+                    start = at + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
         has_name_token(&head[start..], name)
     });
     let_binds || for_binds || closure_binds || arm_binds
@@ -9229,6 +9249,18 @@ assert_eq!(input.amount, 100);"#
             (
                 "match k {\n        Some(n)\n            => 1,\n        None => 2,\n    };\n    ",
                 "match k {\n        Some(a)\n            => 1,\n        None => 2,\n    };\n    ",
+            ),
+            (
+                "match k {\n        Some(Foo { n, .. })\n            => 1,\n        None => 2,\n    };\n    ",
+                "match k {\n        Some(Foo { a, .. })\n            => 1,\n        None => 2,\n    };\n    ",
+            ),
+            (
+                "match k {\n        Some(Foo {\n            n,\n            ..\n        })\n            => 1,\n        None => 2,\n    };\n    ",
+                "match k {\n        Some(Foo {\n            a,\n            ..\n        })\n            => 1,\n        None => 2,\n    };\n    ",
+            ),
+            (
+                "match k {\n        None => { drop(1); }\n        Some(Foo { n, .. })\n            => 1,\n    };\n    ",
+                "match k {\n        None => { drop(1); }\n        Some(Foo { a, .. })\n            => 1,\n    };\n    ",
             ),
             (
                 "match k { Some(n) => 1, None => 2 };\n    ",
