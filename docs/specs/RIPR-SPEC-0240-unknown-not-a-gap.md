@@ -642,6 +642,26 @@ hold, or the test is not related and the abstention above applies:
 - the result is used: `let _ = a + b;` or a `let` nothing reads again does not
   reach an assertion.
 
+A standalone compound-assignment statement (`let mut total = Money(1);
+total += Money(2); assert_eq!(total, Money(3));`) qualifies for an
+`AddAssign::add_assign` relation even though the operator returns unit. The
+same-file, typed-`Self` and unique-impl gates still apply: integer `+=` beside
+an unused `Money` and a second `AddAssign<i64> for Money` do not qualify, and
+`+=` does not relate an `Add::add` owner. This is call-relation evidence;
+whether the assertion discriminates the changed behavior is judged separately.
+
+A closing `}` is a possible binary left-operand boundary for the shared
+operator scanner. The later whole-operand/type check distinguishes
+`let r = Money { 0: 5 } - n;` (a typed `Sub` operand, never unary `Neg`)
+from `if true {} -n;`, `{} -n;` and `match true { true => (), false => () }
+-n;`. Rust executes unary negation in those statement forms, but the bounded
+reader conservatively relates neither `Neg` nor `Sub` there. An observed
+separate expression (`let r = -n; assert_eq!(r, Money(-2));`) remains supported.
+
+`operator_call_credit::block_statements_followed_by_minus_stay_unrelated`
+and `operator_call_credit::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates`
+pin these boundaries (#9813).
+
 `Index`, `Drop` and the iterator traits keep the abstention until their own
 readings are added.
 

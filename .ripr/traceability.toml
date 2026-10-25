@@ -17601,6 +17601,8 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
+  "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
   "crates/ripr/tests/proximity_oracle_credit.rs::same_file_test_that_reaches_the_owner_through_a_helper_keeps_credit",
   "crates/ripr/tests/proximity_oracle_credit.rs::production_macro_hop_keeps_proximity_credit",

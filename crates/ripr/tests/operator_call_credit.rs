@@ -441,7 +441,7 @@ fn a_binary_minus_after_a_block_is_not_negation() -> Result<(), String> {
         signature: "type Output = Money;\n    fn neg(self) -> Money",
         old_line: "        Money(-self.0)",
         new_line: "        Money(0 - self.0)",
-        extra_items: "",
+        extra_items: "impl Sub for Money { type Output = Money; fn sub(self, other: Money) -> Money { Money(self.0 - other.0) } }",
         sibling: "",
         test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
     };
@@ -529,4 +529,95 @@ fn a_comparison_before_a_plus_does_not_hide_the_operator() -> Result<(), String>
     } else {
         Err(format!("expected the add credited, got {direct:?}"))
     }
+}
+
+/// A `}` can finish a statement or a left operand. This syntax-only reader
+/// conservatively relates neither impl for an unparenthesized block statement.
+#[test]
+fn block_statements_followed_by_minus_stay_unrelated() -> Result<(), String> {
+    let neg = Case {
+        label: "neg after block statement",
+        trait_name: "Neg",
+        method: "neg",
+        signature: "type Output = Money;\n    fn neg(self) -> Money",
+        old_line: "        Money(-self.0)",
+        new_line: "        Money(0 - self.0)",
+        extra_items: "impl Sub for Money { type Output = Money; fn sub(self, other: Money) -> Money { Money(self.0 - other.0) } }",
+        sibling: "",
+        test_body: "",
+    };
+    let sub = Case {
+        label: "sub after block statement",
+        trait_name: "Sub",
+        method: "sub",
+        signature: "type Output = Money;\n    fn sub(self, other: Money) -> Money",
+        old_line: "        Money(self.0 - other.0)",
+        new_line: "        Money((self.0) - other.0)",
+        extra_items: "impl Neg for Money { type Output = Money; fn neg(self) -> Money { Money(-self.0) } }",
+        sibling: "",
+        test_body: "",
+    };
+    for case in [&neg, &sub] {
+        for body in [
+            "let n = Money(2);\n        if true {} -n;\n        assert_eq!(Money(9).0, 9);",
+            "let n = Money(2);\n        {} -n;\n        assert_eq!(Money(9).0, 9);",
+            "let n = Money(2);\n        match true { true => (), false => () } -n;\n        assert_eq!(Money(9).0, 9);",
+        ] {
+            let direct = direct_tests(&Case {
+                test_body: body,
+                ..*case
+            })?;
+            assert!(direct.is_empty(), "{}: {body}: {direct:?}", case.label);
+        }
+    }
+    // The same brace before a real typed left operand still selects Sub.
+    let direct = direct_tests(&Case {
+        test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
+        ..sub
+    })?;
+    assert_eq!(direct, ["operator_under_test"]);
+    // A separate, observed unary expression still selects Neg.
+    let direct = direct_tests(&Case {
+        test_body: "let n = Money(2);\n        if true {}\n        let r = -n;\n        assert_eq!(r, Money(-2));",
+        ..neg
+    })?;
+    assert_eq!(direct, ["operator_under_test"]);
+    Ok(())
+}
+
+/// Plain `+=` mutates its Self operand despite returning unit. Crediting the
+/// relation still requires that exact operand type and one matching impl.
+#[test]
+fn standalone_add_assign_keeps_typed_operand_and_unique_impl_gates() -> Result<(), String> {
+    let assign = Case {
+        label: "standalone AddAssign",
+        trait_name: "AddAssign",
+        method: "add_assign",
+        signature: "fn add_assign(&mut self, other: Money)",
+        old_line: "        self.0 += other.0;",
+        new_line: "        self.0 = self.0 + other.0;",
+        extra_items: "",
+        sibling: "",
+        test_body: "let mut total = Money(1);\n        total += Money(2);\n        assert_eq!(total, Money(3));",
+    };
+    assert_eq!(direct_tests(&assign)?, ["operator_under_test"]);
+    let wrong_type = Case {
+        label: "integer AddAssign beside unused Money",
+        test_body: "let money = Money(1);\n        let mut total = 1i64;\n        total += 2;\n        assert_eq!(total, 3);\n        let _ = money;",
+        ..assign
+    };
+    assert!(direct_tests(&wrong_type)?.is_empty());
+    let second_impl = Case {
+        label: "second AddAssign impl",
+        extra_items: "impl AddAssign<i64> for Money { fn add_assign(&mut self, other: i64) { self.0 += other; } }",
+        ..assign
+    };
+    assert!(direct_tests(&second_impl)?.is_empty());
+    // The compound operator cannot supply a relation for Add::add.
+    let add = Case {
+        extra_items: "impl AddAssign for Money { fn add_assign(&mut self, other: Money) { self.0 += other.0; } }",
+        ..with_body(ADD, "Add is not AddAssign", assign.test_body)
+    };
+    assert!(direct_tests(&add)?.is_empty());
+    Ok(())
 }
