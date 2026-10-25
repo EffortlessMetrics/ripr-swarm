@@ -1082,6 +1082,8 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/src/cli/commands/doctor.rs::tests::mcp_config_verdict_accepts_what_init_writes_and_names_each_problem",
+  "crates/ripr/tests/cli_smoke.rs::doctor_verifies_mcp_json_in_human_and_json_without_changing_exit",
   "crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry",
