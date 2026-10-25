@@ -6770,6 +6770,7 @@ pub(crate) fn classify_resolved_owner(
                 pin_facts: &pin_facts,
                 changed_field: changed_field.as_ref(),
             },
+            boundary_fact: missing_discriminators.first(),
         },
         related_candidates,
         &predicate_activations,

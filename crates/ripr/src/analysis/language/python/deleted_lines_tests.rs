@@ -407,6 +407,46 @@ fn deleted_line_colliding_with_a_candidate_finding_numbers_after_it() -> Result<
     Ok(())
 }
 
+/// Added lines get collision ordinals too (#10450): identical lines at one
+/// owner no longer share an id, and two different lines that share a
+/// fingerprint keep their ids whichever comes first in the file.
+#[test]
+fn candidate_findings_with_a_shared_fingerprint_get_distinct_stable_ids() -> Result<(), String> {
+    let base = "probe:src_cart.py:python_preview:6bbc8bb2";
+    let body = |first: &str, second: &str| {
+        format!(
+            "CAP = 100\n\n\ndef capped_total(items):\n    total = min(total, {first})\n    total = min(total, {second})\n    return total\n"
+        )
+    };
+    let id_of = |findings: &[Finding], text: &str| {
+        findings
+            .iter()
+            .find(|finding| finding.probe.expression.trim() == text)
+            .map(|finding| finding.id.clone())
+            .ok_or_else(|| format!("no record for {text}: {findings:?}"))
+    };
+    let forward = analyze("cand-fwd", &body("16976", "28141"), &[5, 6], Vec::new())?;
+    let reversed = analyze("cand-rev", &body("28141", "16976"), &[5, 6], Vec::new())?;
+    for text in ["total = min(total, 16976)", "total = min(total, 28141)"] {
+        assert_eq!(id_of(&forward, text)?, id_of(&reversed, text)?, "{text}");
+    }
+    let mut ids = [
+        id_of(&forward, "total = min(total, 16976)")?,
+        id_of(&forward, "total = min(total, 28141)")?,
+    ];
+    ids.sort();
+    assert_eq!(ids, [base.to_string(), format!("{base}.2")]);
+
+    let same = analyze("cand-same", &body("16976", "16976"), &[5, 6], Vec::new())?;
+    let mut ids: Vec<_> = same.iter().map(|finding| finding.id.clone()).collect();
+    ids.sort();
+    assert_eq!(ids, [base.to_string(), format!("{base}.2")], "{same:?}");
+    for finding in &same {
+        assert_eq!(finding.id, finding.probe.id.0);
+    }
+    Ok(())
+}
+
 /// A deleted line inside the old docstring ran no behavior, even when its
 /// text looks like code; the old-side docstring ranges say so.
 #[test]
