@@ -752,3 +752,49 @@ fn an_explicit_owner_export_beats_a_dependency_glob() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn nested_use_groups_keep_the_owner_leaf() -> Result<(), String> {
+    for lib_rs in [
+        "pub mod internal;\npub use {internal::{thr}};\n",
+        "pub mod internal;\npub use crate::{internal::{thr}};\n",
+        "pub mod internal;\npub use self::{internal::{thr}};\n",
+        "pub mod internal;\npub use {internal::{thr}, ::other_dep::other};\n",
+        "pub mod internal;\npub use {other_dep::{*}, internal::{thr}};\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_use_groups_preserve_dependency_and_rename_refusals() -> Result<(), String> {
+    for lib_rs in [
+        "pub mod internal;\npub use {internal::{*}, other_dep::{*}};\n",
+        "pub mod internal;\npub use {internal::{*}, other_dep::{thr}};\n",
+        "pub mod internal;\npub use {internal::{*}, other_dep::{thr as\nthr}};\n",
+        "pub mod internal;\npub use {internal::{*}, other_dep::{other as\nthr}};\n",
+        "pub mod internal;\npub use {internal::{thr as\nrenamed}, other_dep::{thr}};\n",
+        "pub mod internal;\npub use ::{internal::{thr}};\n",
+        "pub mod internal;\npub use internal::{thr as _};\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        assert_ne!(family(&found, "return_value")?.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_use_groups_preserve_cfg_refusals() -> Result<(), String> {
+    for gate in ["#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]"] {
+        let lib_rs = format!(
+            "pub mod internal;\n{gate}\npub use crate::{{internal::{{thr}}}};\npub use other_dep::*;\n"
+        );
+        let found = reexport_case(&lib_rs)?;
+        assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        assert_ne!(family(&found, "return_value")?.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
