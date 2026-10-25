@@ -2413,6 +2413,8 @@ per-language disposition tests), the registry's relation to
 invocation. Defaults come from the real `crates/ripr/Cargo.toml`; explicit
 `--features` are additive unless `--no-default-features` is supplied. Only declared
 `lang-*` names are accepted. JavaScript and TypeScript share `lang-typescript`.
+`lang-rust` is mandatory, as enforced by the product's `lib.rs`; unsupported
+Rust-disabled selections are rejected before building or reading offline input.
 `--registry-json` reads a saved registry without building and can be stale; the
 report says so. The same feature flags specify its expected build, independently
 of the JSON's availability flags.
@@ -2420,13 +2422,14 @@ of the JSON's availability flags.
 Focused controls (run serially, after resource admission):
 
 ```bash
-cargo xtask check-capability-producers --no-default-features
-cargo xtask check-capability-producers --no-default-features --features lang-perl
+cargo xtask check-capability-producers --no-default-features --features lang-rust
+cargo xtask check-capability-producers --no-default-features --features lang-rust,lang-perl
 ```
 
-The first requires every language's producer to be absent; the second requires
-only Perl present. Substitute `lang-rust`, `lang-python`, or `lang-typescript`
-(the latter requires both TypeScript and JavaScript) for individual controls.
+The first requires Rust present and every preview producer absent; the second
+requires Rust and Perl present. Add `lang-python` or `lang-typescript` to the
+Rust-only selection (the latter requires both TypeScript and JavaScript) for
+individual optional-language controls.
 These extra invocations are opt-in; the existing hosted default invocation does
 not run a feature matrix. Unit controls pin all four language-feature cases and
 reject either direction of a changed availability flag.

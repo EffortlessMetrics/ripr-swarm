@@ -79,6 +79,11 @@ impl BuildSelection {
                 }
             }
         }
+        // The product's lib.rs deliberately rejects Rust-disabled builds.
+        // Saved JSON must not certify a feature combination it cannot build.
+        if !visited.contains("lang-rust") {
+            return Err("ripr requires lang-rust; the minimal supported selection is --no-default-features --features lang-rust".to_string());
+        }
         Ok(visited
             .into_iter()
             .filter(|name| name.starts_with("lang-"))

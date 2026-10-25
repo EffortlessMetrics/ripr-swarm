@@ -321,11 +321,10 @@ fn minimal_and_individual_builds_require_exact_producer_presence() -> Result<(),
         std::fs::read_to_string(root.join(super::RIPR_CARGO_TOML)).map_err(|e| e.to_string())?;
     let inv = read_inventory(&root)?;
     let cases = [
-        (None, vec![]),
-        (Some("lang-rust"), vec!["rust"]),
-        (Some("lang-typescript"), vec!["typescript", "javascript"]),
-        (Some("lang-python"), vec!["python"]),
-        (Some("lang-perl"), vec!["perl"]),
+        ("lang-rust", vec!["rust"]),
+        ("lang-typescript", vec!["rust", "typescript", "javascript"]),
+        ("lang-python", vec!["rust", "python"]),
+        ("lang-perl", vec!["rust", "perl"]),
     ];
     assert_eq!(
         inv.lang_features,
@@ -335,10 +334,10 @@ fn minimal_and_individual_builds_require_exact_producer_presence() -> Result<(),
     for (feature, compiled) in cases {
         let selection = BuildSelection {
             no_default_features: true,
-            features: feature.into_iter().map(String::from).collect(),
+            features: set(&["lang-rust", feature]),
         };
         let enabled = selection.enabled_features(&manifest)?;
-        assert_eq!(enabled, feature.into_iter().map(String::from).collect());
+        assert_eq!(enabled, set(&["lang-rust", feature]));
         let good = build_registry(&compiled);
         assert_eq!(
             compiled_feature_violations(&good, &enabled),
@@ -396,7 +395,7 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
             "offline.json",
             "--no-default-features",
             "--features",
-            "lang-python,lang-perl",
+            "lang-rust,lang-python,lang-perl",
         ]
         .map(String::from),
     )?;
@@ -409,16 +408,16 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
             "--quiet",
             "--no-default-features",
             "--features",
-            "lang-perl,lang-python"
+            "lang-perl,lang-python,lang-rust"
         ]
     );
     assert_eq!(
         options.build.enabled_features(&manifest)?,
-        set(&["lang-python", "lang-perl"])
+        set(&["lang-rust", "lang-python", "lang-perl"])
     );
     assert_eq!(
         options.build.rerun_command(),
-        "cargo xtask check-capability-producers --no-default-features --features lang-perl,lang-python"
+        "cargo xtask check-capability-producers --no-default-features --features lang-perl,lang-python,lang-rust"
     );
     let additive = parse_args(&["--features", "lang-perl"].map(String::from))?;
     assert_eq!(
@@ -427,6 +426,21 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
     );
     let unknown = parse_args(&["--features", "lang-go"].map(String::from))?;
     assert!(unknown.build.enabled_features(&manifest).is_err());
+    for features in [
+        None,
+        Some("lang-typescript"),
+        Some("lang-python"),
+        Some("lang-perl"),
+    ] {
+        let selection = super::features::BuildSelection {
+            no_default_features: true,
+            features: features.into_iter().map(String::from).collect(),
+        };
+        assert!(
+            selection.enabled_features(&manifest).is_err(),
+            "Rust-disabled selection must fail before building or reading offline JSON"
+        );
+    }
     for args in [
         vec!["--features"],
         vec!["--features", ""],
