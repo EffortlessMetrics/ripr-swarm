@@ -19,7 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Canonical gap: gap:python:src/stats.py:Stats.record_write:predicate_boundary:predicate:self.writes+=1
   Changed behavior: self.writes += 1
-  Discriminator (observed, advisory): Related Python test reaches `record_write` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Discriminator (observed, advisory): Related Python test reaches `record_write` with an
+    `exact_value` oracle. Static evidence suggests the changed behavior is observed under an
+    exact-value discriminator
   Related test: tests/test_stats.py:6 test_writes
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes

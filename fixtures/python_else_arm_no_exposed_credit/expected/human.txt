@@ -20,7 +20,10 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/sign.py:sign:return_value:return_value:-2
   Changed behavior: return -2
-  Missing discriminator (1 of 2): A strong Python oracle reaches `sign`, but static evidence does not place a related test input inside the guarding arm `not (x > 0)`; every observed input leaves the changed line…
+  Missing discriminator (1 of 2): A strong Python oracle reaches `sign`, but static evidence does
+    not place a related test input inside the guarding arm `not (x > 0)`; every observed input
+    leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the
+    guarding condition
   Related test: tests/test_sign.py:4 test_positive_sign
   Suggested test file: tests/test_sign.py
   Suggested test: test_positive_sign

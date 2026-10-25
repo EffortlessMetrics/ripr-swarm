@@ -14,7 +14,11 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.56)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: (0, Some(self.remaining))
-  Analyzer limit: A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr…
+  Analyzer limit: A Rust test names the type of the changed trait-impl method and may run that
+    method through an operator, scope exit, loop, index or a method call on a receiver whose type
+    ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that
+    call to the changed method. ripr does not claim a gap; this is a named limitation, not a
+    coverage claim
   Related test (1 of 4 matched rows): tests/size_hints.rs:2 foreign_size_hint_is_observed (no established call path to the changed code; linked by name only)
   Next step: `foreign_size_hint_is_observed` (tests/size_hints.rs:2),
     `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and
@@ -37,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
   ripr context --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:c861ec7a --root <cwd>/fixtures/rust_qualified_foreign_receiver/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --at src/lib.rs:18 --kind return_value
 

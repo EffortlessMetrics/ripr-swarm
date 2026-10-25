@@ -18,7 +18,9 @@ Start here:
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
   Changed behavior: handlers[key]();
-  Discriminator (observed, advisory): Related test reaches `dispatchAction` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+  Discriminator (observed, advisory): Related test reaches `dispatchAction` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant discriminator
   Related test: tests/cache.test.ts:3 dispatchAction calls the named handler
   Next step — TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect
     the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before
@@ -38,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_static_limit/input --diff <cwd>/fixtures/ts_static_limit/diff.patch --mode fast probe:src_cache.ts:typescript_preview:bac50022
   ripr context --root <cwd>/fixtures/ts_static_limit/input --diff <cwd>/fixtures/ts_static_limit/diff.patch --mode fast --at probe:src_cache.ts:typescript_preview:bac50022
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_cache.ts:typescript_preview:bac50022 --root <cwd>/fixtures/ts_static_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

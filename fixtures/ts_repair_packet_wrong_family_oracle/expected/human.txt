@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (Number.isNaN(n)) {
-  Missing discriminator: Related tests reach `parseLimit` with a strong oracle, but the changed line has no statically comparable predicate boundary; static evidence cannot tie an assertion to the changed…
+  Missing discriminator: Related tests reach `parseLimit` with a strong oracle, but the changed line
+    has no statically comparable predicate boundary; static evidence cannot tie an assertion to the
+    changed branch
   Related test: tests/limiter.test.ts:3 parseLimit parses a numeric limit (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/input --diff <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/diff.patch --mode fast probe:src_limiter.ts:typescript_preview:aa93aed4
   ripr context --root <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/input --diff <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/diff.patch --mode fast --at probe:src_limiter.ts:typescript_preview:aa93aed4
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_limiter.ts:typescript_preview:aa93aed4 --root <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

@@ -501,6 +501,15 @@ interprets it through the receipt owner (`output::agent_receipt`):
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
 
+One `agent status` call takes at most one successful worktree observation per
+(root, whole edit-cage policy) and reuses it for every finished attempt it
+reevaluates, so equal-policy attempts do not each rescan the worktree (#9823).
+A capture that fails is not retained. The observation is call-scoped: the next
+status call captures again, and an edit made between two readings inside one call
+is retained outside that call's shared observation until the next call. Each
+attempt keeps its own baseline, delta and verdict authority; receipt issuance,
+the after phase and MCP reads capture afresh.
+
 Repair inventories and Git currentness probes ignore the user's
 `diff.orderFile`: a dangling orderfile must not abort the before phase or the
 after phase, including when the focused test edit was committed between phases.

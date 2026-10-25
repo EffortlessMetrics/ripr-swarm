@@ -47,6 +47,7 @@ Stop reasons:
 
 Static limitation
   rust_implicit_call_unresolved — A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Call the changed method explicitly by its fully qualified path in the test, instead of relying on an operator, `Drop`, `Deref` or other implicit trait call, and assert on its result.
 
 Limitation detail
   last established edge: reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type

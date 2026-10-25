@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (input.trim() === "") {
-  Missing discriminator: Related test reaches `parseUser` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow`…
+  Missing discriminator: Related test reaches `parseUser` but the strongest extracted oracle is
+    `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or
+    a `toThrow` form with an exact payload (string, object, or class reference)
   Related test (1 of 3 matched rows): tests/parser.test.ts:5 empty user throws exact message (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_tothrow_exact_oracle/input --diff <cwd>/fixtures/typescript_tothrow_exact_oracle/diff.patch --mode fast probe:src_parser.ts:typescript_preview:c440ffa1
   ripr context --root <cwd>/fixtures/typescript_tothrow_exact_oracle/input --diff <cwd>/fixtures/typescript_tothrow_exact_oracle/diff.patch --mode fast --at probe:src_parser.ts:typescript_preview:c440ffa1
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_parser.ts:typescript_preview:c440ffa1 --root <cwd>/fixtures/typescript_tothrow_exact_oracle/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
