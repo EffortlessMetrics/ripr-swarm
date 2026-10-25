@@ -1364,8 +1364,9 @@ A factor swap involving named operands retains the ordinary table-row reading
 (#9815). Python `int`/`float` annotations and numeric defaults do not enforce
 runtime operand types: custom `__mul__`/`__rmul__` methods can make the swap a
 behavior change. Numeric test rows alone cannot establish global commutativity.
-Literal-only products have no named table operand and keep their ordinary
-exact-oracle reading. This rule does not infer local or module runtime types.
+Order-sensitive repair guidance requests operands that distinguish multiplication
+order; varying numeric rows alone cannot do so. Literal-only products have no
+named table operand and keep their ordinary exact-oracle reading. This rule does not infer local or module runtime types.
 
 ## Implementation Mapping
 

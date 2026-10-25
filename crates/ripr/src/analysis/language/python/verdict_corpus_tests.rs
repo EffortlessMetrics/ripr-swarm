@@ -19,6 +19,15 @@ fn classify(
     old_line: &str,
     test_source: &str,
 ) -> Result<ExposureClass, String> {
+    classify_finding(owner, line, old_line, test_source).map(|finding| finding.class)
+}
+
+fn classify_finding(
+    owner: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+) -> Result<crate::domain::Finding, String> {
     let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
     // The workspace pass fills the star-export fact from the module source.
     reexports::apply_package_reexports(&mut owners, |file| {
@@ -37,7 +46,6 @@ fn classify(
         &owners,
         &tests,
     )
-    .map(|finding| finding.class)
     .ok_or_else(|| "changed line should classify".to_string())
 }
 
@@ -1998,6 +2006,36 @@ fn annotated_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), Str
             classify(&owner, 2, "    return a * b", AREA_TABLE)?,
             ExposureClass::WeaklyExposed,
             "{signature}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn factor_reorder_guidance_requires_order_sensitive_operands() -> Result<(), String> {
+    for (owner, old) in [
+        (AREA, "    return a * b"),
+        ("def area(a, b):\n    return 7 * a\n", "    return a * 7"),
+    ] {
+        let finding = classify_finding(owner, 2, old, AREA_TABLE)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert!(finding.missing.iter().any(|text| {
+            text.contains("Add a table row whose operands distinguish multiplication order.")
+        }));
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| {
+                    fact.value == "a table row whose operands distinguish multiplication order"
+                })
+        );
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|text| text.contains("varies") || text.contains("do not vary"))
         );
     }
     Ok(())

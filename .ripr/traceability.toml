@@ -16643,6 +16643,7 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::factor_reorder_guidance_requires_order_sensitive_operands",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::untyped_factor_reorder_keeps_the_unvaried_table_reading",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::annotated_factor_reorder_keeps_the_unvaried_table_reading",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::reordered_factors_are_not_an_unvaried_table_operand",

@@ -39,11 +39,12 @@ use std::path::Path;
 /// Rows beyond this bound leave the table unread.
 const MAX_TABLE_ROWS: usize = 64;
 
-/// A changed operand that no readable table row varies.
+/// A changed operand expression that the readable table rows do not discriminate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UnvariedTableOperand {
-    pub(super) operand: String,
     pub(super) reason: String,
+    pub(super) discriminator: String,
+    pub(super) action: String,
 }
 
 /// When every strong related table-driven oracle takes its expected value from
@@ -117,8 +118,9 @@ fn unvaried_returned_parameter_operand(
         saw_table = true;
     }
     saw_table.then(|| UnvariedTableOperand {
-        operand: operand.clone(),
         reason: format!("table rows do not vary {operand}"),
+        discriminator: format!("a table row that varies {operand}"),
+        action: format!("Add a table row that varies `{operand}`."),
     })
 }
 
@@ -168,10 +170,55 @@ fn unvaried_arithmetic_operand(
         }
         saw_table = true;
     }
-    saw_table.then(|| UnvariedTableOperand {
-        operand: operand.clone(),
-        reason: format!("table rows do not vary {operand}"),
+    saw_table.then(|| {
+        if swaps_factors(old_line, line_text) {
+            UnvariedTableOperand {
+                reason: "numeric table rows agree under factor reordering".to_string(),
+                discriminator: "a table row whose operands distinguish multiplication order"
+                    .to_string(),
+                action: "Add a table row whose operands distinguish multiplication order."
+                    .to_string(),
+            }
+        } else {
+            UnvariedTableOperand {
+                reason: format!("table rows do not vary {operand}"),
+                discriminator: format!("a table row that varies {operand}"),
+                action: format!("Add a table row that varies `{operand}`."),
+            }
+        }
     })
+}
+
+/// Syntactic factor swapping selects order-sensitive guidance. It never grants
+/// equivalence or exposure: names can hold overloaded multiplication operands.
+fn swaps_factors(old_line: &str, new_line: &str) -> bool {
+    let whole = |line: &str| line_value_expr(line).and_then(|text| parse_expr(&text));
+    let (Some(Expr::BinOp(old)), Some(Expr::BinOp(new))) = (whole(old_line), whole(new_line))
+    else {
+        return false;
+    };
+    if !matches!(old.op, ast::Operator::Mult) || !matches!(new.op, ast::Operator::Mult) {
+        return false;
+    }
+    let (Some(old_left), Some(old_right), Some(new_left), Some(new_right)) = (
+        factor_spelling(&old.left),
+        factor_spelling(&old.right),
+        factor_spelling(&new.left),
+        factor_spelling(&new.right),
+    ) else {
+        return false;
+    };
+    old_left == new_right && old_right == new_left
+}
+
+fn factor_spelling(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name) => Some(format!("name:{}", name.id)),
+        Expr::Constant(constant) => {
+            constant_i128(&constant.value).map(|value| format!("int:{value}"))
+        }
+        _ => None,
+    }
 }
 
 fn changed_returned_parameter(
