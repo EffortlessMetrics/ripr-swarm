@@ -441,7 +441,9 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
     ] {
         let (_, text) = sources
             .iter()
-            .find(|(path, _)| path.ends_with(suffix))
+            // Component-wise: the scanned path is a native-separator string,
+            // so a `/` suffix never matches a Windows `\\` path as text.
+            .find(|(path, _)| std::path::Path::new(path).ends_with(suffix))
             .ok_or_else(|| format!("{suffix} was not scanned"))?;
         assert!(
             text.lines().count() >= minimum_lines,
@@ -456,9 +458,9 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
             "{path} uses the retired is_unmatched"
         );
         for hit in miss_reading_closures(source) {
-            let allowed = MISS_CLOSURE_ALLOWLIST
-                .iter()
-                .any(|(suffix, fragment)| path.ends_with(suffix) && hit.contains(fragment));
+            let allowed = MISS_CLOSURE_ALLOWLIST.iter().any(|(suffix, fragment)| {
+                std::path::Path::new(path).ends_with(suffix) && hit.contains(fragment)
+            });
             if !allowed {
                 violations.push(format!("{path}:{hit}"));
             }

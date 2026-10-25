@@ -1,0 +1,15 @@
+pub fn inc(x: u32) -> u32 {
+    x + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inc_is_positive_and_maps() {
+        assert!(inc(1) > 0);
+        let v: Vec<u32> = vec![1, 2].into_iter().map(inc).collect();
+        assert!(!v.is_empty());
+    }
+}
