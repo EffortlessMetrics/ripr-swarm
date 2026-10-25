@@ -281,6 +281,7 @@ fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), S
         ("loop-bind", "withRetry(fn.bind(null), 2)"),
         ("loop-cast", "withRetry(fn as any, 2)"),
         ("loop-paren", "withRetry((fn), 2)"),
+        ("loop-spread", "withRetry(...[fn, 2])"),
     ] {
         let body = format!(
             "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({call}, /down/);\n  assert.equal(fn.mock.callCount(), 2);"
@@ -293,6 +294,70 @@ fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), S
             finding.missing
         );
     }
+    for (label, setup, call, count) in [
+        (
+            "loop-helper-arrow",
+            "const go = (f: any) => withRetry(f, 2);",
+            "go(fn)",
+            "fn.mock.callCount()",
+        ),
+        (
+            "loop-helper-function",
+            "function go(f: any) {\n    return withRetry(f, 2);\n  }",
+            "go(fn)",
+            "fn.mock.callCount()",
+        ),
+        (
+            "loop-args-carrier",
+            "const args = [fn, 2] as const;",
+            "withRetry(...args)",
+            "fn.mock.callCount()",
+        ),
+        (
+            "loop-container-carrier",
+            "const h = { fn };",
+            "withRetry(h.fn, 2)",
+            "fn.mock.callCount()",
+        ),
+        (
+            "loop-count-alias",
+            "",
+            "withRetry(fn, 2)",
+            "(() => { const calls = fn.mock.calls; return calls.length; })()",
+        ),
+        (
+            "loop-count-cast",
+            "",
+            "withRetry(fn, 2)",
+            "(fn as any).mock.callCount()",
+        ),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  {setup}\n  await assert.rejects({call}, /down/);\n  assert.equal({count}, 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::StaticUnknown,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    let labelled = RETRY.replace(OLD, "  outer: for (let i = 0; i < attempts; i++) {");
+    let labelled_new = "  outer: for (let i = 0; i < attempts - 1; i++) {";
+    let finding = run(
+        "loop-label",
+        &labelled,
+        "  outer: for (let i = 0; i < attempts; i++) {",
+        labelled_new,
+        &retry_test(COUNTED),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
     let alias = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  const task = fn;\n  await assert.rejects(withRetry(task, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
     let finding = run("loop-carrier", RETRY, OLD, NEW, &retry_test(alias))?;
     assert_eq!(
@@ -301,6 +366,36 @@ fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), S
         "{:?}",
         finding.missing
     );
+    Ok(())
+}
+
+/// A spelling the adapter does not link to the owner as a call has only a
+/// heuristic relation, so its finding is advisory and never a repair target;
+/// the guard still reads these spellings as handoffs once a relation exists.
+#[test]
+fn owner_spellings_without_a_direct_relation_are_never_actionable() -> Result<(), String> {
+    for (label, call) in [
+        ("loop-generic", "withRetry<number>(fn, 2)"),
+        ("loop-nonnull", "withRetry!(fn, 2)"),
+        ("loop-comma", "(0, withRetry)(fn, 2)"),
+        ("loop-call", "withRetry.call(null, fn, 2)"),
+        ("loop-apply", "withRetry.apply(null, [fn, 2])"),
+        ("loop-owner-alias", "(withRetry as typeof withRetry)(fn, 2)"),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({call}, /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        let advisory = finding
+            .missing
+            .iter()
+            .any(|line| line.contains("actionability `advisory`"));
+        assert!(
+            finding.class == ExposureClass::StaticUnknown || advisory,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
     Ok(())
 }
 

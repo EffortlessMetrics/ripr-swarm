@@ -326,19 +326,32 @@ beside brackets, commas and comparison operators is ignored; literal contents
 and `+`/`-` spacing are not, and a header holding a `/` is compared as
 written), and a related test that calls the owner directly, by import, through a
 renamed, default or namespace import, or as a method through a receiver
-asserts the call count of a mock it hands to that call (`m.mock.callCount()`
-or `m.mock.calls.length`, `m` a plain identifier). Handing over means `m`, or
-a local assigned from an expression that mentions `m` (`const task = m`), is
-a free identifier somewhere inside an argument of the owner call: `owner(m)`,
-`owner((m))`, `owner(m as any)`, `owner(m.bind(null))`, `owner(() => m())`
-and `owner(task)` all count, as does `owner?.(m)`. A member value
-(`owner(other.m)`), a member call on a plain function owner
-(`other.owner(m)`, including `other. owner(m)` and `other./* c */owner(m)`),
-an object or array literal holding the mock, and text in a comment or string
-do not. A call count on a mock the owner call never mentions stays an
-actionable gap; so does a handoff the rule cannot see (the mock built inside
-a helper the call mentions), since only a mention connects the count to the
-call. The call names come from `ts_owner_call_names`, a ladder result of
+reads the call count of a mock (`m.mock.callCount()`, `m.mock.calls.length`,
+`m.callCount()` after `const m = x.mock`, `expect(m).toHaveBeenCalledTimes(n)`,
+`m` any identifier in the receiver, so `(m as any).mock...` and `ms[0].mock...`
+count) that the same statement as an owner run mentions. Owner binding and
+mock flow are separate: the call names come from `ts_owner_call_names`, and a
+local that runs one (`const r = owner`, `const go = (f) => owner(f)`,
+`function go(f) { return owner(f); }`) is the owner too. The mock flows by
+mention, not by argument position: `m`, or a local assigned from an
+expression that mentions it (`const task = m`, `const args = [m, 2]`,
+`const { run } = { run: m }`, `let t; t = m`, `const h = { m }`), is a free
+identifier in a statement that mentions the owner in any spelling
+(`owner(m)`, `owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`,
+`owner(() => m())`, `owner(m.bind(null))`, `owner(m as any)`, `owner(...args)`),
+as does `owner?.(m)`. That is the conservative policy: a handoff the rule
+cannot see abstains rather than reads `weakly_exposed`, and so does a mock
+that merely shares a statement with the owner. A member value
+(`owner(other.m)`), an object key (`{ m: x }`), a member call on a plain
+function owner (`other.owner(m)`, including `other. owner(m)` and
+`other./* c */owner(m)`), a count assigned to a local (`const n =
+m.mock.callCount()`), and text in a comment or string do not. A call count on
+a mock no owner statement mentions stays an actionable gap. A labelled
+header (`outer: for (...)`) is a counted header, and a `;` or `)` inside a
+string in a clause does not end it. An owner spelling the adapter does not link
+as a call (`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`)
+has only a heuristic relation and an advisory finding, never a repair target;
+the rule reads it as a handoff once a relation exists. A ladder result of
 `weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
 `gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
 loop header, and the adapter does not model how many iterations the loop
