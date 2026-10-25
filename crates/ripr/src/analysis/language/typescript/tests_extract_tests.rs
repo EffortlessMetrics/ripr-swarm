@@ -1353,6 +1353,13 @@ fn skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices() {
     deep.push_str("a34.skip = custom; describe.skip('off', () => { it('live', () => {}); });");
     for source in [
         deep.as_str(),
+        "var d = describe; var d; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "var d = describe; { var d; d.skip = custom; } describe.skip('off', () => { it('live', () => {}); });",
+        "var d = describe; d.skip = custom; var d; describe.skip('off', () => { it('live', () => {}); });",
+        "let d; (d as any) = describe; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "let d; [d] = [describe]; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "const box = {}; box.d = describe; box.d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "describe.skip((() => { it('live', () => {}); return () => 'off'; })()(), () => { it('dormant', () => {}); });",
         "Object.assign(...[describe, { skip: custom }]); describe.skip('off', () => { it('live', () => {}); });",
         "new Customizer(describe); describe.skip('off', () => { it('live', () => {}); });",
         "const g = globalThis; g.describe = custom; describe.skip('off', () => { it('live', () => {}); });",

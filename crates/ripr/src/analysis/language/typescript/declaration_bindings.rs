@@ -48,6 +48,7 @@ struct Binding {
 struct Scope {
     span: oxc_span::Span,
     parent: Option<usize>,
+    catch_scope: bool,
     bindings: BTreeMap<String, Binding>,
 }
 
@@ -254,6 +255,7 @@ impl DeclarationBindings {
         self.scopes.push(Scope {
             span,
             parent: self.stack.last().copied(),
+            catch_scope: false,
             bindings: names
                 .into_iter()
                 .map(|name| (name, Binding::default()))
@@ -437,6 +439,9 @@ impl<'a> Visit<'a> for DeclarationBindings {
             AstKind::BlockStatement(block) => self.push(block.span, &block.body),
             AstKind::CatchClause(catch) => {
                 self.push(catch.span, &[]);
+                if let Some(scope) = self.stack.last().copied() {
+                    self.scopes[scope].catch_scope = true;
+                }
                 if let Some(param) = &catch.param {
                     for id in param.pattern.get_binding_identifiers() {
                         self.bind_unknown(id.name.as_str());
@@ -497,6 +502,9 @@ impl<'a> Visit<'a> for DeclarationBindings {
                 }
             }
             AstKind::AssignmentTargetPropertyIdentifier(property) => {
+                if let Some(init) = &property.init {
+                    self.escape_value(init);
+                }
                 self.writes.push(Alias {
                     name: property.binding.name.to_string(),
                     at: property.binding.span.start,
@@ -516,8 +524,11 @@ impl<'a> Visit<'a> for DeclarationBindings {
                         },
                         value,
                     ));
+                } else {
+                    self.escape_value(&assignment.right);
                 }
             }
+            AstKind::AssignmentPattern(pattern) => self.escape_value(&pattern.right),
             AstKind::CallExpression(call) => self.escape_arguments(&call.arguments),
             AstKind::NewExpression(call) => self.escape_arguments(&call.arguments),
             AstKind::ReturnStatement(returned) => {
@@ -528,8 +539,35 @@ impl<'a> Visit<'a> for DeclarationBindings {
             AstKind::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
                     for id in declarator.id.get_binding_identifiers() {
-                        if let Some(index) = self.stack.last().copied() {
-                            self.scopes[index].bindings.insert(
+                        let Some(current) = self.stack.last().copied() else {
+                            continue;
+                        };
+                        let owner =
+                            if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                                self.variable_scopes.last().copied().unwrap_or(current)
+                            } else {
+                                current
+                            };
+                        if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                            // One hoisted binding, including repeated `var d;`.
+                            // Remove only block copies on this declaration path.
+                            for scope in self.stack.iter().rev().copied() {
+                                if scope <= owner {
+                                    break;
+                                }
+                                if self.scopes[scope].catch_scope
+                                    && self.scopes[scope].bindings.contains_key(id.name.as_str())
+                                {
+                                    self.opaque = true;
+                                }
+                                self.scopes[scope].bindings.remove(id.name.as_str());
+                            }
+                            self.scopes[owner]
+                                .bindings
+                                .entry(id.name.to_string())
+                                .or_default();
+                        } else {
+                            self.scopes[owner].bindings.insert(
                                 id.name.to_string(),
                                 Binding {
                                     ready: declarator.span.end,
@@ -540,19 +578,17 @@ impl<'a> Visit<'a> for DeclarationBindings {
                     }
                     if let Some(init) = declarator.init.as_ref().and_then(Alias::of) {
                         for id in declarator.id.get_binding_identifiers() {
-                            let floor = self.variable_scopes.last().copied().unwrap_or(0);
-                            for scope in self.stack.iter().rev().copied() {
-                                if scope < floor {
-                                    break;
-                                }
-                                if let Some(binding) =
-                                    self.scopes[scope].bindings.get_mut(id.name.as_str())
-                                {
-                                    binding.potential.push(init.clone());
-                                }
-                                if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
-                                    break;
-                                }
+                            let owner =
+                                if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                                    self.variable_scopes.last().copied()
+                                } else {
+                                    self.stack.last().copied()
+                                };
+                            if let Some(owner) = owner
+                                && let Some(binding) =
+                                    self.scopes[owner].bindings.get_mut(id.name.as_str())
+                            {
+                                binding.potential.push(init.clone());
                             }
                         }
                     } else if let Some(init) = &declarator.init {

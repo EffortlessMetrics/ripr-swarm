@@ -4595,6 +4595,10 @@ impl UnextractedTestFinder<'_> {
                 }
             }
             Expression::CallExpression(call) => {
+                self.visit_empty_table_evaluated_expression(&call.callee);
+                if self.gap.is_some() {
+                    return;
+                }
                 self.visit_call_with_arguments(call, true, true);
                 if self.gap.is_none() {
                     match runtime_expression(&call.callee) {
@@ -4609,6 +4613,19 @@ impl UnextractedTestFinder<'_> {
                         _ => {}
                     }
                 }
+            }
+            Expression::StaticMemberExpression(member) => {
+                self.visit_empty_table_evaluated_expression(&member.object)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                self.visit_empty_table_evaluated_expression(&member.object);
+                self.visit_empty_table_evaluated_expression(&member.expression);
+            }
+            Expression::UnaryExpression(unary) => {
+                self.visit_empty_table_evaluated_expression(&unary.argument)
+            }
+            Expression::AwaitExpression(awaited) => {
+                self.visit_empty_table_evaluated_expression(&awaited.argument)
             }
             Expression::TemplateLiteral(template) => {
                 for value in &template.expressions {
