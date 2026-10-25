@@ -4540,6 +4540,65 @@ fn caplog_text_the_edit_removes_is_credited_and_one_it_keeps_is_a_gap() -> Resul
 }
 
 #[test]
+fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), String> {
+    // #9546: a test that does not request `caplog`, or whose module or
+    // conftest redefines the fixture, reads some other object.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let classify = |mut tests: Vec<PythonTest>| {
+        if let Some(test) = tests.first_mut() {
+            test.fixture_defs.push(PythonFixtureDef {
+                name: "caplog".to_string(),
+                file: PathBuf::from("tests/conftest.py"),
+                body_text: "def caplog():\n    return Recorder()\n".to_string(),
+                imports: Vec::new(),
+            });
+        }
+        tests
+    };
+    let build = || {
+        extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!("import logging\nfrom src.audit import check_balance\n\n{PINNED_TEST}"),
+        )
+    };
+    let finding = |tests: &[PythonTest]| {
+        classify_change_with_source(
+            Path::new("src/audit.py"),
+            6,
+            &format!("        {removed}"),
+            Some("        log.warning(\"low balance: %s\", balance)"),
+            &extract_owners(Path::new("src/audit.py"), AUDIT_OWNER),
+            tests,
+            Some(AUDIT_OWNER),
+        )
+        .map(|finding| (finding.class, finding.static_limit_kind))
+    };
+    // Positive control: the builtin fixture is credited.
+    assert_eq!(finding(&build()), Some((ExposureClass::Exposed, None)));
+    // A redefined fixture abstains.
+    assert_eq!(
+        finding(&classify(build())),
+        Some((
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        ))
+    );
+    // A test that never requests `caplog` abstains.
+    let mut tests = build();
+    if let Some(test) = tests.first_mut() {
+        test.fixtures.clear();
+    }
+    assert_eq!(
+        finding(&tests),
+        Some((
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        ))
+    );
+    Ok(())
+}
+
+#[test]
 fn caplog_text_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
     let unread = (
         ExposureClass::StaticUnknown,
