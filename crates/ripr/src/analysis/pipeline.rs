@@ -3507,7 +3507,9 @@ mod tests {
         assert!(cargo.contains("Add /target/ to"), "{cargo}");
         assert!(!cargo.contains("/target/ripr/ to"), "{cargo}");
         // Without a Cargo.toml the literal root is still advised.
-        let other = ripr_artifact_disclosure(&dir.join("not-a-cargo-project"), &roots, &files);
+        let plain = dir.join("plain");
+        std::fs::create_dir_all(&plain).map_err(|error| error.to_string())?;
+        let other = ripr_artifact_disclosure(&plain, &roots, &files);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(other.contains("Add /target/ripr/ to"), "{other}");
         Ok(())

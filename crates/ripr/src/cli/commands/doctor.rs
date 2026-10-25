@@ -2769,7 +2769,8 @@ fn ripr_artifact_ignore(
     // `target/` ignored (a child-only `/target/ripr/` rule is insufficient),
     // so coverage of the default root is judged by `target/` itself and the
     // advice names `/target/` (#9006).
-    let probe_roots = if root.join("Cargo.toml").is_file() {
+    let cargo_project = root.join("Cargo.toml").is_file();
+    let probe_roots = if cargo_project {
         let mut roots: Vec<PathBuf> = Vec::new();
         for relative in &present {
             let probe = if analysis::artifact_root_pathspec(relative) == "target/ripr" {
@@ -2790,6 +2791,21 @@ fn ripr_artifact_ignore(
     };
     if uncovered.is_empty() {
         return DoctorArtifactIgnore::Ignored;
+    }
+    // Only the repair prerequisite is unmet when a child-only rule already
+    // ignores ripr's own reports: do not claim `git add -A` would commit them.
+    if cargo_project
+        && uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])
+            .is_some_and(|child| child.is_empty())
+    {
+        return DoctorArtifactIgnore::Unignored {
+            warning: format!(
+                "~ ripr's own reports under target/ripr are ignored, but Rust repair \
+                 requires Cargo's whole build directory `target/` to be Git-ignored. \
+                 Add this line to .gitignore: {}",
+                artifact_gitignore_entries(&uncovered),
+            ),
+        };
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
@@ -5098,6 +5114,8 @@ mod tests {
             return Err("expected Unignored for a child-only rule".to_string());
         };
         assert!(warning.ends_with("/target/"), "{warning}");
+        assert!(!warning.contains("would commit"), "{warning}");
+        assert!(warning.contains("Rust repair requires"), "{warning}");
         std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
             .map_err(|error| error.to_string())?;
         assert_eq!(
