@@ -762,7 +762,8 @@ fn build_behavior_item(
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
-    let alignment = classify_sink_alignment_with_old(owner, text, None, related, all_tests, false);
+    let alignment =
+        classify_sink_alignment_with_old(owner, text, None, related, all_tests, false, None);
     let strongest = related
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())
