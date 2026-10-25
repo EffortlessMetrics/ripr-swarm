@@ -64,7 +64,7 @@ use super::super::source_facts::{
 };
 use super::super::source_utils::normalized_path;
 use super::super::static_limits::{
-    implicit_dunder_dispatch_limit, static_limit_for_focused_change,
+    implicit_dunder_dispatch_limit, module_object_rebind_limit, static_limit_for_focused_change,
 };
 use super::super::workspace::owner_for_changed_line;
 use super::super::{PythonFramework, PythonOwner, PythonTest};
@@ -758,6 +758,7 @@ fn build_behavior_item(
     let related = related.as_slice();
     let static_limit =
         static_limit_for_focused_change(text, None, None, &focus, owner, "", candidates)
+            .or_else(|| module_object_rebind_limit(text, None, owner, candidates, None))
             .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
             .map(|limit| limit.kind);
     let canonical_gap = static_limit

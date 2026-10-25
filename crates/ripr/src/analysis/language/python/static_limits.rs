@@ -11,6 +11,7 @@ use super::related_tests::{
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
+use super::sink_alignment::CreditedAssertion;
 use super::source_utils::SourceText;
 use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
@@ -41,6 +42,62 @@ pub(super) fn static_limit_for_change(
         None,
     );
     static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
+}
+
+/// A test that rebinds the owner's module object (`route.response = fake`,
+/// `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
+/// object than the owner mutates. Withholding credit alone leaves a weak
+/// finding whose repair card asserts on the stale import, so the finding is
+/// withheld as a runtime-substitution limit like `patch` (#10289).
+///
+/// `credited` is the test the finding's observation credit comes from. A
+/// credit from a test that does not rebind the object is an independent live
+/// read, so a sibling's rebinding does not take it away (#10354); with no
+/// credit, or credit from a rebinding test, the limit holds (fail closed).
+pub(super) fn module_object_rebind_limit(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    credited: Option<&CreditedAssertion>,
+) -> Option<PythonStaticLimit> {
+    let ChangedEffect::ModuleField { object, .. } =
+        ChangedEffect::of(line_text, old_line_text, owner, false)?
+    else {
+        return None;
+    };
+    let rebinds = |test: &PythonTest| test.constant_rebinding.assigns_attribute(&object);
+    let live_credit = credited.is_some_and(|credited| {
+        related_candidates.iter().any(|candidate| {
+            candidate.test.name == credited.test_name
+                && candidate.test.file == credited.test_file
+                && !rebinds(candidate.test)
+        })
+    });
+    if live_credit {
+        return None;
+    }
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            let test = candidate.test;
+            // Only a test that imports the object can read a stale one.
+            rebinds(test)
+                && test.imports.iter().any(|import| {
+                    import.imported == object
+                        && import_source_module_matches_owner(import, owner, &test.file)
+                })
+        })
+        .then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MockedModule,
+            evidence: format!(
+                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
+            ),
+            missing: format!(
+                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
+            ),
+        })
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -200,36 +257,6 @@ pub(super) fn static_limit_for_focused_change(
             evidence: "static_limit mocked_module: related test uses patch/mock/monkeypatch module syntax"
                 .to_string(),
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
-        });
-    }
-    // A test that rebinds the owner's module object (`route.response = fake`,
-    // `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
-    // object than the owner mutates. Withholding credit alone leaves a weak
-    // finding whose repair card asserts on the stale import, so the finding is
-    // withheld as a runtime-substitution limit like `patch` (#10289).
-    if let Some(ChangedEffect::ModuleField { object, .. }) =
-        ChangedEffect::of(line_text, old_line_text, owner, false)
-        && related_candidates
-            .iter()
-            .filter(|candidate| candidate.relation.uses_oracle())
-            .any(|candidate| {
-                let test = candidate.test;
-                // Only a test that imports the object can read a stale one.
-                test.constant_rebinding.assigns_attribute(&object)
-                    && test.imports.iter().any(|import| {
-                        import.imported == object
-                            && import_source_module_matches_owner(import, owner, &test.file)
-                    })
-            })
-    {
-        return Some(PythonStaticLimit {
-            kind: StaticLimitKind::MockedModule,
-            evidence: format!(
-                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
-            ),
-            missing: format!(
-                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
-            ),
         });
     }
     if related_candidates_have_property_based_test_limit(related_candidates, focus) {
