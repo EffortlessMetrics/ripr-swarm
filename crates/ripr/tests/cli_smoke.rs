@@ -2368,6 +2368,60 @@ fn check_from_a_directory_without_a_workspace_does_not_disclose_resolution() -> 
 }
 
 #[test]
+fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<(), String> {
+    let root = unique_external_workspace("config-validate-hint-source")?;
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let result = (|| {
+        for (source, expected_hint) in [
+            (
+                "mode = \"fast\"\n",
+                Some("`mode` is a valid key, but it belongs under [analysis]"),
+            ),
+            (
+                "mode = \"fast\" # unknown field `max_related_tests`\n",
+                Some("`mode` is a valid key, but it belongs under [analysis]"),
+            ),
+            ("typo = 'unknown field `mode`'\n", None),
+            ("\"mode`extra\" = \"draft\"\n", None),
+            ("\"mode`, expected bogus\" = \"draft\"\n", None),
+            ("broken = [ # unknown field `mode`\n", None),
+            (
+                "[reports]\nmax_related_tests = 'unknown field `mode`'\n",
+                None,
+            ),
+            (
+                "[analysis]\ninclude_unchanged_tests = false # unknown field `mode`\ninclude_unchanged_tests = true\n",
+                None,
+            ),
+        ] {
+            std::fs::write(root.join("ripr.toml"), source).map_err(|error| error.to_string())?;
+            // A relative root still invokes discovery and the production TOML parser.
+            let output = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&root),
+                &["config", "validate", "--root", "."],
+            )
+            .map_err(|error| error.to_string())?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(2), "{source:?}: {stderr}");
+            assert!(output.stdout.is_empty(), "{source:?}: {output:?}");
+            let hints = stderr
+                .lines()
+                .filter(|line| line.contains("is a valid key, but it belongs under"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                hints,
+                expected_hint.into_iter().collect::<Vec<_>>(),
+                "{source:?}: {stderr}"
+            );
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    result
+}
+
+#[test]
 fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("config-validate-parent")?;

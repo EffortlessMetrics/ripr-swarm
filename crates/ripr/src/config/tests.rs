@@ -2068,7 +2068,7 @@ fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), Stri
             replacement: None,
         },
     ];
-    let err = "TOML parse error at line 1, column 1\n  |\n1 | old_mode = 1\n  | ^^^^^^^^\nunknown field `old_mode`, expected one of `analysis`";
+    let err = "unknown field `old_mode`, expected one of `analysis`";
     let hint = retired_key_hint_in(&retired, err)
         .ok_or_else(|| "a recorded retired key must produce a hint".to_string())?;
     assert_eq!(
@@ -2092,11 +2092,11 @@ fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), Stri
     );
     // The hint also reads the error the real parser produces, so the lookup is
     // tied to serde's wording and not only to a hand-built string.
-    let Err(real) = parse_config("old_mode = 1\n") else {
+    let Err(real) = toml::from_str::<RawConfig>("old_mode = 1\n") else {
         return Err("an unknown top-level key must be refused".to_string());
     };
     assert_eq!(
-        retired_key_hint_in(&retired, &real),
+        retired_key_hint_in(&retired, real.message()),
         Some("\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead".to_string()),
         "real parser error: {real}"
     );

@@ -30,6 +30,9 @@ The configuration layer should:
   config fingerprinting share that presence rule);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
+- derive misplaced or retired-key recovery hints from the complete parser
+  reason, so comments, values, syntax failures, and quoted key prefixes cannot
+  fabricate or redirect the hint;
 - keep explicit CLI options ahead of repository config;
 - keep explicit LSP initialization options ahead of repository config;
 - allow repository config to set the default analysis mode;
@@ -570,6 +573,7 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
+- `crates/ripr/tests/cli_smoke.rs::config_validate_hints_follow_the_parser_reason_not_source_text`
 - `crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`
