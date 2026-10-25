@@ -1,0 +1,430 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_nested_use_owner/input",
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:7b3edc8ab9d51020253e36739e5b6043e0e59607009510acc5630c67979e6f05","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_internal.rs:predicate:2361a6b7",
+      "canonical_gap_id": "gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==101",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==101",
+        "language": "rust",
+        "file": "src/internal.rs",
+        "owner": "thr",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==101"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_internal.rs:predicate:2361a6b7",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/internal.rs",
+        "line": 2,
+        "expression": "x > 101"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, low"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: x > 101"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13", "source function argument value x == 101 at line 13"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"x > 101","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: x > 101", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach thr: at, high, low"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "3": "assert!(!thr::internal::thr(50));",
+        "8": "assert!(thr::internal::thr(500));",
+        "13": "assert!(!thr::thr(101));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 3,
+            "value": "x = 50",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "x = 500",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "x = 101",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "x == 101",
+            "context": "function_argument",
+            "provenance": "assert!(!thr::thr(101)); | exact input x = 101; literal operand 101 = 101"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 3,
+          "value": "x = 50",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "x = 500",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "x = 101",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "x == 101",
+          "context": "function_argument",
+          "provenance": "assert!(!thr::thr(101)); | exact input x = 101; literal operand 101 = 101"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "at",
+          "file": "tests/api.rs",
+          "line": 12,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!thr::thr(101));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "high",
+          "file": "tests/api.rs",
+          "line": 7,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(thr::internal::thr(500));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "low",
+          "file": "tests/api.rs",
+          "line": 2,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!thr::internal::thr(50));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_internal.rs:predicate:fa3cd745",
+      "canonical_gap_id": "gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==100",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==100",
+        "language": "rust",
+        "file": "src/internal.rs",
+        "owner": "thr",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==100"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_internal.rs:predicate:fa3cd745",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/internal.rs",
+        "line": 2,
+        "expression": "x > 100"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, low"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13", "missing discriminator x == 100: No related test call uses x equal to 100; observed x values: 101, 50, 500; target 100 value: 100"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach thr: at, high, low", "Related tests contain input values, but the equality-boundary discriminator is missing"],
+      "missing": ["Missing discriminator value: x == 100", "No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "3": "assert!(!thr::internal::thr(50));",
+        "8": "assert!(thr::internal::thr(500));",
+        "13": "assert!(!thr::thr(101));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 3,
+            "value": "x = 50",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "x = 500",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "x = 101",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "x == 100",
+            "reason": "No related test call uses x equal to 100; observed x values: 101, 50, 500; target 100 value: 100",
+            "flow_sink": null
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 3,
+          "value": "x = 50",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "x = 500",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "x = 101",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "x == 100",
+          "reason": "No related test call uses x equal to 100; observed x values: 101, 50, 500; target 100 value: 100",
+          "flow_sink": null
+        }
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "at",
+          "file": "tests/api.rs",
+          "line": 12,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!thr::thr(101));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "high",
+          "file": "tests/api.rs",
+          "line": 7,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(thr::internal::thr(500));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "low",
+          "file": "tests/api.rs",
+          "line": 2,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!thr::internal::thr(50));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_internal.rs:return_value:42dc8ea8",
+      "canonical_gap_id": "gap:rust:src/internal.rs:thr:return_value:return_value:x>101",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/internal.rs:thr:return_value:return_value:x>101",
+        "language": "rust",
+        "file": "src/internal.rs",
+        "owner": "thr",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "x>101"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_internal.rs:return_value:42dc8ea8",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/internal.rs",
+        "line": 2,
+        "expression": "x > 101"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, low"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: x > 101"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13", "source function argument value x == 101 at line 13"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"x > 101","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: x > 101", "Only relational oracle found; it may not discriminate the changed value exactly", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach thr: at, high, low"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "3": "assert!(!thr::internal::thr(50));",
+        "8": "assert!(thr::internal::thr(500));",
+        "13": "assert!(!thr::thr(101));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 3,
+            "value": "x = 50",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "x = 500",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "x = 101",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "x == 101",
+            "context": "function_argument",
+            "provenance": "assert!(!thr::thr(101)); | exact input x = 101; literal operand 101 = 101"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 3,
+          "value": "x = 50",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "x = 500",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "x = 101",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "x == 101",
+          "context": "function_argument",
+          "provenance": "assert!(!thr::thr(101)); | exact input x = 101; literal operand 101 = 101"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "at",
+          "file": "tests/api.rs",
+          "line": 12,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!thr::thr(101));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "high",
+          "file": "tests/api.rs",
+          "line": 7,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(thr::internal::thr(500));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "low",
+          "file": "tests/api.rs",
+          "line": 2,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!thr::internal::thr(50));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_nested_use_owner/input
+
+Summary: 3 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path, 1 unknown); 3 of 3 findings unsuppressed (1 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/internal.rs:2
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==101
+  Changed behavior: x > 101
+  Missing discriminator: No strong discriminator was detected
+  Related test (1 of 3 matched rows): tests/api.rs:12 at (assertion too weak to tell the old behavior from the new)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach yes: Related tests appear to reach thr: at, high, low
+    - infection yes: Detected related test input at the changed boundary
+    - 11 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_nested_use_owner/input --diff <cwd>/fixtures/rust_nested_use_owner/diff.patch --mode fast probe:src_internal.rs:predicate:2361a6b7
+  ripr context --root <cwd>/fixtures/rust_nested_use_owner/input --diff <cwd>/fixtures/rust_nested_use_owner/diff.patch --mode fast --at probe:src_internal.rs:predicate:2361a6b7
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_internal.rs:predicate:2361a6b7 --root <cwd>/fixtures/rust_nested_use_owner/input` for the full gate's answer
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_nested_use_owner/input --at src/internal.rs:2 --kind predicate
+
+Hidden:
+  2 finding(s) omitted: 1 lower-priority, 1 base-side evidence (not candidate edit targets).
+    - ./src/internal.rs:2 (unknown, base-side)
+    - ./src/internal.rs:2 (weak, lower-priority candidate)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
