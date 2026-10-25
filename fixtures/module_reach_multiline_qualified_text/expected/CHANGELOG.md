@@ -47,3 +47,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_multiline_qualified_text (5)
+
+Reason:
+RIPR-SPEC-0118 / #10192: preserve exact canonical edge/route/non-claim and all prior evidence; add private-helper context only as separate limitation_helper_boundary evidence. Guidance retains the same displayed boundary, with verdict/stage/identity/oracle metadata unchanged.
+
+Command:
+`cargo xtask goldens bless module_reach_multiline_qualified_text --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -44,7 +44,7 @@ Where to look
 
 Limitation detail
   last established edge: test `test_outer_returns_difference` (tests/it.rs:4) -> entry `outer`
-  first unresolved edge: entry `outer` -> owner `inner` through a transitive Rust helper path (restricted-visibility helper `inner` behind public entry point `outer`; candidate path only)
+  first unresolved edge: entry `outer` -> owner `inner` through a transitive Rust helper path
   analyzer route: analysis/rust-public-api-transitive-reach
   non-claim: named limitation only; ripr cannot confirm or deny that this path observes the change
 
