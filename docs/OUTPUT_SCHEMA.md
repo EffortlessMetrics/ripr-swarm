@@ -465,7 +465,9 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup. One warning (#10347) fires when no
 `ripr` is on PATH and a project config (`.mcp.json`, `.vscode/mcp.json`,
-`.cursor/mcp.json`) launches it by bare name; the default human screen prints the
+`.cursor/mcp.json`) defines a server that launches it by bare name (`mcpServers`
+for `.mcp.json` and Cursor, `servers` for VS Code; JSONC comments are not
+parsed, so such a file is skipped); the default human screen prints the
 same text as a `~` line.
 
 ### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)

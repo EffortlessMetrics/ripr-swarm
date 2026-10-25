@@ -103,10 +103,15 @@ git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
 
 When a repository has a `.mcp.json`, doctor also checks that it registers a
-`ripr` server whose command is `ripr` and whose args end `mcp`, `--stdio` (what
-`ripr init` writes). A missing, unparseable or mismatched file is an advisory
-`~` line and a failed `mcp_config` check in JSON; it never changes the exit
-status.
+`ripr` server whose command is `ripr` and whose args are exactly `mcp`,
+`--stdio` (what `ripr init --mcp` writes). A missing entry, a mismatched entry
+or an unparseable file is an advisory `~` line and an advisory `mcp_config`
+check in JSON; it never changes the exit status. The repair advice follows
+what `ripr init --mcp` can do: run it when the entry is missing (including a
+missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
+and fix or remove the file first when it is not a JSON object or `mcpServers`
+is not an object, which init refuses. A `.mcp.json` that is a symlink or over
+1 MiB is not verified.
 
 ### Suppression manifest declarations
 
