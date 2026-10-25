@@ -1709,59 +1709,53 @@ fn names_a_type(qualifier: &[String]) -> bool {
 }
 
 /// One `use` leaf: its full path (the last segment is a name or `*`) and
-/// the name it is renamed to, if any.
-type UseLeaf = (Vec<String>, Option<String>);
+/// the name it is renamed to, if any, and whether its path is external.
+type UseLeaf = (Vec<String>, Option<String>, bool);
 
-/// Expand a masked `use` tree (`a::{b, c::d}`, `a::b as c`, `a::*`) into its
-/// leaves. A group whose braces do not balance yields nothing.
-fn expand_use_tree(tree: &str, prefix: &[String], out: &mut Vec<UseLeaf>) {
-    let tree = tree.trim();
-    let Some(open) = tree.find('{') else {
-        let (path, renamed) = match tree.split_once(" as ") {
-            Some((path, alias)) => (path, Some(alias.trim().to_string())),
-            None => (tree, None),
-        };
-        let mut segments = prefix.to_vec();
-        segments.extend(
-            path.split("::")
-                .map(str::trim)
-                .filter(|segment| !segment.is_empty())
-                .map(str::to_string),
-        );
-        out.push((segments, renamed));
-        return;
-    };
+/// Walk parsed groups, inheriting the path and external marker only into
+/// their own descendants. Sibling leaves cannot change each other's origin.
+fn expand_use_tree(
+    tree: &ra_ap_syntax::ast::UseTree,
+    prefix: &[String],
+    external: bool,
+    out: &mut Vec<UseLeaf>,
+) {
+    use ra_ap_syntax::ast::{HasGenericArgs, HasName};
     let mut segments = prefix.to_vec();
-    segments.extend(
-        tree[..open]
-            .split("::")
-            .map(str::trim)
-            .filter(|segment| !segment.is_empty())
-            .map(str::to_string),
-    );
-    let mut depth = 0usize;
-    let mut start = open + 1;
-    let mut parts = Vec::new();
-    for (at, ch) in tree.char_indices().skip_while(|(at, _)| *at < open) {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    parts.push(&tree[start..at]);
-                    break;
-                }
+    let mut external = external;
+    if let Some(path) = tree.path() {
+        external |= path
+            .first_segment()
+            .is_some_and(|segment| segment.coloncolon_token().is_some());
+        for segment in path.segments() {
+            // Unreadable paths remain non-owning leaves, so an explicit
+            // binding cannot disappear and accidentally expose an owner glob.
+            external |= segment.generic_arg_list().is_some() || segment.type_anchor().is_some();
+            if let Some(name) = segment.name_ref() {
+                segments.push(name.text().to_string());
+            } else {
+                external = true;
             }
-            ',' if depth == 1 => {
-                parts.push(&tree[start..at]);
-                start = at + 1;
-            }
-            _ => {}
         }
+    } else {
+        external |= tree.coloncolon_token().is_some();
     }
-    for part in parts {
-        expand_use_tree(part, &segments, out);
+    if let Some(list) = tree.use_tree_list() {
+        for child in list.use_trees() {
+            expand_use_tree(&child, &segments, external, out);
+        }
+        return;
     }
+    if tree.star_token().is_some() {
+        segments.push("*".to_string());
+    }
+    // Keep `as _` distinct from an unrenamed owner leaf.
+    let renamed = tree.rename().map(|rename| {
+        rename
+            .name()
+            .map_or_else(|| "_".to_string(), |name| name.text().to_string())
+    });
+    out.push((segments, renamed, external));
 }
 
 /// Whether `owner`'s crate re-exports it into the module `module`
@@ -1781,8 +1775,8 @@ fn module_reexports_owner(
     owner_crate: &str,
     module: &[String],
 ) -> bool {
+    use ra_ap_syntax::ast;
     use ra_ap_syntax::ast::{HasModuleItem, HasName, HasVisibility};
-    use ra_ap_syntax::{AstNode, ast};
     let owner_package = package_key(&owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
     index.files().iter().any(|(file, facts)| {
@@ -1820,21 +1814,14 @@ fn module_reexports_owner(
             if use_item.visibility().is_none() {
                 continue;
             }
-            let text = mask_comments_and_strings(&use_tree.syntax().text().to_string());
-            // A leading `::` (also inside a group) names an extern crate.
-            let external = text.match_indices("::").any(|(at, _)| {
-                matches!(
-                    text[..at].trim_end().chars().next_back(),
-                    None | Some('{' | ',')
-                )
-            });
             let mut leaves = Vec::new();
-            expand_use_tree(&text, &[], &mut leaves);
-            for (path, alias) in leaves {
+            expand_use_tree(&use_tree, &[], false, &mut leaves);
+            for (path, alias, external) in leaves {
                 let Some((last, target)) = path.split_last() else {
                     continue;
                 };
                 let owns = !external
+                    && !super::owner_pin::has_cfg_attr(&use_item)
                     && alias.is_none()
                     && target.first().is_some_and(|first| {
                         let resolved = match first.as_str() {

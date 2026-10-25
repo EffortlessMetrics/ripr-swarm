@@ -12833,6 +12833,78 @@
             "class": "exposed"
           }
         ]
-      }
+      },
+    {
+      "id": "rust_nested_use_dependency_glob",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_dependency_glob",
+      "vector": "nested_dependency_glob_does_not_supply_owner_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_nested_use_dependency_alias",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_dependency_alias",
+      "vector": "newline_dependency_alias_beats_owner_glob",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_nested_use_cfg",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_cfg",
+      "vector": "cfg_disabled_nested_export_does_not_supply_owner_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    }
   ]
 }
