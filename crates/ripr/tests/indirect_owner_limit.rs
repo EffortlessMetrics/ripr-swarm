@@ -387,16 +387,40 @@ const TAX_AFTER: &str = "    p / 10 + p";
 
 #[test]
 fn an_owner_called_inside_a_local_executor_is_a_limit_not_a_gap() -> Result<(), String> {
-    // #10143's framework rule reads this shape first, so either limit is the
-    // withhold; the case must never fall back to a gap.
+    // #10143's framework rule reads this literal-expectation shape first, so
+    // either of the two named limits is the withhold; it is never a gap.
     let findings = edited(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER)?;
-    if findings.iter().any(is_gap) || !findings.iter().any(|f| f.static_limit_kind.is_some()) {
+    let named = |f: &Finding| {
+        matches!(
+            f.static_limit_kind.map(|kind| kind.as_str()),
+            Some("rust_indirect_owner_call_unresolved" | "rust_framework_oracle_unresolved")
+        )
+    };
+    if findings.iter().any(is_gap) || !findings.iter().any(named) {
         return Err(format!(
-            "local block_on: expected a withholding limit, got {:?}",
+            "local block_on: expected the indirect-owner or framework-oracle limit, got {:?}",
             summary(&findings)
         ));
     }
     Ok(())
+}
+
+/// Runtime truth: `p + p / 10` to `p + p / 5` fails `120 != 110`, so the
+/// assertion discriminates, but the expectation is a binding, not a literal,
+/// which `framework_oracle` does not read. Only this rule withholds it.
+#[test]
+fn a_local_future_executor_with_a_bound_expected_value_is_a_limit_not_a_gap() -> Result<(), String>
+{
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "bound expected through a Future executor",
+    )
 }
 
 #[test]

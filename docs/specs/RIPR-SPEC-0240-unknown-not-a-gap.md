@@ -626,11 +626,14 @@ under `rust_indirect_owner_call_unresolved`:
   (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source
   ripr reads, so a related test's assertion cannot be paired with the changed
   value.
-- **executor-wrapped call**: a related `direct_owner_call` test passes the
-  owner call as the only argument of `block_on(..)`, written bare, as a path
-  (`futures::executor::block_on`) or as a method (`rt.block_on(..)`), or of a
-  helper in the test's file whose signature mentions `Future`. A second
-  argument, or a helper that does not take a `Future`, keeps the gap. The
+- **executor-wrapped call**: the owner is an `async fn`, and a related
+  `direct_owner_call` test passes the owner call as the only argument of
+  `block_on(..)`, written as a path (`futures::executor::block_on`) or as a
+  method (`rt.block_on(..)`), or of a helper in the test's file whose
+  signature mentions `Future`. A synchronous owner (its bare call is its
+  value, whatever the helper returns), a second argument, or a same-file
+  helper that does not take a `Future` keeps the gap; a literal expectation
+  through a same-file helper is also read by the local-executor rule. The
   assertion reads the helper's result, and a bounded rule that follows a
   single-argument helper to the future's output is not specified, so the
   finding is limited rather than credited.

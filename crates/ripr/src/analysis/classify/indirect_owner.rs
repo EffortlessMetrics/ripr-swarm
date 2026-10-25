@@ -446,16 +446,36 @@ fn executor_wraps_owner_call(code: &str, owner: &str, test: &TestFact, index: &R
         if !is_ident(leaf) || leaf == owner {
             return false;
         }
-        // A helper defined in the test's file is the local-executor reading
-        // (`framework_oracle`, #10143), which also asks for a literal expected
-        // value. Only an executor ripr cannot see the definition of is read here.
         let defined_locally = callee == leaf
+            && !open[..callee_start].trim_end().ends_with('.')
             && index
                 .functions()
                 .iter()
                 .any(|function| function.name == leaf && function.file == test.file);
-        KNOWN_EXECUTORS.contains(&leaf) && !defined_locally
+        if defined_locally {
+            // A helper of the test's own file counts only when it takes a
+            // `Future`: a same-named synchronous identity wrapper is not an
+            // executor, and a literal expectation through a helper is also
+            // read by `framework_oracle` (#10143), which reaches the same
+            // withhold. A non-literal expectation falls only to this rule.
+            return index.functions().iter().any(|function| {
+                function.name == leaf
+                    && function.file == test.file
+                    && signature(function).contains("Future")
+            });
+        }
+        KNOWN_EXECUTORS.contains(&leaf)
     })
+}
+
+/// The text of a function up to its body's opening brace.
+fn signature(function: &FunctionFact) -> String {
+    let body: &str = &function.body;
+    let masked = mask_comments_and_strings(body);
+    masked
+        .find('{')
+        .map_or(masked.as_str(), |open| &masked[..open])
+        .to_string()
 }
 
 /// Offset just past the `)` that closes the call whose `(` starts at `open`.
