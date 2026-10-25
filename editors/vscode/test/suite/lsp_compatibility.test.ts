@@ -371,13 +371,8 @@ async function assertDescendantStopped(pidPath: string): Promise<void> {
   assert.ok(Number.isSafeInteger(pid) && pid > 0, `fixture recorded invalid descendant pid ${String(pid)}`);
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-        return;
-      }
-      throw error;
+    if (!processIsRunning(pid)) {
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
