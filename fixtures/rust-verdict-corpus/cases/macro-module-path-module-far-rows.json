@@ -1,0 +1,54 @@
+{
+  "case_id": "macro-module-path-module-far-rows",
+  "subject_id": "authored-macro-modules",
+  "diff": "cases/macro-module-path-module-far-rows.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_far_inputs",
+  "hard_case": "The table is invoked from a module declared with `#[path = \"other/rows.rs\"]`; ripr cannot name that file exactly, so it indexes no generated test.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "limit > width",
+        "mutated_line": "limit > width",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 5 against a limit of 5 no longer fits"
+      },
+      {
+        "replacement": "limit + 1 >= width",
+        "mutated_line": "limit + 1 >= width",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 6 against a limit of 5 now fits"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "path_small(1, 5, true) and path_large(9, 5, false) read the same for every mutant, so every mutant passes. The table is invoked from a module declared with `#[path = \"other/rows.rs\"]`, a declaration ripr does not follow, so it indexes no generated test and must not guess one. Spec cell: RIPR-SPEC-0117 example 9 (#6925).",
+  "labeling_observation": {
+    "ripr_commit": "f1a6349aa + #6925 cross-file macro scope",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#9"
+  ]
+}
