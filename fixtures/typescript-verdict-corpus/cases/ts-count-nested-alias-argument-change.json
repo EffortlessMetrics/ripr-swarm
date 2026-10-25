@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-count-nested-alias-argument-change",
+  "subject_id": "authored-ts-count-nested-alias",
+  "diff": "cases/ts-count-nested-alias-argument-change.diff",
+  "anchor": {
+    "file": "src/notify.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_argument",
+  "test_shape": "done_callback_local_mock_alias",
+  "hard_case": "An admitted done callback has its own unique count alias; the count cannot see changed arguments, while a recorded-argument pin can.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test bridge.mjs",
+    "toolchain": "Node v24.19.0 built-in test/assert; retained explicit minimal it/jest.fn/expect.toBe compatibility shim, not stock Jest; full authored package original/rewrite/wrong argument executed",
+    "mutants": [
+      {
+        "replacement": "sender.send(id + 1);",
+        "mutated_line": "sender.send(id + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: sends 5 instead of 8 for id=4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The recorded argument distinguishes the edit; a count remains one in both executions.",
+  "labeling_observation": {
+    "ripr_commit": "786cdb172f99c3b4d547fdf9af221fd921bb77e9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
