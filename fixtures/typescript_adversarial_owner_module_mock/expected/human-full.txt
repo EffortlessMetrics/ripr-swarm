@@ -53,6 +53,7 @@ Weakness
 
 Static limitation
   mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+  Next: Add a test that runs the real implementation, with no mock replacing the changed module, and assert on its result.
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
