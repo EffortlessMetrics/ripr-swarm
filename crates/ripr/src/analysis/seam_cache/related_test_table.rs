@@ -18,7 +18,10 @@ use crate::analysis::new_test_target::NewTestTargetAdmission;
 use crate::analysis::seam_classification::ClassifiedSeam;
 use crate::analysis::seams::{RepoSeam, SeamGripClass, SeamId};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::domain::{MissingDiscriminatorFact, StageEvidence, ValueContext, ValueFact};
+use crate::{
+    domain::{MissingDiscriminatorFact, StageEvidence, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use serde::de::Error as _;
 use serde::ser::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

@@ -10,11 +10,11 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: no gap selected for repair
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
-  File: ./src/lib.rs:9
+  File: ./src/lib.rs:11
   Static exposure: exposed (severity: info, confidence 1.00)
   Canonical gap: gap:rust:src/lib.rs:impl Wrapper::get:return_value:return_value:let_v=self.inner.get_v
   Changed behavior: { let v = self.inner.get(); v }
-  Related test (1 of 2 matched rows): src/lib.rs:20 wrapper_reads_back
+  Related test (1 of 2 matched rows): src/lib.rs:22 wrapper_reads_back
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

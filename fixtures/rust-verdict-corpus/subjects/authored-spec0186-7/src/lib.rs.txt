@@ -1,0 +1,15 @@
+//! The binding that held the boundary call's result is overwritten before the assertion.
+
+pub fn gate(input: u32) -> bool { input >= 10 }
+
+#[cfg(test)]
+mod tests {
+    use super::gate;
+
+    #[test]
+    fn overwritten_result() {
+        let mut got = gate(10);
+        got = true;
+        assert_eq!(got, true);
+    }
+}

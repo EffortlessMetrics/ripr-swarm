@@ -68,6 +68,7 @@ mod catch_arm_guard;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod deleted_lines;
 #[cfg(test)]
@@ -177,6 +178,7 @@ pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
+pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
@@ -1242,6 +1244,7 @@ impl TypeScriptAdapter {
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
         dedup_typescript_probe_ids(&mut findings);
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,

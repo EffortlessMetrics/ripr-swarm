@@ -7255,7 +7255,12 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &missing_before,
             &missing_before_display,
-            &format!("ripr check --format repo-exposure-json > {missing_before_display}"),
+            // The redirect operand keeps the native spelling (#8240); only the
+            // prose path uses `display_path`.
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                crate::agent::loop_commands::shell_arg(&missing_before_path.to_string_lossy())
+            ),
             &["cargo mutants"],
         );
         assert!(
@@ -7277,7 +7282,12 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &missing_after,
             &missing_after_display,
-            &format!("ripr check --format repo-exposure-json > {missing_after_display}"),
+            // The redirect operand keeps the native spelling (#8240); only the
+            // prose path uses `display_path`.
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                crate::agent::loop_commands::shell_arg(&missing_after_path.to_string_lossy())
+            ),
             &["cargo mutants"],
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -7485,7 +7495,12 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &repo_message,
             &missing_repo_display,
-            &format!("ripr check --format repo-exposure-json > {missing_repo_display}"),
+            // The redirect operand keeps the native spelling (#8240); only the
+            // prose path uses `display_path`.
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                crate::agent::loop_commands::shell_arg(&missing_repo.to_string_lossy())
+            ),
             &["cargo mutants", "ripr check --json"],
         );
 
