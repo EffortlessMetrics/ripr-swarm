@@ -35,6 +35,7 @@ Weakness
 
 Stop reasons:
   - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
+    Next: Make sure the changed line sits inside a function (not a macro body or item attribute); if it does, report the shape in an issue.
 
 Next step
   ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
@@ -69,6 +70,7 @@ Weakness
 
 Stop reasons:
   - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
+    Next: Make sure the changed line sits inside a function (not a macro body or item attribute); if it does, report the shape in an issue.
 
 Next step
   ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
