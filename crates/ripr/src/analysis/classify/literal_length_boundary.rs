@@ -219,6 +219,12 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
                     .count()
         || context.probe.after.as_deref().map(compact)
             != Some(format!("{text_name}.as_bytes().len()"))
+        // Only the `len()` spelling is a known no-op rewrite. Any other old
+        // initializer (`chars().count()`, a trimmed length) may have computed
+        // a different value, so the edit could change behavior and the rows
+        // were never evaluated against it.
+        || context.probe.before.as_deref().map(compact)
+            != Some(format!("{text_name}.len()"))
     {
         return None;
     }

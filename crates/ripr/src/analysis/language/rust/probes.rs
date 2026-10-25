@@ -130,6 +130,20 @@ pub(super) fn apply_rust_value_propagation_limit(
     );
 }
 
+/// The literal byte-length route (#9637) established this binding's operand
+/// from exact test rows, so the syntax-only "unresolved" disclosure would
+/// contradict it. Only that route's own derived-local fact qualifies: other
+/// infection-Yes mechanisms keep the disclosure, and a miss here is the
+/// conservative direction (the disclosure stays).
+fn literal_byte_length_resolves(finding: &Finding, relation: &ChangedBindingPredicateUse) -> bool {
+    finding.ripr.infect.state == crate::domain::StageState::Yes
+        && finding.activation.observed_values.iter().any(|fact| {
+            fact.value.starts_with(&format!("{} = ", relation.binding))
+                && fact.text.contains("immutable string literal")
+                && fact.text.contains("via as_bytes().len()")
+        })
+}
+
 /// Disclose a changed-binding predicate relation on the probe's finding.
 /// The probe is predicate-shaped and classifies through the normal
 /// predicate path; this only discloses the causal link (which binding and
@@ -156,13 +170,10 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
         relation.binding, relation.predicate_line
     ));
-    if finding.ripr.infect.state != crate::domain::StageState::Yes
+    if !literal_byte_length_resolves(finding, relation)
         && let BindingValueResolution::Unresolved { earliest_operation } =
             &relation.value_resolution
     {
-        // The relation is syntax-only. A later row-owned infection
-        // authority can establish this operand from exact test inputs.
-        // Preserve the causal relation without contradicting that result.
         // Neutral prefixes: this is a value disclosure on a
         // predicate-shaped finding, not a `static_limit_kind` record,
         // so it deliberately stays outside the structured
@@ -927,6 +938,20 @@ mod tests {
         let class = finding.class.clone();
         finding.evidence.clear();
         finding.ripr.infect.state = crate::domain::StageState::Yes;
+        // Infection from another mechanism keeps the unresolved disclosure.
+        attach_changed_binding_predicate_evidence(&mut finding, Some(&relation));
+        assert_eq!(finding.evidence.len(), 3);
+        finding.evidence.clear();
+        finding
+            .activation
+            .observed_values
+            .push(crate::domain::ValueFact {
+                line: 1,
+                text: "fits(\"abc\", 3) | immutable string literal \"abc\" has byte length 3 via as_bytes().len()"
+                    .to_string(),
+                value: format!("{} = 3", relation.binding),
+                context: crate::domain::ValueContext::Unknown,
+            });
         attach_changed_binding_predicate_evidence(&mut finding, Some(&relation));
         assert_eq!(finding.class, class);
         assert_eq!(finding.evidence.len(), 1);

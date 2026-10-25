@@ -398,3 +398,30 @@ fn a_single_equal_row_or_a_conditionally_run_row_is_not_credited() -> Result<(),
     }
     Ok(())
 }
+
+#[test]
+fn an_old_initializer_other_than_plain_len_is_not_assumed_equivalent() -> Result<(), String> {
+    // `chars().count()` -> `as_bytes().len()` can change the value for
+    // non-ASCII text; the literal rows were never evaluated against the old
+    // initializer, so the byte-length route must not credit the edit.
+    for old in [
+        "text.chars().count()",
+        "text.trim().len()",
+        "text.len() + 0",
+    ] {
+        let source = candidate();
+        let diff = DIFF.replace("text.len()", old);
+        let finding = finding_with_diff(&source, &diff)?;
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .all(|fact| !fact.text.contains("via as_bytes().len()")),
+            "{old}: {:?}",
+            finding.class
+        );
+        assert_ne!(finding.class, ExposureClass::Exposed, "{old}");
+    }
+    Ok(())
+}
