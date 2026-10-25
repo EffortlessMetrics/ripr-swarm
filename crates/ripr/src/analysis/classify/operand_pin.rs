@@ -11,6 +11,9 @@
 //! field is paired this way, the exact oracle does not discriminate the
 //! change.
 
+mod primitive_binding;
+use primitive_binding::TypeSite;
+
 use super::super::rust_index::{RustIndex, TestSummary};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary};
 use crate::analysis::syntax::{fn_call_has_local_binding, name_scopes_for_fn};
@@ -56,15 +59,17 @@ impl OperandOnlyPin {
 /// does anything else ripr cannot read, which leaves the finding as it was.
 pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
-    owner_name: &str,
-    owner_body: &str,
+    owner: &FunctionSummary,
     outer_imports: Option<&BTreeSet<String>>,
     tests: &[(&TestSummary, RelationReason)],
     index: &RustIndex,
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
-    if !operand_established_primitive(left, owner_body, outer_imports, index)
-        || !operand_established_primitive(right, owner_body, outer_imports, index)
+    let owner_name = owner.name.as_str();
+    let owner_body = owner.body.as_str();
+    if !primitive_binding::context_is_closed(owner, index)
+        || !operand_established_primitive(left, owner_body, outer_imports, index, owner)
+        || !operand_established_primitive(right, owner_body, outer_imports, index, owner)
     {
         return None;
     }
@@ -166,8 +171,8 @@ pub(in crate::analysis) fn operand_only_pin(
     })
 }
 
-/// `name: left <op> right` with plain identifier operands and one binary
-/// operator, written with spaces around it.
+/// `name: left <op> right` with plain identifier operands and one supported
+/// binary operator, regardless of whitespace around that operator.
 fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
     let trimmed = expression.trim().trim_end_matches(',').trim();
     let (name, value) = trimmed.split_once(':')?;
@@ -175,13 +180,12 @@ fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
         return None;
     }
     let name = name.trim();
-    let parts = value.split_whitespace().collect::<Vec<_>>();
-    let [left, operator, right] = parts.as_slice() else {
-        return None;
-    };
-    let binary = matches!(*operator, "+" | "-" | "*" | "/" | "%" | "|" | "^" | "&");
-    (binary && is_identifier(name) && is_identifier(left) && is_identifier(right) && left != right)
-        .then_some((name, *left, *right))
+    let (left, right) = value.split_once(['+', '-', '*', '/', '%', '|', '^', '&'])?;
+    let (left, right) = (left.trim(), right.trim());
+    // Requiring two identifiers still refuses compound operators, additional
+    // expressions, comments, paths, calls, unary operands and parentheses.
+    (is_identifier(name) && is_identifier(left) && is_identifier(right) && left != right)
+        .then_some((name, left, right))
 }
 
 /// Whether `operand` is established to hold a built-in-operator value, so the
@@ -201,6 +205,7 @@ fn operand_established_primitive(
     owner_body: &str,
     outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
+    owner: &FunctionSummary,
 ) -> bool {
     // Comments are dropped first. A string, char literal or block comment
     // could hide a binding or a type this proof would misread, so such an
@@ -212,7 +217,9 @@ fn operand_established_primitive(
     let bindings = let_binding_expressions(&text);
     let primitive_params: Vec<String> = owner_param_types(&text)
         .into_iter()
-        .filter(|(_, ty)| primitive_type_token(ty))
+        .filter(|(_, ty)| {
+            primitive_binding::type_is_primitive(ty, owner, index, TypeSite::Signature)
+        })
         .map(|(name, _)| name)
         .collect();
     // A parameter that a `let` rebinds is not established up front: the
@@ -245,7 +252,12 @@ fn operand_established_primitive(
                 .iter()
                 .filter(|(bound, _, _, _)| bound == name)
                 .all(|(_, bound_expr, annotation, offset)| match annotation {
-                    Some(ty) => primitive_type_token(ty),
+                    Some(ty) => primitive_binding::type_is_primitive(
+                        ty,
+                        owner,
+                        index,
+                        TypeSite::Annotation(*offset),
+                    ),
                     None => expression_established(
                         bound_expr,
                         *offset,
@@ -253,6 +265,7 @@ fn operand_established_primitive(
                         &text,
                         outer_imports,
                         index,
+                        owner,
                     ),
                 });
             if all {
@@ -276,6 +289,7 @@ fn expression_established(
     owner_body: &str,
     outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
+    owner: &FunctionSummary,
 ) -> bool {
     let expr = expr.trim();
     if is_identifier(expr) {
@@ -284,7 +298,7 @@ fn expression_established(
     if let Some(callee) = call_callee(expr) {
         return call_established_primitive(callee, offset, owner_body, outer_imports, index);
     }
-    arithmetic_established(expr, established)
+    arithmetic_established(expr, established, owner, index, offset)
 }
 
 struct CallCallee<'a> {
@@ -386,12 +400,15 @@ fn call_established_primitive(
         let Some(returns) = declared_return_type(function.body.as_str()) else {
             return false;
         };
+        if !primitive_binding::type_is_primitive(returns, function, index, TypeSite::Signature) {
+            return false;
+        }
         match &seen {
             Some(previous) if previous != returns => return false,
             _ => seen = Some(returns.to_string()),
         }
     }
-    seen.is_some_and(|token| primitive_type_token(&token))
+    seen.is_some()
 }
 
 /// The declared return type text of a function whose `body` starts at its
@@ -511,12 +528,24 @@ fn owner_param_types(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `text` without the rest of any line holding a `//` comment.
+/// Mask line comments while preserving byte offsets into the parsed owner.
 fn strip_line_comments(text: &str) -> String {
-    text.lines()
-        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut masked = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if let Some((code, _)) = line.split_once("//") {
+            masked.push_str(code);
+            for byte in line[code.len()..].bytes() {
+                masked.push(match byte {
+                    b'\r' => '\r',
+                    b'\n' => '\n',
+                    _ => ' ',
+                });
+            }
+        } else {
+            masked.push_str(line);
+        }
+    }
+    masked
 }
 
 /// Whether `expr` is an arithmetic combination of established names, numeric or
@@ -524,7 +553,13 @@ fn strip_line_comments(text: &str) -> String {
 /// accepted operators (with unary `-`, `!`, `&`). A word directly followed
 /// by `(` is a call and proves nothing; any other character shape — a
 /// stray `.`, a path, an index, a macro — refuses.
-fn arithmetic_established(expr: &str, established: &[String]) -> bool {
+fn arithmetic_established(
+    expr: &str,
+    established: &[String],
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    offset: usize,
+) -> bool {
     let bytes = expr.as_bytes();
     if !expr.is_ascii() {
         return false;
@@ -569,7 +604,12 @@ fn arithmetic_established(expr: &str, established: &[String]) -> bool {
                 }
                 let word = &expr[start..at];
                 if expecting_cast {
-                    if !primitive_type_token(word) {
+                    if !primitive_binding::type_is_primitive(
+                        word,
+                        owner,
+                        index,
+                        TypeSite::Cast(offset + start),
+                    ) {
                         return false;
                     }
                     expecting_cast = false;
@@ -949,6 +989,38 @@ mod tests {
         let mut index = RustIndex::default();
         index.insert_file(path, facts, true);
         index
+    }
+
+    // Older focused rule fixtures supply owner text separately from their
+    // index. Materialize that owner through the real producer so primitive
+    // binding proof never gets a test-only missing-context exemption.
+    fn operand_only_pin(
+        expression: &str,
+        owner_name: &str,
+        owner_body: &str,
+        imports: Option<&BTreeSet<String>>,
+        tests: &[(&TestSummary, RelationReason)],
+        index: &RustIndex,
+    ) -> Option<OperandOnlyPin> {
+        if let Some(owner) = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == owner_name && owner.body.as_str() == owner_body)
+        {
+            return super::operand_only_pin(expression, owner, imports, tests, index);
+        }
+        let declarations = index
+            .files()
+            .values()
+            .map(|facts| facts.source.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let index = index_with(&[owner_body, &declarations]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == owner_name)?;
+        super::operand_only_pin(expression, owner, imports, tests, &index)
     }
 
     fn test_with(body_lines: &[&str]) -> TestSummary {
@@ -1928,13 +2000,38 @@ mod tests {
 
     #[test]
     fn only_a_plain_binary_initializer_is_read() {
-        assert_eq!(
-            binary_field_initializer("total: a + b"),
-            Some(("total", "a", "b"))
-        );
-        assert_eq!(binary_field_initializer("total: a + b + c"), None);
-        assert_eq!(binary_field_initializer("total: f(a) + b"), None);
-        assert_eq!(binary_field_initializer("total: a + a"), None);
-        assert_eq!(binary_field_initializer("total: a::b + c"), None);
+        for operator in ["+", "-", "*", "/", "%", "|", "^", "&"] {
+            for (before, after) in [(" ", " "), ("", ""), ("", " "), (" ", ""), ("\t", "\n")] {
+                let expression = format!("total: a{before}{operator}{after}b,");
+                assert_eq!(
+                    binary_field_initializer(&expression),
+                    Some(("total", "a", "b")),
+                    "{expression}"
+                );
+            }
+        }
+        for expression in [
+            "total: a + b + c",
+            "total: f(a) + b",
+            "total: a + a",
+            "total: a::b + c",
+            "total: a&&b",
+            "total: a||b",
+            "total: a<<b",
+            "total: a>>b",
+            "total: a==b",
+            "total: a+=b",
+            "total: a+b*c",
+            "total: a+f(b)",
+            "total: a+&b",
+            "total: (a)+b",
+            "total: a/*comment*/+b",
+            "total: a/**/b",
+            "total: a**b",
+            "total: r#a+b",
+            "total: -a+b",
+        ] {
+            assert_eq!(binary_field_initializer(expression), None, "{expression}");
+        }
     }
 }

@@ -8591,6 +8591,8 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
+  "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
   "xtask/src/tests/operand_callee_honesty.rs::later_binding_contract_rejects_false_credit_and_vacuity",
   "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_gets_no_unseen_reach_allowance",
@@ -13560,6 +13562,20 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/operand_whitespace.rs::both_spellings_have_the_same_rust_tokens_and_native_values",
+  "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
+  "crates/ripr/tests/operand_whitespace.rs::a_nonzero_shipping_pin_discriminates_both_spellings",
+  "crates/ripr/tests/operand_whitespace.rs::compact_spelling_preserves_callee_identity_refusals",
+  "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
+  "crates/ripr/tests/operand_whitespace.rs::primitive_generic_nominal_and_import_bindings_refuse_the_downgrade",
+  "crates/ripr/tests/operand_whitespace.rs::value_namespace_and_nested_test_type_bindings_keep_primitive_credit",
+  "crates/ripr/tests/operand_whitespace.rs::unestablished_alias_terminals_and_standard_roots_stay_conservative",
+  "crates/ripr/tests/operand_whitespace.rs::out_of_line_standard_imports_need_the_crate_root_context",
+  "crates/ripr/tests/operand_whitespace.rs::disjoint_block_bindings_do_not_rebind_outer_annotations_or_casts",
+  "crates/ripr/tests/operand_whitespace.rs::actual_type_sites_keep_comment_offsets_and_item_hoisting",
+  "crates/ripr/tests/operand_whitespace.rs::established_standard_derives_keep_the_missing_discriminator",
+  "crates/ripr/tests/operand_whitespace.rs::pricing_corpus_keeps_its_accepted_missing_discriminator",
+  "crates/ripr/tests/operand_whitespace.rs::derive_and_attribute_expansion_cannot_hide_operator_effects",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",
@@ -14036,6 +14052,7 @@ code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classify/operand_pin.rs",
+  "crates/ripr/src/analysis/classify/operand_pin/primitive_binding.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",

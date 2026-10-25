@@ -20,8 +20,9 @@ pub(crate) use owner_pin::{
     empty_macro_binding_ambiguities, err_return_guard_key, local_empty_macro_names,
     macro_binding_scan, macro_call_is_statement, node_has_macro_escape, owner_pin_assertions,
     owner_reference_count, returns_leave_the_function, skipping_table_column,
-    source_binds_value_name, source_declares_value_name, supported_targeted_item_context,
-    trusted_macro_binding_site_sets, trusted_macro_binding_sites, use_rebinds_crate_name,
+    source_binds_value_name, source_declares_value_name, standard_derive_names,
+    supported_targeted_item_context, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
@@ -36,7 +37,8 @@ pub(crate) use local_test_macros::{
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
-    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, name_scopes_for_fn,
+    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, name_scope_for_items,
+    name_scopes_for_fn,
 };
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,

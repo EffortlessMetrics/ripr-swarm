@@ -1077,8 +1077,7 @@ impl ClassifiedProbeEvidence {
             && let Some(owner) = context.owner_fn
             && let Some(pin) = operand_only_pin(
                 &context.probe.expression,
-                &owner.name,
-                owner.body.as_str(),
+                owner,
                 outer_imports.as_ref(),
                 &context.related_tests,
                 context.index,
