@@ -2325,7 +2325,8 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn unlinked_executable_fixture_reaps_child_before_directory_cleanup() -> Result<(), String> {
+    fn unlinked_executable_fixture_reaps_child_and_removes_directory_on_drop() -> Result<(), String>
+    {
         use nix::errno::Errno;
         use nix::sys::signal::{Signal, kill};
         use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
