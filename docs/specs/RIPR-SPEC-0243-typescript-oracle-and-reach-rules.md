@@ -1038,22 +1038,6 @@ return value. That is only true under all of these conditions, and any
 other shape keeps today's `decorator_indirection` limit (`no_static_path`
 or `static_unknown`, never `exposed`):
 
-**Rule 22. A member of a literal `require()` is a named import (#9188).**
-`const f = require("<module>").f` (also `var`, a renamed local, and the
-string-key spelling `require("<module>")["f"]`) picks one export out of a
-CommonJS module, so it records the import `const { f } = require("<module>")`
-records: source `<module>`, imported `f`, local `f` (or the rename). A call
-through the local then relates by rules 5 and 7 as the destructured form does.
-Only a plain member of a call to `require` with a string-literal argument is
-read: a call on the member (`require("./lib").make()`), an optional chain, a
-computed key that is not a string literal, a deeper member (`.a.b`), the
-`.default` member (a native CommonJS module has none) and a dynamic
-`require` argument record nothing and keep the old reading. The identity gates
-of rule 5 still apply (the specifier must resolve to the owner module, the
-imported name must be the owner's name, a shadow or a mock blocks it), and a
-member read off a function export (rule 19) is a property of the function, not
-the owner.
-
 1. `D` is a function declaration with a `descriptor` parameter that
    assigns `descriptor.value = function (...) { ... }` once, and the
    changed line is the wrapper's final top-level `return`. Statements
@@ -1108,6 +1092,22 @@ decorators, which can never be `exposed` and so cannot clear a
 discriminated row. A narrow kind with these conditions is reversible
 (deleting the relation restores the old reading) and fails closed on every
 shape it does not match, which the actionability rule requires.
+
+**Rule 22. A member of a literal `require()` is a named import (#9188).**
+`const f = require("<module>").f` (also `var`, a renamed local, and the
+string-key spelling `require("<module>")["f"]`) picks one export out of a
+CommonJS module, so it records the import `const { f } = require("<module>")`
+records: source `<module>`, imported `f`, local `f` (or the rename). A call
+through the local then relates by rules 5 and 7 as the destructured form does.
+Only a plain member of a call to `require` with a string-literal argument is
+read: a call on the member (`require("./lib").make()`), an optional chain, a
+computed key that is not a string literal, a deeper member (`.a.b`), the
+`.default` member (a native CommonJS module has none) and a dynamic
+`require` argument record nothing and keep the old reading. The identity gates
+of rule 5 still apply (the specifier must resolve to the owner module, the
+imported name must be the owner's name, a shadow or a mock blocks it), and a
+member read off a function export (rule 19) is a property of the function, not
+the owner.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
