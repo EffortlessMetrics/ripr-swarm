@@ -1400,7 +1400,8 @@ fn extract_imports_from_statements_inner(
     let mut written_names: Option<std::collections::HashSet<String>> = None;
     // `const lib = require('./y')` namespace bindings, so a member picked off
     // `lib` later reads as that module's member (#10447).
-    let mut namespaces: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut namespaces: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
         if let Statement::ImportDeclaration(import) = stmt {
