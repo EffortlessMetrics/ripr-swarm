@@ -4551,7 +4551,8 @@ fn owner_call_relation_reason(
                         test,
                         source,
                         trait_name,
-                        owner_scope.in_file(&test.file),
+                        Some(owner_scope),
+                        index,
                     )
                 }) || super::owner_pin::parent_chain_shadows_trait(
                     test,
@@ -4610,7 +4611,8 @@ fn owner_call_relation_reason(
             test,
             source,
             &impl_type,
-            owner_scope.in_file(&test.file),
+            Some(owner_scope),
+            index,
         ) || super::owner_pin::file_renames_to(source, &impl_type)
             || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
     }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
@@ -4632,7 +4634,8 @@ fn owner_call_relation_reason(
                 test,
                 source,
                 trait_name,
-                owner_scope.in_file(&test.file),
+                Some(owner_scope),
+                index,
             )
         })
     }) || owner_trait.as_deref().is_some_and(|trait_name| {

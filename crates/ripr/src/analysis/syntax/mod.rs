@@ -12,6 +12,7 @@ mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
 pub(crate) mod run_memo;
+mod source_snapshot;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
@@ -58,3 +59,4 @@ pub(crate) use ra::{
     inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
     passes_call_making_closure,
 };
+pub(crate) use source_snapshot::{ItemNesting, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr};
