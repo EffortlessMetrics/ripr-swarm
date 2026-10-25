@@ -212,7 +212,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation semantics.".to_string(),
         });
     }
-    if trimmed.contains("lambda ") {
+    if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
             evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
@@ -221,6 +221,23 @@ pub(super) fn static_limit_for_focused_change(
         });
     }
     None
+}
+
+/// A `lambda` expression: the keyword at an identifier boundary and followed
+/// by a space, `:` or `(`. Text in a string is read as text only when the line
+/// is a plain one-line string literal return (`return "lambda x"`): no braces
+/// (an f-string expression or a dict could hold code), no triple quotes (the
+/// line may close a string opened above) and no other quote state to track.
+fn contains_lambda_keyword(text: &str) -> bool {
+    let plain_line =
+        !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
+    text.match_indices("lambda").any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after = text[idx + "lambda".len()..].chars().next();
+        before.is_none_or(|ch| !is_python_identifier_char(ch))
+            && after.is_some_and(|ch| ch == ' ' || ch == ':' || ch == '(')
+            && !(plain_line && python_prefix_hides_code(line_prefix_before(text, idx)))
+    })
 }
 
 /// A dunder method owner (`Cache.__setitem__`) with no related test, in a
@@ -314,9 +331,22 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
     text.contains("__getattr__")
-        || text.contains("type(")
-        || text.contains("setattr(")
+        || contains_call_at_name_boundary(text, "type(")
+        || contains_call_at_name_boundary(text, "setattr(")
         || contains_metaclass_declaration(text)
+}
+
+/// `call` (`type(`) where the name starts at an identifier boundary:
+/// `type(x)` and `builtins.type(x)`, not `content_type(x)`. Text in a string
+/// still counts: a boundary is the only thing read, so an f-string expression
+/// or a multi-line string can never hide a real call.
+fn contains_call_at_name_boundary(text: &str, call: &str) -> bool {
+    text.match_indices(call).any(|(idx, _)| {
+        !text[..idx]
+            .chars()
+            .next_back()
+            .is_some_and(is_python_identifier_char)
+    })
 }
 
 fn contains_metaclass_declaration(text: &str) -> bool {
@@ -593,7 +623,13 @@ pub(super) fn test_has_mocked_module(test: &PythonTest) -> bool {
         "monkeypatch.delattr(",
     ]
     .iter()
-    .any(|call| body_calls_at_name_boundary(&test.body_text, call))
+    .any(|call| {
+        if call.starts_with("patch") {
+            body_calls_patch(&test.body_text, call, &test.imports)
+        } else {
+            body_calls_at_name_boundary(&test.body_text, call)
+        }
+    })
 }
 
 /// Whether `body` contains `call` where the name starts at an identifier
@@ -605,6 +641,59 @@ fn body_calls_at_name_boundary(body: &str, call: &str) -> bool {
             .chars()
             .next_back()
             .is_some_and(is_python_identifier_char)
+    })
+}
+
+/// Receivers whose `.patch(...)` is an HTTP request, not `mock.patch`.
+const HTTP_CLIENT_RECEIVERS: &[&str] = &[
+    "client",
+    "test_client",
+    "api_client",
+    "async_client",
+    "session",
+    "requests",
+    "httpx",
+];
+
+/// `body_calls_at_name_boundary` for a `patch` form, except an HTTP client's
+/// `client.patch("/x")` (RIPR-SPEC-0238 rule 8). The exemption is fail-closed:
+/// it applies only to a plain `<http client>.patch(` receiver, and only when
+/// neither the test body (which holds its signature) nor its imports mention
+/// a mock at all, so a client that is itself a mock keeps the limit.
+fn body_calls_patch(body: &str, call: &str, imports: &[PythonImport]) -> bool {
+    let mentions_mock = body.to_ascii_lowercase().contains("mock")
+        || imports.iter().any(|import| {
+            let text = format!(
+                "{} {} {}",
+                import.imported, import.alias, import.source_module
+            );
+            text.to_ascii_lowercase().contains("mock")
+        });
+    body.match_indices(call).any(|(idx, _)| {
+        let before = &body[..idx];
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(is_python_identifier_char)
+        {
+            return false;
+        }
+        let http_request = before.ends_with('.') && !mentions_mock && http_client_receiver(before);
+        !http_request
+    })
+}
+
+/// Whether the text before `.patch(` ends in `<http client>.`, with the client
+/// name starting at an identifier boundary (`self.client.` and `client.` both,
+/// `other_client.` not).
+fn http_client_receiver(before: &str) -> bool {
+    let receiver = before.trim_end_matches('.');
+    HTTP_CLIENT_RECEIVERS.iter().any(|name| {
+        receiver.strip_suffix(name).is_some_and(|rest| {
+            rest.chars()
+                .next_back()
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+        })
     })
 }
 
@@ -1684,5 +1773,80 @@ mod tests {
             decorator_limit(&owner),
             Some(StaticLimitKind::DecoratorIndirection)
         );
+    }
+
+    /// Token-shaped detection reads names, not substrings (RIPR-SPEC-0238
+    /// rule 8): a call named `content_type`, the word `lambda` inside a string
+    /// and an HTTP client's `.patch` are not metaprogramming, lambda syntax or a
+    /// mocked module.
+    #[test]
+    fn substring_lookalikes_are_not_metaprogramming_lambda_or_mock_patch() {
+        for code in ["    return content_type(x)", "    return my_setattr(x)"] {
+            assert!(!contains_metaprogramming(code), "{code}");
+        }
+        // Fail closed where string hiding is unsafe: f-string expressions run.
+        for code in [
+            "    return f\"{type(x)}\"",
+            "    return f\"{setattr(o, n, v)}\"",
+            "    return type(x)",
+            "    return builtins.type(x)",
+            "    setattr(obj, name, value)",
+            "    return cls.__getattr__(name)",
+        ] {
+            assert!(contains_metaprogramming(code), "{code}");
+        }
+        for code in [
+            "    return \"lambda x\"",
+            "    return 'a lambda (x)'",
+            "    return lambdas(x)",
+            "    return my_lambda + 1",
+        ] {
+            assert!(!contains_lambda_keyword(code), "{code}");
+        }
+        for code in [
+            "    return lambda x: x",
+            "    key = lambda: 0",
+            "    return f\"{(lambda x: x)(1)}\"",
+            "    \"\"\"; k = lambda x: x",
+            "    return sorted(items, key=lambda(x))",
+        ] {
+            assert!(contains_lambda_keyword(code), "{code}");
+        }
+        let none: Vec<PythonImport> = Vec::new();
+        for body in [
+            "    client.patch(\"/x\")\n",
+            "    self.client.patch(\"/x\")\n",
+            "    response = requests.patch(url)\n",
+            "    session.patch(url, json={})\n",
+        ] {
+            assert!(!body_calls_patch(body, "patch(", &none), "{body}");
+        }
+        let from_mock = vec![PythonImport {
+            imported: "mock".to_string(),
+            alias: "m".to_string(),
+            source_module: "unittest".to_string(),
+        }];
+        for (body, imports) in [
+            ("    patch(\"os.getcwd\")\n", &none),
+            ("    mock.patch(\"os.getcwd\")\n", &none),
+            ("    unittest.mock.patch(\"os.getcwd\")\n", &none),
+            ("    mocker.patch(\"os.getcwd\")\n", &none),
+            ("    m.patch(\"os.getcwd\")\n", &from_mock),
+            ("    self.mocker.patch(\"os.getcwd\")\n", &none),
+            ("    mock_client.patch(\"/x\")\n", &none),
+            // An unrecognized receiver fails closed.
+            ("    other_client.patch(\"/x\")\n", &none),
+            (
+                "    client = mock.Mock()\n    client.patch(\"/x\")\n",
+                &none,
+            ),
+        ] {
+            assert!(body_calls_patch(body, "patch(", imports), "{body}");
+        }
+        assert!(body_calls_patch(
+            "    mocker.patch.object(a, \"b\")\n",
+            "patch.object(",
+            &none
+        ));
     }
 }
