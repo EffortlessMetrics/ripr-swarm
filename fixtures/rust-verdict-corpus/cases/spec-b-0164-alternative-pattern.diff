@@ -1,0 +1,12 @@
+diff --git a/src/m_alt.rs b/src/m_alt.rs
+--- a/src/m_alt.rs
++++ b/src/m_alt.rs
+@@ -10,7 +10,7 @@
+ 
+ pub fn classify_alt(input: &str) -> &'static str {
+     let final_label = label_alt(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

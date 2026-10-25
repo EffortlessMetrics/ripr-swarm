@@ -1379,3 +1379,403 @@ fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), Strin
     assert_eq!(nested.classification()?, "exposed", "inline ancestor");
     Ok(())
 }
+
+// ---- #9971: relative `self::`/`super::` imports in unit tests under `src/` ----
+
+const UNIT_GATE: &str = "#[cfg(test)]\nmod unit;\n";
+
+fn unit_source(import: &str, body: &str) -> String {
+    format!("{import}\n{}", test_file(body))
+}
+
+fn unit_package(diff_path: &'static str, files: Vec<(&'static str, String)>) -> Package<'static> {
+    Package {
+        manifest: manifest("qual_reach", None),
+        diff_path,
+        files,
+    }
+}
+
+/// The recovered state: related by the helper-owner call and exposed.
+fn assert_recovered(package: &Package<'_>, label: &str) -> Result<(), String> {
+    assert_eq!(package.relation()?.as_deref(), LINKED, "{label}");
+    assert_eq!(package.classification()?, "exposed", "{label}");
+    Ok(())
+}
+
+/// The refused state: the helper-owner relation is withheld (a weaker
+/// name-affinity relation may remain) and the finding is not exposed.
+fn assert_refused(package: &Package<'_>, label: &str) -> Result<(), String> {
+    let (relation, classification) = package
+        .outcome()
+        .map_err(|error| format!("{label}: {}", error.chars().take(200).collect::<String>()))?;
+    assert_ne!(relation.as_deref(), LINKED, "{label}");
+    assert_ne!(classification, "exposed", "{label}");
+    Ok(())
+}
+
+/// The root-module unit-test layout the verdict-corpus row uses.
+fn root_unit(lib_tail: &str, unit: String) -> Package<'static> {
+    unit_package(
+        "src/lib.rs",
+        vec![
+            ("src/lib.rs", format!("{LIB}\n{lib_tail}")),
+            ("src/unit.rs", unit),
+        ],
+    )
+}
+
+#[test]
+fn a_relative_import_resolved_to_the_entrys_module_links() -> Result<(), String> {
+    let import = "use super::order_discount;";
+    assert_recovered(
+        &root_unit(UNIT_GATE, unit_source(import, BARE)),
+        "super to the crate root",
+    )?;
+    // The entry in a file module; the test module is a child of it.
+    assert_recovered(
+        &unit_package(
+            "src/cmp.rs",
+            vec![
+                ("src/lib.rs", "pub mod cmp;\n".to_string()),
+                ("src/cmp.rs", format!("{LIB}\n{UNIT_GATE}")),
+                ("src/cmp/unit.rs", unit_source(import, BARE)),
+            ],
+        ),
+        "super to a file module",
+    )?;
+    // Two levels up to the crate root.
+    assert_recovered(
+        &unit_package(
+            "src/lib.rs",
+            vec![
+                ("src/lib.rs", format!("{LIB}\npub mod cmp;\n")),
+                ("src/cmp.rs", UNIT_GATE.to_string()),
+                (
+                    "src/cmp/unit.rs",
+                    unit_source("use super::super::order_discount;", BARE),
+                ),
+            ],
+        ),
+        "super::super",
+    )?;
+    // A sibling module through `super::<module>::`.
+    assert_recovered(
+        &unit_package(
+            "src/inner.rs",
+            vec![
+                ("src/lib.rs", format!("mod inner;\n{UNIT_GATE}")),
+                ("src/inner.rs", LIB.to_string()),
+                (
+                    "src/unit.rs",
+                    unit_source("use super::inner::order_discount;", BARE),
+                ),
+            ],
+        ),
+        "super::module::entry",
+    )?;
+    // An entry in an inline module of the parent.
+    let inline_lib = NESTED_LIB.replace("pub use inner::order_discount;\n", "");
+    assert_recovered(
+        &unit_package(
+            "src/lib.rs",
+            vec![
+                ("src/lib.rs", format!("{inline_lib}{UNIT_GATE}")),
+                (
+                    "src/unit.rs",
+                    unit_source("use super::inner::order_discount;", BARE),
+                ),
+            ],
+        ),
+        "super::inline_module::entry",
+    )?;
+    // `self::` into a child module the test file itself declares.
+    assert_recovered(
+        &unit_package(
+            "src/cmp/inner.rs",
+            vec![
+                ("src/lib.rs", "pub mod cmp;\n".to_string()),
+                (
+                    "src/cmp.rs",
+                    format!(
+                        "mod inner;\n{}",
+                        unit_source("use self::inner::order_discount;", BARE)
+                    ),
+                ),
+                ("src/cmp/inner.rs", LIB.to_string()),
+            ],
+        ),
+        "self::child::entry",
+    )?;
+    // A list import resolves like the plain one.
+    assert_recovered(
+        &root_unit(
+            UNIT_GATE,
+            unit_source("use super::{order_discount, is_bulk};", BARE),
+        ),
+        "list import",
+    )
+}
+
+#[test]
+fn a_relative_import_that_does_not_name_the_entrys_module_stays_refused() -> Result<(), String> {
+    let gate = |lib: &str| format!("{lib}\n{UNIT_GATE}");
+    let at = |import: &str| unit_source(import, BARE);
+    // Baseline: the matching import links, so each refusal below differs in
+    // exactly the shape it names.
+    assert_recovered(
+        &root_unit(UNIT_GATE, at("use super::order_discount;")),
+        "baseline",
+    )?;
+    // `super` is the crate root, the entry is in `inner`.
+    let sibling = |import: &str| {
+        unit_package(
+            "src/inner.rs",
+            vec![
+                ("src/lib.rs", gate("mod inner;")),
+                ("src/inner.rs", LIB.to_string()),
+                ("src/unit.rs", at(import)),
+            ],
+        )
+    };
+    assert_recovered(
+        &sibling("use super::inner::order_discount;"),
+        "sibling baseline",
+    )?;
+    assert_refused(&sibling("use super::order_discount;"), "wrong module")?;
+    assert_refused(
+        &sibling("use self::order_discount;"),
+        "self is the test module",
+    )?;
+    assert_refused(
+        &sibling("use super::super::inner::order_discount;"),
+        "ascends past the crate root",
+    )?;
+    assert_refused(
+        &sibling("use super::inner::self::order_discount;"),
+        "self mid-path",
+    )?;
+    assert_refused(
+        &sibling("use super::inner::super::order_discount;"),
+        "super mid-path",
+    )?;
+    assert_refused(
+        &sibling("use super::inner::order_discount as order_discount;"),
+        "renamed",
+    )?;
+    // The entry reached through a module that only re-exports it.
+    let reexport = unit_package(
+        "src/inner.rs",
+        vec![
+            (
+                "src/lib.rs",
+                gate("mod inner;\npub mod api {\n    pub use crate::inner::order_discount;\n}"),
+            ),
+            ("src/inner.rs", LIB.to_string()),
+            ("src/unit.rs", at("use super::api::order_discount;")),
+        ],
+    );
+    assert_refused(&reexport, "re-export module")?;
+    // An integration test is not a unit test: `super` is not resolved there.
+    let integration = Package::root(LIB, &unit_source("use super::order_discount;", BARE));
+    assert_refused(&integration, "integration test")
+}
+
+#[test]
+fn nearer_bindings_and_scope_changes_keep_a_relative_import_refused() -> Result<(), String> {
+    let import = "use super::order_discount;";
+    let with_body =
+        |body: &str| root_unit(UNIT_GATE, unit_source(import, &format!("{body}\n{BARE}")));
+    assert_recovered(&with_body(""), "baseline")?;
+    for (label, shadow) in [
+        ("let", "    let order_discount = |qty: u32| qty;"),
+        ("fn item", "    fn order_discount(qty: u32) -> u32 { qty }"),
+        ("tuple constructor", "    struct order_discount(u32);"),
+        ("const item", "    const order_discount: u32 = 7;"),
+        ("local import", "    use std::cmp::max as order_discount;"),
+    ] {
+        assert_refused(&with_body(shadow), label)?;
+    }
+    // A file-level value of the entry's name.
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!(
+                "const order_discount: u32 = 7;\n{}",
+                unit_source(import, BARE)
+            ),
+        ),
+        "file const",
+    )?;
+    // A function-local relative import is not resolved.
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            test_file(&format!("    use super::order_discount;\n{BARE}")),
+        ),
+        "function-local import",
+    )?;
+    // An inline module moves `super`: here it names the test module.
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!(
+                "mod nested {{\n    use super::order_discount;\n{}\n}}\n",
+                test_file(BARE)
+            ),
+        ),
+        "inline module in the test file",
+    )?;
+    // A glob beside the import may bind or unbind the name.
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!("use std::collections::*;\n{}", unit_source(import, BARE)),
+        ),
+        "glob import",
+    )?;
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!("use super::*;\n{}", unit_source(import, BARE)),
+        ),
+        "super glob",
+    )?;
+    // A macro in item position or a macro definition may splice items.
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!(
+                "macro_rules! m {{ () => {{}}; }}\nm!();\n{}",
+                unit_source(import, BARE)
+            ),
+        ),
+        "item macro",
+    )?;
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!("include!(\"more.rs\");\n{}", unit_source(import, BARE)),
+        ),
+        "include",
+    )
+}
+
+#[test]
+fn conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused() -> Result<(), String>
+{
+    let import = "use super::order_discount;";
+    let unit = || unit_source(import, BARE);
+    assert_recovered(&root_unit(UNIT_GATE, unit()), "baseline")?;
+    // The test module declared under another cfg, a compound cfg or a
+    // cfg_attr, or beside a #[path].
+    for (label, gate) in [
+        ("feature cfg", "#[cfg(feature = \"x\")]\nmod unit;\n"),
+        ("compound cfg", "#[cfg(all(test, unix))]\nmod unit;\n"),
+        ("negated cfg", "#[cfg(not(test))]\nmod unit;\n"),
+        ("cfg_attr", "#[cfg_attr(test, doc = \"x\")]\nmod unit;\n"),
+        (
+            "duplicate",
+            "#[cfg(test)]\nmod unit;\n#[cfg(test)]\nmod unit;\n",
+        ),
+        (
+            "path remap of the test module",
+            "#[cfg(test)]\n#[path = \"unit.rs\"]\nmod unit;\n",
+        ),
+        (
+            "path remap elsewhere in the package",
+            "#[cfg(test)]\nmod unit;\n#[path = \"other.rs\"]\nmod other;\n",
+        ),
+        ("inline test module", "#[cfg(test)]\nmod unit {}\n"),
+    ] {
+        assert_refused(&root_unit(gate, unit()), label)?;
+    }
+    // A cfg-gated import (the name is bound only under the feature).
+    assert_refused(
+        &root_unit(
+            UNIT_GATE,
+            format!("#[cfg(feature = \"x\")]\n{}", unit_source(import, BARE)),
+        ),
+        "cfg-gated use",
+    )?;
+    // An inner cfg on the test file.
+    assert_refused(
+        &root_unit(UNIT_GATE, format!("#![cfg(feature = \"x\")]\n{}", unit())),
+        "inner cfg",
+    )?;
+    // The test module reached only through a cfg-gated parent.
+    let nested = |cmp_decl: &str, cmp_inner: &str| {
+        unit_package(
+            "src/cmp.rs",
+            vec![
+                ("src/lib.rs", cmp_decl.to_string()),
+                ("src/cmp.rs", format!("{LIB}\n{UNIT_GATE}{cmp_inner}")),
+                ("src/cmp/unit.rs", unit()),
+            ],
+        )
+    };
+    assert_recovered(&nested("pub mod cmp;\n", ""), "nested baseline")?;
+    assert_refused(
+        &nested("#[cfg(feature = \"x\")]\npub mod cmp;\n", ""),
+        "cfg-gated entry module",
+    )?;
+    assert_refused(
+        &nested("pub mod cmp;\nmod cmp {}\n", ""),
+        "duplicate entry module",
+    )?;
+    assert_refused(
+        &nested("#[path = \"cmp.rs\"]\npub mod cmp;\n", ""),
+        "path-remapped entry module",
+    )?;
+    assert_refused(
+        &nested("pub mod cmp;\n", "mod cmp {}\n"),
+        "same-named inline module in the file",
+    )?;
+    // An inline module on the declaration chain of the test module.
+    let through_inline =
+        |files: Vec<(&'static str, String)>| unit_package("src/outer/cmp.rs", files);
+    let outer = |lib: &str| {
+        through_inline(vec![
+            ("src/lib.rs", lib.to_string()),
+            ("src/outer/cmp.rs", format!("{LIB}\n{UNIT_GATE}")),
+            ("src/outer/cmp/unit.rs", unit()),
+        ])
+    };
+    assert_refused(
+        &outer("pub mod outer {\n    pub mod cmp;\n}\n"),
+        "inline module between",
+    )?;
+    // The test module inside an inline module of the library root: `super`
+    // would be the inline module, not the file's directory module.
+    let inline_parent = unit_package(
+        "src/lib.rs",
+        vec![
+            (
+                "src/lib.rs",
+                format!("{LIB}\npub mod outer {{\n    #[cfg(test)]\n    mod unit;\n}}\n"),
+            ),
+            (
+                "src/outer/unit.rs",
+                unit_source("use super::super::order_discount;", BARE),
+            ),
+        ],
+    );
+    assert_refused(&inline_parent, "test module under an inline module")?;
+    // An unrelated module of the same name in another crate of the workspace
+    // earns nothing: the test sits in a member crate, not the entry's.
+    let member = unit_package(
+        "src/cmp.rs",
+        vec![
+            ("src/lib.rs", "pub mod cmp;\n".to_string()),
+            ("src/cmp.rs", LIB.to_string()),
+            ("crates/other/Cargo.toml", manifest("other", None)),
+            ("crates/other/src/lib.rs", "pub mod cmp;\n".to_string()),
+            ("crates/other/src/cmp.rs", UNIT_GATE.to_string()),
+            (
+                "crates/other/src/cmp/unit.rs",
+                unit_source("use super::order_discount;", BARE),
+            ),
+        ],
+    );
+    assert_refused(&member, "member crate's same-named module")
+}

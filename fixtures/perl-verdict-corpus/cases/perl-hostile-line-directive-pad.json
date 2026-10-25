@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-hostile-line-directive-pad",
+  "subject_id": "authored-perl-hostile-source",
+  "diff": "cases/perl-hostile-line-directive-pad.diff",
+  "anchor": {
+    "file": "lib/Hostile.pm",
+    "line": 63
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "string_format",
+  "test_shape": "hostile_line_directive",
+  "hard_case": "A `# line 500` directive precedes the owner, so Perl's own line numbers disagree with the file's.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "'%-5s|'",
+        "mutated_line": "return sprintf('%-5s|', $s);",
+        "outcome": "tests_failed",
+        "failing_test": "t/hostile.t: pad fills to six columns",
+        "equivalence_review": "not equivalent: the pad width shrinks"
+      },
+      {
+        "replacement": "'%6s|'",
+        "mutated_line": "return sprintf('%6s|', $s);",
+        "outcome": "tests_failed",
+        "failing_test": "t/hostile.t: pad fills to six columns",
+        "equivalence_review": "not equivalent: the pad aligns right"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is(pad('ab'), 'ab    |') pins width and alignment. Spec cells: RIPR-SPEC-0064 oracle strength (is).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-hostile-line-directive-pad.json",
+    "sha256": "3e440133beba5055b11e2472d733b7ce347a3f85df57e790b2964888b7b9dce7",
+    "provenance": "producer"
+  }
+}

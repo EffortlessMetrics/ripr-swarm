@@ -89,7 +89,7 @@ pub(in crate::analysis) use helper_transfer::{
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
-pub(in crate::analysis) use operand_pin::operand_only_pin;
+pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
 pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
@@ -116,7 +116,7 @@ pub(in crate::analysis) use propagation_witness::{
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;
 pub(in crate::analysis) use reach::{
-    UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
+    UnseenReachNames, includes_external_docs_with, invokes_opaque_macro, is_proximity_only,
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
     reach_evidence, relation_establishes_reach,
 };

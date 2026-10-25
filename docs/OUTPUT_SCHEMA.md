@@ -2744,10 +2744,16 @@ suppression.
 
 `ripr check --format json` caps the rendered `findings` array at
 `RIPR_CHECK_FINDINGS_BYTES` emitted array bytes (payloads plus separators),
-default 1,000,000. Findings render in deterministic pipeline order; once the
-emitted bytes exceed the budget, the rest is disclosed rather than rendered.
-The first finding always renders, so a nonempty analysis never yields an empty
-prefix. Set the variable to `0` to remove the cap (unbounded); any positive
+default 1,000,000. When the budget engages (#10093), findings render in a
+deterministic priority order and the kept set is emitted in the unchanged
+pipeline order; the rest is disclosed rather than rendered. Priority is
+candidate-current before base-side or unresolved-currentness findings, then
+`reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown classes
+and `exposed` last, then a recommended next step, then the pipeline order as the
+tiebreak. Priority only chooses what renders; it never changes a class, count or
+currentness. A budget that does not engage emits every finding in pipeline
+order, byte-identical to before. The highest-priority finding always renders,
+so a nonempty analysis never yields an empty document. Set the variable to `0` to remove the cap (unbounded); any positive
 integer sets the budget explicitly. An unparseable value fails the run
 (fail-closed), naming the variable and the repair. Does not bump
 `schema_version` (additive optional member).
@@ -2760,12 +2766,16 @@ is never complete:
 - `basis` — always `"check_findings_byte_budget"`.
 - `downstream_consumable` — always `false`.
 - `message` — `rendered <R> of <T> findings within the findings-array byte
-  budget (...)`, naming the applied setting and the `=0` full-set repair.
+  budget (...)`, naming the applied setting and the `=0` full-set repair, the
+  keep-priority rule, and what was dropped: `omitted <N>: by class <class>=<n>,
+  ...; by file <file>=<n>, ...` (at most five files named, the rest counted as
+  `(+K more file(s))`, and a `base-side or unresolved-currentness` count when
+  any such finding was dropped).
 - `repair_route` — always `"output/check-findings-budget"`.
 
 When the budget engages, `analysis_outcome` also carries the additive
 members `document_complete: false`, `findings_rendered` and `findings_total`
-(#9010). They are emitted only when the findings array is a strict prefix;
+(#9010). They are emitted only when the findings array omits findings;
 unbounded runs and all existing goldens omit them. `analysis_complete` remains
 the analysis verdict derived from `outcome.kind` and no `outcome.kind` variant
 is added: the enum describes analysis, not the rendered document. The shared
@@ -2824,7 +2834,7 @@ Example (budget engaged after the first of 61 findings):
     "run_status": "limited_findings_bound",
     "basis": "check_findings_byte_budget",
     "downstream_consumable": false,
-    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set)",
+    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set); kept the highest-priority findings (candidate-current first, then reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, exposed last, then a recommended next step) in sort order; omitted 60: by class weakly_exposed=20, exposed=40; by file src/lib.rs=60",
     "repair_route": "output/check-findings-budget"
   }
 ]
@@ -18519,7 +18529,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.98",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.101",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19287,7 +19297,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.98",
+      "schema_version": "1.101",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
