@@ -843,6 +843,7 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
             // it in the right operand and the boundary would read as a call.
             if matches!(prefix, "if" | "else if" | "while")
                 && let Some(condition) = leading_paren_group_before_statement(&text)
+                && is_single_simple_comparison(condition)
             {
                 text = condition.to_string();
             }
@@ -895,6 +896,34 @@ fn leading_paren_group_before_statement(text: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// The condition of a one-line guard (`if (total > 100) return total - 10;`),
+/// whitespace-insensitive, when the line carries a statement after a single
+/// simple comparison. `None` for any other shape.
+pub(crate) fn inline_guard_condition(line_text: &str) -> Option<String> {
+    let mut text = line_text.trim().trim_start_matches('}').trim();
+    for prefix in ["else if", "if", "while"] {
+        if let Some(stripped) = text.strip_prefix(prefix) {
+            text = stripped.trim();
+            break;
+        }
+    }
+    let condition = leading_paren_group_before_statement(text)?;
+    is_single_simple_comparison(condition)
+        .then(|| condition.chars().filter(|ch| !ch.is_whitespace()).collect())
+}
+
+/// Exactly one comparison between two simple operands (`total >= 100`): no
+/// `&&` / `||` clause that could skip the branch, and no arithmetic around
+/// either side that would shift the boundary a test must hit.
+fn is_single_simple_comparison(condition: &str) -> bool {
+    COMPARISON_OPERATORS.iter().any(|operator| {
+        condition.split_once(operator).is_some_and(|(left, right)| {
+            is_simple_typescript_discriminator_operand(left.trim())
+                && is_simple_typescript_discriminator_operand(right.trim())
+        })
+    })
 }
 
 /// The comparison operators the boundary discriminator probes, in probe

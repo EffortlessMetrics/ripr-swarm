@@ -457,6 +457,12 @@ boundary without changing the guards (#4104 E):
   in the owner, the changed line compares them as whole sides, and it runs on
   every call. No value is claimed; the call's own arguments at `<i>` and
   `<j>` decide whether it hits the boundary.
+- **One-line guard boundary** (#10463): `if (<a> <op> <b>) <statement>;` (also
+  `else if` and `while`) reads its condition as the predicate boundary exactly
+  as the braced form does, but only when the condition is one comparison of two
+  simple operands. A compound (`&&`, `||`) or arithmetic condition stays
+  unparsed, and a line whose condition equals the removed line's condition
+  (an edit to the statement) is not a predicate boundary change.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

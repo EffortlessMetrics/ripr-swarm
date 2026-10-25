@@ -6722,6 +6722,25 @@ fn boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement() {
     ] {
         assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
     }
+    // A compound or arithmetic condition is not one comparison, so the inline
+    // form stays unparsed: a test at the threshold may skip the branch.
+    for line in [
+        "  if (enabled && total >= 100) return 1;",
+        "  if (total >= 100 || force) return 1;",
+        "  if (total + 1 > 100) return 1;",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A statement-only edit leaves the guard's condition unchanged.
+    assert_eq!(
+        inline_guard_condition("  if (total > 100) return total - 20;"),
+        inline_guard_condition("  if (total  > 100)  return total - 10;"),
+    );
+    assert_ne!(
+        inline_guard_condition("  if (total > 100) return total - 10;"),
+        inline_guard_condition("  if (total >= 100) return total - 10;"),
+    );
+    assert_eq!(inline_guard_condition("  if (total > 100) {"), None);
     // The braced and wrapped forms keep their existing answer.
     assert_eq!(
         typescript_boundary_discriminator("  if (total > 100) {").as_deref(),
