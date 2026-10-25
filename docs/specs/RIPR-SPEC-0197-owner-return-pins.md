@@ -2149,7 +2149,11 @@ receiving call is itself resolved.
 - A manifest-established binary context is also a containment boundary for
   exported bindings and opaque macro arguments (#10191). A binary cannot be
   imported by another crate, so `fuzz_target!` in a separate fuzz binary does
-  not rebind an integration test's `assert_eq!`. Every approved execution
+  not rebind an integration test's `assert_eq!`. Changed constructed fields
+  use the same assertion-identity gate as whole returns, including whole-record
+  equality and field reads. A local or imported shadow and an opaque in-scope
+  expansion refuse credit and disclose the refusal; a qualified standard
+  assertion retains credit despite a local bare-name shadow. Every approved execution
   context must be a binary root, read from the selected manifest epoch:
   ordinary binary layouts or a literal `[[bin]] path`, including paths outside
   `src/`. A file also declared as its package's or an ancestor package's library

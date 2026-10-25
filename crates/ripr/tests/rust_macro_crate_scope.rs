@@ -1,5 +1,5 @@
 //! #10191: opaque macro arguments must respect established Cargo crate boundaries.
-use ripr::{CheckInput, Mode, OutputFormat, ProbeFamily, check_workspace, render_check};
+use ripr::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -35,7 +35,7 @@ impl Subject {
         Ok(subject)
     }
 
-    fn finding(&self) -> Result<serde_json::Value, String> {
+    fn finding_for(&self, family: &str, expression: &str) -> Result<serde_json::Value, String> {
         let report = check_workspace(CheckInput {
             root: self.0.clone(),
             diff_file: Some(self.0.join("diff.patch")),
@@ -44,28 +44,119 @@ impl Subject {
             include_unchanged_tests: true,
             ..CheckInput::default()
         })?;
-        let subjects = report
-            .findings
-            .iter()
-            .filter(|finding| {
-                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.expression == "7"
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(subjects.len(), 1, "exactly one changed return subject");
         let json: serde_json::Value =
             serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
                 .map_err(|e| e.to_string())?;
-        json["findings"]
+        let subjects = json["findings"]
             .as_array()
             .ok_or("missing findings")?
             .iter()
-            .find(|finding| {
-                finding["probe"]["family"] == "return_value"
-                    && finding["probe"]["expression"] == "7"
+            .filter(|finding| {
+                finding["probe"]["family"] == family && finding["probe"]["expression"] == expression
             })
             .cloned()
-            .ok_or_else(|| "missing return finding".into())
+            .collect::<Vec<_>>();
+        assert_eq!(subjects.len(), 1, "exactly one {family} subject: {json}");
+        Ok(subjects[0].clone())
     }
+
+    fn finding(&self) -> Result<serde_json::Value, String> {
+        self.finding_for("return_value", "7")
+    }
+}
+
+fn field_subject(prefix: &str, assertion: &str, extra: &[(&str, &str)]) -> Result<Subject, String> {
+    let tests =
+        format!("{prefix}\nuse demo::{{value, Value}};\n#[test]\nfn pins() {{ {assertion} }}\n");
+    let mut files = vec![
+        (
+            "src/lib.rs",
+            "#[derive(Debug, PartialEq, Eq)]\npub struct Value { pub minor: u32 }\npub fn value() -> Value {\n    Value {\n        minor: 8,\n    }\n}\n",
+        ),
+        ("tests/pin.rs", tests.as_str()),
+        (
+            "diff.patch",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@\n pub fn value() -> Value {\n     Value {\n-        minor: 7,\n+        minor: 8,\n     }\n }\n",
+        ),
+        ("fuzz/Cargo.toml", BIN),
+        ("fuzz/parse_version.rs", FUZZ),
+    ];
+    files.extend_from_slice(extra);
+    Subject::new(&files)
+}
+
+#[test]
+fn unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit() -> Result<(), String> {
+    for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+        for (prefix, name) in [
+            ("", "assert_eq"),
+            ("", "std::assert_eq"),
+            (
+                "macro_rules! assert_eq { ($($t:tt)*) => {} }",
+                "std::assert_eq",
+            ),
+        ] {
+            let assertion = format!("{name}!({operands});");
+            let finding = field_subject(prefix, &assertion, &[])?
+                .finding_for("field_construction", "minor: 8")?;
+            assert_eq!(finding["classification"], "exposed", "{finding}");
+            assert_eq!(finding["ripr"]["observe"]["state"], "yes");
+            assert_eq!(finding["ripr"]["discriminate"]["state"], "yes");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn field_assertion_rebindings_refuse_credit_and_disclose_the_site() -> Result<(), String> {
+    for (prefix, extra) in [
+        ("macro_rules! assert_eq { ($($t:tt)*) => {} }", vec![]),
+        ("emit!(assert_eq);", vec![]),
+        (
+            "use other::assert_eq;",
+            vec![
+                (
+                    "Cargo.toml",
+                    "[package]\nname='demo'\nversion='0.0.0'\n[dev-dependencies]\nother={path='other'}\n",
+                ),
+                (
+                    "other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                (
+                    "other/src/lib.rs",
+                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n",
+                ),
+            ],
+        ),
+    ] {
+        for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+            let assertion = format!("assert_eq!({operands});");
+            let finding = field_subject(prefix, &assertion, &extra)?
+                .finding_for("field_construction", "minor: 8")?;
+            assert_ne!(finding["classification"], "exposed", "{finding}");
+            assert_ne!(finding["ripr"]["observe"]["state"], "yes", "{finding}");
+            assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+            let tests = finding["related_tests"].as_array().ok_or("missing tests")?;
+            assert_eq!(tests.len(), 1, "{finding}");
+            assert_eq!(tests[0]["oracle_strength"], "none", "{finding}");
+            assert_eq!(tests[0]["oracle_kind"], "unknown", "{finding}");
+            assert_eq!(tests[0]["miss"], "assertion_not_credited", "{finding}");
+            assert!(
+                finding["evidence"]
+                    .as_array()
+                    .ok_or("missing evidence")?
+                    .iter()
+                    .any(|note| note
+                        .as_str()
+                        .is_some_and(|text| text.contains("assertion not credited")
+                            && text.contains("assert_eq!")
+                            && text.contains("tests/pin.rs"))),
+                "{finding}"
+            );
+        }
+    }
+    Ok(())
 }
 
 impl Drop for Subject {

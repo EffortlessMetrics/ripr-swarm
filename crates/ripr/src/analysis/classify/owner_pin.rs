@@ -673,6 +673,7 @@ impl OwnerPinSyntax {
             Some("assert_eq") => matches!(
                 family,
                 ProbeFamily::ReturnValue
+                    | ProbeFamily::FieldConstruction
                     | ProbeFamily::ErrorPath
                     | ProbeFamily::Predicate
                     | ProbeFamily::SideEffect
