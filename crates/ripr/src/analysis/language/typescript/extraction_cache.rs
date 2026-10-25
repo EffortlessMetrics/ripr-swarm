@@ -436,6 +436,18 @@ thread_local! {
 /// uncached extraction. Test extraction costs about 4 s/MB in a debug build,
 /// which an unchanged test file used to pay again on every LSP save.
 pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestExtraction> {
+    test_extraction_cached_with(relative, source, || {
+        super::tests_extract::try_extract_tests_with_expansion(relative, source)
+    })
+}
+
+/// [`test_extraction_cached`] with the extractor injected, so a test can
+/// force the worker-failure path that cannot be provoked from outside.
+fn test_extraction_cached_with(
+    relative: &Path,
+    source: &str,
+    extract: impl FnOnce() -> Result<TestExtraction, String>,
+) -> Rc<TestExtraction> {
     // Lossless path identity, not `normalized_path`: the extracted tests store
     // `relative` as their `file`, and a Unix filename may contain a literal
     // backslash that normalization would fold into a directory separator.
@@ -457,8 +469,7 @@ pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestEx
     }
     // A worker failure is environmental, not a function of the bytes: serve
     // the empty result this call but never store it.
-    let extraction = match super::tests_extract::try_extract_tests_with_expansion(relative, source)
-    {
+    let extraction = match extract() {
         Ok(extraction) => Rc::new(extraction),
         Err(_) => return Rc::new((Vec::new(), None, None)),
     };
@@ -985,5 +996,29 @@ mod tests {
         let mut roomy = TestExtractionCache::with_bounds(8, 1 << 30);
         roomy.insert(key, extraction);
         assert_eq!(roomy.entries.len(), 1);
+    }
+
+    #[test]
+    fn a_worker_failure_is_served_empty_but_never_stored() {
+        let path = Path::new("tests/worker_failure.test.ts");
+        let before = test_extraction_cache_len();
+        let failed = test_extraction_cached_with(path, TEST_FILE, || {
+            Err("static limit parse_worker_failed: forced".to_string())
+        });
+        assert!(
+            failed.0.is_empty(),
+            "the failing call serves an empty result"
+        );
+        assert_eq!(
+            test_extraction_cache_len(),
+            before,
+            "the failure must not be stored"
+        );
+        let recovered = test_extraction_cached(path, TEST_FILE);
+        assert_eq!(
+            recovered.0.len(),
+            1,
+            "after the worker recovers, the same bytes must extract their test"
+        );
     }
 }

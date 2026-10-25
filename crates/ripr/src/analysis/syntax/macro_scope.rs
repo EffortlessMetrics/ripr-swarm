@@ -25,6 +25,18 @@ pub(crate) struct ScopedMacro {
     /// Byte offset of the item in its file; textual scope is ordered by it.
     pub offset: usize,
     pub text: String,
+    /// Carries a plain `#[macro_export]`: the macro is also named by the
+    /// path `crate::name`, wherever in the crate it is defined.
+    pub exported: bool,
+}
+
+/// A top-level `use crate::name;` with no attribute, rename or group.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScopedUse {
+    pub name: String,
+    /// Byte range of the whole item.
+    pub start: usize,
+    pub end: usize,
 }
 
 /// A top-level out-of-line `mod name;`.
@@ -45,6 +57,12 @@ pub(crate) struct ScopedModule {
 pub(crate) struct MacroScope {
     pub macros: Vec<ScopedMacro>,
     pub modules: Vec<ScopedModule>,
+    pub uses: Vec<ScopedUse>,
+    /// `macro_export` is spelled somewhere this scope does not list as a
+    /// plain exported top-level macro (inside a module or function, behind a
+    /// `cfg`, with arguments, in a macro body). That macro is named by a
+    /// crate path from anywhere, so a resolver that imports by path refuses.
+    pub export_opaque: bool,
     /// A definition this scope could not list (a token spanning lines) or a
     /// `#[macro_use]` inline module whose macros it does not list. Either can
     /// shadow a name the listed definitions carry, so a resolver that reads
@@ -64,8 +82,17 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
                 let Some(name) = rule.name().map(|name| name.text().to_string()) else {
                     continue;
                 };
+                let (exported, plain) = macro_attributes(&rule);
+                if exported && !plain {
+                    scope.export_opaque = true;
+                }
                 match flatten(rule.syntax()) {
-                    Some(text) => scope.macros.push(ScopedMacro { name, offset, text }),
+                    Some(text) => scope.macros.push(ScopedMacro {
+                        name,
+                        offset,
+                        text,
+                        exported: exported && plain,
+                    }),
                     None => scope.opaque = true,
                 }
             }
@@ -87,10 +114,101 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
                     plain,
                 });
             }
+            ast::Item::Use(item) => {
+                if let Some(name) = crate_path_import(&item) {
+                    let range = item.syntax().text_range();
+                    scope.uses.push(ScopedUse {
+                        name,
+                        start: usize::from(range.start()),
+                        end: usize::from(range.end()),
+                    });
+                }
+            }
             _ => {}
         }
     }
+    let spelled = parse
+        .syntax_node()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == "macro_export")
+        .count();
+    let listed = scope.macros.iter().filter(|scoped| scoped.exported).count();
+    scope.export_opaque |= spelled != listed;
     Some(scope)
+}
+
+/// Whether every `name!` invocation in `source` sits directly in the file's
+/// top-level module. A `use` is not visible in a child module, so a macro
+/// named by one reaches no call nested in an inline module or a function.
+pub(crate) fn calls_only_at_top_level(source: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    parse
+        .syntax_node()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| call.path().is_some_and(|path| path.syntax().text() == name))
+        .all(|call| {
+            call.syntax()
+                .parent()
+                .is_some_and(|parent| parent.kind() == SyntaxKind::SOURCE_FILE)
+        })
+}
+
+/// The `name` of an attribute-free `use crate::name;`.
+fn crate_path_import(item: &ast::Use) -> Option<String> {
+    if item.attrs().next().is_some() {
+        return None;
+    }
+    let tree = item.use_tree()?;
+    if tree.rename().is_some() || tree.use_tree_list().is_some() || tree.star_token().is_some() {
+        return None;
+    }
+    let text: String = tree
+        .path()?
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let (head, name) = text.split_once("::")?;
+    let identifier = !name.is_empty()
+        && !name.contains("::")
+        && !matches!(name, "self" | "super" | "crate")
+        && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+    (head == "crate" && identifier).then(|| name.to_string())
+}
+
+/// Whether the macro is `#[macro_export]`, and whether every attribute it
+/// carries is one that cannot change whether or where it exists.
+fn macro_attributes(rule: &ast::MacroRules) -> (bool, bool) {
+    let mut exported = false;
+    let mut plain = true;
+    for attr in rule.attrs() {
+        let text: String = attr
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let inner = text
+            .strip_prefix("#[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or("?");
+        match inner {
+            "macro_export" => exported = true,
+            other
+                if ["allow(", "warn(", "deny(", "doc"]
+                    .iter()
+                    .any(|p| other.starts_with(p)) => {}
+            _ => plain = false,
+        }
+    }
+    (exported, plain)
 }
 
 /// Byte offset of the first `name!` token pair in the code (not a comment or
@@ -188,19 +306,58 @@ fn flatten(node: &ra_ap_syntax::SyntaxNode) -> Option<String> {
 /// any inner attribute. The result has exactly one more line break than the
 /// text it replaces, before the first item. `None` when `source` does not
 /// parse cleanly or has no item.
-pub(crate) fn splice_imported_macros(source: &str, imported: &str) -> Option<String> {
-    if imported.contains('\n') {
+pub(crate) fn splice_imported_macros(source: &str, imported: &ImportedMacros) -> Option<String> {
+    if imported.definitions.contains('\n') {
         return None;
     }
     let parse = parse_clean_source_file(source)?;
     let first = parse.tree().items().next()?;
     let offset = usize::from(first.syntax().text_range().start());
-    let mut spliced = String::with_capacity(source.len() + imported.len() + 1);
-    spliced.push_str(source.get(..offset)?);
-    spliced.push_str(imported);
+    let mut body = source.to_string();
+    // `use crate::name;` named the macro by path; the definition now precedes
+    // the file, so the import is blanked (newlines kept) instead of left to
+    // read as a second, ambiguous source of the same name.
+    if !imported.path_imports.is_empty()
+        && let Some(scope) = macro_scope(source)
+    {
+        for import in scope
+            .uses
+            .iter()
+            .filter(|import| imported.path_imports.contains(&import.name))
+        {
+            let blanked: String = source
+                .get(import.start..import.end)?
+                .chars()
+                .flat_map(|c| {
+                    // One space per byte keeps every later byte range valid.
+                    let fill = if c == '\n' { '\n' } else { ' ' };
+                    std::iter::repeat_n(fill, c.len_utf8())
+                })
+                .collect();
+            body.replace_range(import.start..import.end, &blanked);
+        }
+    }
+    let mut spliced = String::with_capacity(body.len() + imported.definitions.len() + 1);
+    spliced.push_str(body.get(..offset)?);
+    spliced.push_str(&imported.definitions);
     spliced.push('\n');
-    spliced.push_str(source.get(offset..)?);
+    spliced.push_str(body.get(offset..)?);
     Some(spliced)
+}
+
+/// What a file sees from other files (#6925): one line of `macro_rules!`
+/// items, and the names among them that the file also spells as a top-level
+/// `use crate::name;` (a `#[macro_export]` macro named by path).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ImportedMacros {
+    pub definitions: String,
+    pub path_imports: Vec<String>,
+}
+
+impl ImportedMacros {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.definitions.is_empty()
+    }
 }
 
 /// Lines `splice_imported_macros` adds before any item.
@@ -269,14 +426,63 @@ mod tests {
     }
 
     #[test]
+    fn a_path_import_reaches_only_top_level_calls() {
+        assert!(calls_only_at_top_level(
+            "use crate::t;\nt!(a);\nt!(b);\n",
+            "t"
+        ));
+        assert!(!calls_only_at_top_level(
+            "use crate::t;\nmod tests { t!(a); }\n",
+            "t"
+        ));
+        assert!(!calls_only_at_top_level(
+            "use crate::t;\nfn f() { t!(a); }\n",
+            "t"
+        ));
+        assert!(calls_only_at_top_level("use crate::t;\nu!(a);\n", "t"));
+    }
+
+    #[test]
+    fn blanking_a_path_import_keeps_byte_ranges_with_multibyte_text() {
+        let source = "use crate::t; // é\nuse crate::u; // ü€\nt!(a);\nu!(b);\n";
+        let imported = ImportedMacros {
+            definitions: "macro_rules! t { () => {} } macro_rules! u { () => {} }".to_string(),
+            path_imports: vec!["t".to_string(), "u".to_string()],
+        };
+        let spliced = splice_imported_macros(source, &imported).unwrap_or_default();
+        assert!(
+            !spliced.is_empty(),
+            "premise: the source parses and splices"
+        );
+        assert_eq!(
+            spliced.matches('\n').count(),
+            source.matches('\n').count() + 1
+        );
+        assert!(!spliced.contains("use crate"), "{spliced}");
+        assert!(spliced.ends_with("t!(a);\nu!(b);\n"), "{spliced}");
+    }
+
+    #[test]
     fn splicing_lands_after_inner_attributes_and_adds_one_line() {
         let source = "#![no_std]\n\nfn first() {}\nfn second() {}\n";
-        let spliced = splice_imported_macros(source, "macro_rules! m { () => {} }");
+        let imported = ImportedMacros {
+            definitions: "macro_rules! m { () => {} }".to_string(),
+            path_imports: Vec::new(),
+        };
+        let spliced = splice_imported_macros(source, &imported);
         assert_eq!(
             spliced.as_deref(),
             Some("#![no_std]\n\nmacro_rules! m { () => {} }\nfn first() {}\nfn second() {}\n")
         );
-        assert_eq!(splice_imported_macros("", "x"), None, "no item to precede");
-        assert_eq!(splice_imported_macros(source, "a\nb"), None);
+        let single = |definitions: &str| ImportedMacros {
+            definitions: definitions.to_string(),
+            path_imports: Vec::new(),
+        };
+        assert_eq!(
+            splice_imported_macros("", &single("x")),
+            None,
+            "no item to precede"
+        );
+        assert_eq!(splice_imported_macros(source, &single("a\nb")), None);
     }
 }

@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-hostile-autoload-field",
+  "subject_id": "authored-perl-hostile-source",
+  "diff": "cases/perl-hostile-autoload-field.diff",
+  "anchor": {
+    "file": "lib/Hostile.pm",
+    "line": 43
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "hostile_autoload_dispatch",
+  "hard_case": "The owner is AUTOLOAD; the test calls an accessor that exists nowhere in the source.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "3 * $self->{$field}",
+        "mutated_line": "return 3 * $self->{$field};",
+        "outcome": "tests_failed",
+        "failing_test": "t/hostile.t: autoloaded field is doubled",
+        "equivalence_review": "not equivalent: the field is tripled"
+      },
+      {
+        "replacement": "2 + $self->{$field}",
+        "mutated_line": "return 2 + $self->{$field};",
+        "outcome": "tests_failed",
+        "failing_test": "t/hostile.t: autoloaded field is doubled",
+        "equivalence_review": "not equivalent: the field gains two"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is($o->width, 8) pins the doubled field. No static call edge names AUTOLOAD. Spec cells: RIPR-SPEC-0235 dynamic_dispatch.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-hostile-autoload-field.json",
+    "sha256": "d50cc270bfe9b6fa88340abf728e383dfc3781e66552c3095c5ecc3f086394d6",
+    "provenance": "producer"
+  }
+}

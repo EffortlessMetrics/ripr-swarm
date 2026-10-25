@@ -23,7 +23,8 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
 # 23 -> 25 (#9416): perl-idiom-closure-counter and one more abstained row now catch the rewrite but ripr abstains (limited) rather than reporting a false gap.
-missed_credit_ceiling = 25
+# 25 -> 27 (part 4/8): perl-hostile-autoload-field and perl-hostile-glob-double. Their tests catch the rewrite, but the changed sub is reached only through AUTOLOAD or a glob-assigned closure, so ripr abstains (limited) on purpose rather than credit a test it cannot attribute statically.
+missed_credit_ceiling = 27
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
@@ -675,6 +676,11 @@ reason = "Rust-only bool truth-table infection; not a perl verdict example"
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+[[spec]]
+id = "RIPR-SPEC-0360"
+scope = "out"
+reason = "Rust-only loop-accumulator credit; not a perl verdict example"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a

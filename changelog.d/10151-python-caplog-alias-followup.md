@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python captured-log aliases are read in one lexical pass, so overlapping alias names (`msgs = caplog.text` then `text = caplog.messages`) no longer corrupt each other, and an alias used inside a wrapped `assert (...)` statement is evaluated instead of abstaining. RIPR-SPEC-0238 rule 22 now states the alias bounds, and a fixture with an honesty-corpus case pins that an alias name spelled inside the asserted literal is never substituted (#10151).

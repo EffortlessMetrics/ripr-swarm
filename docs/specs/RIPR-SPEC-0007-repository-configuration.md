@@ -102,6 +102,12 @@ artifact root not covered by git ignore rules, the artifact root tracked by
 git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
 
+When a repository has a `.mcp.json`, doctor also checks that it registers a
+`ripr` server whose command is `ripr` and whose args end `mcp`, `--stdio` (what
+`ripr init` writes). A missing, unparseable or mismatched file is an advisory
+`~` line and a failed `mcp_config` check in JSON; it never changes the exit
+status.
+
 ### Suppression manifest declarations
 
 The configured suppression file and explicit `--suppression-policy` input share

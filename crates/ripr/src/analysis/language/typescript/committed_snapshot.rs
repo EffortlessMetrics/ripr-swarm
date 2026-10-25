@@ -399,9 +399,80 @@ fn mentions_update_key(text: &str) -> bool {
 /// Jest `projects`, Vitest `workspace`, or a Vitest/Vite `root` key. Jest's
 /// `rootDir` and a `<rootDir>` mapper token do not match `root`.
 fn delegates_to_other_config(text: &str) -> bool {
+    let text = blank_value_strings(text);
     ["projects", "workspace", "root"]
         .into_iter()
-        .any(|key| mentions_named_key(text, key))
+        .any(|key| mentions_named_key(&text, key))
+}
+
+/// `text` with the contents of every quoted property value (`label: "x"`
+/// followed by `,` or `}`) read as spaces, so a label such as `displayName: "projects"` is not
+/// taken for a key (#10295). A string that is a key, a computed key, or a
+/// bracket member keeps its text. Unchanged when the scan cannot be sure of
+/// string boundaries (unterminated string or comment, or a template literal or a `/`,
+/// which may open a regex whose quote could desynchronise it), so the old refusal stands.
+fn blank_value_strings(text: &str) -> String {
+    let Some(clean) = blank_comments(text) else {
+        return text.to_string();
+    };
+    let mut out = String::with_capacity(clean.len());
+    let mut chars = clean.char_indices();
+    let mut previous = ' ';
+    while let Some((open, ch)) = chars.next() {
+        match ch {
+            '"' | '\'' => {
+                let mut close = None;
+                while let Some((at, inner)) = chars.next() {
+                    if inner == '\\' {
+                        if chars.next().is_none() {
+                            return text.to_string();
+                        }
+                    } else if inner == ch {
+                        close = Some(at);
+                        break;
+                    }
+                }
+                let Some(close) = close else {
+                    return text.to_string();
+                };
+                let after = clean.get(close + 1..).unwrap_or_default();
+                out.push(ch);
+                let body = clean.get(open + 1..close).unwrap_or_default();
+                // Only a property value (`label: "x"`): a string after `(`, `,`
+                // or `=` can be a dynamic key (`Object.defineProperty(c, 'root', ..)`).
+                if previous == ':' && skip_trivia(after).starts_with([',', '}']) {
+                    out.extend(body.chars().flat_map(|c| {
+                        let fill = if c.is_ascii() && is_line_terminator(c) {
+                            c
+                        } else {
+                            ' '
+                        };
+                        std::iter::repeat_n(fill, c.len_utf8())
+                    }));
+                } else {
+                    out.push_str(body);
+                }
+                out.push(ch);
+                previous = ch;
+            }
+            // A template can hold quotes this scan would misread as a string.
+            // So can a regex literal, and after comments are blanked a `/`
+            // is a regex or a division this scan cannot tell apart.
+            '`' | '/' => return text.to_string(),
+            c => {
+                if !c.is_whitespace() {
+                    previous = c;
+                }
+                out.push(c);
+            }
+        }
+    }
+    // Callers slice the result with offsets taken from `clean`.
+    if out.len() == clean.len() {
+        out
+    } else {
+        text.to_string()
+    }
 }
 
 /// `true` when a `preset` value in `text` is not a plain package name: a
@@ -522,7 +593,8 @@ fn blank_comments(text: &str) -> Option<String> {
 fn without_plain_inline_projects(raw: &str) -> Option<String> {
     let blanked = blank_comments(raw)?;
     let text = blanked.as_str();
-    let mut found = text.match_indices("projects");
+    let valued = blank_value_strings(&blanked);
+    let mut found = valued.match_indices("projects");
     let (index, matched) = found.next()?;
     if found.next().is_some() {
         return None;
@@ -614,10 +686,12 @@ fn without_plain_inline_projects(raw: &str) -> Option<String> {
     }
     let end = end?;
     let inside = array.get(..end)?;
-    if delegates_to_other_config(inside)
-        || mentions_named_key(inside, "rootDir")
-        || mentions_named_key(inside, "roots")
-        || inside.contains("...")
+    let array_start = text.len() - array.len();
+    let inside_valued = valued.get(array_start..array_start + end)?;
+    if delegates_to_other_config(inside_valued)
+        || mentions_named_key(inside_valued, "rootDir")
+        || mentions_named_key(inside_valued, "roots")
+        || inside_valued.contains("...")
         || preset_may_name_a_file(inside)
     {
         return None;
