@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-loop-accumulator",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for #6485 (loop accumulators pinned exactly on a nonzero total)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "0a1ed401945325bab27e6ffd6f5d237a2a2055aab38aaa7eded973c06b336ef9"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "404d57c3a72340366e4a5dc90edb99cd0b315e7a7c9be59094bfa7e32230d51e"
+    }
+  ]
+}

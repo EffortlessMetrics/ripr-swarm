@@ -1,0 +1,62 @@
+{
+  "case_id": "loop-accumulator-bound-input",
+  "subject_id": "authored-loop-accumulator",
+  "diff": "cases/loop-accumulator-bound-input.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "exact_pin_on_bound_input",
+  "hard_case": "The added term reads a field of the loop variable and the pin passes a local binding (`&parcels`), not a literal sequence. ripr cannot read that the input walks the loop, so it abstains instead of calling the exact pin weak.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total -= p.grams;",
+        "mutated_line": "total -= p.grams;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parcels_weigh_their_sum",
+        "equivalence_review": "not equivalent: parcels_weigh_their_sum fails on it"
+      },
+      {
+        "replacement": "total *= p.grams;",
+        "mutated_line": "total *= p.grams;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parcels_weigh_their_sum",
+        "equivalence_review": "not equivalent: parcels_weigh_their_sum fails on it"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parcels_weigh_their_sum",
+        "equivalence_review": "not equivalent: parcels_weigh_their_sum fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "parcels_weigh_their_sum builds two parcels and pins 42 exactly, so each mutant of the update fails it. The input is a bound local of struct values, which the owner pin does not read as a literal sequence: the finding must read limited, never a gap.",
+  "labeling_observation": {
+    "ripr_commit": "cf8be83",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#3"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-trap-loop-accumulator",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for #6485 (loop accumulators whose pin walks no input or pins zero)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "759effe06e634d3c5032883f36e245cbc878ff2fad8913b91fcd3bfb9d57fa3b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "3087f564d83276f7ceffd0a2d90e140c3dbdd986eb9b5548591c1f4dbe6f1df7"
+    }
+  ]
+}

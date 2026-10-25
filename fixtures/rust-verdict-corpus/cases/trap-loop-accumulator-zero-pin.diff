@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,7 +11,7 @@
+ pub fn zero_total(items: &[u32]) -> u32 {
+     let mut sum = 0;
+     for w in items {
+-        sum = sum + w;
++        sum += w;
+     }
+     sum
+ }

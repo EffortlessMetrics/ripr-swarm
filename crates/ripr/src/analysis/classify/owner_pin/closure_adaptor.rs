@@ -483,6 +483,94 @@ pub(in crate::analysis::classify) fn pinned_call_runs_closure(
         .is_some_and(|runs| runs.iter().any(|elements| !elements.is_empty()))
 }
 
+/// RIPR-SPEC-0360: whether some run of the pinned owner call walks a
+/// non-empty literal sequence at `position` and pins a nonzero integer
+/// literal. `expected` is the assertion's expected operand: the literal
+/// itself, or (for an assertion borrowed from a test-local helper) one of the
+/// helper's parameters, read at each of the test's eager calls of the helper.
+/// A direct call reads only a literal sequence and a literal expectation;
+/// anything else refuses (fail closed).
+pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    call_text: &str,
+    name: &str,
+    position: usize,
+    expected: &str,
+) -> bool {
+    let Some(argument) =
+        call_argument_texts(call_text, name).and_then(|arguments| arguments.get(position).cloned())
+    else {
+        return false;
+    };
+    let expected = expected.trim();
+    match loan {
+        None => {
+            literal_sequence(&argument).is_some_and(|elements| !elements.is_empty())
+                && nonzero_integer_literal(expected)
+        }
+        Some(loan) => {
+            let parameter =
+                |text: &str| loan.parameters.iter().position(|name| name == text.trim());
+            let Some(walked) = parameter(&argument) else {
+                return false;
+            };
+            let expected_parameter = parameter(expected);
+            loan.call_lines.iter().any(|line| {
+                let Some(text) = line
+                    .checked_sub(test.start_line)
+                    .and_then(|offset| test.body.lines().nth(offset))
+                else {
+                    return false;
+                };
+                if call_count(text, &loan.name) != 1 {
+                    return false;
+                }
+                let Some(arguments) = call_argument_texts(text, &loan.name) else {
+                    return false;
+                };
+                let pinned = match expected_parameter {
+                    Some(index) => arguments.get(index).map(String::as_str),
+                    None => Some(expected),
+                };
+                arguments
+                    .get(walked)
+                    .and_then(|sequence| literal_sequence(sequence))
+                    .is_some_and(|elements| !elements.is_empty())
+                    && pinned.is_some_and(|value| nonzero_integer_literal(value.trim()))
+            })
+        }
+    }
+}
+
+/// A decimal integer literal other than zero, with an optional sign, digit
+/// separators and a built-in integer suffix (`12`, `-3`, `1_000u32`).
+fn nonzero_integer_literal(text: &str) -> bool {
+    let text = text.strip_prefix('-').unwrap_or(text);
+    let digits_end = text
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '_'))
+        .unwrap_or(text.len());
+    let (digits, suffix) = text.split_at(digits_end);
+    let digits: String = digits.chars().filter(|ch| *ch != '_').collect();
+    !digits.is_empty()
+        && digits.chars().any(|ch| ch != '0')
+        && matches!(
+            suffix,
+            "" | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+        )
+}
+
 /// The element sequences `argument` takes over every run of the call that
 /// passes it, or `None` when any run is unreadable. `site` is the text of
 /// the call (or the assertion holding it); a constant-row table column is

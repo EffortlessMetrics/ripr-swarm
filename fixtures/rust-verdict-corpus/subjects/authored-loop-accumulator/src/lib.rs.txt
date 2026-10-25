@@ -1,0 +1,50 @@
+//! Loop accumulators whose exact pin walks the input and pins a nonzero total.
+
+pub fn net_change(deltas: &[i32]) -> i32 {
+    let mut net = 0;
+    for d in deltas {
+        net = net - d;
+    }
+    net
+}
+
+pub fn iter_total(items: &Vec<u64>) -> u64 {
+    let mut sum = 0u64;
+    for w in items.iter() {
+        sum = sum + w;
+    }
+    sum
+}
+
+pub struct Parcel {
+    pub grams: u32,
+}
+
+pub fn parcel_grams(parcels: &[Parcel]) -> u32 {
+    let mut total = 0;
+    for p in parcels {
+        total = total + p.grams;
+    }
+    total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_and_three_net_minus_five() {
+        assert_eq!(net_change(&[2, 3]), -5);
+    }
+
+    #[test]
+    fn iter_walk_adds_up() {
+        assert_eq!(iter_total(&vec![5, 6, 7]), 18);
+    }
+
+    #[test]
+    fn parcels_weigh_their_sum() {
+        let parcels = [Parcel { grams: 40 }, Parcel { grams: 2 }];
+        assert_eq!(parcel_grams(&parcels), 42);
+    }
+}

@@ -1882,3 +1882,11 @@ path = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the out-parameter oracle contract: an assert_eq! on the very local a direct call of the changed method received as &mut, bound once and asserted after the call in the same test, is an oracle for that call, and every other shape fails closed."
+
+[[artifact]]
+id = "RIPR-SPEC-0360"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0360-rust-loop-accumulator-update.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #6485 records the loop-accumulator contract: a changed update of a zero-initialized local the owner returns gets a return_value probe, an exact pin credits it only when it walks a non-empty literal input and pins a nonzero total, and an exact pin ripr cannot read is withheld, never a gap."

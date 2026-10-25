@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,7 +23,7 @@
+ pub fn parcel_grams(parcels: &[Parcel]) -> u32 {
+     let mut total = 0;
+     for p in parcels {
+-        total = total + p.grams;
++        total += p.grams;
+     }
+     total
+ }

@@ -11,7 +11,12 @@
 //! - **returned receiver**: the changed statement is a method call on a value
 //!   the owner then returns (`v.sort_by_key(..); v`);
 //! - **let-else exit**: the changed line is the early exit of a `let ... else`,
-//!   whose pattern the pinned input decides.
+//!   whose pattern the pinned input decides;
+//! - **accumulated local**: the changed statement adds into a zero-initialized
+//!   local the owner returns, once per element of a slice parameter
+//!   (RIPR-SPEC-0360). The owner pin credits it only for a literal non-empty
+//!   input and a nonzero literal total; a pin it cannot read that way (a
+//!   bound input, a computed expectation) is withheld here.
 //!
 //! Reading those as "no assertion references the change" is a certain claim
 //! about a test that may well notice it, so the gap is withheld under
@@ -23,6 +28,7 @@ use super::owner_pin::{CONDITIONAL_COMBINATORS, closure_adaptor::adaptor_tail_of
 use super::reveal::assertion_comparison_operands;
 use crate::analysis::facts::TestFact;
 use crate::analysis::rust_index::RustIndex;
+use crate::analysis::syntax::loop_accumulator::loop_accumulator_at;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::text_calls;
 use crate::domain::*;
@@ -39,6 +45,7 @@ enum Shape {
     ClosureTail,
     ReturnedReceiver,
     LetElseExit,
+    AccumulatedLocal,
 }
 
 impl Shape {
@@ -52,6 +59,9 @@ impl Shape {
             }
             Shape::LetElseExit => {
                 "the changed code is the `else` exit of a `let ... else`, and ripr does not decide whether the pinned input takes it"
+            }
+            Shape::AccumulatedLocal => {
+                "the changed statement adds into a local the call returns, and ripr cannot read that the pinned input walks the loop and totals to a nonzero value"
             }
         }
     }
@@ -421,6 +431,9 @@ fn unread_shape(body: &str, line_index: usize, family: &ProbeFamily) -> Option<S
     };
     match family {
         ProbeFamily::ReturnValue => {
+            if loop_accumulator_at(body, line_index).is_some() {
+                return Some(Shape::AccumulatedLocal);
+            }
             if let Some(shape) = let_else_exit(&list, &overlaps) {
                 return Some(shape);
             }

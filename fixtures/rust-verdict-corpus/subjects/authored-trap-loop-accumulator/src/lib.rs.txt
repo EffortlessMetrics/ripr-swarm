@@ -1,0 +1,32 @@
+//! Loop accumulators whose pinned input cannot separate the update from its neighbours.
+
+pub fn empty_total(items: &[u32]) -> u32 {
+    let mut sum = 0;
+    for w in items {
+        sum = sum + w;
+    }
+    sum
+}
+
+pub fn zero_total(items: &[u32]) -> u32 {
+    let mut sum = 0;
+    for w in items {
+        sum = sum + w;
+    }
+    sum
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_adds_up_to_nothing() {
+        assert_eq!(empty_total(&[]), 0);
+    }
+
+    #[test]
+    fn zeros_add_up_to_zero() {
+        assert_eq!(zero_total(&[0, 0]), 0);
+    }
+}
