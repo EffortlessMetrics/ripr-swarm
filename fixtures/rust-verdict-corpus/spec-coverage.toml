@@ -19,12 +19,25 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
+# 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
+# shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
+# 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
+# 147 (#9197): plus `strsim-sorensen-dice-equal`, which compares a local rebound
+# from the parameter (`let a = a.chars()..collect()`), so the name-only credit
+# is withheld and the row abstains; fail-closed by design. Measured on the
+# combined tree.
+# 141: that 145 minus the four spec-b-0164 rows #10196 credits (alternative-pattern, escaped-pattern,
+# char-scrutinee, computed-arm-value).
+# 142: that 146 minus the four rows above (141 was measured before #10163 landed).
+# 143: that 147 minus the four rows above (142 was measured before #9197 landed).
 # 149 = 147 on main + 2 new measured rows (spec0096-named-binding-used,
 # spec0048-label-rendered-observed) whose initializer-call and const shapes
 # abstain today; analyzer fix tracked in #9871.
 # 148: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
-# 147: minus spec0186-ex06-private-predicate-via-wrapper, credited once in-file test-module imports resolve (#10279).
-missed_credit_ceiling = 147
+# 147 (#6485): minus one more on this branch (two grid rows recovered by the loop-accumulator credit, one bound-input abstention added). Measured on the combined tree.
+# 143: that 147 minus the four spec-b-0164 rows #10196 credits.
+# 142: minus spec0186-ex06-private-predicate-via-wrapper, credited once in-file test-module imports resolve (#10279). Measured on the combined tree.
+missed_credit_ceiling = 142
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -68,7 +81,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 37
+trap_floor = 40
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -997,6 +1010,10 @@ reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+[[spec]]
+id = "RIPR-SPEC-0360"
+scope = "in"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
