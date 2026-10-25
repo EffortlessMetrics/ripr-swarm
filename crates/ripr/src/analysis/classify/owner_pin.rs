@@ -12014,6 +12014,11 @@ fn fixture_parameters(test: &TestSummary, masked: &str) -> Option<BTreeSet<Strin
     if masked[open + 1..close].trim().is_empty() {
         return Some(BTreeSet::new());
     }
+    // A `#[test_case]` function has no fixtures: the syntax gate admits it
+    // only when every row holds one scalar literal per parameter.
+    if test.attrs.iter().any(|attr| is_test_case_attribute(attr)) {
+        return Some(BTreeSet::new());
+    }
     let parse = parse_clean_source_file(&test.body)?;
     let function = parse
         .tree()
@@ -12037,6 +12042,11 @@ fn fixture_parameters(test: &TestSummary, masked: &str) -> Option<BTreeSet<Strin
         }
     }
     Some(fixtures)
+}
+
+fn is_test_case_attribute(attribute: &str) -> bool {
+    let compact: String = attribute.split_whitespace().collect();
+    compact.starts_with("#[test_case(") || compact.starts_with("#[test_case::test_case(")
 }
 
 /// The offsets of the parentheses around the parameter list of the `fn`
