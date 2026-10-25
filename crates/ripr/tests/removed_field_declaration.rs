@@ -366,3 +366,12 @@ fn removed_item_macro_identifier_element_list_keeps_field_construction() -> Resu
     let finding = removed_only(old, 4, "ok: [T; N],", ProbeFamily::StaticUnknown)?;
     require_declaration_unknown(&finding)
 }
+
+#[test]
+fn removed_item_macro_empty_array_value_keeps_field_construction() -> Result<(), String> {
+    let old =
+        "pin_project! {\n    pub struct Task {\n        value: [],\n        ok: [T],\n    }\n}\n";
+    removed_only(old, 3, "value: [],", ProbeFamily::FieldConstruction)?;
+    let finding = removed_only(old, 4, "ok: [T],", ProbeFamily::StaticUnknown)?;
+    require_declaration_unknown(&finding)
+}

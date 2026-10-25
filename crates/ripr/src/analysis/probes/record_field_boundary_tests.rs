@@ -626,6 +626,8 @@ fn item_macro_struct_field_holding_an_expression_keeps_field_construction() -> R
         "f: (1, 2),",
         "f: [1, 2],",
         "f: [A, B],",
+        "f: [],",
+        "f: [;3],",
         "f: [0u8; 3],",
     ] {
         let source =
@@ -827,6 +829,34 @@ fn observes_list() { assert_eq!(make().value, [1, 2]); }
             .iter()
             .any(|probe| probe.family == ProbeFamily::FieldConstruction),
         "element list lost field_construction: {probes:?}"
+    );
+    Ok(())
+}
+
+/// External-review control (#10290): empty brackets are an empty array value,
+/// not a slice type, so they keep their probe.
+#[test]
+fn macro_field_empty_array_value_retains_runtime_probe() -> Result<(), String> {
+    let source = r###"macro_rules! array_factory {
+    (struct $name:ident { $field:ident: $value:expr, }) => {
+        struct $name { $field: [usize; 0] }
+        fn make() -> $name { $name { $field: $value } }
+    };
+}
+array_factory! {
+    struct Task {
+        value: [],
+    }
+}
+#[test]
+fn observes_empty() { assert_eq!(make().value.len(), 0); }
+"###;
+    let probes = probes_at(source, 9)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "empty array value lost field_construction: {probes:?}"
     );
     Ok(())
 }

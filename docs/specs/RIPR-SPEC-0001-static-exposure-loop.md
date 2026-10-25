@@ -126,8 +126,9 @@ an allowlist of type syntax: identifiers and paths, lifetimes, balanced `<..>`,
 a reference `&` or raw-pointer `*const`/`*mut` prefix, `dyn`/`impl`/`fn`/`for`/
 `mut`/`const`/`unsafe`/`extern`, `->`, `pub` with `(crate|super|self|in path)`,
 `+` joining bound names, a paren group only as a `fn`/`Fn*` argument list or
-tuple type, and a bracket holding exactly one element type (no comma
-outside `<..>`) whose length, if any, is a literal or a path. Everything else
+tuple type, and a bracket holding exactly one non-empty element type (no comma
+outside `<..>`; `[]`, `[;3]` and `[T;]` are not types) whose length, if any, is a
+literal or a path, and `<..>` only after a path or `for`. Everything else
 keeps `field_construction`: a construction (`Task { buffered: None }`), a
 literal, closure, `|`, `.`, `as`, `?`, `..`, unary or binary operator, call
 (`compute()`), macro `!`, nested brace, array element list (`[A, B]`, `[1, 2]`) or non-path length

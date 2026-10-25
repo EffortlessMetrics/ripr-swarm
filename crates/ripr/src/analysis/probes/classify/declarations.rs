@@ -249,9 +249,19 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
         let pure_type = match token.kind() {
             SyntaxKind::L_PAREN => type_paren_group(token),
             SyntaxKind::L_BRACK => literal_or_path_array_length(token),
+            // `<` opens generic arguments only after a path (`Foo<..>`).
             SyntaxKind::L_ANGLE => {
                 angle_depth += 1;
-                true
+                matches!(
+                    previous,
+                    Some(
+                        SyntaxKind::IDENT
+                            | SyntaxKind::COLON2
+                            | SyntaxKind::SELF_TYPE_KW
+                            | SyntaxKind::CRATE_KW
+                            | SyntaxKind::FOR_KW
+                    )
+                )
             }
             // `&` is a reference prefix, never a binary `a & b`/`a && b`.
             SyntaxKind::AMP => !matches!(
@@ -447,14 +457,32 @@ fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
     // `<..>` (`[A, B]`) makes it an element list, which keeps its probe.
     let mut angle_depth = 0usize;
     let mut previous = None;
+    // `[]` and `[;3]` hold no element type, and `[T;]` no length: not types.
+    let mut element_parts = 0usize;
+    let mut length_parts = 0usize;
     for element in tree.children_with_tokens() {
         let Some(token) = element.as_token() else {
             if after_semicolon {
                 return false;
             }
+            element_parts += 1;
             continue;
         };
         let kind = token.kind();
+        if !matches!(
+            kind,
+            SyntaxKind::L_BRACK
+                | SyntaxKind::R_BRACK
+                | SyntaxKind::WHITESPACE
+                | SyntaxKind::COMMENT
+                | SyntaxKind::SEMICOLON
+        ) {
+            if after_semicolon {
+                length_parts += 1;
+            } else {
+                element_parts += 1;
+            }
+        }
         match kind {
             SyntaxKind::L_ANGLE => angle_depth += 1,
             // `->` inside a bracketed fn type is `-` then `>`, not a close.
@@ -481,7 +509,7 @@ fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
             _ => {}
         }
     }
-    true
+    element_parts > 0 && (!after_semicolon || length_parts > 0)
 }
 
 fn is_brace_token_tree(node: &SyntaxNode) -> bool {
@@ -666,6 +694,11 @@ mod tests {
             "s: [T; 4],",
             "s: [Foo<A, B>],",
             "s: [fn(u8) -> u8],",
+            "u: (),",
+            "g: Foo<>,",
+            "h: fn(),",
+            "s: [(u8, u8)],",
+            "h: Box<dyn for<'a> Fn(&'a u8)>,",
             "q: &&'a str,",
             "pub(super) x: u8,",
             "pub(self) z: u8,",
@@ -690,6 +723,11 @@ mod tests {
             "a: u8; b",
             "f: pub_fn(x),",
             "f: [A, B],",
+            "f: [],",
+            "f: [;3],",
+            "f: [;],",
+            "f: [T;],",
+            "f: <>,",
             "f: [A, B; 3],",
             "f: a * b,",
             "f: a - b,",
