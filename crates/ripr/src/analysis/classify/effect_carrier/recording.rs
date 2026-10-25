@@ -129,6 +129,7 @@ fn setup(statement: &ast::Stmt, sink: &str, known: &mut Inputs) -> Option<()> {
     };
     let name = pattern.name()?.text().to_string();
     if name.starts_with("r#")
+        || binding.let_else().is_some()
         || name == sink
         || pattern.ref_token().is_some()
         || pattern.pat().is_some()

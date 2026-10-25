@@ -442,7 +442,7 @@ non-ignored related test matches one of these shapes:
   primitive comparison may guard further append-only sends. Format arguments
   are parsed out of their token tree: only primitive names or numeric literals
   and plain named/positional placeholders are admitted. Hidden calls, operators
-  on unknown values, other setup/effects, type aliases, ambiguous imports,
+  on unknown values, let-else, other setup/effects, type aliases, ambiguous imports,
   item expansion/attributes, and user-defined `clone`/`to_string` methods
   (including raw spellings) refuse
   this credit. Concrete mutable parameters, standard collection receivers,
