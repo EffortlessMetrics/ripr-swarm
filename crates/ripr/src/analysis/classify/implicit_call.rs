@@ -109,9 +109,6 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
             finding.class,
             ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
         )
-        // A test seen calling the owner already decided reach; this rule is
-        // only for the "no test is seen calling" reading.
-        || finding.ripr.reach.state != StageState::Weak
     {
         return false;
     }
@@ -129,6 +126,18 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     let Some(kind) = ImplicitCall::of_owner(owner) else {
         return false;
     };
+    // A test seen calling the owner already decided reach, so this rule is
+    // only for the "no test is seen calling" reading. The one exception is a
+    // reach that syntax alone established (operator crediting, #9567) and
+    // whose observation no assertion confirmed: relating the test says the
+    // owner runs, not that an assertion would notice it change, so the gap
+    // stays withheld instead of becoming a "add a test" signal (#9567).
+    if finding.ripr.reach.state != StageState::Weak
+        && !(matches!(kind, ImplicitCall::Syntax(_))
+            && reached_only_through_syntax(finding, owner, index))
+    {
+        return false;
+    }
     let Some(self_type) = impl_self_type_name(&owner.id.0) else {
         return false;
     };
@@ -164,6 +173,36 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     );
     withhold_gap(finding, LIMIT, FIRST_UNRESOLVED_EDGE, next_step, &[]);
     true
+}
+
+/// Whether every test related to the owner by a direct call reaches it only
+/// through syntax: none of them spells the owner's method name, so the relation
+/// came from an operator, loop or scope exit the language runs. A finding with
+/// no such test, or with one that names the method, is judged by its own
+/// evidence.
+fn reached_only_through_syntax(
+    finding: &Finding,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let mut direct = finding
+        .related_tests
+        .iter()
+        .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .peekable();
+    if direct.peek().is_none() {
+        return false;
+    }
+    direct.all(|related| {
+        index
+            .tests()
+            .iter()
+            .find(|test| test.name == related.name && test.file == related.file)
+            .is_some_and(|test| {
+                let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
+                !contains_as_whole_word(&code, &owner.name)
+            })
+    })
 }
 
 /// How the language reaches the owner without a call that names it.

@@ -17863,6 +17863,7 @@ tests = [
   "crates/ripr/tests/operator_call_credit.rs::a_comparison_before_a_plus_does_not_hide_the_operator",
   "crates/ripr/tests/operator_call_credit.rs::an_operator_inside_stringify_is_text_not_a_call",
   "crates/ripr/tests/operator_call_credit.rs::an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl",
+  "crates/ripr/tests/operator_call_credit.rs::a_credit_no_assertion_confirms_is_withheld_not_a_gap",
   "crates/ripr/tests/operator_call_credit.rs::reference_operands_do_not_reach_the_owned_impl",
   "crates/ripr/tests/implicit_call_limit.rs::a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_operator_impl_controls_keep_the_gap",
