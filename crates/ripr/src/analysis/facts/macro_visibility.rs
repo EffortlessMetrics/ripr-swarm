@@ -53,6 +53,28 @@ impl Clone for MacroVisibility {
     }
 }
 
+/// Whether `source` could contain a call `name!` of one of `names`. A
+/// superset of what `first_macro_call` finds, so a `false` skips its parse
+/// without changing the answer: the name at identifier boundaries, followed
+/// by `!`, or by `/` for a comment before the `!`, past any whitespace.
+fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric() || byte >= 0x80;
+    names.iter().any(|name| {
+        source.match_indices(name.as_str()).any(|(start, _)| {
+            if start > 0 && is_ident(bytes[start - 1]) {
+                return false;
+            }
+            let rest = &source[start + name.len()..];
+            let Some(next) = rest.bytes().find(|byte| !byte.is_ascii_whitespace()) else {
+                return false;
+            };
+            // `next` begins an identifier when the name was only a prefix.
+            next == b'!' || next == b'/'
+        })
+    })
+}
+
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
@@ -81,6 +103,11 @@ impl MacroVisibility {
         let Some(source) = self.sources.get(file) else {
             return String::new();
         };
+        // Parsing is the cost: most files never spell a generator's name as
+        // a call, and `first_macro_call` would parse each of them to say so.
+        if !may_call_generator(source, &self.generators) {
+            return String::new();
+        }
         // A `#[macro_use]` module declared after the first call is not in
         // scope at it.
         let Some(first_call) = first_macro_call(source, &self.generators) else {
@@ -402,6 +429,33 @@ mod tests {
                 .collect();
             let imported = visibility(&refs).imported_definitions(Path::new(invoking));
             assert!(defines_t(&imported), "{invoking}: {imported:?}");
+        }
+    }
+
+    #[test]
+    fn the_call_precheck_never_hides_a_call_the_parser_finds() {
+        let names: BTreeSet<String> = ["t".to_string()].into();
+        for call in [
+            "t!(a);",
+            "t !(a);",
+            "t\n!(a);",
+            "t /* c */ !(a);",
+            "t // c\n!(a);",
+            "mod m { t!(a); }",
+            "fn f() { let _ = (t!(a)); }",
+        ] {
+            assert!(may_call_generator(call, &names), "{call}");
+            assert!(first_macro_call(call, &names).is_some(), "{call}");
+        }
+        for other in [
+            "fn t() {}",
+            "let t = 1;",
+            "at!(a);",
+            "t_!(a);",
+            "t",
+            "x!(t);",
+        ] {
+            assert!(!may_call_generator(other, &names), "{other}");
         }
     }
 

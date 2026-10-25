@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Resolving the `macro_rules!` test generators a file sees from other files (#6925) no longer parses every file in the workspace to look for a generator call (#9794). A text precheck now skips files that never spell a generator name followed by `!`, which removes about a quarter of the instructions of a warm `ripr check` on the cargo pin (about 5.5 s to 4.3 s on the shared container) with byte-identical output.
