@@ -13,6 +13,11 @@ cargo build --release -p ripr
 cargo xtask size-scaling --binary target/release/ripr
 ```
 
+A nightly advisory lane (`.github/workflows/size-scaling.yml`) builds the release
+binary and runs the gate at a 512 KiB base, so the largest step is 2 MiB; the
+report is kept as the `size-scaling` artifact, which is the trend. It is not
+part of the required PR workflow.
+
 Outputs: `target/ripr/reports/size-scaling.{json,md}`. The workspaces are owned
 and disposable under `target/ripr/size-scaling/<pid>`; a run refuses to reuse an
 existing root and fails if it cannot remove its own.

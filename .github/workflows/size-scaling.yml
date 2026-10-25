@@ -1,0 +1,51 @@
+name: Size Scaling
+
+# Nightly hostile-input size gate (#10362): runs `ripr check` against one
+# release binary on generated Rust, Python and TypeScript files at 1x, 2x and
+# 4x a base size and fails when cost stops being linear in file size, when a
+# step exceeds the ceiling, or when a run analyzes nothing. Not part of the
+# required PR workflow; the report is an artifact so the trend is readable
+# run over run. Wall time only; peak memory is not measured (docs/SIZE_SCALING.md).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: size-scaling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  size-scaling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Build the release binary
+        run: cargo build --release --locked -p ripr
+
+      - name: Measure size scaling
+        run: cargo xtask size-scaling --binary target/release/ripr --base-kib 512
+
+      - name: Upload size-scaling report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: size-scaling
+          path: target/ripr/reports/size-scaling.*
+          if-no-files-found: warn

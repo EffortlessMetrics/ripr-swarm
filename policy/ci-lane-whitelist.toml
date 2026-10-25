@@ -30,6 +30,10 @@ id = "dx-scoreboard"
 paths = ["target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "size-scaling"
+paths = ["target/ripr/reports/size-scaling.json", "target/ripr/reports/size-scaling.md"]
+
+[[artifact_family]]
 id = "rust-corpus"
 paths = ["target/ripr/reports/rust-corpus-smoke.json", "target/ripr/reports/rust-corpus-smoke.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
@@ -162,6 +166,16 @@ commands = ["cargo xtask dx-scoreboard --clone --include-heavy --corpus-dir \"$R
 estimated_lem = 40
 artifact_families = ["dx-scoreboard"]
 description = "Nightly developer-experience scoreboards on the pinned real-repository corpus; fails only when a metric regresses past its margin against the committed baseline or an instrument breaks."
+
+[[lane]]
+id = "size-scaling"
+posture = "advisory"
+workflow = ".github/workflows/size-scaling.yml"
+jobs = ["size-scaling"]
+commands = ["cargo build --release --locked -p ripr", "cargo xtask size-scaling --binary target/release/ripr --base-kib 512"]
+estimated_lem = 30
+artifact_families = ["size-scaling"]
+description = "Nightly hostile-input size gate: runs ripr check on generated Rust, Python and TypeScript files at 1x, 2x and 4x a base size against a release binary; fails when cost stops being linear in file size, a step exceeds the ceiling, or a run analyzes nothing. Wall time only."
 
 [[lane]]
 id = "rust-corpus"

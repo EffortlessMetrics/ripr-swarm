@@ -2448,7 +2448,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/size-scaling.{json,md}",
             false,
-            false,
+            true,
             "Runs ripr check on generated Rust, Python and TypeScript files (production and test, one-line and one-item-per-line) at 1x, 2x and 4x a base size in owned disposable workspaces, and fails when wall time grows faster than the size allows, when the largest step exceeds an absolute ceiling, or when any step times out, ends on a signal or exits unexpectedly. Wall time only; peak memory is not measured. Does not change product behavior or qualify a release.",
         ),
         command_entry(
