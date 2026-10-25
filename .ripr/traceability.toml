@@ -17234,6 +17234,8 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::nested_mock_call_count_aliases_resolve_forward_captures",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::mock_call_count_alias_dependencies_refuse_cycles_and_keep_long_chains",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::admitted_nested_mock_call_count_aliases_are_not_argument_pins",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::nested_mock_call_count_aliases_preserve_argument_and_added_call_credit",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::unused_nested_mock_call_count_alias_does_not_capture_an_outer_argument_pin",
@@ -17496,6 +17498,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
 ]
 fixtures = [
+  "fixtures/typescript_mock_count_nested_alias",
   "fixtures/typescript_mock_count_alias",
   "fixtures/typescript_mock_count_optional",
   "fixtures/typescript_mock_count_computed",

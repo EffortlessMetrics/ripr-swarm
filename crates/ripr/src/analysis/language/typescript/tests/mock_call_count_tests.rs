@@ -376,3 +376,34 @@ fn unused_nested_mock_call_count_alias_does_not_capture_an_outer_argument_pin() 
     );
     Ok(())
 }
+
+#[test]
+fn nested_mock_call_count_aliases_resolve_forward_captures() -> Result<(), String> {
+    let source = "import { notify } from \"../src/notify\";\nit(\"notify\", done => {\n const fn = jest.fn();\n notify(4, {send: fn});\n setTimeout(() => {\n const count = calls.length;\n expect(count).toBe(1);\n done();\n }, 0);\n const calls = fn.mock.calls;\n});\n";
+    assert_eq!(
+        notify_class("nested-forward-count-alias", source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn mock_call_count_alias_dependencies_refuse_cycles_and_keep_long_chains() {
+    let tests = extract_tests(
+        Path::new("tests/notify.test.ts"),
+        &node_test("const calls = count; const count = calls; assert.equal(count, 1);"),
+    );
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(mock_call_count_assertions(&tests[0]), vec![false]);
+
+    let mut aliases = String::from("const calls0 = fn.mock.calls;\n");
+    for index in 1..=256 {
+        aliases.push_str(&format!("const calls{index} = calls{};\n", index - 1));
+    }
+    aliases.push_str("assert.equal(calls256.length, 1);");
+    let tests = extract_tests(Path::new("tests/notify.test.ts"), &node_test(&aliases));
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(mock_call_count_assertions(&tests[0]), vec![true]);
+}

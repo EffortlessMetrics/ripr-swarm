@@ -2740,8 +2740,8 @@ type MockCountAliases = std::collections::BTreeMap<String, (Vec<MockCountPart>, 
 /// A unique callback-local constant denotes the same value at every use.
 /// Resolve that binding identity independently of source-text mentions in
 /// unused closures. This only withholds argument credit; it establishes no
-/// execution order or admission. Initializer aliases still resolve in order,
-/// and any nested shadowing refuses the name entirely. A nested callback's
+/// execution order or admission. Initializer dependencies resolve independently
+/// of lexical order, and nested shadowing refuses the name entirely. A callback's
 /// constants have that callback's lexical scope, not the whole registration.
 fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockCountAliases {
     use oxc_ast_visit::{Visit, walk};
@@ -2815,8 +2815,8 @@ fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockC
         constants: Vec::new(),
     };
     facts.visit_program(&parsed.program);
-    facts.constants.sort_by_key(|constant| constant.start);
     let mut aliases = MockCountAliases::new();
+    let empty = MockCountAliases::new();
     for constant in &facts.constants {
         if facts.bindings.get(&constant.name) != Some(&1)
             || facts.reads.get(&constant.name).is_some_and(|reads| {
@@ -2835,10 +2835,53 @@ fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockC
         else {
             continue;
         };
-        let path = mock_count_path(&init, &aliases, constant.start, 0);
+        let path = mock_count_path(&init, &empty, constant.start, 0);
         aliases.insert(constant.name.clone(), (path, constant.end));
     }
-    aliases
+    resolve_mock_count_aliases(aliases)
+}
+
+/// Each path has at most one root alias dependency. Resolve that graph once,
+/// rather than treating source order as callback execution order or repeatedly
+/// parsing initializers. Cycles remain unresolved; long acyclic chains need no
+/// recursive stack and retain the same bounded path suffix as direct paths.
+fn resolve_mock_count_aliases(raw: MockCountAliases) -> MockCountAliases {
+    let mut ready = std::collections::VecDeque::new();
+    let mut waiting = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for (name, (path, _)) in &raw {
+        if let Some(MockCountPart::Property(root)) = path.first()
+            && raw.contains_key(root)
+        {
+            waiting.entry(root.clone()).or_default().push(name.clone());
+        } else {
+            ready.push_back(name.clone());
+        }
+    }
+    let mut resolved = MockCountAliases::new();
+    while let Some(name) = ready.pop_front() {
+        let Some((path, end)) = raw.get(&name) else {
+            continue;
+        };
+        let mut expanded = match path.first() {
+            Some(MockCountPart::Property(root)) => resolved
+                .get(root)
+                .map(|(prefix, _)| {
+                    let mut expanded = prefix.clone();
+                    expanded.extend_from_slice(&path[1..]);
+                    expanded
+                })
+                .unwrap_or_else(|| path.clone()),
+            _ => path.clone(),
+        };
+        if expanded.len() > 64 {
+            expanded.drain(..expanded.len() - 64);
+        }
+        resolved.insert(name.clone(), (expanded, *end));
+        if let Some(dependents) = waiting.remove(&name) {
+            ready.extend(dependents);
+        }
+    }
+    resolved
 }
 
 fn mock_count_suffix(path: &[MockCountPart]) -> bool {
