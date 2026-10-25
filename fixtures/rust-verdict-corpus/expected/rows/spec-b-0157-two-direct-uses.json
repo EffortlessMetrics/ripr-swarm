@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0157-two-direct-uses",
+  "subject_id": "authored-spec-b-bindings",
+  "origin": "authored",
+  "anchor": "src/b_two_uses.rs:4",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_two_direct_uses",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": true,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

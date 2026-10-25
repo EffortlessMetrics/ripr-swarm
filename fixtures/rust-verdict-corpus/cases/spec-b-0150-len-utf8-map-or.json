@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0150-len-utf8-map-or",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0150-len-utf8-map-or.diff",
+  "anchor": {
+    "file": "src/b_utf8.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_len_utf8_map_or_equality",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let width = input.chars().next().map_or(1, |ch| ch.len_utf8());",
+        "mutated_line": "let width = input.chars().next().map_or(1, |ch| ch.len_utf8());",
+        "outcome": "tests_failed",
+        "failing_test": "b_utf8::tests::the_leading_width_is_exact_b_utf8",
+        "equivalence_review": "not equivalent: b_utf8::tests::the_leading_width_is_exact_b_utf8 fails on it"
+      },
+      {
+        "replacement": "let width = input.chars().next().map_or(0, |ch| ch.len_utf8() + 1);",
+        "mutated_line": "let width = input.chars().next().map_or(0, |ch| ch.len_utf8() + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "b_utf8::tests::the_leading_width_is_exact_b_utf8",
+        "equivalence_review": "not equivalent: b_utf8::tests::the_leading_width_is_exact_b_utf8 fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The empty row pins the map_or default and the a and \u00e9 rows pin the width, so both mutants fail the test. Spec cells: RIPR-SPEC-0150#2.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0150#2"
+  ]
+}

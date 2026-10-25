@@ -763,9 +763,13 @@ id = "RIPR-SPEC-0108"
 reason = "the meta-gate's own pass/fail messages over charter fixtures; the Rust rows it guards are measured through their owning specs (#9872)"
 
 # Rust bounded value-propagation limitation
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0150"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 8
+reason = "a rfind/map_or let-binding needs an enclosing function body to compile (Option::map_or and str::rfind are not const), so a missing owner cannot be authored as compiling Rust; the binding-owner unit tests cover the refusal"
 
 # Rust producer-owned source role
 [[unmeasured]]
@@ -778,9 +782,9 @@ id = "RIPR-SPEC-0154"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Changed-binding → predicate-operand relation
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0157"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Bounded value transfer from exact test inputs
 [[spec]]

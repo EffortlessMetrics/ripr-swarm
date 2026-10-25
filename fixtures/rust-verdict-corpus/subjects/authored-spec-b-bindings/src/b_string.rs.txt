@@ -1,0 +1,17 @@
+//! The rfind family appears only inside a string literal.
+
+pub fn tagged_start_is(path: &str, at: usize) -> bool {
+    let start = path.len() + "rfind map_or".len() - 12;
+    start == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_start_is_the_length_b_string() {
+        assert!(tagged_start_is("abc", 3));
+        assert!(!tagged_start_is("abc", 2));
+    }
+}

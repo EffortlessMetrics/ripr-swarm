@@ -110,13 +110,17 @@ generic syntax reason.
 
 ## Acceptance Examples
 
-- Accept: changed `let end = input.rfind(delim).map_or(0, |idx| idx);`
-  with a later `if end == start` — one predicate probe at the use line,
-  initializer before/after, `binding_predicate_relation` and
-  earliest-operation evidence, no generic changed-syntax limitation.
-- Accept: two direct uses — two probes, scan order, distinct ids.
-- Reject: the relation through a shadowed, reassigned, closure-captured,
-  macro-guarded, sibling-function, or comment/string-only use.
+1. Accept: changed `let end = input.rfind(delim).map_or(0, |idx| idx);`
+   with a later `if end == start` — one predicate probe at the use line,
+   initializer before/after, `binding_predicate_relation` and
+   earliest-operation evidence, no generic changed-syntax limitation.
+2. Accept: two direct uses — two probes, scan order, distinct ids.
+3. Reject: the relation through a shadowed use.
+4. Reject: the relation through a reassigned use.
+5. Reject: the relation through a closure-captured use.
+6. Reject: the relation through a macro-guarded use.
+7. Reject: the relation through a sibling-function use.
+8. Reject: the relation through a comment/string-only use.
 
 ## Test Mapping
 

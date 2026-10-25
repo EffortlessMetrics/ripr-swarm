@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- RIPR-SPEC-0150 and RIPR-SPEC-0157 acceptance examples are numbered and measured by the Rust verdict corpus: sixteen runtime-labeled changed-binding cases (accepts probe the use line; shadowed, reassigned, closure, macro, sibling-function, comment and string uses stay limited), with the missing-owner example waived because it cannot compile (RIPR-SPEC-0157, #9271).

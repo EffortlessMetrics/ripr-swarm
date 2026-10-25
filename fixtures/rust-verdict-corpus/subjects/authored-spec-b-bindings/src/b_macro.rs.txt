@@ -1,0 +1,17 @@
+//! The compared use sits inside a macro invocation.
+
+pub fn fits_in_macro(text: &str, width: usize) -> bool {
+    let end = text.len();
+    format!("{}", end <= width) == "true"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fits_is_inclusive_b_macro() {
+        assert!(fits_in_macro("abc", 3));
+        assert!(!fits_in_macro("abcd", 3));
+    }
+}
