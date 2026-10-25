@@ -1376,9 +1376,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
   rule 20. Example 34's `exc.value is not None` and length forms have
   cases (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`,
-  #7546); the corpus has no `assertRaises` callable,
-  `assertRaises ... as cm` or other example 34 form yet, and each needs
-  its own case before those parts read as established.
+  #7546); `assertRaises` callable and `assertRaises ... as cm` now have
+  cases (`py-raises-callable-unittest`,
+  `py-raises-bound-unittest-exception`), and any other example 34 form
+  needs its own case before that part reads as established.
   Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
   mutant the `assert_called_once_with` expectation kills, which scores
   credited under rule 17's called-parameter form, and a sign case
