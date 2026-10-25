@@ -458,9 +458,9 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
             "{path} uses the retired is_unmatched"
         );
         for hit in miss_reading_closures(source) {
-            let allowed = MISS_CLOSURE_ALLOWLIST
-                .iter()
-                .any(|(suffix, fragment)| path.ends_with(suffix) && hit.contains(fragment));
+            let allowed = MISS_CLOSURE_ALLOWLIST.iter().any(|(suffix, fragment)| {
+                std::path::Path::new(path).ends_with(suffix) && hit.contains(fragment)
+            });
             if !allowed {
                 violations.push(format!("{path}:{hit}"));
             }
