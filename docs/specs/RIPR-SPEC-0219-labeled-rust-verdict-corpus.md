@@ -306,6 +306,7 @@ twice by one case.
   than counted. The list is maintained by hand: nothing detects an in-scope
   prose spec that is missing from it.
 - `spec-examples.lock`, beside the ledger, lists the covered examples the gate protects: one `RIPR-SPEC-NNNN#<number or slug>` per line, sorted and unique (the loader rejects anything else). It replaced a single `floor` count, which every corpus PR edited and which could not tell a swap (one example lost, another gained) from no change (#9859).
+- `spec-scopes/<RIPR-SPEC-NNNN>.toml`, beside the ledger, holds one spec entry per file (`id`, `scope`, `reason`, `waived`, or `unmeasured = true` with a `reason`), merged with the inline entries. New specs add a file instead of appending to the ledger tail, which parallel corpus PRs all edited. A file whose name differs from its `id`, a missing field, a non-`.toml` entry, or a spec named both inline and in a file fails `validate`; only an absent directory is optional (#9859).
 
 `validate` fails when a spec with numbered examples is missing from the
 ledger (a new spec cannot leave the denominator silently), when the ledger
