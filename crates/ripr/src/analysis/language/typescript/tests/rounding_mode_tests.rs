@@ -394,3 +394,12 @@ fn unreadable_spread_positions_never_witness_equal_arguments() {
     let before = positional_prefix(vec!["5".to_string(), "5".to_string(), "...xs".to_string()]);
     assert!(call_has_identical_arguments(&before, &params));
 }
+
+#[test]
+fn a_spread_past_the_fixed_count_still_reads_as_unreadable() {
+    let mut arguments: Vec<String> = (0..20).map(|n| n.to_string()).collect();
+    arguments.push("...xs".to_string());
+    let got = positional_prefix(arguments);
+    assert_eq!(got.len(), 21);
+    assert_eq!(got[20], "...#20");
+}

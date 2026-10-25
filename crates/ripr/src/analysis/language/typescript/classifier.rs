@@ -4357,7 +4357,9 @@ pub(crate) fn positional_prefix(mut arguments: Vec<String>) -> Vec<String> {
     arguments.truncate(at);
     // Each marker is distinct, so two unreadable positions never compare as
     // equal values (a boundary witness, #10476 review).
-    let end = at.max(SPREAD_UNREADABLE_POSITIONS);
+    // At least the spread's own position, so a spread past the fixed count
+    // still reads as unreadable rather than absent.
+    let end = SPREAD_UNREADABLE_POSITIONS.max(at + 1);
     arguments.extend((at..end).map(|position| format!("...#{position}")));
     arguments
 }
