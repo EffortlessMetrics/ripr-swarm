@@ -684,6 +684,13 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
 
+A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
+no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
+(`impl<Item, const N: usize> Drop` before `for Holder<Item, N>` and `{` on later
+lines). It declares only, so it seeds a single `static_unknown` probe like a
+one-line `impl ... {` header (#8389) and never `field_construction` for a
+const-generic bound or `call_deletion` for a generic attribute (#10244).
+
 ## Implementation Mapping
 
 Current and planned modules:
