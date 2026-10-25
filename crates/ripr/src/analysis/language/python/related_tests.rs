@@ -739,7 +739,7 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
 /// or an annotation (`x, r = ...`, `for i, r in ...`, `with a as (b, r)`,
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
-fn binds_in_target_list(body: &str, var: &str) -> bool {
+pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -770,7 +770,9 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
 fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
     let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
     let not_line_start = !body[line_start..idx].trim().is_empty();
-    if not_line_start && plain_assign(after) {
+    // `if z: r += [1]`, `a = 1; r += [1]`: an augmented assignment after a
+    // header or `;` rebinds like a plain one.
+    if not_line_start && (plain_assign(after) || augmented_assign_op(after)) {
         return true;
     }
     // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
@@ -805,18 +807,25 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     plain_assign(rest)
         || augmented_assign_op(rest)
         || (rest.starts_with(',') && opener_is_target_position(head_line))
-        // An annotated target (`(r): list = [1]`); `if (r):` and `case (r):`
-        // are not at a target position.
+        // An annotated target (`(r): list = [1]`); `if (r):` is not at a target
+        // position. `case (r):` / `case [r]:` is a match capture that rebinds
+        // `r`, so a `case` line withholds credit too.
         || (rest.starts_with(':')
             && !rest.starts_with(":=")
-            && opener_is_target_position(head_line))
+            && (opener_is_target_position(head_line)
+                || head_line
+                    .trim_start()
+                    .strip_prefix("case")
+                    .is_some_and(|tail| !tail.starts_with(is_python_identifier_char))))
         // `in` binds only inside a `for` target list (`for (r) in items`,
         // `for (r)in items`, `for x, (r) in items`); a membership test such as
         // `assert ((r)) in items` rebinds nothing.
         || (rest.strip_prefix("in").is_some_and(|after_in| {
             !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head_line)
         }))
-        || head.trim_end().ends_with(" as")
+        || head.trim_end().strip_suffix("as").is_some_and(|before_as| {
+            before_as.ends_with([' ', '\t']) || before_as.ends_with(['(', ','])
+        })
 }
 
 fn plain_assign(rest: &str) -> bool {
@@ -869,9 +878,17 @@ fn skip_blank_backward(text: &str, across_lines: bool) -> &str {
         } else {
             head.trim_end_matches([' ', '\t'])
         };
+        let removed = &head[trimmed.len()..];
         let mut next = trimmed
             .strip_suffix("\\\r\n")
             .or_else(|| trimmed.strip_suffix("\\\n"))
+            // Across lines `trim_end` also removed the newline of a trailing
+            // backslash continuation (`(\\\n (r))`).
+            .or_else(|| {
+                trimmed
+                    .strip_suffix('\\')
+                    .filter(|_| across_lines && removed.contains('\n'))
+            })
             .unwrap_or(trimmed);
         if across_lines {
             let line_start = next.rfind('\n').map_or(0, |at| at + 1);
@@ -2963,9 +2980,8 @@ fn walrus_binds(body_text: &str, name: &str) -> bool {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
-            && body_text[end..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(":=")
+            // `(r\n := [1])`: a line break is legal inside the brackets.
+            && skip_blank_forward(&body_text[end..], true).starts_with(":=")
             && !python_text_hides_code(body_text, idx)
     })
 }

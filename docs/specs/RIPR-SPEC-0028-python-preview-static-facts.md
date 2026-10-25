@@ -401,10 +401,18 @@ comments, strings, and docstrings:
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
   `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
-  is not credited. A comment inside the brackets, a backslash continuation and
-  a run of blanks after `for`, `as`, `def` or `class` do not hide a rebind, and
-  a `for` or `as` inside a string or after a `#` comment is text, so
-  `assert "for" and ((r)) in [r]` stays a credited read. A `:` ends a target
+  is not credited, as is an augmented assignment after a header or `;`
+  (`if c: r += 1`) and a `case (r):` / `case [r]:` match capture. Within one
+  bracketed target, a comment, a backslash continuation or a run of blanks
+  before the name, its closing bracket or the `=` / `in` / `as` after it, and
+  a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
+  A `for` or `as` inside a string or after a `#` comment is text, so
+  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  them closed by this: a multi-line tuple target whose earlier elements sit on
+  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
+  (the credit-keeping direction); and a dict key at the start of a continuation
+  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
+  (a miss). A `:` ends a target
   position only when it closes a compound-statement header whose brackets
   balance outside string literals (single, double and tripled quotes, escaped
   quotes) and comments (`if ")": ( r), x = ...` and

@@ -9541,13 +9541,26 @@ fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited
         // A backslash continuation before the `=` or after a target comma.
         "    r \\\n        = [1]\n",
         "    (r)\\\n        = [1]\n",
-        "    x, \\\n        r = 1, [1]\n",
+        "    r \\\n        += [1]\n",
+        // A continuation before a later opener of the peel, LF and CRLF.
+        "    (\\\n        (r)) = [1]\n",
+        "    [\\\n        [r]] = [1]\n",
+        "    (\\\r\n        (r)) = [1]\n",
+        // An augmented assignment after a header, `else` or `;`.
+        "    if z: r += [1]\n",
+        "    if z:\n        pass\n    else: r += [1]\n",
+        "    z = 1; r += [1]\n",
+        "    for x in y: r += 1\n",
+        // A walrus split inside brackets, and a tab before `as`.
+        "    (r\n     := [1])\n",
+        "    with (a\tas (r)): pass\n",
+        "    with a as\tr : pass\n",
+        "    for \\\n        r in [[1]]:\n        pass\n",
         // `in` directly after the closing bracket, and blank runs after a keyword.
         "    for (r)in [[1]]:\n        pass\n",
         "    for (r)in[[1]]:\n        pass\n",
         "    for  r  in [[1]]:\n        pass\n",
         "    for\tr in [[1]]:\n        pass\n",
-        "    with a as  r : pass\n",
         "    def  r():\n        pass\n",
         // Headers whose string spells prefixes, f-string braces or triple quotes.
         "    if rb\")\": ( r), x = [1], 2\n",
@@ -9603,4 +9616,23 @@ fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Resul
         assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
     }
     Ok(())
+}
+
+#[test]
+fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
+    use super::related_tests::binds_in_target_list;
+    for body in [
+        "r = make()\ncase (r):\n    pass\n",
+        "r = make()\ncase [r]:\n    pass\n",
+        "r = make()\n    case (r):\n        pass\n",
+    ] {
+        assert!(binds_in_target_list(body, "r"), "{body:?}");
+    }
+    for body in [
+        "r = make()\nif (r):\n    pass\n",
+        "r = make()\nif [r]:\n    pass\n",
+        "r = make()\ncase_count = (r)\n",
+    ] {
+        assert!(!binds_in_target_list(body, "r"), "{body:?}");
+    }
 }
