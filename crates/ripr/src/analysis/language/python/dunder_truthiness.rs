@@ -24,7 +24,10 @@ pub(super) fn bind_workspace_observer(
     let pair = workspace_admission::closed_sources(
         root,
         sources,
-        incomplete,
+        // The physical audit cannot exclude a writer retained at HEAD but
+        // deleted from disk in a committed-history source view.
+        incomplete
+            || !crate::analysis::committed_source::committed_paths_missing_on_disk(root).is_empty(),
         super::bounded_read::source_matches_capped,
     );
     for owner in owners.iter_mut().filter(|owner| owner.name == "__bool__") {

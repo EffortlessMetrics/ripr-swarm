@@ -20,6 +20,16 @@ const OLD: &str = "        return self.cents != 0";
 const NEW: &str = "        return self.cents > 0";
 
 fn classify(source: &str, old: &str, test_source: &str, sole: bool) -> Result<Finding, String> {
+    classify_with_missing_committed(source, old, test_source, sole, false)
+}
+
+fn classify_with_missing_committed(
+    source: &str,
+    old: &str,
+    test_source: &str,
+    sole: bool,
+    missing_committed: bool,
+) -> Result<Finding, String> {
     let file = Path::new("shapes/money.py");
     let test_file = Path::new("tests/test_money.py");
     let mut owners = extract_owners(file, source);
@@ -42,7 +52,25 @@ fn classify(source: &str, old: &str, test_source: &str, sole: bool) -> Result<Fi
             .map_err(|error| error.to_string())?;
         std::fs::write(absolute, text).map_err(|error| error.to_string())?;
     }
-    super::dunder_truthiness::bind_workspace_observer(&workspace.0, &mut owners, &sources, false);
+    let overlay = missing_committed.then(|| {
+        std::sync::Arc::new(
+            crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+                &workspace.0,
+                [(
+                    "tests/test_patch.py",
+                    Some(b"writer retained at HEAD".as_slice()),
+                )],
+            ),
+        )
+    });
+    crate::analysis::committed_source::with_overlay(overlay, || {
+        super::dunder_truthiness::bind_workspace_observer(
+            &workspace.0,
+            &mut owners,
+            &sources,
+            false,
+        );
+    });
     for owner in &mut owners {
         if owner.is_module_owner() {
             owner.foreign_writes = super::module_value::ForeignWrites::scan(
@@ -110,6 +138,16 @@ fn integer_truthiness_credits_only_a_changed_truth_value() -> Check {
         )?
         .class,
         ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn integer_truthiness_refuses_a_committed_writer_missing_from_disk() -> Check {
+    assert_eq!(
+        classify_with_missing_committed(MONEY, OLD, &test("    assert Money(-1)"), true, true)?
+            .class,
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }
