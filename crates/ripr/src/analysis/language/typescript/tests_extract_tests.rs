@@ -1157,3 +1157,116 @@ test("own skip", async t => {
     let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
     assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
 }
+/// #10169: skipped suites are dormant because of the referenced runner
+/// binding, including aliases; an identical spelling is insufficient.
+#[test]
+fn skipped_suite_bindings_follow_imports_and_immutable_aliases() {
+    let file = Path::new("test/binding.test.ts");
+    for (prelude, suite) in [
+        ("", "describe.skip"),
+        ("import { describe as group } from 'mocha';", "group.skip"),
+        (
+            "import { describe as group } from 'vitest'; const d = group;",
+            "d.skip",
+        ),
+        ("const d = describe; const alias = d;", "alias.only.skip"),
+        ("const skip = describe.skip;", "skip"),
+        ("import * as runner from 'mocha';", "runner.describe.skip"),
+        (
+            "import * as runner from 'vitest'; const { describe: d } = runner;",
+            "d.skip",
+        ),
+        ("const { describe: d } = require('node:test');", "d.skip"),
+        ("const d = describe; { const d = custom; }", "d.skip"),
+        (
+            "const d = describe; function shadow(d) { d = custom; }",
+            "d.skip",
+        ),
+        (
+            "const d = describe; { const describe = custom; describe.skip = run; }",
+            "d.skip",
+        ),
+    ] {
+        let source = format!("{prelude}\n{suite}('off', () => {{ it('nested', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_unrelated_and_shadowed_notices() {
+    let file = Path::new("test/binding.test.ts");
+    let nested = "it('nested', () => {});";
+    for source in [
+        format!(
+            "const describe = {{ skip: (_n, fn) => fn() }}; describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "import {{ describe }} from './helper'; describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "import {{ describe }} from 'mocha'; function register(describe) {{ describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "import {{ describe }} from 'mocha'; {{ const describe = custom; describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "const d = describe; function register(d) {{ d.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "try {{ run(); }} catch (describe) {{ describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "for (const describe of helpers) {{ describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "function register() {{ describe.skip('runs', () => {{ {nested} }}); var describe = custom; }}"
+        ),
+        format!(
+            "const describe = custom; describe('runs', {{ skip: true }}, () => {{ {nested} }});"
+        ),
+        format!(
+            "const describe = custom; const d = describe; d.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("let d = describe; d = custom; d.skip('runs', () => {{ {nested} }});"),
+        format!("const d = describe; d.skip = custom; d.skip('runs', () => {{ {nested} }});"),
+        format!("describe = custom; describe.skip('runs', () => {{ {nested} }});"),
+    ] {
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('nested'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_preserve_evaluated_argument_and_sibling_notices() {
+    let file = Path::new("test/binding.test.ts");
+    for source in [
+        "const d = describe; d.skip('off', () => { it('dormant', () => {}); }); register(() => { it('live', () => {}); });",
+        "describe.skip((() => { it('live', () => {}); return 'off'; })(), () => { it('dormant', () => {}); });",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
