@@ -1,0 +1,6 @@
+use spec0048_3::render_report;
+
+#[test]
+fn report_renders_the_tier_label() {
+    assert_eq!(render_report(), "tier: gold\n");
+}

@@ -1,0 +1,9 @@
+diff --git a/routeclients/orders.py b/routeclients/orders.py
+--- a/routeclients/orders.py
++++ b/routeclients/orders.py
+@@ -5,4 +5,4 @@ app = MiniApp()
+ 
+ @app.get("/orders")
+ def orders():
+-    return {"count": 2}
++    return {"count": 3}

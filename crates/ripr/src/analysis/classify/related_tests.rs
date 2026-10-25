@@ -2555,6 +2555,67 @@ pub(super) fn nearest_manifest_identity(
         .map(|prefix| format!("{prefix}Cargo.toml"))
 }
 
+/// #10127: whether a test in `test_file` sits in a package that directly
+/// declares the owner's package as a dependency, and that package defines no
+/// other function of the owner's name. Both package identities come from the
+/// discovered manifests (not from `src/`/`tests/` path shapes, which a
+/// declared `[lib] path` root does not follow), and the path-dependency
+/// graph must be complete. An unattributable file, an unrelated package, a
+/// transitive dependent and a dependent that defines its own function of the
+/// owner's name (so a bare call there need not reach the owner) all answer
+/// `false`, which keeps the finding's actionable gap.
+pub(in crate::analysis) fn declared_dependent_package_calls_owner(
+    context: &DependencyEdgeContext<'_>,
+    owner: &FunctionSummary,
+    test_file: &Path,
+    entry_symbol: &str,
+) -> bool {
+    if context.adjacency.status() != PathDependencyGraphStatus::Complete {
+        return false;
+    }
+    let (Some(owner_manifest), Some(test_manifest)) = (
+        nearest_manifest_identity(context.manifest_dir_prefixes, &owner.file),
+        nearest_manifest_identity(context.manifest_dir_prefixes, test_file),
+    ) else {
+        return false;
+    };
+    // A partially indexed test package may hold the competing definition
+    // this check looks for.
+    if owner_manifest == test_manifest
+        || context.unindexed_manifests.contains(&test_manifest)
+        || !has_callable_forward_dependency(context.adjacency, &test_manifest, &owner_manifest)
+    {
+        return false;
+    }
+    let package_of = |function: &FunctionSummary| {
+        nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
+    };
+    let functions = context.index.functions();
+    // A function of the owner's name in the test's package, or in another
+    // package it can call, is a bare-call target as plausible as the owner.
+    let shadowed = functions.iter().any(|function| {
+        function.name == owner.name
+            && function.id != owner.id
+            && package_of(function).is_some_and(|manifest| {
+                manifest == test_manifest
+                    || (manifest != owner_manifest
+                        && has_callable_forward_dependency(
+                            context.adjacency,
+                            &test_manifest,
+                            &manifest,
+                        ))
+            })
+    });
+    // A function of the entry symbol's name in the owner's own package makes
+    // the entry identity ambiguous (the name-only witness graph cannot say
+    // which definition the test calls), and the owner-package one would be a
+    // same-package chain entered from outside, so the gap stays.
+    let wrapper_in_owner_package = functions.iter().any(|function| {
+        function.name == entry_symbol && package_of(function).as_ref() == Some(&owner_manifest)
+    });
+    !shadowed && !wrapper_in_owner_package
+}
+
 /// Whether `body` introduces a local binding of `owner_name` through a
 /// `let` declaration (including `let mut`). Such a binding — a closure, a
 /// shadowing local — is invisible to `index.functions()` and is the most
@@ -3741,13 +3802,13 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 }
 
 /// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
-/// `Site(..)`, a constructor-named associated call (`Site::new(..)`,
-/// `Site::default()`, `Site::from_x(..)`, `Site::with_x(..)`), an enum tuple
-/// variant (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
+/// `Site(..)`, one of the conventional constructors (`Site::new(..)`,
+/// `Site::default()`, `Site::from(..)`), an enum tuple variant
+/// (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
 /// Any other associated call (`Site::make_cache()`) may return another type
-/// and fails closed. The `new_*`/`from_*`/`with_*` prefixes are a naming
-/// convention, not a return type: `Site::with_cache()` still reads as `Site`
-/// even if it returns a `Cache`; there is no return-type lookup here.
+/// and fails closed. So do the `new_*`/`from_*`/`with_*` spellings: the prefix
+/// is a naming convention, not a return type, and `Site::with_cache()` may
+/// return a `Cache` (#8782 item 2). There is no return-type lookup here.
 /// Module-qualified heads stay unresolved: this matcher receives only a
 /// compact impl name, so the final segment cannot establish type identity.
 fn initializer_type_head(expr: &str) -> Option<&str> {
@@ -3778,9 +3839,6 @@ fn is_variant_name(name: &str) -> bool {
 
 fn is_constructor_name(name: &str) -> bool {
     matches!(name, "new" | "default" | "from")
-        || ["new_", "from_", "with_"]
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
 }
 
 /// Leading `a::B::c` path of `text` after `&`/`mut`/`dyn`/whitespace, and the
@@ -11213,7 +11271,7 @@ let r = try_parse_summary(\"x\");",
             ("let s = Site::new(); (s).build();", true),
             ("let s = Site::new(); (&mut s).build();", true),
             ("Site::new().build();", true),
-            ("Site::with_langs(1).build();", true),
+            ("Site::with_langs(1).build();", false),
             ("Site { langs: 1 }.build();", true),
             ("(Site::default()).build();", true),
             ("Cache::new(Site::default()).build();", false),
@@ -11583,12 +11641,12 @@ let r = try_parse_summary(\"x\");",
             ("let x = make_site()", Some("make_site")),
             ("let x = Site::make_cache()", None),
             ("let x = Site::builder().build()", None),
-            ("let x = Site::new_empty()", Some("Site")),
-            ("let x = Vec::with_capacity(4)", Some("Vec")),
+            ("let x = Site::new_empty()", None),
+            ("let x = Vec::with_capacity(4)", None),
             ("let x = Shape::Circle", Some("Shape")),
             ("let x = Shape::Circle(1.0)", Some("Shape")),
-            // Known limit: prefixes are a convention, not a return type.
-            ("let x = Site::with_cache()", Some("Site")),
+            // Prefixes are a convention, not a return type (#8782 item 2).
+            ("let x = Site::with_cache()", None),
             ("let x = Site::FACTORY()", None),
             ("let x = |s: Site| s", None),
             ("let x = Site::new().cache()", None),

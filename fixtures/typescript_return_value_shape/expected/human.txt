@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return Math.round(amount * 100) / 100;
-  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `roundCents`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `roundCents`;
+    verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
+    assertion
   Related test: tests/rounding.test.ts:6 rounds two decimals
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `return value == Math.round(amount * 100) / 100`; no actionable repair packet is
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_return_value_shape/input --diff <cwd>/fixtures/typescript_return_value_shape/diff.patch --mode fast probe:src_rounding.ts:typescript_preview:271f21f8
   ripr context --root <cwd>/fixtures/typescript_return_value_shape/input --diff <cwd>/fixtures/typescript_return_value_shape/diff.patch --mode fast --at probe:src_rounding.ts:typescript_preview:271f21f8
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_rounding.ts:typescript_preview:271f21f8 --root <cwd>/fixtures/typescript_return_value_shape/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

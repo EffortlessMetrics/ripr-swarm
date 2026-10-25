@@ -305,14 +305,14 @@ twice by one case.
   examples are prose, not numbered, reported as `unmeasured_specs` rather
   than counted. The list is maintained by hand: nothing detects an in-scope
   prose spec that is missing from it.
-- `floor` is the covered-example count the gate protects.
+- `spec-examples.lock`, beside the ledger, lists the covered examples the gate protects: one `RIPR-SPEC-NNNN#<number or slug>` per line, sorted and unique (the loader rejects anything else). It replaced a single `floor` count, which every corpus PR edited and which could not tell a swap (one example lost, another gained) from no change (#9859).
 
 `validate` fails when a spec with numbered examples is missing from the
 ledger (a new spec cannot leave the denominator silently), when the ledger
 names a spec that does not exist, scopes a spec with no numbered examples,
 lists as unmeasured a spec that now has numbered examples, waives an
 example that does not exist or without a reason, or waives an example a
-case covers, and when `floor` exceeds the coverable examples.
+case covers, and when the lock names an example no spec carries.
 
 Covered examples are the in-scope, non-waived examples at least one case
 cites. The report's `spec_example_coverage` section gives `coverage` as
@@ -332,13 +332,15 @@ instrument rather than a measured score. Specs come from the repository
 that owns `fixtures/<corpus>/`; a corpus without that tree does not fall
 back to CWD `docs/specs`.
 
-`check` fails before running ripr when covered is below `floor`, naming the
-fall and the fix (restore the lost citation, or lower the floor with a
-reason when a case was deliberately retired). When covered is above `floor`
-it passes and prints that the floor can be raised. `validate` applies the
-same floor gate without running ripr; `report` prints the coverage without
-gating it. In CI the floor is enforced by the xtask unit test
-`committed_ledger_is_valid_and_meets_its_floor`, which the Rust gates
+`check` fails before running ripr when a locked example is no longer covered,
+naming each lost example and the fix (restore the lost citation, or drop the
+line from the lock with a reason when a case was deliberately retired). A
+covered example the lock lacks passes and prints the lines to add, so a PR
+that covers a new example adds one line at its sorted place and two such PRs
+rarely touch the same line. `validate` applies the same lock gate without
+running ripr; `report` prints the coverage without gating it. In CI the lock
+is enforced by the xtask unit test
+`committed_ledger_is_valid_and_locks_every_covered_example`, which the Rust gates
 workflow's workspace nextest run executes.
 
 Decisions:
@@ -522,10 +524,12 @@ reported but never gated. `validate` does not run the grid.
 
 - Each spec-coverage validation rule rejects a tampered ledger or
   citation, the numbered-example reader handles continued and indented
-  lines and specs without numbered items, and the floor gate fails below,
-  passes at, and invites a raise above the floor.
-- The committed ledger validates against `docs/specs` and its floor equals
-  the covered count.
+  lines and specs without numbered items, and the lock gate fails on a lost
+  example (including a swap that keeps the count), passes when every covered
+  example is locked, and names the line to add for a new one; the lock file
+  parser rejects unsorted, repeated and malformed lines.
+- The committed ledger validates against `docs/specs` and its lock lists
+  every covered example.
 - Oracle outcome classification yields each of the five outcomes, the
   claim is the strongest entry, validation rejects unknown kinds and
   strengths and malformed labels, the oracle gate fails below the floor and
@@ -697,8 +701,9 @@ Spec-example coverage tests live in
 - `an_example_both_waived_and_covered_is_rejected`
 - `ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones`
 - `coverage_counts_cited_in_scope_examples_over_the_unwaived_ones`
-- `floor_gate_fails_below_passes_at_and_invites_a_raise_above`
-- `committed_ledger_is_valid_and_meets_its_floor`
+- `lock_gate_fails_on_a_lost_example_and_invites_a_line_for_a_new_one`
+- `lock_files_parse_sorted_unique_entries_and_reject_the_rest`
+- `committed_ledger_is_valid_and_locks_every_covered_example`
 - `spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs`
 - `spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec`
 - `spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject`

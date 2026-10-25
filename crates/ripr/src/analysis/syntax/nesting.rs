@@ -166,7 +166,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     // following `-`, `*`, `&` or `!` is binary, not prefix.
     let mut after_operand = false;
     let mut previous_word_was_else = false;
-    let mut index = 0usize;
+    let mut index = frontmatter_end(text);
 
     while let Some(&byte) = bytes.get(index) {
         if byte.is_ascii_whitespace() {
@@ -374,6 +374,79 @@ pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet
         }
     }
     lines
+}
+
+/// Byte offset just past a terminated leading frontmatter block (`---`
+/// fences around TOML, optionally after a shebang line), or 0 when the file
+/// has none. The parser lexes the whole block as one token, so its contents
+/// and fence length cannot nest anything; counting a 230-dash fence as an
+/// operator chain refused cargo's own `fence-too-many-dashes.rs` fixture and
+/// made the whole workspace analysis partial (#9794). An unterminated fence
+/// is not skipped and keeps its old estimate.
+fn frontmatter_end(text: &str) -> usize {
+    // The parser's whitespace set (Pattern_White_Space), narrower than
+    // `char::is_whitespace`: a skip must never exceed what it lexes.
+    fn pattern_ws(c: char) -> bool {
+        matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | '\r'
+                | '\u{b}'
+                | '\u{c}'
+                | '\u{85}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+        )
+    }
+    let mut offset = 0;
+    // A `#!` line is a shebang only when the parser would not read it as
+    // the start of an inner attribute (`#! [..]`, `#!\n[..]`).
+    if let Some(after) = text.strip_prefix("#!")
+        && !after.trim_start_matches(pattern_ws).starts_with('[')
+    {
+        offset = text.find('\n').map_or(text.len(), |n| n + 1);
+    }
+    let rest = &text[offset..];
+    let body_start = rest.len() - rest.trim_start_matches(pattern_ws).len();
+    // The opening fence starts its line (column 0), the only shape the
+    // parser lexes as frontmatter.
+    let line_start = rest[..body_start].rfind('\n').map_or(0, |n| n + 1);
+    if line_start != body_start {
+        return 0;
+    }
+    let mut lines = rest[line_start..].split_inclusive('\n');
+    let Some(opening) = lines.next() else {
+        return 0;
+    };
+    let fence = opening.bytes().take_while(|b| *b == b'-').count();
+    if fence < 3 {
+        return 0;
+    }
+    let mut end = offset + line_start + opening.len();
+    for line in lines {
+        end += line.len();
+        let dashes = line.bytes().take_while(|b| *b == b'-').count();
+        if dashes < fence {
+            continue;
+        }
+        // The first line that starts with the fence closes the block, and
+        // only if it is the fence and nothing else; the parser rejects the
+        // block otherwise (extra dashes, trailing text) or when a second
+        // fence follows.
+        let tail = line[dashes..].trim_end_matches([' ', '\t', '\r', '\n']);
+        let second = text[end..]
+            .trim_start_matches(pattern_ws)
+            .starts_with("---");
+        return if dashes == fence && tail.is_empty() && !second {
+            end
+        } else {
+            0
+        };
+    }
+    0
 }
 
 fn skip_line(bytes: &[u8], mut index: usize) -> usize {
@@ -662,6 +735,108 @@ mod tests {
         // Only the `&str` reference prefix counts.
         assert!(estimate_rust_nesting(&source).depth <= 1);
         assert!(parse_clean_source_file(&source).is_some());
+    }
+
+    /// #9794: cargo's `fence-too-many-dashes.rs` opens with a 230-dash
+    /// frontmatter fence. The parser lexes the block as one token, so it must
+    /// not count as an operator chain (it made the whole analysis partial).
+    #[test]
+    fn a_terminated_leading_frontmatter_block_is_not_nesting() {
+        let fence = "-".repeat(5_000);
+        let deep = "(".repeat(5_000);
+        for source in [
+            format!(
+                "{fence}\n[dependencies]\n{fence}\n\n#![feature(frontmatter)]\nfn main() {{}}\n"
+            ),
+            format!("---\n[dependencies]\nx = \"{deep}\"\n---\nfn main() {{}}\n"),
+            "#!/usr/bin/env cargo\n---cargo\n[dependencies]\n---\nfn main() {}\n".to_string(),
+            format!("\n\n{fence}\n[dependencies]\n{fence}\nfn main() {{}}\n"),
+        ] {
+            assert_eq!(rust_nesting_refusal(&source), None, "{:?}", &source[..40]);
+            assert!(
+                parse_clean_source_file(&source).is_some(),
+                "{}",
+                &source[..40]
+            );
+        }
+    }
+
+    /// The skip is only for a terminated block at the top of the file: a
+    /// dash run anywhere else, or a fence that never closes, keeps its
+    /// estimate and its refusal.
+    #[test]
+    fn dash_runs_outside_a_terminated_leading_block_still_count() {
+        let run = "-".repeat(5_000);
+        for source in [
+            format!("{run}\n[dependencies]\nfn main() {{}}\n"),
+            format!("fn main() {{}}\n{run}\n[dependencies]\n{run}\n"),
+            format!("fn f() -> i32 {{ {run}1 }}\n"),
+            format!("// header\n{run}\n[dependencies]\n{run}\nfn main() {{}}\n"),
+            format!("{run}\n[dependencies]\n---\nfn main() {{}}\n"),
+            // The parser needs the closing fence to match the opening one.
+            format!("---\n[dependencies]\n----\n{run}\nfn main() {{}}\n"),
+            // A BOM before the fence keeps it from lexing as frontmatter.
+            format!("\u{feff}{run}\n[dependencies]\n{run}\nfn main() {{}}\n"),
+            // The parser rejects a block whose closing line has extra
+            // dashes or trailing text, or that is followed by a second one.
+            format!("---\nA\n----\n{run}\n---\n"),
+            format!("---\n---x\n{run}\n---\n"),
+            format!("---\n{run}\n---\n\n---\n"),
+            format!("#! [x]\n---\n{run}\n---\n"),
+            format!("\u{a0}\n---\n{run}\n---\n"),
+            // Too short to be a fence, and an inner attribute is not a shebang.
+            format!("--\n[dependencies]\n--\n{run}\n"),
+            format!("#![feature(frontmatter)]\n---\n{run}\n---\n"),
+            // Code after a skipped block is still estimated.
+            format!("---\n[dependencies]\n---\nfn f() -> i32 {{ {run}1 }}\n"),
+            // An indented fence is not frontmatter to the parser.
+            format!("  {run}\n[dependencies]\n  {run}\nfn main() {{}}\n"),
+        ] {
+            assert!(rust_nesting_refusal(&source).is_some(), "{}", &source[..40]);
+        }
+    }
+
+    /// `frontmatter_end` must never skip more than the parser lexes as its
+    /// frontmatter token: compare against the real token boundary for
+    /// accepted and rejected shapes (small payloads; the boundary does not
+    /// depend on size).
+    #[test]
+    fn frontmatter_skip_matches_the_parsers_frontmatter_token() {
+        let sources = [
+            "---\n[dependencies]\n---\nfn main() {}\n",
+            "-----\n[dependencies]\n-----\nfn main() {}\n",
+            "\n\n---\nx = 1\n---\nfn main() {}\n",
+            "#!/usr/bin/env cargo\n---cargo\n[dependencies]\n---\nfn main() {}\n",
+            "---\r\nx = 1\r\n---  \r\nfn main() {}\r\n",
+            "---\nx = 1\n---\n\nfn main() {}\n",
+            "---\nA\n----\nfn main() {}\n---\n",
+            "---\n---x\nfn main() {}\n---\n",
+            "---\nx = 1\n---\n\n---\nfn main() {}\n",
+            "#! [x]\n---\nx = 1\n---\nfn main() {}\n",
+            "\u{a0}\n---\nx = 1\n---\nfn main() {}\n",
+            "#![feature(frontmatter)]\n---\nx = 1\n---\nfn main() {}\n",
+            "--\nx = 1\n--\nfn main() {}\n",
+            "  ---\nx = 1\n  ---\nfn main() {}\n",
+            "\u{feff}---\nx = 1\n---\nfn main() {}\n",
+            "---\nx = 1\nfn main() {}\n",
+            "fn main() {}\n",
+        ];
+        for source in sources {
+            let parse = parse_source_file(source);
+            let lexed = parse
+                .syntax_node()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.kind() == ra_ap_syntax::SyntaxKind::FRONTMATTER)
+                .map_or(0, |token| usize::from(token.text_range().end()));
+            let skipped = frontmatter_end(source);
+            // Skipping nothing is always safe; skipping must stop at the
+            // parser's boundary.
+            assert!(
+                skipped == 0 || skipped == lexed,
+                "{source:?}: skipped {skipped}, parser frontmatter ends at {lexed}"
+            );
+        }
     }
 
     #[test]

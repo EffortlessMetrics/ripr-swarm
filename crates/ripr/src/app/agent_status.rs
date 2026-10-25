@@ -434,6 +434,9 @@ fn inspect_repair_attempts(
         return Some(Vec::new());
     }
     let current_head = crate::agent::artifact::current_git_head(root).ok();
+    // Finished attempts re-read one worktree; share a capture per policy for
+    // this call only (#9823).
+    let _capture_scope = crate::edit_cage::ReevaluationMemoScope::begin();
     let mut attempts = Vec::new();
     let mut trusted = true;
     for entry in entries {
@@ -4307,7 +4310,14 @@ mod tests {
             if attempt_routes.contains("--seam-id") {
                 return Err(format!("attempt routes leak --seam-id:\n{attempt_routes}"));
             }
-            if !inventory.contains(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1"))) {
+            // The inventory is JSON text, so match the JSON-escaped spelling:
+            // on Windows `shell_arg` double-quotes `HEAD~1`, which JSON
+            // writes as `\"HEAD~1\"` (#9272).
+            let gap_start =
+                serde_json::to_string(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1")))
+                    .map_err(|error| error.to_string())?;
+            let gap_start = gap_start.trim_matches('"');
+            if !inventory.contains(gap_start) {
                 return Err(format!("inventory status names no gap start:\n{inventory}"));
             }
             // The seam-inventory gate has no verdict on a gap subject, while

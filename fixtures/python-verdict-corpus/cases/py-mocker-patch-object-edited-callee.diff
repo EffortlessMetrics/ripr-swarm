@@ -1,0 +1,9 @@
+diff --git a/shop/rates.py b/shop/rates.py
+--- a/shop/rates.py
++++ b/shop/rates.py
+@@ -3,4 +3,4 @@ def tax(cents):
+ 
+ 
+ def fee(cents):
+-    return cents // 50
++    return cents // 25

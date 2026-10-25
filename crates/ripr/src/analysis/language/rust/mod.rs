@@ -21,7 +21,9 @@ mod probe_shape;
 pub(crate) mod probes;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
-pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
+pub(crate) use probes::{
+    changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
+};
 
 use super::super::probes as analysis_probes;
 use super::super::{
@@ -1375,14 +1377,17 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
 }
 
-/// Whether a `weakly_exposed` finding's only reach is proximity: every
+/// Whether a `weakly_exposed` or `reachable_unrevealed` finding's only reach is proximity: every
 /// related test shares the owner's file, module or a name token. With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
 /// negative a `no_static_path` finding has, and a transitive or macro witness
 /// names the limit instead of a gap.
 fn needs_proximity_reach_limit(finding: &Finding) -> bool {
-    finding.class == ExposureClass::WeaklyExposed
+    matches!(
+        finding.class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    )
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
         && !finding.related_tests.is_empty()
@@ -1417,7 +1422,7 @@ fn apply_rust_no_static_path_limit(
     dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     if needs_proximity_reach_limit(finding) {
-        apply_rust_proximity_reach_limit(finding, probe, transitive_reach);
+        apply_rust_proximity_reach_limit(finding, probe, index, transitive_reach, dependency_edges);
         return;
     }
     if needs_mixed_macro_reach_limit(finding) {
@@ -1513,12 +1518,42 @@ fn apply_rust_facade_reach_limit(
 fn apply_rust_proximity_reach_limit(
     finding: &mut Finding,
     probe: &Probe,
+    index: &RustIndex,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
+    dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     let Some(owner_name) = owner_name_from_id(&probe.owner, &probe.location.file) else {
         return;
     };
-    if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
+    // A `reachable_unrevealed` finding names the limit only for a witness in
+    // a package that declares the owner's package as a dependency: a
+    // same-package chain keeps its inspect-first gap, and so does a witness
+    // whose package cannot be tied to the owner (unrelated, unattributable
+    // or defining its own function of the owner's name). A test that reaches
+    // the owner through a wrapper crate has no helper-transfer chain, so the
+    // name-token relation alone must not read as an actionable gap (#10127).
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // The owner as the index spells it, the same form a witness's test file
+    // has (the probe's own path may carry the checkout root).
+    let owner = probe
+        .owner
+        .as_ref()
+        .and_then(|id| index.functions().iter().find(|function| function.id == *id));
+    let admits = |test_file: &Path, entry_symbol: &str| {
+        !cross_package_only
+            || owner.zip(dependency_edges).is_some_and(|(owner, context)| {
+                classify::declared_dependent_package_calls_owner(
+                    context,
+                    owner,
+                    test_file,
+                    entry_symbol,
+                )
+            })
+    };
+    if let Some(witness) = transitive_reach
+        .transitive_witness(&owner_name)
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
+    {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
@@ -1526,7 +1561,10 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
+    } else if let Some(witness) = transitive_reach
+        .macro_reach_witness(&owner_name)
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
+    {
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
@@ -1534,7 +1572,10 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
+    } else if let Some(witness) = transitive_reach
+        .deep_transitive_witness(&owner_name)
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
+    {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
@@ -2013,6 +2054,7 @@ impl RustAdapter {
         // narrowing can apply, so non-narrowing paths pay nothing. A
         // `limited`/`unavailable` graph is disclosed, never silently treated
         // as a complete reach.
+        let mut scope_graph_limitation = None;
         let (dependent_package_roots, manifest_dir_prefixes) =
             if matches!(options.mode, AnalysisMode::Draft | AnalysisMode::Fast)
                 && options.include_unchanged_tests
@@ -2049,6 +2091,8 @@ impl RustAdapter {
                     if let Some(disclosure) = expansion.scope_disclosure() {
                         eprintln!("{disclosure}");
                     }
+                    // #10182: stderr is not a consumer; the report carries it.
+                    scope_graph_limitation = expansion.scope_limitation()?;
                     let manifest_dir_prefixes = expansion.manifest_dir_prefixes().to_vec();
                     let mut dependent_package_roots = expansion.into_dependent_package_roots();
                     dependent_package_roots
@@ -2360,6 +2404,7 @@ impl RustAdapter {
         // loses its probe shapes and its tests, so the related-test search for
         // the changed code can miss evidence there. One aggregate limitation
         // keeps the run from reading complete by omission.
+        limitations.extend(scope_graph_limitation);
         limitations.extend(declined_unchanged_file_limitation(
             &index,
             analyzable_changed_files

@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (total >= 100) {
-  Missing discriminator (1 of 2): Related tests reach `applyDiscount` with a strong oracle, but no strong assertion observes a `applyDiscount(...)` call at the changed predicate boundary `total == 100`; inputs on…
+  Missing discriminator (1 of 2): Related tests reach `applyDiscount` with a strong oracle, but no
+    strong assertion observes a `applyDiscount(...)` call at the changed predicate boundary `total
+    == 100`; inputs on one side of the boundary do not discriminate the changed comparison
   Related test: tests/discount.test.ts:3 wrong expected (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `total == 100`; no actionable repair packet is emitted until verify, receipt, and
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_witness_dead_expected/input --diff <cwd>/fixtures/typescript_witness_dead_expected/diff.patch --mode fast probe:src_discount.ts:typescript_preview:a9f257a1
   ripr context --root <cwd>/fixtures/typescript_witness_dead_expected/input --diff <cwd>/fixtures/typescript_witness_dead_expected/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:a9f257a1
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_discount.ts:typescript_preview:a9f257a1 --root <cwd>/fixtures/typescript_witness_dead_expected/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -48,6 +48,7 @@ pub(in crate::analysis) use activation::{
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+    wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
@@ -87,7 +88,9 @@ pub(in crate::analysis) use helper_transfer::{
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
-pub(in crate::analysis) use infection::infection_evidence_for_owner;
+pub(in crate::analysis) use infection::{
+    exercised_bool_chain_return_sink, infection_evidence_for_owner,
+};
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
 pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
@@ -123,9 +126,10 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    find_related_tests_with_candidate_index, impl_self_type_name, is_partial_eq_method,
-    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, resolves_method_in_prefix, test_calls_free_function,
+    declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
+    impl_self_type_name, is_partial_eq_method, manifests_with_unindexed_files,
+    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
+    package_prefix, resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;

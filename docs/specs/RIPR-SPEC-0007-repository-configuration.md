@@ -83,6 +83,16 @@ This obligation does not change artifact-root ownership, input filtering,
 configuration precedence, or output schemas. Newline-containing and non-UTF-8
 path advice is outside this bounded contract.
 
+For a project whose root has a `Cargo.toml`, doctor's warning for the default
+`target/ripr` root recommends `/target/` instead. Rust repair requires Cargo's
+whole build directory `target/` to be Git-ignored (a child-only rule is
+insufficient), so the advice must also satisfy that preflight (#9006): doctor
+judges the default root covered only when `target/` itself is ignored (a
+child-only `/target/ripr/` rule is still flagged), and the changed-scope
+artifact disclosure names `/target/` too. Roots
+relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
+`Cargo.toml`, keep the literal-root rule above.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with

@@ -252,6 +252,9 @@ pub(super) struct PythonTestRebinding {
     /// the directory chain that declares a fixture or hook. Decided by
     /// existence, never by reading what that code calls.
     pub(super) implicit_reach: bool,
+    /// A module `def`/`class` header (decorator, default, annotation, base) or
+    /// a conditional import can run code at import (#10040 `no_call_path`).
+    pub(super) header_reach: bool,
 }
 
 impl PythonTestRebinding {
@@ -290,6 +293,7 @@ pub(super) fn python_test_rebinding(
         attributes: Vec::new(),
         edited_in_diff: false,
         implicit_reach: false,
+        header_reach: false,
     }
 }
 
@@ -414,11 +418,21 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 
 /// Whether `source` names a writer that can bind module names at runtime
 /// without an assignment statement, including `unittest.mock` patching
-/// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`). Textual on
+/// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`), and
+/// `importlib.reload`, which re-executes the module. Textual on
 /// purpose: a false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
     [
-        "exec", "globals", "vars", "locals", "setattr", "__dict__", "patch",
+        "exec",
+        "globals",
+        "vars",
+        "locals",
+        "setattr",
+        "__setattr__",
+        "delattr",
+        "reload",
+        "__dict__",
+        "patch",
     ]
     .into_iter()
     .any(|identifier| mentions_identifier(source, identifier))

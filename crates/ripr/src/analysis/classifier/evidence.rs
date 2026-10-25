@@ -14,7 +14,7 @@ use crate::analysis::classify::{
     outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -323,38 +323,41 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !is_unselected_input_reason(&fact.reason));
         }
+        // #7970: a function that is not one of the related tests and
+        // calls the owner by name (a wrapper, a helper, a production
+        // caller) may feed it inputs the literal call lines do not show.
+        // #8462: a production function that holds the owner without a call
+        // shape (`let f = owner; f(1, 1)`) or a `macro_rules!` body that
+        // expands to a call is invisible to `calls`, so the bare name in
+        // either counts as another caller.
+        let owner_has_other_callers = context.owner_fn.is_none_or(|owner| {
+            let other_function_holds_owner = context.index.functions().iter().any(|function| {
+                function.id != owner.id
+                    && !test_summaries
+                        .iter()
+                        .any(|test| test.file == function.file && test.name == function.name)
+                    && (function.calls.iter().any(|call| call.name == owner.name)
+                        || mentions_identifier(function.body.as_str(), &owner.name))
+            });
+            // Only the `&&`/`||` operand reading consumes this, so other
+            // families skip the per-file macro scan.
+            other_function_holds_owner
+                || (matches!(
+                    context.probe.family,
+                    ProbeFamily::Predicate | ProbeFamily::ReturnValue
+                ) && context.index.files().values().any(|file| {
+                    macro_rules_bodies(&file.source)
+                        .iter()
+                        .any(|body| mentions_identifier(body, &owner.name))
+                }))
+        });
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
             context.owner_fn,
-            // #7970: a function that is not one of the related tests and
-            // calls the owner by name (a wrapper, a helper, a production
-            // caller) may feed it inputs the literal call lines do not show.
-            // #8462: a production function that holds the owner without a call
-            // shape (`let f = owner; f(1, 1)`) or a `macro_rules!` body that
-            // expands to a call is invisible to `calls`, so the bare name in
-            // either counts as another caller.
-            context.owner_fn.is_none_or(|owner| {
-                let other_function_holds_owner = context.index.functions().iter().any(|function| {
-                    function.id != owner.id
-                        && !test_summaries
-                            .iter()
-                            .any(|test| test.file == function.file && test.name == function.name)
-                        && (function.calls.iter().any(|call| call.name == owner.name)
-                            || mentions_identifier(function.body.as_str(), &owner.name))
-                });
-                // Only the `&&`/`||` operand reading consumes this, so other
-                // families skip the per-file macro scan.
-                other_function_holds_owner
-                    || (matches!(context.probe.family, ProbeFamily::Predicate)
-                        && context.index.files().values().any(|file| {
-                            macro_rules_bodies(&file.source)
-                                .iter()
-                                .any(|body| mentions_identifier(body, &owner.name))
-                        }))
-            }),
+            owner_has_other_callers,
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -428,6 +431,30 @@ impl ClassifiedProbeEvidence {
                 )
             }
             _ => infect,
+        };
+        // RIPR-SPEC-0353: an all-bool `&&`/`||` owner body has no digit, call
+        // or arithmetic to mark its tail a returned value, so the sink reads
+        // unknown. When the related tests' literal rows tell the chain from
+        // every one-step mutation, the tail is the owner's return and the
+        // direct-return witness may complete.
+        let (flow_sinks, propagation_witness) = match context.owner_fn.and_then(|owner| {
+            crate::analysis::classify::exercised_bool_chain_return_sink(
+                context.probe,
+                &activation,
+                &test_summaries,
+                owner,
+                owner_has_other_callers,
+            )
+            .map(|sink| (owner, sink))
+        }) {
+            Some((owner, sink)) => {
+                let sinks = vec![sink];
+                let witness =
+                    crate::analysis::classify::constant_tail_witness(context.probe, owner, &sinks)
+                        .map(PropagationWitnessDiagnostic::from_witness);
+                (sinks, witness.or(propagation_witness))
+            }
+            None => (flow_sinks, propagation_witness),
         };
         let valid_witness = propagation_witness
             .as_ref()
@@ -773,6 +800,23 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.implicit_expansion.unwrap_or(&fallback_expansion),
         );
+        // #9849: only an established unconditional bool whole-return may
+        // borrow the existing predicate boundary authority through a wrapper.
+        // This view supplies activation facts, never a second classification.
+        let wrapper_boundary_probe = (matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && helper_only_reach(&context.related_tests)
+            && owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
+        .then(|| {
+            let mut predicate = context.probe.clone();
+            predicate.family = ProbeFamily::Predicate;
+            predicate
+        });
+        // Reveal asks once per assertion. Compute the whole-test activation
+        // only once per original test, and borrow its rows instead of copying
+        // them for each assertion. File/name/coordinate retain provenance.
+        let wrapper_activations = RefCell::new(BTreeMap::new());
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -782,6 +826,39 @@ impl ClassifiedProbeEvidence {
             &cross_package_defeats,
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
+                wrapper_return_pin: &|test, assertion| {
+                    wrapper_boundary_probe.is_some()
+                        && context.related_tests.iter().any(|(related, reason)| {
+                            *reason == RelationReason::HelperOwnerCall
+                                && related.file == test.file
+                                && related.start_line == test.start_line
+                                && related.name == test.name
+                        })
+                        && context
+                            .owner_fn
+                            .zip(context.helper_chain.as_ref())
+                            .is_some_and(|(owner, chain)| {
+                                let mut cached = wrapper_activations.borrow_mut();
+                                let activation = cached
+                                    .entry((test.file.clone(), test.start_line, test.name.clone()))
+                                    .or_insert_with(|| {
+                                        activation_and_boundary_input(
+                                            wrapper_boundary_probe
+                                                .as_ref()
+                                                .unwrap_or(context.probe),
+                                            context.owner_fn,
+                                            &[test],
+                                            &flow_sinks,
+                                            context.helper_chain.as_ref(),
+                                            context.index,
+                                            context.workspace_complete,
+                                            context.test_value_facts,
+                                        )
+                                        .activation
+                                    });
+                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
+                            })
+                },
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {
                     if !matches!(
