@@ -1,0 +1,40 @@
+{
+  "kind": "python_assert_equal_binding_observed_test_projection",
+  "summary": {
+    "findings": 4
+  },
+  "findings": [
+    {
+      "classification": "static_unknown",
+      "oracle_strength": "unknown",
+      "probe": {
+        "family": "return_value"
+      },
+      "test_source": "import unittest\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        self.assertEqual = lambda *args: None\n        self.assertEqual(fee(10), 12)\n"
+    },
+    {
+      "classification": "static_unknown",
+      "oracle_strength": "unknown",
+      "probe": {
+        "family": "return_value"
+      },
+      "test_source": "import unittest\nfrom types import SimpleNamespace\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        self = SimpleNamespace(assertEqual=lambda *args: None)\n        self.assertEqual(fee(10), 12)\n"
+    },
+    {
+      "classification": "static_unknown",
+      "oracle_strength": "unknown",
+      "probe": {
+        "family": "return_value"
+      },
+      "test_source": "import unittest\nfrom helpers import noop as assertEqual\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n"
+    },
+    {
+      "classification": "static_unknown",
+      "oracle_strength": "unknown",
+      "probe": {
+        "family": "return_value"
+      },
+      "test_source": "import unittest\nfrom helpers import check_equal as assertEqual\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual = lambda *args: None\n        assertEqual(fee(10), 12)\n"
+    }
+  ]
+}

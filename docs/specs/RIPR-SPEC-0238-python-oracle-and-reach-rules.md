@@ -179,7 +179,8 @@ A call statement or `with` item, by the last dotted segment of its callee:
 
 | Last segment | Kind / strength |
 | --- | --- |
-| `assertEqual`, `assertDictEqual` | `exact_value` / strong |
+| `assertEqual` | `exact_value` / strong only with the binding authority in rule 26; otherwise unresolved / unknown |
+| `assertDictEqual` | `exact_value` / strong |
 | `assertListEqual` | `unknown`, shape `unknown_custom_helper`; the bounded standard unittest context in RIPR-SPEC-0028 promotes to `exact_value` / strong |
 | `assertIn`, `assertRegex`, `assertNotEqual` | `relational_check` / weak |
 | `assertTrue`, `assertFalse` | `smoke_only` / smoke |
@@ -198,7 +199,7 @@ code, field, boundary, exact, exception, mock, helper) is evidence only and
 never changes kind or strength.
 
 This table is the existing behavior and is normative, with rules 1 to 3,
-12, 14 and 15 below and the RIPR-SPEC-0028 `assertListEqual` context as
+12, 14, 15 and 26 below and the RIPR-SPEC-0028 `assertListEqual` context as
 the changes (rule 15 changes row 5 for `and`).
 Rule 13 changes relations and, for pytest's callable form, reads `match=`
 as `broad_error`. Rule 17 reads a mock assertion
@@ -824,6 +825,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
     `assertEqual` and helper forms keep their strength
     (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
+
+26. **`assertEqual` authority follows its binding.** A call receives the
+    standard unittest oracle only for an authenticated `TestCase` receiver,
+    including module/type import aliases and known local inheritance, with
+    no visible receiver rebinding or equality-method/dispatch override.
+    Ordinary setup and unrelated members do not remove that authority. A
+    unique straight-line `assertEqual = self.assertEqual` capture on an
+    earlier line preserves it; a later alias rebinding does not. A bare or
+    unrelated same-name call stays `unknown_custom_helper` / unknown, so
+    admission remains unresolved rather than claiming no assertion. The
+    existing single-assert helper resolver may restore authority from a
+    resolved helper body, including an imported alias. This rule also screens
+    assertion calls used as `and` conjuncts. It changes assertion authority,
+    not test collection, owner-call reach, or exception/parametrize rules.
 
 ### Verdict ladder
 

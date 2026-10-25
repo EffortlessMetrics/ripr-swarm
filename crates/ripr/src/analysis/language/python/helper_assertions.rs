@@ -192,7 +192,11 @@ pub(super) fn apply_helper_assertions(
         return;
     }
     for test in tests {
-        if !names.iter().any(|name| test.body_text.contains(name)) {
+        if !names.iter().any(|name| test.body_text.contains(name))
+            && !test.imports.iter().any(|import| {
+                names.contains(import.imported.as_str()) && test.body_text.contains(&import.alias)
+            })
+        {
             continue;
         }
         resolve_test(test, modules);

@@ -89,6 +89,7 @@ mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;
+mod unittest_equal;
 #[cfg(test)]
 use discriminators::{
     first_python_keyword_argument, is_literal_python_model_field_value,
@@ -1269,6 +1270,9 @@ mod module_field_tests;
 
 #[cfg(test)]
 mod helper_assertions_tests;
+
+#[cfg(test)]
+mod unittest_equal_tests;
 
 #[cfg(test)]
 mod capability_disposition_tests;

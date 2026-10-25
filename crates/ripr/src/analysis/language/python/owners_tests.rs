@@ -420,6 +420,7 @@ pub(super) struct TestImportContext<'a> {
     pub(super) definition: &'a [PythonImport],
     pub(super) admission: &'a PythonAdmissionContext,
     pub(super) standard_unittest_list: bool,
+    pub(super) standard_unittest_equal: bool,
     /// Another local class lists this one as a base, so a subclass may replace
     /// its setup hooks.
     pub(super) subclassed: bool,
@@ -474,7 +475,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(
+                let mut assertions = collect_assertions_from_statements(
                     &function.body,
                     source,
                     import_context.standard_unittest_list
@@ -482,6 +483,14 @@ pub(super) fn collect_tests_from_statements(
                             &function.args,
                             &function.decorator_list,
                         ),
+                );
+                super::unittest_equal::withhold_unbound_equal(
+                    &mut assertions,
+                    &function.args,
+                    &function.decorator_list,
+                    &function.body,
+                    import_context.standard_unittest_equal,
+                    source,
                 );
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
@@ -565,7 +574,16 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(&function.body, source, false);
+                let mut assertions =
+                    collect_assertions_from_statements(&function.body, source, false);
+                super::unittest_equal::withhold_unbound_equal(
+                    &mut assertions,
+                    &function.args,
+                    &function.decorator_list,
+                    &function.body,
+                    import_context.standard_unittest_equal,
+                    source,
+                );
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == PythonFramework::Pytest)
@@ -647,6 +665,9 @@ pub(super) fn collect_tests_from_statements(
                             body: imports,
                             definition: &definition_imports,
                             admission,
+                            standard_unittest_equal: local_classes
+                                .standard_equal
+                                .contains(class_name),
                             standard_unittest_list: class_context.is_none()
                                 && super::oracles::unittest_list::eligible_class(
                                     class,
@@ -681,6 +702,9 @@ pub(super) fn collect_tests_from_statements(
                                     .unwrap_or(&definition_imports),
                                 admission,
                                 standard_unittest_list: false,
+                                standard_unittest_equal: local_classes
+                                    .standard_equal
+                                    .contains(class_name),
                                 // A consumer class runs the mixin's tests under its own hooks.
                                 subclassed: true,
                             },
@@ -907,6 +931,8 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
 struct LocalTestClasses<'a> {
     /// Classes unittest collects.
     unittest: BTreeSet<&'a str>,
+    /// Existing local class graph with an authenticated standard equality base.
+    standard_equal: BTreeSet<&'a str>,
     /// `Test*` classes pytest collects.
     pytest: BTreeSet<&'a str>,
     /// Per collected class, in its method resolution order, each mixin and
@@ -1034,6 +1060,33 @@ impl<'a> LocalTestClasses<'a> {
             }
             if !inherited.is_empty() {
                 found.inherited.insert(name, inherited);
+            }
+        }
+        for name in scope.defs.keys() {
+            let mut authentic = false;
+            let preserves = scope.ancestors_or_self(name).iter().all(|ancestor| {
+                let Some((_, class)) = scope.defs.get(ancestor) else {
+                    return false;
+                };
+                let Some(imports) = found.definition_imports.get(ancestor) else {
+                    return false;
+                };
+                let locals = scope.local_bases(ancestor);
+                super::unittest_equal::class_preserves_equality(class)
+                    && !scope.redefined.contains(ancestor)
+                    && class.bases.iter().all(|base| {
+                        if super::unittest_equal::standard_base(base, imports) {
+                            authentic = true;
+                            true
+                        } else {
+                            expr_full_name(base).is_some_and(|base| {
+                                base == "object" || locals.iter().any(|local| *local == base)
+                            })
+                        }
+                    })
+            });
+            if authentic && preserves {
+                found.standard_equal.insert(name);
             }
         }
         found.unittest = own_unittest;
