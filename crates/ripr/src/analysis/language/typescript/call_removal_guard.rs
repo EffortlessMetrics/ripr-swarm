@@ -180,6 +180,15 @@ pub(crate) fn call_count_pins_removed_call(
                 let Some(registration) = registration else {
                     return false;
                 };
+                if identifier(&registration.callee) != Some("test")
+                    || registration.arguments.len() != 2
+                    || !matches!(
+                        registration.arguments.first(),
+                        Some(Argument::StringLiteral(_))
+                    )
+                {
+                    return false;
+                }
                 let Some(Argument::ArrowFunctionExpression(callback)) =
                     registration.arguments.get(1)
                 else {
