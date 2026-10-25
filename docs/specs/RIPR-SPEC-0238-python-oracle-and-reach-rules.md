@@ -330,7 +330,26 @@ Relations, first match wins (rank, oracle-eligible):
   (braces or angle brackets, with or without a converter) matches one
   concrete segment the router accepts for its converter: untyped and
   `str` take any non-empty segment, `int`, `float` and `uuid` validate
-  the value, and `path` or any unknown converter stays unmatched;
+  the value, and `path` or any unknown converter stays unmatched. The
+  literal must be the whole first argument (`"/items" + x`, `"/items" % x`,
+  `"/items".format(..)` and adjacent literals name another path), in the test
+  call and in the route decorator alike (a decorator whose path is not a
+  whole literal is a dynamic route registration, a static limit). The
+  receiver is `client`, or a name bound once by assignment or `with ... as`
+  from `client`, another receiver or a `TestClient(...)` construction (any
+  alias chain length; an assignment, annotation, augmented assignment, tuple
+  or `for`/`with`/walrus target, `def` or `import` of the same name anywhere in
+  the body withdraws it; a call wrapped over lines or written `app = x` reads
+  like its one-line form), or an
+  `AsyncClient(...)` built over an application (`app=` or an
+  `ASGITransport`). A client built over an application name imported from a
+  module that is not where the owner's application comes from is a rival and
+  does not relate: the owner's file imports the receiver from a module (the
+  test must import it from that module), or defines it itself (the test must
+  import it from that module or a package above it). A client built
+  elsewhere (a fixture, an unresolved, dotted or called application name, a
+  rebound name, a router an application includes under another name) is
+  unidentified and keeps the path-and-verb match (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -401,17 +420,23 @@ This order is the existing behavior and is normative:
      and `x.type(1)` do not count; `getattr (o, n)` now counts.
    - a subscript call counts when `]` is followed by `(` outside strings.
    - `__getattr__` counts as a whole identifier.
-   - `lambda` counts as a keyword token followed by a space or `:`, so
-     `'lambda x'` does not count and `lambda: 0`, missed today, does.
+   - `lambda` counts as a keyword token followed by a space, `:` or `(`.
+     On a plain line (no `{`, backslash or triple quote) a `lambda` inside
+     a string or comment does not count; on any other line it counts,
+     because an f-string expression or a multi-line string edge can run
+     it. `lambda: 0`, missed before, counts.
    - an import alias counts at an identifier boundary: the character
      before is not an identifier character or `.`, and `(` or `.`
      follows. `pos.x` does not match alias `os`, and `score(` does not
      match alias `re`.
    - `mocked_module` body calls count for `patch(`, `patch.object(` and
-     `patch.multiple(` only when the callee is bare or its receiver is
-     `mock`, `unittest.mock`, `mocker`, or a name the test file imports
-     from `unittest.mock` or `mock`. `client.patch(` does not count. The
-     `monkeypatch` forms and decorator rule are unchanged.
+     `patch.multiple(` at an identifier boundary, except an HTTP request:
+     a receiver that is `client`, `test_client`, `api_client`,
+     `async_client`, `session`, `requests` or `httpx` (alone or after
+     `self.`), in a test whose body and imports never mention a mock. Any
+     other receiver, and any test that mentions a mock, keeps the limit
+     (fail closed). The `monkeypatch` forms and decorator rule are
+     unchanged.
 
 ### Sink alignment
 
@@ -769,9 +794,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     `any(<text> in r.message for r in caplog.records)` finds the text
     inside one message (`any(r.message == <text> ...)`, in either operand
     order, compares a whole one). Indexed or whole-list forms (`caplog.records[0].message == ...`,
-    `caplog.messages == [...]`), a filtered `any(...)`, and `not in`
-    abstain when they share a word with the changed message. The
-    membership is read from the parsed assertion, not its text layout:
+    `caplog.messages == [...]`) and a filtered `any(...)` abstain when
+    they share a word with the changed message.
+    An absence assertion reads the same way with the outcome inverted:
+    `"<text>" not in caplog.text`, `... not in caplog.messages`,
+    `... not in [r.message for r in caplog.records]` and
+    `not any(<text> in r.message for r in caplog.records)` pass while no
+    captured text matches. A text absent from the old message and present
+    in the new one is `exposed`; absent from both (including a new call
+    below the pinned level, which records nothing) is a weak gap; a text
+    already present in the old message means the test fails before the
+    edit and is not read. An absence literal under `or` is not required,
+    as for a presence literal. The membership is read from the parsed assertion, not its text layout:
     extra spacing, parentheses, line breaks, implicit literal
     concatenation, an assertion message and a membership joined by `and`
     all read the same way, while a membership against any other receiver

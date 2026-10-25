@@ -108,6 +108,44 @@ verdict. A derived observation (`Owner.make().method()` where the edited
 constructor argument only reaches the assertion through `method`) is not
 covered and still reads `exposed` (#9429, third shape).
 
+## Guarded self-field credit (#9833, #9868)
+
+A separate credit-side reader can admit an ordinary method's guarded
+`self.attr` write only when every readable strong call row enters every plain
+`if` ancestor. Unreadable rows and other ancestor forms withhold this new
+credit. The context-dunder collection shape uses the same entry fact.
+
+This reader uses native Python tokens for known flow escapes and binding
+changes. Escaped quotes cannot hide a return, and comments or multiline
+literal contents cannot invent an escape. Parenthesized, destructured,
+loop-target, declared or named-expression bindings of an input or receiver
+withhold credit. Formal parameters of an unused nested definition do not
+rebind the containing method's parameter. Non-space code indentation and a
+second statement on the changed physical line remain unsupported.
+
+The shared exclusion reader is not a native literal evaluator. Guard credit
+therefore withholds floating-point operands and escaped string values,
+including resolved call-row and constant operands, rather than assuming raw
+literal spelling establishes native equality or mixed numeric ordering.
+Unrelated prefix `or`/`not` expressions do not change that decision; these
+operators remain unsupported in the actual enclosing guard.
+
+The changed field must also survive explicit owner writes after the changed
+line and explicit test writes between the owner call and selected assertion.
+Same-named field assignments, augmented assignments, loop/comprehension
+targets or deletions, including writes through possible aliases, withhold
+credit. Native AST store contexts distinguish these writes from read-only
+truthiness conditions, dictionary keys, slices and call arguments. An
+annotation without a value does not store to the field. An assignment
+containing the owner call stores after that call, including when its target
+is spelled first; an earlier semicolon-separated setup remains outside the
+observation interval. Different-field writes and read-only uses preserve
+credit. A later write on an unresolved receiver can conservatively withhold
+credit even when that receiver is a fresh object.
+Arbitrary helper effects and general object-flow inference remain outside
+this bounded reader. Direct-write behavior and exclusion-side decisions are
+unchanged.
+
 ## Required Evidence
 
 Unit tests cover the fail-open shapes (`or` and `not` guards whole-condition
