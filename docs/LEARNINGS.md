@@ -3201,6 +3201,7 @@ running the owner. A helper-name graph supplies candidates, not identities, so
 resolve each hop's free call in its own module/import scope and keep boundary
 tests on the candidate route, not a vacuous negative. Repeated parsing is
 performance work under #8005.
+
 ## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
 
 `cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on

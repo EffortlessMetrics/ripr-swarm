@@ -4826,17 +4826,32 @@ fn scoped_receiver_names_type(
         })
 }
 
-/// Whether any pattern in the function enclosing `call` binds `name`, so a
-/// free-function spelling there may be a local closure or value instead.
+/// Whether a `use` imports `name` or a glob, which may shadow a same-spelled
+/// declaration; imports are never resolved here.
+fn use_item_binds(item: &ast::Use, name: &str) -> bool {
+    let bare = |text: String| text.trim_start_matches("r#") == name;
+    item.syntax().descendants().any(|node| {
+        ast::UseTree::cast(node.clone()).is_some_and(|tree| tree.star_token().is_some())
+            || ast::NameRef::cast(node.clone()).is_some_and(|bound| bare(bound.text().to_string()))
+            || ast::Name::cast(node).is_some_and(|bound| bare(bound.text().to_string()))
+    })
+}
+
+/// Whether the function enclosing `call` binds `name` by pattern or `use`, so
+/// a free-function spelling there may be a local closure or import instead.
 fn enclosing_fn_binds(call: &SyntaxNode, name: &str) -> bool {
     call.ancestors()
         .find_map(ast::Fn::cast)
         .is_none_or(|function| {
-            function
-                .syntax()
+            let syntax = function.syntax();
+            syntax
                 .descendants()
                 .filter_map(ast::IdentPat::cast)
                 .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+                || syntax
+                    .descendants()
+                    .filter_map(ast::Use::cast)
+                    .any(|item| use_item_binds(&item, name))
         })
 }
 
@@ -4883,18 +4898,7 @@ fn visible_receiver_binding_names_type(
                     && ast::AnyHasName::cast(node.clone())
                         .and_then(|item| item.name())
                         .is_some_and(|bound| bound.text().trim_start_matches("r#") == name)
-                    || ast::Use::cast(node).is_some_and(|item| {
-                        item.syntax().descendants().any(|node| {
-                            ast::UseTree::cast(node.clone())
-                                .is_some_and(|tree| tree.star_token().is_some())
-                                || ast::NameRef::cast(node.clone()).is_some_and(|bound| {
-                                    bound.text().trim_start_matches("r#") == name
-                                })
-                                || ast::Name::cast(node).is_some_and(|bound| {
-                                    bound.text().trim_start_matches("r#") == name
-                                })
-                        })
-                    })
+                    || ast::Use::cast(node).is_some_and(|item| use_item_binds(&item, name))
             }) {
                 return false;
             }

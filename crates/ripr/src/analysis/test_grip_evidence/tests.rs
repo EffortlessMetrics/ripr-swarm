@@ -19797,7 +19797,13 @@ fn inherent_receiver_constructors_need_indexed_declarations() -> Result<(), Stri
         (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "let fixture = || 0;\n    assert_eq!(fixture().area(), 1);", false),
         // Bare unit struct is a value only when verified; a constant is not.
         ("pub struct Site;\nimpl Site { pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site.area(), 1);", true),
-        ("pub struct Cache;\npub const Site: Cache = Cache;\nimpl Cache { pub fn area(&self) -> u32 { 1 } }\nmod m { pub struct Site(pub u8); impl Site { pub fn area(&self) -> u32 { 1 } } }", "assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub struct Cache;\nimpl Cache { pub fn area(&self) -> u32 { 1 } }\npub const Site: Cache = Cache;", "assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub struct Cache;\npub const Site: Cache = Cache;", "let s = Site;\n    assert_eq!(s.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub enum E { Site }", "use E::Site;\n    assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site;\nimpl Site { pub fn area(&self) -> u32 { 1 } }", "use ext::Other as Site;\n    assert_eq!(Site.area(), 1);", false),
+        // A `use` in the test body can rebind the free-fixture head.
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "use ext::fixture;\n    assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "use ext::*;\n    assert_eq!(fixture().area(), 1);", false),
     ] {
         assert_eq!(receiver_resolves(source, call)?, expected, "{call} over {source}");
     }
