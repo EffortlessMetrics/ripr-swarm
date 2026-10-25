@@ -2285,17 +2285,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             // `debug_assert_eq!` for its profile limit (#8051); the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(
-                    &path.syntax().text().to_string(),
-                    &[
-                        "assert_eq",
-                        "assert",
-                        "debug_assert_eq",
-                        "assert_ne",
-                        "debug_assert_ne",
-                        "debug_assert",
-                    ],
-                )
+                !names_candidate_assertion(&path.syntax().text().to_string(), &ASSERTION_CANDIDATES)
             }) {
                 continue;
             }
@@ -2640,10 +2630,7 @@ fn local_helper_assertions(
             // The same candidate spellings as the test's own assertions.
             // Their execution and bindings still pass the shared helper gate.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(
-                    &path.syntax().text().to_string(),
-                    &["assert_eq", "assert"],
-                )
+                !names_candidate_assertion(&path.syntax().text().to_string(), &ASSERTION_CANDIDATES)
             }) {
                 continue;
             }
@@ -4088,6 +4075,17 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     // only bare names with the workspace binding check are established.
     trusted.contains(&path)
 }
+
+/// The assertion macros the owner-pin collectors read (#8983), in the test body
+/// and in the check helpers it calls.
+const ASSERTION_CANDIDATES: [&str; 6] = [
+    "assert_eq",
+    "assert",
+    "debug_assert_eq",
+    "assert_ne",
+    "debug_assert_ne",
+    "debug_assert",
+];
 
 /// A macro path that may be one of the `leaves` assertions: the bare name,
 /// or `assert_eq` / `assert` under a `std`/`core` root (#7857, #8927). A qualified candidate

@@ -197,6 +197,12 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                             );
                         }
                     }
+                    if subject == "return" && live && macro_name == "assert_eq" {
+                        assert!(
+                            credited("return_value"),
+                            "{key}: live return credit lost: {classes:?}"
+                        );
+                    }
                     if subject == "effect" && live {
                         assert!(
                             credited("side_effect"),
@@ -219,5 +225,62 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
         }
     }
     assert_eq!(count, 264);
+    Ok(())
+}
+
+/// A check helper that owns the assertion keeps its credit for every admitted
+/// macro: the helper collector reads the same six names as the test body.
+#[test]
+fn helper_borne_assertions_keep_credit_for_every_admitted_macro() -> Result<(), String> {
+    let root_dir =
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("helper_borne_assertion_admission");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/observation_verified_side_effect");
+    let production =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -16,4 +16,4 @@ impl Notifier {\n \n pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n-    notifier.send(\"static_msg\")\n+    notifier.send(order_id)\n }\n";
+    for macro_name in [
+        "assert_eq",
+        "assert",
+        "assert_ne",
+        "debug_assert_eq",
+        "debug_assert",
+        "debug_assert_ne",
+    ] {
+        let actual = "notifier.sent.borrow().first().map(String::as_str)";
+        let arguments = if macro_name.ends_with("_ne") {
+            format!("{actual}, Some(\"static_msg\")")
+        } else if macro_name.ends_with("_eq") {
+            format!("{actual}, Some(\"order-42\")")
+        } else {
+            format!("{actual} == Some(\"order-42\")")
+        };
+        let source = format!(
+            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\nfn check(notifier: &Notifier) {{\n{macro_name}!({arguments});\n}}\n#[test]\nfn process_order_observed() {{\nlet notifier = Notifier::new();\nprocess_order(&notifier, \"order-42\");\ncheck(&notifier);\n}}\n}}\n"
+        );
+        let root = root_dir.join(macro_name);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"helper_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let effect = report
+            .findings
+            .iter()
+            .find(|f| f.probe.family.as_str() == "side_effect")
+            .ok_or_else(|| format!("{macro_name}: no side_effect finding"))?;
+        assert!(
+            matches!(effect.class.as_str(), "exposed" | "weakly_exposed"),
+            "{macro_name}: helper-borne assertion lost credit: {}",
+            effect.class.as_str()
+        );
+    }
     Ok(())
 }

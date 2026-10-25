@@ -1495,8 +1495,9 @@ impl OwnerPinSyntax {
             .into_iter()
             .map(|(name, _)| name),
         );
-        if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
-            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
+        if let Some(path) = ADMITTED_ASSERTION_MACROS
+            .iter()
+            .find_map(|name| std_rooted_macro_path(&assertion.text, name))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
