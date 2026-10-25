@@ -1575,9 +1575,20 @@ fn extract_imports_from_statements_inner(
                         let Some(key_name) = object_binding_key_name(prop) else {
                             continue;
                         };
-                        let local_name = binding_identifier_name(&prop.value)
-                            .unwrap_or(key_name)
-                            .to_string();
+                        // The local is the plain binding, with or without a
+                        // default (`{ f: g }`, `{ f: g = 1 }`). A nested pattern
+                        // (`{ a: { b } }`) binds other names, so it records
+                        // nothing rather than a wrong local.
+                        let local_name = match &prop.value {
+                            BindingPattern::BindingIdentifier(id) => id.name.to_string(),
+                            BindingPattern::AssignmentPattern(with_default) => {
+                                match binding_identifier_name(&with_default.left) {
+                                    Some(name) => name.to_string(),
+                                    None => continue,
+                                }
+                            }
+                            _ => continue,
+                        };
                         if written(&local_name) {
                             continue;
                         }

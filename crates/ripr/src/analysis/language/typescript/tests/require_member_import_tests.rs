@@ -350,3 +350,49 @@ fn a_call_through_a_namespace_member_alias_reaches_the_owner() -> Result<(), Str
     assert_eq!(other, ExposureClass::NoStaticPath);
     Ok(())
 }
+
+#[test]
+fn destructuring_records_the_bound_local_or_nothing() {
+    let lib = (
+        "./lib".to_string(),
+        Some("default".to_string()),
+        "lib".to_string(),
+        true,
+    );
+    // A default keeps the plain local, direct or through a namespace.
+    assert_eq!(
+        imports_of("const { f: g = 1 } = require('./lib');\n"),
+        vec![named("./lib", "f", "g")]
+    );
+    assert_eq!(
+        imports_of("const { f = 1 } = require('./lib');\n"),
+        vec![named("./lib", "f", "f")]
+    );
+    assert_eq!(
+        imports_of("const lib = require('./lib');\nconst { f: g = 1 } = lib;\n"),
+        vec![lib, named("./lib", "f", "g")]
+    );
+    // A nested pattern binds other names, so no import is recorded for it.
+    for source in [
+        "const { a: { b } } = require('./lib');\n",
+        "const { a: [b] } = require('./lib');\n",
+        "const { a: { b } = {} } = require('./lib');\n",
+    ] {
+        assert_eq!(imports_of(source), Vec::new(), "{source}");
+    }
+}
+
+#[test]
+fn a_rewritten_member_alias_of_a_namespace_records_no_import() {
+    for source in [
+        "const lib = require('./lib');\nlet s = lib.f;\ns = other;\n",
+        "const lib = require('./lib');\nlet { f: s } = lib;\ns = other;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+}

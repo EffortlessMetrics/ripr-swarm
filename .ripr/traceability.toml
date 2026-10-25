@@ -17527,6 +17527,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs::a_member_picked_off_a_const_require_namespace_is_a_named_import",
   "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs::only_a_plain_member_of_a_const_namespace_is_read",
   "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs::a_call_through_a_namespace_member_alias_reaches_the_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs::destructuring_records_the_bound_local_or_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs::a_rewritten_member_alias_of_a_namespace_records_no_import",
   "crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs::unwritten_var_and_let_runner_bindings_register",
   "crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs::written_var_runner_bindings_stay_uncredited",
   "crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs::var_binding_of_a_non_runner_never_registers",
