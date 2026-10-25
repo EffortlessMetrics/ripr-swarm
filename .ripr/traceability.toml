@@ -16373,6 +16373,7 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::seeded_convention_constructor_types_the_receiver_binding",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -16387,6 +16388,7 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",
