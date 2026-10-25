@@ -292,7 +292,20 @@ pub(crate) fn ts_changed_value_is_observed(
                 // Rule 7: the owner's names for this test are the owner name
                 // plus the alias-rename locals behind an
                 // `ImportAliasOwnerCall` relation.
-                let mut owner_names: Vec<&str> = vec![owner_name];
+                let decorated_reach =
+                    candidate.relation == TypeScriptRelationKind::DecoratedMethodCall;
+                let mut owner_names: Vec<&str> = if decorated_reach {
+                    // RIPR-SPEC-0243 rule 21: the test calls the decorated
+                    // method, whose result is the decorator's return value.
+                    owner
+                        .module_entries
+                        .iter()
+                        .filter(|entry| entry.decorated.is_some())
+                        .map(|entry| entry.name.as_str())
+                        .collect()
+                } else {
+                    vec![owner_name]
+                };
                 if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
                     owner_names.extend(import_alias_owner_locals(
                         candidate.test,
@@ -324,13 +337,35 @@ pub(crate) fn ts_changed_value_is_observed(
                 // owners keep the legacy member-segment reading: their honest
                 // needle IS `receiver.method(...)`.
                 let observed_code = ts_mask_literals_and_comments(observed);
+                // RIPR-SPEC-0243 rule 21: the credited assertion must call
+                // the decorated method on a receiver of the decorated class;
+                // an assertion on another class's same-named method sees
+                // nothing of the decorator.
+                if decorated_reach {
+                    if owner
+                        .module_entries
+                        .iter()
+                        .filter_map(|entry| entry.decorated.as_ref().map(|d| (entry, d)))
+                        .any(|(entry, decorated)| {
+                            ts_observes_decorated_method_call(
+                                &observed_code,
+                                &candidate.test.body_text,
+                                &decorated.class_name,
+                                &entry.name,
+                            )
+                        })
+                    {
+                        return true;
+                    }
+                    continue;
+                }
                 // #7507/#7815: `typeof cost` observes the type string, not
                 // the changed value. [`ts_masked_observes_owner`] excludes
                 // only those consumed occurrences, so a mixed assertion
                 // (`typeof price === 'function' ? price(150) : 0`) can
                 // still witness the later value check.
-                let owner_is_method =
-                    matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
+                let owner_is_method = decorated_reach
+                    || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
                 // Method owners keep the legacy member-segment reading: their
                 // honest needle IS `receiver.method(...)`.
                 let namespace_receivers = if owner_is_method {
@@ -5707,6 +5742,214 @@ pub(crate) fn owner_line_context<'a>(
     }
 }
 
+/// `true` when `observed` (literals masked) calls `method` on a receiver of
+/// `class`: `new Class(...).method(` directly, or `x.method(` where the test
+/// body binds `x` to `new Class(...)`. A same-named method of another class
+/// is not the decorated one.
+pub(crate) fn ts_observes_decorated_method_call(
+    observed: &str,
+    test_body: &str,
+    class: &str,
+    method: &str,
+) -> bool {
+    let construct = format!("new {class}(");
+    // A method replaced on the instance or prototype (`l.add = () => 99`,
+    // `spyOn(l, "add")`, `defineProperty(l, "add", ...)`) bypasses the
+    // decorator wrapper, so no assertion in this test sees it.
+    let normalized = normalize_member_access(test_body);
+    let test_body = normalized.as_str();
+    let member = format!(".{method}");
+    // Any use of the member other than a direct call (`l.add(...)`) is
+    // refused: an assignment, destructuring target, `[l.add] = ...` or a
+    // method passed as a value can all swap the wrapper out.
+    let replaced = test_body.match_indices(&member).any(|(at, _)| {
+        let after = &test_body[at + member.len()..];
+        match after.chars().next() {
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' => false,
+            Some('(') => false,
+            _ => true,
+        }
+    }) || [
+        "] =",
+        "Object.assign(",
+        "Object.setPrototypeOf(",
+        "Reflect.set(",
+        "__proto__",
+    ]
+    .iter()
+    .any(|marker| test_body.contains(marker))
+        || [
+            format!("\"{method}\""),
+            format!("'{method}'"),
+            format!("`{method}`"),
+        ]
+        .iter()
+        .any(|quoted| test_body.contains(quoted.as_str()));
+    if replaced {
+        return false;
+    }
+    // The asserted value must be the decorated call itself: a comparison,
+    // `typeof`, ternary or `||` around it can hold for the edited result, or
+    // never run the call.
+    let mut observed = observed.trim();
+    while let Some(inner) = observed
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| matching_paren_end(&format!("({inner})"), 0) == Some(inner.len() + 1))
+    {
+        observed = inner.trim();
+    }
+    let observed = observed.strip_prefix("await ").unwrap_or(observed).trim();
+    let call = format!("{member}(");
+    if observed.starts_with(&construct) {
+        let Some(close) = matching_paren_end(observed, construct.len() - 1) else {
+            return false;
+        };
+        let rest = &observed[close + 1..];
+        return rest.starts_with(&call)
+            && matching_paren_end(rest, call.len() - 1) == Some(rest.len() - 1);
+    }
+    let Some(name_end) = observed.find('.') else {
+        return false;
+    };
+    let name = &observed[..name_end];
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        || !observed[name_end..].starts_with(&call)
+        || matching_paren_end(&observed[name_end..], call.len() - 1)
+            != Some(observed.len() - name_end - 1)
+    {
+        return false;
+    }
+    // The receiver is bound once, by `const name = new Class(...)`, and never
+    // reassigned or redeclared in a nested scope.
+    let declaration = format!("const {name} = {construct}");
+    let declarations = ["const ", "let ", "var "]
+        .iter()
+        .map(|kw| test_body.matches(&format!("{kw}{name} ")).count())
+        .sum::<usize>()
+        + test_body.matches(&format!("{{ {name} ")).count()
+        + test_body.matches(&format!("({name})")).count()
+        + test_body.matches(&format!("({name},")).count()
+        + test_body.matches(&format!(", {name})")).count()
+        // Typed, optional, defaulted or bare-arrow parameters shadow the
+        // receiver inside a callback (`(l: Other) => ...`, `l => ...`).
+        + test_body.matches(&format!("({name}:")).count()
+        + test_body.matches(&format!(", {name}:")).count()
+        + test_body.matches(&format!("({name}?")).count()
+        + test_body.matches(&format!(", {name}?")).count()
+        + test_body.matches(&format!("({name} =")).count()
+        + test_body.matches(&format!(", {name} =")).count()
+        + test_body.matches(&format!("{name} =>")).count();
+    let assignments = test_body
+        .match_indices(name)
+        .filter(|(at, _)| {
+            let before = test_body[..*at].chars().next_back();
+            let after = test_body[at + name.len()..].trim_start();
+            before.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.')))
+                && after.starts_with('=')
+                && !after.starts_with("==")
+                && !after.starts_with("=>")
+        })
+        .count();
+    test_body.contains(&declaration) && declarations == 1 && assignments == 1
+}
+
+/// `body` without comments and without whitespace around `.` (`l . add`,
+/// `l./* c */add`), so member names can be matched as contiguous text.
+fn normalize_member_access(body: &str) -> String {
+    let mut stripped = String::with_capacity(body.len());
+    let mut chars = body.chars().peekable();
+    // Comment markers inside a string or template literal (`"http://x"`,
+    // `"src/**/*.ts"`) are text, not comments: dropping the rest of the line
+    // would hide a method replacement that follows. State confusion from a
+    // quote inside a regex literal only keeps more text, which refuses more.
+    let mut quote: Option<char> = None;
+    while let Some(ch) = chars.next() {
+        if let Some(open) = quote {
+            stripped.push(ch);
+            if ch == '\\' {
+                if let Some(escaped) = chars.next() {
+                    stripped.push(escaped);
+                }
+            } else if ch == open || (ch == '\n' && open != '`') {
+                quote = None;
+            }
+            continue;
+        }
+        match (ch, chars.peek()) {
+            ('"' | '\'' | '`', _) => {
+                quote = Some(ch);
+                stripped.push(ch);
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = ' ';
+                for next in chars.by_ref() {
+                    if prev == '*' && next == '/' {
+                        break;
+                    }
+                    prev = next;
+                }
+                stripped.push(' ');
+            }
+            ('/', Some('/')) => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        break;
+                    }
+                }
+                stripped.push('\n');
+            }
+            _ => stripped.push(ch),
+        }
+    }
+    let mut out = String::with_capacity(stripped.len());
+    let mut pending_space = false;
+    for ch in stripped.chars() {
+        if ch.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && ch != '.' && !out.ends_with('.') {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(ch);
+    }
+    out
+}
+
+/// Byte index of the `)` matching the `(` at `open`, or `None`.
+fn matching_paren_end(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in text[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `true` when `line` is inside the pass-through return a decorated-method
+/// entry of `owner` recorded (`decorated_entries`).
+fn decorated_return_changed(owner: &TypeScriptOwner, line: usize) -> bool {
+    owner.module_entries.iter().any(|entry| {
+        entry.decorated.as_ref().is_some_and(|decorated| {
+            (decorated.return_start_line..=decorated.return_end_line).contains(&line)
+        })
+    })
+}
+
 /// Classify a changed line whose owning production owner was already
 /// resolved. The per-changed-line driver resolves the owner against a
 /// per-file index (#10021) so the hot loop does not re-scan the workspace
@@ -5731,7 +5974,35 @@ pub(crate) fn classify_resolved_owner(
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
 ) -> Option<Finding> {
-    let related_candidates = &context.related_candidates;
+    // RIPR-SPEC-0243 rule 21: a decorated-method reach observes only an edit
+    // to the wrapper's pass-through return. Any other line of the decorator
+    // keeps the reading it had before the relation existed.
+    let decorated_gated: Vec<TypeScriptRelatedCandidate<'_>>;
+    let has_decorated = context
+        .related_candidates
+        .iter()
+        .any(|candidate| candidate.relation == TypeScriptRelationKind::DecoratedMethodCall);
+    let return_changed = decorated_return_changed(owner, line);
+    let related_candidates = if has_decorated {
+        // On the return line the decorated tests are the only entry reach: an
+        // ordinary exported caller's unrelated assertion (a shared token such
+        // as `args`) must not lend the credit once the entry-only cap lifts.
+        decorated_gated = context
+            .related_candidates
+            .iter()
+            .filter(|candidate| {
+                if return_changed {
+                    candidate.relation != TypeScriptRelationKind::ModuleEntryCall
+                } else {
+                    candidate.relation != TypeScriptRelationKind::DecoratedMethodCall
+                }
+            })
+            .copied()
+            .collect();
+        &decorated_gated
+    } else {
+        &context.related_candidates
+    };
     // The changed line's probe family selects which assertion of each
     // related test the public row shows (#5525, RIPR-SPEC-0224): the same
     // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`
@@ -6354,7 +6625,10 @@ pub(crate) fn classify_resolved_owner(
         && super::loop_count_guard::ts_loop_count_unmodeled(
             old_line_text,
             line_text,
+            owner,
             related_candidates,
+            alias_map,
+            workspace_root,
         );
     if loop_count_unknown {
         verdict.class = ExposureClass::StaticUnknown;

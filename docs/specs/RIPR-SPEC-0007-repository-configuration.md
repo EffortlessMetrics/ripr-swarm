@@ -86,7 +86,10 @@ path advice is outside this bounded contract.
 For a project whose root has a `Cargo.toml`, doctor's warning for the default
 `target/ripr` root recommends `/target/` instead. Rust repair requires Cargo's
 whole build directory `target/` to be Git-ignored (a child-only rule is
-insufficient), so the advice must also satisfy that preflight (#9006). Roots
+insufficient), so the advice must also satisfy that preflight (#9006): doctor
+judges the default root covered only when `target/` itself is ignored (a
+child-only `/target/ripr/` rule is still flagged), and the changed-scope
+artifact disclosure names `/target/` too. Roots
 relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
 `Cargo.toml`, keep the literal-root rule above.
 
@@ -98,6 +101,12 @@ uses `!` and the completed run exits 3 (#5102). An advisory never changes the ex
 artifact root not covered by git ignore rules, the artifact root tracked by
 git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
+
+When a repository has a `.mcp.json`, doctor also checks that it registers a
+`ripr` server whose command is `ripr` and whose args end `mcp`, `--stdio` (what
+`ripr init` writes). A missing, unparseable or mismatched file is an advisory
+`~` line and a failed `mcp_config` check in JSON; it never changes the exit
+status.
 
 ### Suppression manifest declarations
 

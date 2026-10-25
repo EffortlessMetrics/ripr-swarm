@@ -200,9 +200,93 @@ fn patched_module_object_is_not_credited() -> Check {
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it(monkeypatch):\n    mp = monkeypatch\n    mp.delattr(route, \"response\")\n    checkout(True)\n    assert response.status_code == 422\n",
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
     ] {
+        // Never exposed, and never a weak finding either: a weak finding
+        // carries a repair card that asserts on the stale imported object
+        // (#10289).
         let class = classify_with_test(test_src)?;
-        assert_ne!(class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(class, ExposureClass::StaticUnknown, "{test_src}");
     }
+    Ok(())
+}
+
+fn classify_with_tests(test_srcs: &[(&str, &str)]) -> Result<ExposureClass, String> {
+    let file = "shop/route.py";
+    let src = ROUTE.replace("= 422", "= 400");
+    let mut owners = extract_owners(Path::new(file), &src);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or("owner checkout must be extracted")?;
+    let mut tests = Vec::new();
+    for (path, test_src) in test_srcs {
+        let parsed = extract_tests(Path::new(path), test_src);
+        if parsed.is_empty() {
+            return Err(format!("fixture {path} must parse a test"));
+        }
+        tests.extend(parsed);
+    }
+    classify_change_with_old(
+        Path::new(file),
+        owner.start_line + 1,
+        "    response.status_code = 400",
+        Some("    response.status_code = 422"),
+        &owners,
+        &tests,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+const LIVE_READER: (&str, &str) = (
+    "tests/test_live.py",
+    "from shop.route import checkout, response\n\n\ndef test_live():\n    checkout(True)\n    assert response.status_code == 422\n",
+);
+
+#[test]
+fn live_reader_in_another_file_keeps_its_credit_beside_a_rebinding_test() -> Check {
+    let reload = (
+        "tests/test_reload.py",
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_reload():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 422\n",
+    );
+    assert_eq!(
+        classify_with_tests(&[LIVE_READER, reload])?,
+        ExposureClass::Exposed
+    );
+    // The rebinding test alone still withholds the finding.
+    assert_eq!(
+        classify_with_tests(&[reload])?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn return_only_assertion_beside_a_rebinding_test_does_not_lift_the_limit() -> Check {
+    let reload = (
+        "tests/test_reload.py",
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_reload():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 422\n",
+    );
+    let returns_only = (
+        "tests/test_return.py",
+        "from shop.route import checkout\n\n\ndef test_return():\n    assert checkout(True) is None\n",
+    );
+    assert_eq!(
+        classify_with_tests(&[returns_only, reload])?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn rebinding_in_the_live_readers_own_file_still_withholds() -> Check {
+    // The rebinding evidence is file-level, so a reader beside the rebinding
+    // test in one file cannot be told apart from it: fail closed.
+    let both = (
+        "tests/test_both.py",
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_live():\n    checkout(True)\n    assert response.status_code == 422\n\n\ndef test_reload():\n    importlib.reload(route)\n",
+    );
+    assert_eq!(classify_with_tests(&[both])?, ExposureClass::StaticUnknown);
     Ok(())
 }
 
@@ -216,7 +300,7 @@ fn dynamic_namespace_module_class(writer: &str) -> Result<ExposureClass, String>
 fn dynamic_namespace_reload_does_not_credit_module_object() -> Check {
     assert_eq!(
         dynamic_namespace_module_class("importlib.reload(route)")?,
-        ExposureClass::WeaklyExposed
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }
@@ -225,7 +309,7 @@ fn dynamic_namespace_reload_does_not_credit_module_object() -> Check {
 fn dynamic_namespace_dunder_setattr_does_not_credit_module_object() -> Check {
     assert_eq!(
         dynamic_namespace_module_class("route.__setattr__(\"response\", object())")?,
-        ExposureClass::WeaklyExposed
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }
@@ -234,7 +318,7 @@ fn dynamic_namespace_dunder_setattr_does_not_credit_module_object() -> Check {
 fn dynamic_namespace_renamed_delattr_does_not_credit_module_object() -> Check {
     assert_eq!(
         dynamic_namespace_module_class("mp.delattr(route, \"response\")")?,
-        ExposureClass::WeaklyExposed
+        ExposureClass::StaticUnknown
     );
     Ok(())
 }

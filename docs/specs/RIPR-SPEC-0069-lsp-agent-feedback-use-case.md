@@ -77,6 +77,11 @@ established.
 `tower-lsp-server`. Diagnostics come in three closed kinds, selected by the
 explicit LSP diagnostic profile:
 
+When stdin is a terminal rather than an editor pipe, `ripr lsp` writes a
+one-line stderr hint (it is a language server started by an editor; Ctrl-D
+exits) before serving. The hint never touches stdout, so the LSP stream is
+unchanged, and an unwritable stderr is ignored.
+
 - finding-based diagnostics (`actionable` by default; `full` preserves the
   audit/debug projection);
 - seam grip-class diagnostics (configurable via

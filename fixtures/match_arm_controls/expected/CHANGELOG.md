@@ -360,3 +360,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (31)
+
+Reason:
+RIPR-SPEC-0164: alternatives, char scrutinee and literal-tail callee resolve; computed-value and char probes read weakly_exposed (tests pin one row)
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
