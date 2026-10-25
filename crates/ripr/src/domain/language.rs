@@ -692,7 +692,8 @@ impl StaticLimitKind {
                  does not evaluate (an environment variable the test sets or removes, a mockall \
                  closure that reads the call's arguments, an expect-test debug literal, an \
                  insta snapshot kept outside the source, a helper-built receiver under a changed \
-                 closure, or a hand-written recording double), so ripr cannot say whether the check \
+                 closure, a hand-written recording double, or an async owner driven by an \
+                 executor helper in the test's file), so ripr cannot say whether the check \
                  notices the change. ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
             }
