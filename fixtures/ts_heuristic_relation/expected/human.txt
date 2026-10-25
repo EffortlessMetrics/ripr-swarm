@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount <= 0) {
-  Missing discriminator: Only heuristic TypeScript test links were found for `formatCurrency`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing discriminator: Only heuristic TypeScript test links were found for `formatCurrency`;
+    verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
+    assertion
   Related test: tests/formatter.test.ts:7 formatCurrency behavior formats positive amounts
   Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
