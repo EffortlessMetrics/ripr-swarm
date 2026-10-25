@@ -207,7 +207,8 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                             )
                         })
                         .collect::<Vec<_>>();
-                    let live = matches!(context, "direct" | "mixed" | "loop_break" | "labeled_break");
+                    let live =
+                        matches!(context, "direct" | "mixed" | "loop_break" | "labeled_break");
                     if !live {
                         for family in &families {
                             // Residual: a boolean `assert!`/`debug_assert!` still
