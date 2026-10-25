@@ -4233,6 +4233,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
             extracted_starts: &extracted_starts,
             covered: covered.as_deref().unwrap_or_default(),
             admission,
+            shadowed: Vec::new(),
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -4306,10 +4307,35 @@ struct UnextractedTestFinder<'a> {
     /// expansions already stand for.
     covered: &'a [std::ops::Range<usize>],
     admission: TypeScriptAdmissionContext,
+    /// Parameter names of the enclosing functions. A call through one is the
+    /// parameter's value, not a runner registration (`async function run({
+    /// test }) { await test(); }`).
+    shadowed: Vec<String>,
     gap: Option<(usize, &'static str, String)>,
 }
 
 impl UnextractedTestFinder<'_> {
+    fn callee_is_parameter(&self, callee: &Expression<'_>) -> bool {
+        callee_root_name(callee).is_some_and(|name| self.shadowed.iter().any(|s| s == name))
+    }
+
+    fn with_parameters(
+        &mut self,
+        params: &oxc_ast::ast::FormalParameters<'_>,
+        visit: impl FnOnce(&mut Self),
+    ) {
+        let depth = self.shadowed.len();
+        self.shadowed.extend(
+            params
+                .items
+                .iter()
+                .flat_map(|param| param.pattern.get_binding_identifiers())
+                .map(|identifier| identifier.name.to_string()),
+        );
+        visit(self);
+        self.shadowed.truncate(depth);
+    }
+
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
         for stmt in statements {
             if self.gap.is_some() {
@@ -4409,7 +4435,9 @@ impl UnextractedTestFinder<'_> {
 
     fn visit_function(&mut self, func: &Function<'_>) {
         if let Some(body) = &func.body {
-            self.visit_statements(&body.statements);
+            self.with_parameters(&func.params, |finder| {
+                finder.visit_statements(&body.statements);
+            });
         }
     }
 
@@ -4434,7 +4462,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, statement_position);
             }
             Expression::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
@@ -4445,6 +4475,7 @@ impl UnextractedTestFinder<'_> {
                 // with no nested test-shaped call for `visit_call` to find.
                 if statement_position
                     && let Expression::CallExpression(call) = &await_expr.argument
+                    && !self.callee_is_parameter(&call.callee)
                     && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
                         && self
@@ -4563,7 +4594,7 @@ impl UnextractedTestFinder<'_> {
         if callee_is_skipped_describe(call) {
             return;
         }
-        if statement_position && self.gap.is_none() {
+        if statement_position && self.gap.is_none() && !self.callee_is_parameter(&call.callee) {
             // Tagged-template `.each`: `` test.each`table`('name', fn) `` — the
             // tagged template sits in CALLEE position, so the call's callee is
             // not an identifier/member the extractor recognizes at all; the

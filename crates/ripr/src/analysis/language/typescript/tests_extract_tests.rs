@@ -30,6 +30,34 @@ fn awaited_unwalked_root_keeps_the_partial_extraction_disclosure() {
 }
 
 #[test]
+fn a_parameter_named_like_the_runner_is_not_a_dropped_registration() {
+    let file = Path::new("test/helpers/with-performance.test.ts");
+    for (params, call) in [
+        ("{ test }", "await test();"),
+        ("test", "test('id', () => { expect(1).toBe(1); });"),
+        ("[test]", "await test('id', () => { expect(1).toBe(1); });"),
+    ] {
+        let shadowed = format!(
+            "import {{ test }} from 'node:test';\nasync function run({params}) {{\n  {call}\n}}\n"
+        );
+        let tests = extract_tests(file, &shadowed);
+        assert!(
+            detect_partial_test_extraction(file, &shadowed, &tests).is_none(),
+            "a call through a parameter registers nothing: {shadowed}"
+        );
+        // Same body without the parameter is the dropped registration the
+        // disclosure exists for, so the exemption is the binding, not the shape.
+        let unshadowed =
+            format!("import {{ test }} from 'node:test';\nasync function run() {{\n  {call}\n}}\n");
+        let tests = extract_tests(file, &unshadowed);
+        assert!(
+            detect_partial_test_extraction(file, &unshadowed, &tests).is_some(),
+            "an unshadowed registration in a helper must stay disclosed: {unshadowed}"
+        );
+    }
+}
+
+#[test]
 fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
     let file = Path::new("test/nanoid.test.js");
     for source in [
