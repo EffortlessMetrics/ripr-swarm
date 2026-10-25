@@ -394,6 +394,43 @@ comments, strings, and docstrings:
 - module-level owner: a local bound by an import of, or from, the owner
   module.
 
+A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
+an oracle-eligible relation, only to a test whose straight-line `assert`
+provably holds under the old literal and fails under the new one. The module
+binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
+namespace writer), the edit is the file's only changed line, no test file
+writes the attribute, and the test keeps its imported names. Reader functions
+must retain their binding too: same-module walrus/attribute replacements and
+workspace foreign writes withhold the reader's credit. Attribute targets come
+from the parsed statement tree, including parenthesized, unpacked, annotated,
+loop/context and spaced targets; comparison reads and annotations without values
+are not writes. An unparseable foreign source retains word-based write uncertainty;
+references to its module name, malformed test/initializer/conftest files, hidden
+loader spellings or package export uncertainty withhold credit globally. An
+unreferenced malformed production module alone does not erase exact credit.
+The workspace word index is bounded; overflow withholds credit. This is a bounded
+source read, not a complete import or reflective-execution graph. The assertion
+reads `NAME` itself or calls a module function with literal arguments whose
+body is one `return` expression over its parameters, literals and `NAME`; a
+name, call, operator or value kind outside that bounded evaluator decides
+nothing and the edit keeps the `missing_import_graph` abstention. A value no
+assertion distinguishes is never graded as a gap. A function defined under a
+decided module-level `if sys.version_info >= (3, 0):` condition (the only
+decided shapes are Python 2/3 version tuples, with `sys` the single plain
+import) is an ordinary function owner when its name has no other live
+binding (including walrus replacements), and no module-source write or
+uncertainty may replace `sys.version_info`, including an annotated attribute
+target. A definition in the dead arm stays with the `<module>` abstention.
+The workspace pass also withholds conditional-derived owners when another file
+may replace the callable or `sys.version_info`. Physical continuation indentation
+never makes a trailing `return` safe before the asserted value read; ordinary
+multiline setup remains eligible. A generator test lends no executed-body credit.
+Formatted strings remain uncertain in this bounded admission because their
+expressions can carry generator syntax. Statement identity uses the reported
+source assertion, independently of the boolean oracle's normalized gate text.
+Preceding assertions must evaluate true under the same bounded old/new scope
+before a later assertion can supply the value-flip credit.
+
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
 

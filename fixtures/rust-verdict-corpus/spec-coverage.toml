@@ -18,7 +18,11 @@ floor = 203
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 144
+# 145: `shape-async-fn-block-on` moved false_actionable -> abstained (main), and
+# `strsim-sorensen-dice-equal` (#9197) compares a local rebound from the
+# parameter (`let a = a.chars()..collect()`), so the name-only credit is
+# withheld and the row abstains; fail-closed by design.
+missed_credit_ceiling = 145
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
