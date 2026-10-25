@@ -635,4 +635,45 @@ mod index_tests {
         assert_eq!(test_files(&reused.index), test_files(&fresh.index));
         Ok(())
     }
+
+    #[test]
+    fn leaf_addition_that_only_mentions_a_withheld_file_rebuilds_like_fresh() -> Result<(), String>
+    {
+        let (root, files) = fixture("mention", &[(HAY, HAY_SOURCE)])?;
+        let load = |paths: &[PathBuf]| -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+            paths
+                .iter()
+                .map(|path| {
+                    fs::read(root.join(path))
+                        .map(|bytes| (path.clone(), bytes))
+                        .map_err(|error| error.to_string())
+                })
+                .collect()
+        };
+        let cached = crate::analysis::facts::build_analysis_index_from_loaded_files(
+            &root,
+            &load(&files)?,
+            &[],
+        )?;
+        assert!(outside(&cached.index, HAY), "premise: withheld before");
+        // A bare mention links nothing, but it is doubt: the file is kept.
+        fs::write(root.join("src/note.rs"), "// see rust-library.rs\n")
+            .map_err(|error| error.to_string())?;
+        let mut all = files.clone();
+        all.push(PathBuf::from("src/note.rs"));
+        let target = load(&all)?;
+        let reused = crate::analysis::facts::reuse_cached_index_with_loaded_files(
+            cached,
+            &root,
+            &target,
+            &[],
+        )?;
+        let fresh =
+            crate::analysis::facts::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(!outside(&fresh.index, HAY), "premise: a mention is doubt");
+        assert_eq!(outside(&reused.index, HAY), outside(&fresh.index, HAY));
+        assert_eq!(test_files(&reused.index), test_files(&fresh.index));
+        Ok(())
+    }
 }

@@ -137,6 +137,10 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
             || provenance.outside_module_tree;
         if has_provenance && let Some(facts) = index.files.get_mut(&file) {
             facts.role_provenance = provenance;
+        } else if let Some(facts) = index.files.get_mut(&file) {
+            // Incremental reuse keeps earlier file facts: a verdict the
+            // latest pass no longer reaches must not linger.
+            facts.role_provenance.outside_module_tree = false;
         }
     }
     withhold_tests_outside_module_tree(index, &outside_module_tree);

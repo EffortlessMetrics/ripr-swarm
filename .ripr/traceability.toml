@@ -18984,6 +18984,11 @@ tests = [
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::escaped_path_operands_are_doubt",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::inline_module_path_with_punctuation_or_escape_keeps_the_file",
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::declared_modules_ignore_longer_identifiers",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::module_tokens_survive_newlines_and_comments",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::metavariable_module_operands_survive_trivia",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::leaf_addition_that_only_mentions_a_withheld_file_rebuilds_like_fresh",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_attribute_in_a_file_no_target_compiles_adds_no_test",
+  "crates/ripr/tests/outside_target_haystack.rs::a_module_building_macro_keeps_the_file_whatever_its_spacing",
 ]
 fixtures = []
 code = [
