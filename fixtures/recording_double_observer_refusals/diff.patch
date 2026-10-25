@@ -16,3 +16,9 @@ diff --git a/src/unicode_binding.rs b/src/unicode_binding.rs
 @@ -13 +13 @@
 -    sink.send(format!("n={}", n));
 +    sink.send(format!("n={n}"));
+diff --git a/src/raw_receiver.rs b/src/raw_receiver.rs
+--- a/src/raw_receiver.rs
++++ b/src/raw_receiver.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));

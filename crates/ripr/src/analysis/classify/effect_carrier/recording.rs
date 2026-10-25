@@ -365,7 +365,7 @@ impl RecordingDouble {
                         || (text(&u) != "usesuper::*;" && text(&u) != "useself::*;")
                 })
                 || node.children().filter_map(ast::Name::cast).any(|n| {
-                    !n.text().is_ascii()
+                    !ident(n.text())
                         || matches!(n.text().trim_start_matches("r#"), "Vec" | "String")
                 })
         }) {

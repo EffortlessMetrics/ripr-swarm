@@ -51,14 +51,14 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/recording_double_observer_refusals",
-      "vector": "raw_owned_clone_and_raw_or_nfc_bindings_cannot_supply_recorded_field_observation",
+      "vector": "raw_receiver_clone_and_binding_aliases_cannot_supply_recorded_field_observation",
       "assertions": [
         {
           "type": "must_not_report_clean"
         },
         {
           "type": "expected_finding_count",
-          "count": 6
+          "count": 8
         },
         {
           "type": "must_not_promote"

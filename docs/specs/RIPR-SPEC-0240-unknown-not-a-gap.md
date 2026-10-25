@@ -435,8 +435,9 @@ non-ignored related test matches one of these shapes:
   Owner execution is bounded to primitive integer inputs, literal setup or an
   explicitly typed primitive slice `iter().sum()`, and direct sends. A scalar
   binding that shadows a slice removes that slice provenance. Raw parameter or
-  setup binding names refuse credit. Non-ASCII declaration names in the recording
-  file also refuse credit, so Unicode normalization cannot retain aliased provenance.
+  setup binding names refuse credit. Declaration names in the recording file must
+  be unescaped ASCII identifiers, so raw type shadows and Unicode normalization
+  cannot borrow another declaration or retain aliased provenance.
   A later
   primitive comparison may guard further append-only sends. Format arguments
   are parsed out of their token tree: only primitive names or numeric literals
