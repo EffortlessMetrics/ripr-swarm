@@ -21,8 +21,12 @@ floor = 220
 # 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
 # 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-# 148: plus the two abstentions #9845 adds (shape-hostile-macro-defined-owner, shape-hostile-owner-as-path-value).
-missed_credit_ceiling = 148
+# 147 (#9197): plus `strsim-sorensen-dice-equal`, which compares a local rebound
+# from the parameter (`let a = a.chars()..collect()`), so the name-only credit
+# is withheld and the row abstains; fail-closed by design. Measured on the
+# combined tree.
+# 149: plus the two abstentions #9845 adds (shape-hostile-macro-defined-owner, shape-hostile-owner-as-path-value).
+missed_credit_ceiling = 149
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -969,6 +973,11 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
+
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
