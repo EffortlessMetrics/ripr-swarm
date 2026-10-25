@@ -8723,6 +8723,8 @@ fixtures = [
   "fixtures/same_crate_trait_impl_same_leaf_doctest_control",
   "fixtures/cross_crate_trait_impl_direct_owner_positive",
   "fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance",
+  "fixtures/owner_self_body_same_name_no_unseen_reach",
+  "fixtures/owner_self_body_same_name_with_caller_control",
   "fixtures/compile_time_marker_test_no_observation",
   "fixtures/asserting_same_file_test_positive_control",
   "fixtures/evidence-promotion-honesty-corpus/perl-packets",
