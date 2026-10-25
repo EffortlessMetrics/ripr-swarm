@@ -139,6 +139,30 @@ impl MemberCrates {
         self.default_target_root_with_flags(crate_root, &["autolib", "autobins"])
     }
 
+    /// Whether `crate_root`, a root-relative file, is the library root its
+    /// package's manifest names through `[lib] path` (RIPR-SPEC-0171 example
+    /// 5). Default `src/lib.rs` roots stay with
+    /// [`Self::is_default_target_root`]; this admits only a root the manifest
+    /// moved there. Without manifest authority the answer is no.
+    pub(crate) fn is_custom_lib_path_root(&self, crate_root: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let Some(directory) = crate_root.parent() else {
+            return false;
+        };
+        let Some((package, _)) = nearest_package(&root, directory) else {
+            return false;
+        };
+        package
+            .manifest
+            .get("lib")
+            .is_some_and(|lib| lib.get("path").is_some())
+            && is_library_root(&package, &crate_root)
+    }
+
     /// Unit-test identity follows the discovery flag for this root's target
     /// kind. Disabling automatic binaries does not disable the default library
     /// (or vice versa). Keep the broader root predicate above unchanged for its
@@ -606,7 +630,7 @@ fn resolve(
     let (test, test_chain) = nearest_package(root, test_dir)?;
     let owner_name = owner.name()?;
     let library = owner.library_identifier()?;
-    if !is_default_library_root(&owner, owner_root) {
+    if !is_library_root(&owner, owner_root) {
         return None;
     }
     // Cargo configuration and manifests between either file and the root can
@@ -779,6 +803,39 @@ fn is_default_library_root(package: &Package, owner_root: &Path) -> bool {
         .and_then(toml::Value::as_bool)
         == Some(false);
     !moved && !autolib_off && owner_root == package.directory.join("src").join("lib.rs")
+}
+
+/// Whether `owner_root` is the root file of `package`'s library: the file
+/// `[lib] path` names, else `src/lib.rs` while `autolib` is on. A `[lib] path`
+/// that is not a plain relative string, or that leaves the package, names no
+/// root (RIPR-SPEC-0171 example 5: a custom `[lib] path` is a crate root as
+/// much as `src/lib.rs`, and a dependent imports it by the library name).
+fn is_library_root(package: &Package, owner_root: &Path) -> bool {
+    let manifest = &package.manifest;
+    // `autolib = false` disables only the implicit `src/lib.rs` target; an
+    // explicit `[lib] path` is still a configured target (Cargo's
+    // `normalize_lib` keeps it in both discovery modes).
+    let relative = match manifest.get("lib").and_then(|lib| lib.get("path")) {
+        None => {
+            let autolib_off = manifest
+                .get("package")
+                .and_then(|package| package.get("autolib"))
+                .and_then(toml::Value::as_bool)
+                == Some(false);
+            if autolib_off {
+                return false;
+            }
+            Path::new("src").join("lib.rs")
+        }
+        Some(path) => match path.as_str() {
+            Some(text) => lexical(Path::new(text)),
+            None => return false,
+        },
+    };
+    let stays_inside = relative
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    stays_inside && owner_root == package.directory.join(relative)
 }
 
 fn test_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
@@ -1162,6 +1219,76 @@ mod tests {
             names(&files, "pricing/tests/t.rs", "pricing/src/lib.rs")?,
             Vec::<String>::new()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_custom_lib_path_root_names_the_library() -> Result<(), String> {
+        // RIPR-SPEC-0171 example 5: `[lib] path = "lib/core.rs"` makes that
+        // file the library root a dependent imports by name. The default
+        // `src/lib.rs` is then a module of nothing, and a path that leaves
+        // the package or is not a string names no root.
+        let custom = format!("{PRICING}[lib]\npath = \"lib/core.rs\"\n");
+        let files = [
+            ("Cargo.toml", ROOT),
+            ("pricing/Cargo.toml", custom.as_str()),
+            ("orders/Cargo.toml", "[package]\nname = \"orders\"\n"),
+        ];
+        assert_eq!(
+            names(&files, "pricing/tests/t.rs", "pricing/lib/core.rs")?,
+            ["pricing"]
+        );
+        assert_eq!(
+            names(&files, "pricing/tests/t.rs", "pricing/src/lib.rs")?,
+            Vec::<String>::new()
+        );
+        for escaping in ["../other/lib.rs", "/abs/lib.rs"] {
+            let manifest = format!("{PRICING}[lib]\npath = \"{escaping}\"\n");
+            let files = [
+                ("Cargo.toml", ROOT),
+                ("pricing/Cargo.toml", manifest.as_str()),
+                ("orders/Cargo.toml", "[package]\nname = \"orders\"\n"),
+            ];
+            assert_eq!(
+                names(&files, "pricing/tests/t.rs", "other/lib.rs")?,
+                Vec::<String>::new(),
+                "{escaping}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_manifest_moved_lib_path_is_a_custom_root() -> Result<(), String> {
+        let custom = format!("{PRICING}[lib]\npath = \"lib/core.rs\"\n");
+        let escaping = format!("{PRICING}[lib]\npath = \"../pricing2/lib.rs\"\n");
+        let dotted = format!("{PRICING}[lib]\npath = \"./lib/core.rs\"\n");
+        let autolib_off = format!("{PRICING}autolib = false\n[lib]\npath = \"lib/core.rs\"\n");
+        let autolib_implicit_off = format!("{PRICING}autolib = false\n");
+        let probe = |manifest: &str, file: &str| -> Result<bool, String> {
+            let root = temp_workspace(
+                "custom-lib-root",
+                &[
+                    ("pricing/Cargo.toml", manifest),
+                    ("pricing2/Cargo.toml", "[package]\nname = \"pricing2\"\n"),
+                    ("pricing/inner/Cargo.toml", "[package]\nname = \"inner\"\n"),
+                ],
+            )?;
+            let answer = MemberCrates::new(&root).is_custom_lib_path_root(Path::new(file));
+            let _ = std::fs::remove_dir_all(&root);
+            Ok(answer)
+        };
+        assert!(probe(&custom, "pricing/lib/core.rs")?);
+        assert!(!probe(&custom, "pricing/lib/other.rs")?);
+        assert!(!probe(&custom, "pricing/src/lib.rs")?);
+        assert!(!probe(PRICING, "pricing/src/lib.rs")?);
+        assert!(!probe(&escaping, "pricing2/lib.rs")?);
+        assert!(probe(&dotted, "pricing/lib/core.rs")?);
+        // `autolib = false` turns off only the implicit target, not a `[lib] path`.
+        assert!(probe(&autolib_off, "pricing/lib/core.rs")?);
+        assert!(!probe(&autolib_implicit_off, "pricing/src/lib.rs")?);
+        // A nested package owns its own files, whatever the outer manifest says.
+        assert!(!probe(&custom, "pricing/inner/lib/core.rs")?);
         Ok(())
     }
 

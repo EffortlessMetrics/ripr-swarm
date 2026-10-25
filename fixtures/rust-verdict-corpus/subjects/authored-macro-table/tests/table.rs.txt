@@ -1,0 +1,82 @@
+use macro_table::{fits_arrow, fits_edge, fits_far, fits_semicolon, fits_smoke};
+
+macro_rules! edge_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_edge($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+edge_table! {
+    edge_under(3, 5, true)
+    edge_at(5, 5, true)
+    edge_over(6, 5, false)
+}
+
+macro_rules! semicolon_table {
+    ($($name:ident: $width:expr, $limit:expr, $want:expr);+) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_semicolon($width, $limit), $want);
+            }
+        )+
+    };
+}
+
+semicolon_table! {
+    semicolon_at: 5, 5, true;
+    semicolon_over: 6, 5, false
+}
+
+macro_rules! far_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_far($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+far_table! {
+    far_small(1, 5, true)
+    far_large(9, 5, false)
+}
+
+macro_rules! smoke_table {
+    ($($name:ident($width:expr, $limit:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                let _ = fits_smoke($width, $limit);
+            }
+        )*
+    };
+}
+
+smoke_table! {
+    smoke_at(5, 5)
+    smoke_over(6, 5)
+}
+
+macro_rules! arrow_table {
+    ($($name:ident => ($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_arrow($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+arrow_table! {
+    arrow_at => (5, 5, true)
+    arrow_over => (6, 5, false)
+}
