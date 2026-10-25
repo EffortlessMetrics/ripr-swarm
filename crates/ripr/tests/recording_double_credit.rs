@@ -291,11 +291,25 @@ fn primitive_slice_setup_and_later_append_keep_the_exact_pin() -> Result<(), Str
 #[test]
 fn a_scalar_shadow_drops_slice_provenance() -> Result<(), String> {
     let body = "let mut recorder = Recorder { lines: vec![], other: vec![] };\n        report(&mut recorder, &[1, 2]);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);";
-    let candidate = source("self.lines.push(line);", "&mut dyn Sink", body).replace(
-        "n: u32) {",
-        "items: &[u32]) { let items: u32 = 3; let n: u32 = items.iter().sum();",
-    ) + "\nstruct Stop; trait Iter { fn iter(&self) -> Stop; } impl Iter for u32 { fn iter(&self) -> Stop { std::process::exit(0); } } impl Stop { fn sum(self) -> u32 { 3 } }\n";
-    assert_reading("shadowed slice invokes user iter", &candidate, false)
+    for (label, parameter, binding, read) in [
+        ("plain slice shadow", "items", "items", "items"),
+        ("raw local aliases plain slice", "items", "r#items", "items"),
+        (
+            "plain local aliases raw slice",
+            "r#items",
+            "items",
+            "r#items",
+        ),
+    ] {
+        let candidate = source("self.lines.push(line);", "&mut dyn Sink", body).replace(
+            "n: u32) {",
+            &format!(
+                "{parameter}: &[u32]) {{ let {binding}: u32 = 3; let n: u32 = {read}.iter().sum();"
+            ),
+        ) + "\nstruct Stop; trait Iter { fn iter(&self) -> Stop; } impl Iter for u32 { fn iter(&self) -> Stop { std::process::exit(0); } } impl Stop { fn sum(self) -> u32 { 3 } }\n";
+        assert_reading(label, &candidate, false)?;
+    }
+    Ok(())
 }
 #[test]
 fn the_changed_call_cannot_hide_execution_in_format_arguments() -> Result<(), String> {
