@@ -1270,27 +1270,41 @@ impl TestScope {
         let levels: Vec<&Vec<ScopeEntry>> = std::iter::once(&innermost)
             .chain(self.levels.iter().rev())
             .collect();
-        for (depth, level) in levels.iter().enumerate() {
-            let mut names: Vec<&str> = level.iter().map(|(name, _, _)| name.as_str()).collect();
-            names.sort_unstable();
-            names.dedup();
-            for name in names {
-                if resolved.iter().any(|binding| binding.name == name) {
+        // Each level grouped by name once, in source order within a name, so a
+        // file with thousands of top-level bindings is not rescanned per name
+        // (#10017). The map is ordered, which keeps the output order that the
+        // sorted, deduplicated name list gave before.
+        let grouped: Vec<std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>>> = levels
+            .iter()
+            .map(|level| {
+                let mut by_name: std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>> =
+                    std::collections::BTreeMap::new();
+                for (name, value, phase) in level.iter() {
+                    by_name
+                        .entry(name.as_str())
+                        .or_default()
+                        .push((value, *phase));
+                }
+                by_name
+            })
+            .collect();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (depth, by_name) in grouped.iter().enumerate() {
+            for (&name, found) in by_name {
+                if !seen.insert(name) {
                     continue;
                 }
-                let mut writes: Vec<(&ScopeValue, Phase)> = level
-                    .iter()
-                    .filter(|(bound, _, _)| bound == name)
-                    .map(|(_, value, phase)| (value, *phase))
-                    .collect();
+                let mut writes = found.clone();
                 // Stable: source order is kept within a phase.
                 writes.sort_by_key(|(_, phase)| *phase);
                 let constructed_by = match writes.last() {
                     // An enclosing `beforeEach` runs after this `beforeAll`.
                     Some((_, Phase::BeforeAll))
-                        if levels[depth + 1..].iter().any(|outer| {
-                            outer.iter().any(|(bound, _, phase)| {
-                                bound == name && *phase == Phase::BeforeEach
+                        if grouped[depth + 1..].iter().any(|outer| {
+                            outer.get(name).is_some_and(|outer_writes| {
+                                outer_writes
+                                    .iter()
+                                    .any(|(_, phase)| *phase == Phase::BeforeEach)
                             })
                         }) =>
                     {

@@ -119,6 +119,9 @@ pub(super) fn python_log_evidence(
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
     {
+        if !caplog_is_the_builtin_fixture(candidate.test) {
+            return None;
+        }
         let assertion =
             select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()?;
         let rows = owner_call_rows_for_candidate(owner, &constants, candidate)?;
@@ -330,6 +333,15 @@ fn receiver_reaches_root_capture(receiver: &str, owner_source: &str) -> bool {
     owner_source
         .lines()
         .any(|line| line.starts_with(&prefix) && line.trim_end().ends_with(')'))
+}
+
+/// Whether the test's `caplog` is pytest's own capture fixture. A test that
+/// does not request it, has it supplied by `parametrize`, or whose module or
+/// `conftest.py` redefines it, reads a different object, so the logged-text reading does not apply (#9546).
+fn caplog_is_the_builtin_fixture(test: &PythonTest) -> bool {
+    test.fixtures.iter().any(|name| name == "caplog")
+        && !test.direct_parametrized.iter().any(|name| name == "caplog")
+        && !test.fixture_defs.iter().any(|def| def.name == "caplog")
 }
 
 /// Whether the test rebinds `caplog` (assignment, walrus, `as`, `for`,
