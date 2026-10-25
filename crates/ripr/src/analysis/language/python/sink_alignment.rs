@@ -120,7 +120,7 @@ pub(super) fn classify_sink_alignment(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
 ) -> SinkAlignment {
-    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false)
+    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false, None)
 }
 
 /// Whether a strong related-test oracle actually observes the changed behavior's
@@ -227,6 +227,161 @@ pub(super) fn dict_changed_keys_and_values(
     }
 }
 
+/// Recover only a flat, one-element-per-line return display. Replacing the
+/// paired member in that display retains its key/index identity without guessing
+/// across nested multiline expressions, opener-line elements or structural edits.
+pub(super) fn multiline_literal_change(
+    source: &str,
+    line: usize,
+    new_line: &str,
+    old_line: Option<&str>,
+) -> Option<(String, String)> {
+    let old_line = old_line?;
+    let lines: Vec<&str> = source.lines().collect();
+    let index = line.checked_sub(1)?;
+    if *lines.get(index)? != new_line {
+        return None;
+    }
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    if indent(old_line) != indent(new_line) {
+        return None;
+    }
+    let start = (0..index).rev().find(|&i| {
+        !lines[i].trim().is_empty()
+            && !lines[i].trim_start().starts_with('#')
+            && indent(lines[i]) < indent(new_line)
+    })?;
+    let (open, close) = match lines[start].trim() {
+        "return {" => ('{', '}'),
+        "return [" => ('[', ']'),
+        _ => return None,
+    };
+    let end = (index + 1..lines.len()).find(|&i| {
+        !lines[i].trim().is_empty()
+            && !lines[i].trim_start().starts_with('#')
+            && indent(lines[i]) <= indent(lines[start])
+    })?;
+    if lines[end].trim() != close.to_string() {
+        return None;
+    }
+    let display = |old: bool| -> Option<String> {
+        let mut members = Vec::new();
+        for (i, member) in lines.iter().enumerate().take(end).skip(start + 1) {
+            let member = if old && i == index { old_line } else { member };
+            if member.trim().is_empty() || member.trim_start().starts_with('#') {
+                continue;
+            }
+            let member = member.trim();
+            let mut last = 0;
+            for token in rustpython_parser::lexer::lex(member, rustpython_parser::Mode::Expression)
+            {
+                let (token, range) = token.ok()?;
+                if !matches!(
+                    token,
+                    rustpython_parser::Tok::Newline | rustpython_parser::Tok::EndOfFile
+                ) {
+                    last = usize::from(range.end());
+                }
+            }
+            let member = member.get(..last)?.trim_end_matches(',');
+            let single = format!("{open}{member}{close}");
+            match super::approx_band::parse_expression(&single)? {
+                Expr::Dict(dict)
+                    if open == '{'
+                        && dict.keys.len() == 1
+                        && dict.keys.first().is_some_and(Option::is_some) => {}
+                Expr::List(list) if open == '[' && list.elts.len() == 1 => {}
+                _ => return None,
+            }
+            members.push(member.to_string());
+        }
+        Some(format!("return {open}{}{close}", members.join(", ")))
+    };
+    Some((display(true)?, display(false)?))
+}
+
+/// A changed literal must be an entire token, not a substring of a sibling's
+/// number/string. Keep the existing minimum-length rule for one-line displays.
+fn oracle_contains_whole_literal(oracle: &str, value: &str) -> bool {
+    let value = value.trim();
+    if value.trim_matches(['"', '\'']).len() < 2 {
+        return false;
+    }
+    let Some(wanted) = super::approx_band::parse_expression(value) else {
+        return false;
+    };
+    let width = match &wanted {
+        Expr::Constant(_) => 1,
+        Expr::UnaryOp(unary)
+            if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd)
+                && matches!(unary.operand.as_ref(), Expr::Constant(_)) =>
+        {
+            2
+        }
+        _ => return false,
+    };
+    let equal = |found: Expr| match (&wanted, found) {
+        (Expr::Constant(a), Expr::Constant(b)) => a.value == b.value,
+        (Expr::UnaryOp(a), Expr::UnaryOp(b)) if a.op == b.op => {
+            matches!((a.operand.as_ref(), b.operand.as_ref()),
+                (Expr::Constant(a), Expr::Constant(b)) if a.value == b.value)
+        }
+        _ => false,
+    };
+    let tokens: Vec<_> = rustpython_parser::lexer::lex(oracle, rustpython_parser::Mode::Module)
+        .filter_map(Result::ok)
+        .filter(|(token, _)| {
+            !matches!(
+                token,
+                rustpython_parser::Tok::Newline
+                    | rustpython_parser::Tok::EndOfFile
+                    | rustpython_parser::Tok::Indent
+                    | rustpython_parser::Tok::Dedent
+            )
+        })
+        .collect();
+    let adjacent = |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '.');
+    tokens.windows(width).any(|window| {
+        let start = usize::from(window[0].1.start());
+        let end = usize::from(window[width - 1].1.end());
+        oracle
+            .get(start..end)
+            .and_then(super::approx_band::parse_expression)
+            .is_some_and(equal)
+            && !oracle[..start].chars().next_back().is_some_and(adjacent)
+            && !oracle[end..].chars().next().is_some_and(adjacent)
+    })
+}
+
+/// Only a display compared with the asserted result observes the collection.
+/// A display in an unrelated boolean conjunct or a sibling subscript does not.
+fn oracle_compares_whole_collection(oracle: &str) -> bool {
+    let expression = oracle
+        .trim()
+        .strip_prefix("assert ")
+        .unwrap_or(oracle.trim());
+    let Some(Expr::Compare(compare)) = super::approx_band::parse_expression(expression) else {
+        return false;
+    };
+    let [ast::CmpOp::Eq] = compare.ops.as_slice() else {
+        return false;
+    };
+    let [right] = compare.comparators.as_slice() else {
+        return false;
+    };
+    let display = |expr: &Expr| matches!(expr, Expr::Dict(_) | Expr::List(_));
+    let result = |expr: &Expr| match expr {
+        Expr::Name(_) => true,
+        Expr::Call(call) => match call.func.as_ref() {
+            Expr::Name(name) => name.id.as_str() != "len",
+            Expr::Attribute(attr) => attr.attr.as_str() != "get",
+            _ => false,
+        },
+        _ => false,
+    };
+    (display(right) && result(&compare.left)) || (display(&compare.left) && result(right))
+}
+
 /// Whether a strong oracle observes the CHANGED dict element (#1290 / #6585): a
 /// subscript or `.get(...)` of a changed key, the changed value literal when the
 /// oracle does not solely subscript an unchanged sibling, or a whole-collection
@@ -239,20 +394,14 @@ pub(super) fn oracle_observes_changed_dict_element(
     changed_values: &[String],
 ) -> bool {
     // A whole-collection comparison (`== {...}` / `== [...]`) observes every element.
-    if oracle.contains("=={")
-        || oracle.contains("== {")
-        || oracle.contains("==[")
-        || oracle.contains("== [")
-    {
+    if oracle_compares_whole_collection(oracle) {
         return true;
     }
     // Observes a changed value literal (e.g. the new `9090` / `"failure"`), but
     // not when that literal only appears beside a sibling-key subscript
     // (`assert build()['timeout'] == 80` after `'port'` changed to `80`).
     for value in changed_values {
-        let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2
-            && oracle.contains(literal)
+        if oracle_contains_whole_literal(oracle, value)
             && !oracle_solely_subscripts_unchanged_dict_key(oracle, changed_keys)
         {
             return true;
@@ -349,17 +498,11 @@ fn oracle_observes_changed_list_element(
     changed_indices: &[usize],
     changed_values: &[String],
 ) -> bool {
-    if oracle.contains("=={")
-        || oracle.contains("== {")
-        || oracle.contains("==[")
-        || oracle.contains("== [")
-    {
+    if oracle_compares_whole_collection(oracle) {
         return true;
     }
     for value in changed_values {
-        let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2
-            && oracle.contains(literal)
+        if oracle_contains_whole_literal(oracle, value)
             && !oracle_solely_subscripts_unchanged_list_index(oracle, changed_indices)
         {
             return true;
@@ -573,6 +716,7 @@ pub(super) fn classify_sink_alignment_with_old(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
     guard_entered: bool,
+    literal_lines: Option<&(String, String)>,
 ) -> SinkAlignment {
     let prep = AlignmentPrep::new(owner, all_tests);
     classify_sink_alignment_prepared(
@@ -582,6 +726,7 @@ pub(super) fn classify_sink_alignment_with_old(
         related,
         &prep,
         guard_entered,
+        literal_lines,
     )
 }
 
@@ -592,6 +737,7 @@ pub(super) fn classify_sink_alignment_prepared(
     related: &[RelatedTest],
     prep: &AlignmentPrep<'_>,
     guard_entered: bool,
+    literal_lines: Option<&(String, String)>,
 ) -> SinkAlignment {
     // Whether the changed line is genuinely a control-flow construct gates the
     // empty-token-delta fallback below: only a control-flow change may credit
@@ -904,16 +1050,19 @@ pub(super) fn classify_sink_alignment_prepared(
     // the changed key, or a whole-collection comparison. Non-dict changes (and)
     // changes whose changed keys cannot be localized from the paired old line) are
     // not gated and keep prior behavior (pass-through `true`).
-    let dict_change = dict_changed_keys_and_values(old_line_text, line_text);
+    let (element_old, element_new) = literal_lines
+        .map(|(old, new)| (Some(old.as_str()), new.as_str()))
+        .unwrap_or((old_line_text, line_text));
+    let dict_change = dict_changed_keys_and_values(element_old, element_new);
     let list_change = if dict_change.is_none() {
-        list_changed_indices_and_values(old_line_text, line_text)
+        list_changed_indices_and_values(element_old, element_new)
     } else {
         None
     };
     let list_equality_discriminates = units
         .iter()
         .any(|unit| super::oracles::unittest_list::literal_text(&unit.text))
-        && super::oracles::unittest_list::literal_change_discriminated(old_line_text, line_text);
+        && super::oracles::unittest_list::literal_change_discriminated(element_old, element_new);
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
         if super::oracles::unittest_list::literal_text(&unit.text) {
             list_equality_discriminates

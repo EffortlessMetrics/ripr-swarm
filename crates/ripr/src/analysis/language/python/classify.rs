@@ -295,7 +295,14 @@ pub(super) fn classify_change_for_owner(
     // (#5572). Every consumer below — the public rows, sink alignment, the
     // error-path / boundary / changed-default gates and the `test_oracle`
     // evidence — reads that one selection.
-    let focus = PythonAssertionFocus::for_change(family.clone(), line_text, old_line_text);
+    let literal_lines = owner_source.and_then(|source| {
+        super::sink_alignment::multiline_literal_change(source, line, line_text, old_line_text)
+    });
+    let (element_old, element_new) = literal_lines
+        .as_ref()
+        .map(|(old, new)| (Some(old.as_str()), new.as_str()))
+        .unwrap_or((old_line_text, line_text));
+    let focus = PythonAssertionFocus::for_change(family.clone(), element_new, element_old);
     let mut related_candidates = related_test_candidates(owner, all_tests);
     // Only when no test relates to the owner itself: a test that calls a
     // same-module caller of the owner earns a weak `helper_owner_call` row
@@ -325,6 +332,7 @@ pub(super) fn classify_change_for_owner(
         &related,
         all_tests,
         guard_entered,
+        literal_lines.as_ref(),
     );
     let log_evidence = python_log_evidence(
         old_line_text,
@@ -1239,6 +1247,7 @@ pub(super) fn classify_change_for_owner(
             line_text,
             old_line_text,
             guard_entered,
+            literal_lines: literal_lines.as_ref(),
             focus: &focus,
             boundary_fact: crate::domain::input_boundary_fact(
                 &missing_discriminators,
