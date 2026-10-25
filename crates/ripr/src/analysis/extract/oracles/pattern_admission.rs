@@ -55,8 +55,43 @@ pub(crate) struct LocalDecls {
     single_variant_enums: BTreeMap<String, String>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static TABLE_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Tables built on this thread so far. A file's adapter pass must add one,
+/// not one per function or assertion (#10363).
+#[cfg(test)]
+pub(crate) fn table_builds() -> usize {
+    TABLE_BUILDS.with(std::cell::Cell::get)
+}
+
+/// A file's declaration table, built on the first assertion that needs it so
+/// a file without assertions pays nothing (#10363).
+pub(crate) struct LazyDecls<'a> {
+    source: &'a str,
+    table: std::cell::OnceCell<LocalDecls>,
+}
+
+impl<'a> LazyDecls<'a> {
+    pub(crate) fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            table: std::cell::OnceCell::new(),
+        }
+    }
+
+    pub(crate) fn get(&self) -> &LocalDecls {
+        self.table
+            .get_or_init(|| LocalDecls::from_source(self.source))
+    }
+}
+
 impl LocalDecls {
     pub(crate) fn from_source(source: &str) -> Self {
+        #[cfg(test)]
+        TABLE_BUILDS.with(|count| count.set(count.get() + 1));
         if source.is_empty() {
             return Self::default();
         }
