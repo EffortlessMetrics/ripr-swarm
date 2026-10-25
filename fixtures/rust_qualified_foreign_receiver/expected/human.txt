@@ -41,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
   ripr context --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:c861ec7a --root <cwd>/fixtures/rust_qualified_foreign_receiver/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --at src/lib.rs:18 --kind return_value
 

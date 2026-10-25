@@ -401,25 +401,51 @@ fn observed_discriminator_values(
         &right,
         probe.location.line,
     );
+    let left_credit = credited_parameter(
+        owner,
+        &parameters,
+        &left,
+        &left_parameter,
+        probe.location.line,
+    );
+    let right_credit = credited_parameter(
+        owner,
+        &parameters,
+        &right,
+        &right_parameter,
+        probe.location.line,
+    );
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
-    let left_resolved = resolve_boundary_operand(
+    let left_resolved = credited_resolution(
         owner,
+        &parameters,
         &left,
+        resolve_boundary_operand(
+            owner,
+            &left,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            ordering_predicate(&probe.expression),
+        ),
         probe.location.line,
-        &parameters,
-        index,
-        workspace_complete,
-        ordering_predicate(&probe.expression),
     );
-    let right_resolved = resolve_boundary_operand(
+    let right_resolved = credited_resolution(
         owner,
-        &right,
-        probe.location.line,
         &parameters,
-        index,
-        workspace_complete,
-        ordering_predicate(&probe.expression),
+        &right,
+        resolve_boundary_operand(
+            owner,
+            &right,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            ordering_predicate(&probe.expression),
+        ),
+        probe.location.line,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -477,13 +503,13 @@ fn observed_discriminator_values(
             });
             continue;
         }
-        let Some(left_parameter) = left_parameter.as_deref() else {
+        let Some(left_credit) = left_credit.as_deref() else {
             continue;
         };
-        let Some(left_value) = parameter_value(&row, left_parameter) else {
+        let Some(left_value) = parameter_value(&row, left_credit) else {
             continue;
         };
-        let right_value = right_parameter
+        let right_value = right_credit
             .as_deref()
             .and_then(|parameter| parameter_value(&row, parameter))
             .map(|value| value.value)
@@ -503,12 +529,12 @@ fn observed_discriminator_values(
             });
         }
     }
-    if let (Some(constant), Some(left_parameter)) = (&right_constant, left_parameter.as_deref()) {
+    if let (Some(constant), Some(left_credit)) = (&right_constant, left_credit.as_deref()) {
         for (file, line, text) in owner_calls_passing_constant(
             related_tests,
             owner,
             &parameters,
-            left_parameter,
+            left_credit,
             constant,
             index,
         ) {
@@ -795,6 +821,51 @@ fn is_parameter_expression(
             .iter()
             .any(|name| parameters.contains(name))
     })
+}
+
+/// The parameter whose observed rows may be credited as `operand`'s value
+/// (#9197). A name that matches a parameter but that the owner rebinds or
+/// mutates on or before the compared line is no longer the value the test
+/// passed in, so the observed rows must not satisfy the boundary. The operand
+/// stays a known parameter for the unresolved-input reading; only the credit
+/// is withheld.
+fn credited_parameter(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    found: &Option<String>,
+    predicate_line: usize,
+) -> Option<String> {
+    found.clone().filter(|_| {
+        !(parameters.iter().any(|parameter| parameter == operand)
+            && owner_rebinds_operand(owner, operand, predicate_line))
+    })
+}
+
+/// `resolved`, except a parameter operand the owner rebinds or mutates
+/// resolves to no exact row value (#9197).
+fn credited_resolution(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    resolved: Option<ResolvedOperand>,
+    predicate_line: usize,
+) -> Option<ResolvedOperand> {
+    match resolved {
+        Some(ResolvedOperand::Parameter(_))
+            if credited_parameter(
+                owner,
+                parameters,
+                operand,
+                &Some(operand.to_string()),
+                predicate_line,
+            )
+            .is_none() =>
+        {
+            None
+        }
+        other => other,
+    }
 }
 
 fn resolve_boundary_operand(
@@ -1201,6 +1272,260 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: 
                     .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
             })
         })
+}
+
+/// Whether the owner may rebind or mutate the identifier `operand` on or before
+/// the predicate line, so a name match against an owner parameter no longer
+/// proves the compared value is what the test passed in (#9197). Fail-closed:
+/// any `let`/`mut`/`ref` binding, assignment or compound assignment, `for` or
+/// `let` pattern, closure parameter list, match-arm pattern or `matches!`
+/// line that mentions the name counts, without proving it is the same scope.
+/// Comments and strings are masked, the signature is skipped (a `mut x`
+/// parameter alone is not a rebinding), and a field access (`self.x`) or path
+/// segment (`m::x`) is a different name.
+fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line: usize) -> bool {
+    if owner_declares_local(owner, operand, predicate_line) {
+        return true;
+    }
+    let is_identifier = operand
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !is_identifier {
+        return false;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let through_predicate = masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= predicate_line)
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Some((signature, body)) = through_predicate.split_once('{') else {
+        return false;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Only a `mut` parameter can be changed in place by a receiver call
+    // (`x.add_assign(5)`); an immutable one cannot, so `x.abs()` stays a read.
+    let mut_parameter = signature.match_indices("mut").any(|(start, _)| {
+        !signature[..start].ends_with(is_word)
+            && signature[start + 3..]
+                .trim_start()
+                .strip_prefix(operand)
+                .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    });
+    body.match_indices(operand).any(|(start, _)| {
+        let before = &body[..start];
+        let after = &body[start + operand.len()..];
+        if before.chars().next_back().is_some_and(is_word)
+            || after.chars().next().is_some_and(is_word)
+            || before.ends_with('.')
+            || before.ends_with("::")
+        {
+            return false;
+        }
+        let before_trimmed = before.trim_end();
+        let after_trimmed = after.trim_start();
+        let line_before = before.rsplit('\n').next().unwrap_or(before);
+        let last_word = before_trimmed
+            .rsplit(|ch: char| !is_word(ch))
+            .next()
+            .unwrap_or("");
+        let assigned = (after_trimmed.starts_with('=')
+            && !after_trimmed.starts_with("==")
+            && !after_trimmed.starts_with("=>"))
+            || ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="]
+                .iter()
+                .any(|assignment| after_trimmed.starts_with(assignment));
+        let binding_keyword = matches!(last_word, "let" | "mut" | "ref");
+        // `x.add_assign(5)` on a `mut` parameter: a receiver call (whitespace
+        // tolerant) may mutate it in place, so it no longer holds the input.
+        let receiver_call = mut_parameter
+            && after_trimmed.strip_prefix('.').is_some_and(|rest| {
+                let rest = rest.trim_start();
+                let name_len = rest.chars().take_while(|ch| is_word(*ch)).count();
+                name_len > 0 && rest[name_len..].trim_start().starts_with(['(', ':'])
+            });
+        // A pattern name sits before the arm's own `=>`: a guard use
+        // (`n if 0 > n =>`), the scrutinee of a one-line match, or a use in an
+        // earlier arm's result (`Some(v) => x, None =>`) is not a binding. An
+        // arm that re-binds the scrutinee's own name is declined too (no
+        // attempt to tie it to its match).
+        // The one exemption is a bare first-arm binder of the scrutinee's own
+        // name (`match n { n if 0 > n => .. }`): it binds the same value the
+        // match reads, so it is not a different `n`. Any other arm pattern
+        // naming it, or a scrutinee that is more than the bare name, is declined.
+        let binds_scrutinee_itself = {
+            let opening = before_trimmed.strip_suffix('{').map(str::trim_end);
+            opening
+                .and_then(|head| head.strip_suffix(operand))
+                .is_some_and(|head| {
+                    let head = head.trim_end();
+                    head.strip_suffix("match")
+                        .is_some_and(|rest| !rest.ends_with(is_word))
+                })
+                && (after_trimmed.starts_with("if ")
+                    || after_trimmed.starts_with("=>")
+                    || after_trimmed.starts_with(','))
+        };
+        let match_arm_pattern = !binds_scrutinee_itself && in_match_arm_pattern(before);
+        // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
+        // the bracket group holding the name is followed by a bare `=`.
+        let destructuring_assignment = {
+            let mut depth = 0usize;
+            let mut closed_at = None;
+            for (offset, ch) in after.char_indices() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' if depth == 0 => {
+                        closed_at = Some(offset + 1);
+                        break;
+                    }
+                    ')' | ']' | '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            closed_at.is_some_and(|at| {
+                let rest = after[at..].trim_start();
+                rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
+            })
+        };
+        let for_pattern = before
+            .rfind("for ")
+            .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
+            .is_some_and(|at| !contains_word(&before[at..], "in"));
+        let let_pattern = before
+            .rfind("let ")
+            .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
+            .is_some_and(|at| !before[at..].contains(['=', ';']));
+        let single_pipes = line_before
+            .replace("||", "")
+            .replace("|=", "")
+            .matches('|')
+            .count();
+        assigned
+            || receiver_call
+            || destructuring_assignment
+            || binding_keyword
+            || match_arm_pattern
+            || for_pattern
+            || let_pattern
+            || single_pipes % 2 == 1
+            || line_before.contains("matches!")
+    })
+}
+
+/// Whether the name just after `before` sits in a `match` arm pattern (before
+/// that arm's `=>`), judged by a backward token scan from the name to the arm's
+/// start: pattern text (identifiers, paths, `@`, `|`, `..`/`..=`, `:`, `&`,
+/// tuple, array and struct groups) up to either the match block's own `{` or
+/// the previous arm's `=>` followed by a separating comma or block. A guard
+/// (`if`), the scrutinee (`match`), a statement (`;`), an arm's result (after
+/// its `=>` with no separator) or any other operator ends it as not a pattern,
+/// so guard operators (`==`, `>=`), `1..=5` ranges and struct braces after the
+/// name never hide the binding (#9197).
+fn in_match_arm_pattern(before: &str) -> bool {
+    let chars: Vec<char> = before.chars().collect();
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut i = chars.len();
+    // After a `,` or a skipped `{}` block at this level the text read back is
+    // the previous arm's result (or a tuple's earlier elements), which may be
+    // any expression: it is skipped without classification, and the name is a
+    // pattern if that read reaches the previous arm's `=>` or the match
+    // block's `{` without leaving the level through an unmatched `(` or `[`
+    // (a tuple or call comma, which resumes the strict read).
+    let mut tolerant = false;
+    while i > 0 {
+        i -= 1;
+        let ch = chars[i];
+        if ch.is_whitespace() {
+            continue;
+        }
+        if matches!(ch, ')' | ']' | '}') {
+            let mut depth = 1usize;
+            while i > 0 && depth > 0 {
+                i -= 1;
+                match chars[i] {
+                    ')' | ']' | '}' => depth += 1,
+                    '(' | '[' | '{' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth > 0 {
+                return false;
+            }
+            if ch == '}' {
+                tolerant = true;
+            }
+            continue;
+        }
+        if tolerant {
+            match ch {
+                '(' | '[' => tolerant = false,
+                '{' => {
+                    let head: String = chars[..i].iter().collect();
+                    let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
+                    if contains_word(&head[boundary..], "match") {
+                        return true;
+                    }
+                    tolerant = false;
+                }
+                ';' => return false,
+                '>' if i > 0 && chars[i - 1] == '=' => return true,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '(' | '[' => {}
+            '{' => {
+                let head: String = chars[..i].iter().collect();
+                let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
+                if contains_word(&head[boundary..], "match") {
+                    return true;
+                }
+            }
+            ',' => tolerant = true,
+            '|' | '&' | ':' | '@' => {}
+            '.' => {
+                if i == 0 || chars[i - 1] != '.' {
+                    return false;
+                }
+            }
+            '=' => {
+                if !(i > 0 && chars[i - 1] == '.') {
+                    return false;
+                }
+            }
+            c if is_word(c) => {
+                let mut start = i;
+                while start > 0 && is_word(chars[start - 1]) {
+                    start -= 1;
+                }
+                let word: String = chars[start..=i].iter().collect();
+                if matches!(
+                    word.as_str(),
+                    "if" | "match" | "while" | "let" | "for" | "in" | "return" | "else"
+                ) {
+                    return false;
+                }
+                i = start;
+            }
+            // `=>` directly before the name is a body use; any other
+            // operator ends the pattern.
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|token| token == word)
 }
 
 /// The initializer of a local binding whose live span (per the #3294
@@ -1762,28 +2087,54 @@ fn missing_boundary_discriminator(
         &right,
         probe.location.line,
     );
+    let left_credit = credited_parameter(
+        owner,
+        &parameters,
+        &left,
+        &left_parameter,
+        probe.location.line,
+    );
+    let right_credit = credited_parameter(
+        owner,
+        &parameters,
+        &right,
+        &right_parameter,
+        probe.location.line,
+    );
 
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
     // inputs; the boundary is observed when both sides compare equal
     // under any row.
-    let left_resolved = resolve_boundary_operand(
+    let left_resolved = credited_resolution(
         owner,
+        &parameters,
         &left,
+        resolve_boundary_operand(
+            owner,
+            &left,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            ordering_predicate(&probe.expression),
+        ),
         probe.location.line,
-        &parameters,
-        index,
-        workspace_complete,
-        ordering_predicate(&probe.expression),
     );
-    let right_resolved = resolve_boundary_operand(
+    let right_resolved = credited_resolution(
         owner,
-        &right,
-        probe.location.line,
         &parameters,
-        index,
-        workspace_complete,
-        ordering_predicate(&probe.expression),
+        &right,
+        resolve_boundary_operand(
+            owner,
+            &right,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            ordering_predicate(&probe.expression),
+        ),
+        probe.location.line,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -1824,14 +2175,13 @@ fn missing_boundary_discriminator(
         })
     });
 
-    let equality_observed = exact_equality_observed
-        || left_parameter.as_deref().is_some_and(|left_parameter| {
+    let parameter_equality = |left_name: Option<&str>, right_name: Option<&str>| {
+        left_name.is_some_and(|left_name| {
             call_values.iter().any(|row| {
-                let Some(left_value) = parameter_value(row, left_parameter) else {
+                let Some(left_value) = parameter_value(row, left_name) else {
                     return false;
                 };
-                let right_value = right_parameter
-                    .as_deref()
+                let right_value = right_name
                     .and_then(|parameter| parameter_value(row, parameter))
                     .map(|value| value.value)
                     .or_else(|| {
@@ -1842,22 +2192,40 @@ fn missing_boundary_discriminator(
                     comparable_value(value) == comparable_value(&left_value.value)
                 })
             })
-        });
-    let constant_named = right_constant
-        .as_ref()
-        .zip(left_parameter.as_deref())
-        .is_some_and(|(constant, left_parameter)| {
-            !owner_calls_passing_constant(
-                related_tests,
-                owner,
-                &parameters,
-                left_parameter,
-                constant,
-                index,
-            )
-            .is_empty()
-        });
+        })
+    };
+    let constant_passed = |left_name: Option<&str>| {
+        right_constant
+            .as_ref()
+            .zip(left_name)
+            .is_some_and(|(constant, left_name)| {
+                !owner_calls_passing_constant(
+                    related_tests,
+                    owner,
+                    &parameters,
+                    left_name,
+                    constant,
+                    index,
+                )
+                .is_empty()
+            })
+    };
+    let equality_observed = exact_equality_observed
+        || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
+    let constant_named = constant_passed(left_credit.as_deref());
     if equality_observed || constant_named {
+        return None;
+    }
+    // #9197: the owner rebinds or mutates a compared parameter name, and the
+    // test input would have satisfied the boundary only by that name. No input
+    // can satisfy a repair for a value ripr cannot see, so the boundary is
+    // unresolved rather than a named missing equality.
+    if parameter_equality(left_parameter.as_deref(), right_parameter.as_deref())
+        || constant_passed(left_parameter.as_deref())
+    {
+        *unresolved = Some(format!(
+            "boundary operand `{left}` or `{right}` is rebound or mutated by the owner before the compared line, so a related test's input is not its value and ripr cannot tell which side of the boundary a test reaches"
+        ));
         return None;
     }
     // A deep table or builder line that may feed the owner hides its
@@ -2029,7 +2397,7 @@ fn missing_boundary_discriminator(
         return None;
     }
 
-    let mut left_values = left_parameter
+    let mut left_values = left_credit
         .as_deref()
         .map(|parameter| observed_parameter_values(&call_values, parameter))
         .unwrap_or_default();
@@ -2043,7 +2411,7 @@ fn missing_boundary_discriminator(
     left_values.extend(exact_lefts);
     left_values.sort();
     left_values.dedup();
-    let right_parameter_values = right_parameter
+    let right_parameter_values = right_credit
         .as_deref()
         .and_then(|parameter| parameter_value_set(&call_values, parameter));
     let right_literal =
@@ -3886,6 +4254,9 @@ pub(super) fn is_constant_like(name: &str) -> bool {
 pub(super) fn free_identifiers(text: &str) -> Vec<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let chars: Vec<char> = masked.chars().collect();
+    // Byte offset of each masked char: the mask blanks a char literal, so a
+    // byte-literal prefix is recognised against the original text.
+    let offsets: Vec<usize> = masked.char_indices().map(|(offset, _)| offset).collect();
     let mut names = Vec::new();
     let mut previous: Option<char> = None;
     let mut after_as = false;
@@ -3919,7 +4290,11 @@ pub(super) fn free_identifiers(text: &str) -> Vec<String> {
             let name: String = chars[start..idx].iter().collect();
             let next = chars[idx..].iter().find(|ch| !ch.is_whitespace()).copied();
             let path_next = chars.get(idx) == Some(&':') && chars.get(idx + 1) == Some(&':');
-            let byte_literal = name == "b" && chars.get(idx) == Some(&'\'');
+            let byte_literal = name == "b"
+                && offsets
+                    .get(idx)
+                    .and_then(|offset| text.as_bytes().get(*offset))
+                    == Some(&b'\'');
             let skip = after_as
                 || byte_literal
                 || name == "as"
@@ -6965,7 +7340,21 @@ mod tests {
         test_file_source: &str,
         calls: &[&str],
     ) -> (ActivationEvidence, Vec<TestSummary>) {
-        let owner = function("pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}");
+        constant_boundary_activation_for_owner(
+            "pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}",
+            constant_source,
+            test_file_source,
+            calls,
+        )
+    }
+
+    fn constant_boundary_activation_for_owner(
+        owner_body: &str,
+        constant_source: &str,
+        test_file_source: &str,
+        calls: &[&str],
+    ) -> (ActivationEvidence, Vec<TestSummary>) {
+        let owner = function(owner_body);
         let mut index = crate::analysis::rust_index::RustIndex::default();
         index.insert_file_only(
             PathBuf::from("src/lib.rs"),
@@ -7113,6 +7502,45 @@ mod tests {
             "{:?}",
             opaque.missing_discriminators
         );
+    }
+
+    #[test]
+    fn a_rebound_parameter_does_not_make_a_constant_argument_the_boundary() {
+        // #9197 with #10199's file provenance: `score(LIMIT)` names the
+        // constant, but the owner rebinds `amount` before the comparison, so
+        // the argument is not the compared value and no "argument names
+        // constant" fact (with its test file) is listed. The unrebound owner
+        // is the positive control and keeps the fact.
+        let calls = ["score(5);", "score(crate::LIMIT);"];
+        let names_constant = |owner: &str| {
+            let (activation, _) = constant_boundary_activation_for_owner(
+                owner,
+                "const LIMIT: i32 = 5 * 2;",
+                "use app::score;",
+                &calls,
+            );
+            activation.observed_values.iter().any(|fact| {
+                fact.text.contains("argument names constant LIMIT")
+                    && fact.file.as_deref() == Some(std::path::Path::new("tests/score.rs"))
+            })
+        };
+        assert!(names_constant(
+            "pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}"
+        ));
+        assert!(names_constant(
+            "pub fn score(amount: i32) -> bool {\n    let other = 1; amount > LIMIT\n}"
+        ));
+        for rebinding in [
+            "let amount = amount + 1;",
+            "let mut amount = amount; amount += 1;",
+        ] {
+            assert!(
+                !names_constant(&format!(
+                    "pub fn score(amount: i32) -> bool {{\n    {rebinding} amount > LIMIT\n}}"
+                )),
+                "{rebinding}"
+            );
+        }
     }
 
     #[test]
@@ -9747,5 +10175,150 @@ assert_eq!(input.amount, 100);"#
         ] {
             assert_eq!(unread_mentions(source, "add"), count, "{source}");
         }
+    }
+
+    #[test]
+    fn a_receiver_call_mutates_only_a_mut_parameter() {
+        // #9197: `x.add_assign(5)` changes a `mut` parameter in place, so the
+        // name no longer holds the test's input; on an immutable parameter the
+        // same shape (`x.abs()`, `x.min(3)`) is a read and keeps the credit.
+        // This is the pin for the `receiver_call` guard: it fails with the guard
+        // disabled. (Publicly a `mut x` parameter is already unmapped, so the
+        // guard is defense-in-depth should `mut` parameters become mappable.)
+        let credited = |signature: &str, prelude: &str| {
+            let owner = function(&format!(
+                "pub fn thr({signature}) -> bool {{\n{prelude}\n    x > 102\n}}"
+            ));
+            let parameters = vec!["x".to_string()];
+            let line = 2 + prelude.lines().count();
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), line).is_some()
+        };
+        for prelude in [
+            "    x.add_assign(5);",
+            "    x .add_assign (5);",
+            "    x\n        .add_assign(5);",
+            "    x.saturating_add_assign::<i32>(5);",
+        ] {
+            assert!(!credited("mut x: i32", prelude), "{prelude}");
+            assert!(!credited("mut  x : i32", prelude), "{prelude}");
+            // Not mutable: the call cannot change the parameter.
+            assert!(credited("x: i32", prelude), "{prelude}");
+        }
+        for prelude in [
+            "    let _ = x.abs();",
+            "    let _ = x.min(3);",
+            "    let _ = self.x.add(1);",
+        ] {
+            assert!(credited("x: i32", prelude), "{prelude}");
+        }
+        // A `mut` parameter read by a method that cannot be a mutation is
+        // still declined (fail-closed: the scan does not know the method).
+        assert!(!credited("mut x: i32", "    let _ = x.abs();"));
+        // A different `mut` parameter does not make `x` mutable.
+        assert!(credited("mut y: i32, x: i32", "    x.add_assign(5);"));
+    }
+
+    #[test]
+    fn a_rebound_or_mutated_parameter_is_not_the_compared_value() {
+        // #9197: the operand name matches the parameter, but the owner
+        // rebinds or mutates it before line 3, so no input row is its value.
+        let rebound = |prelude: &str| {
+            let owner = function(&format!(
+                "pub fn thr(x: i32) -> bool {{\n{prelude}\n    x > 102\n}}"
+            ));
+            let parameters = function_parameters(&owner);
+            let line = 2 + prelude.lines().count();
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), line)
+        };
+        for prelude in [
+            "    let x = x * 2;",
+            "    let mut x = x;",
+            "    x += 5;",
+            "    x = x + 5;",
+            "    for x in 0..3 { let _ = x; }",
+            "    let (x, _) = (x + 5, 0);",
+            "    if let Some(x) = Some(1) { let _ = x; }",
+            "    let _ = Some(1).map(|x| x + 5);",
+            "    let _ = match Some(1) { Some(x) => x, None => 0 };",
+            "    let _ = matches!(Some(1), Some(x) if x > 0);",
+            "    let _ = foo(&mut x);",
+            "    let _ = match Some(1) { Some(x) if x > 0 => x, _ => 0 };",
+            "    (x, y) = (y, x);",
+            "    match y {\n        0 => a + 1,\n        x => 1,\n    };",
+            "    match y {\n        0 => -1,\n        x => 1,\n    };",
+            "    match y {\n        0 => a * b,\n        x => 1,\n    };",
+            "    match y {\n        0 => !a,\n        x => 1,\n    };",
+            "    match y {\n        0 => a < b,\n        x => 1,\n    };",
+            "    match y {\n        0 => a == b,\n        x => 1,\n    };",
+            "    match y {\n        0 => f(a)?,\n        x => 1,\n    };",
+            "    match y {\n        0 => a.b,\n        x => 1,\n    };",
+            "    match y {\n        0 => 1.5,\n        x => 1,\n    };",
+            "    match y {\n        0 => 1_u8..2,\n        x => 1,\n    };",
+            "    match y {\n        0 => vec![1],\n        x => 1,\n    };",
+            "    match y {\n        0 => return,\n        x => 1,\n    };",
+            "    match y {\n        0 => if a { 1 } else { 2 },\n        x => 1,\n    };",
+            "    match y {\n        0 => 5 - 1,\n        x => 1,\n    };",
+            "    match y {\n        0 => match z {\n            Z => 1,\n            _ => 2,\n        },\n        x => 1,\n    };",
+            "    match y {\n        0 => match z { Z => 1, _ => 2 },\n        x => 1,\n    };",
+            "    match y {\n        0 => a + 1\n        ,\n        x => 1,\n    };",
+            "    match y {\n        Some(x) if x == 3 =>",
+            "    match y {\n        Some(x) if x >= 3 =>",
+            "    match y {\n        Some(\n            x\n        ) if y != 3 =>",
+            "    match y {\n        (a, x) if a == 1 =>",
+            "    match y {\n        Some(x)\n            if a == 1 =>",
+            "    match y {\n        x @ 1..=5 =>",
+            "    match y {\n        Some(x @ 1..=5) =>",
+            "    match y {\n        S { f: x } =>",
+            "    match y {\n        S { x } =>",
+            "    match y {\n        S { x, .. } =>",
+            "    match y {\n        Foo::Bar { x: 1, y: x } =>",
+            "    match y {\n        Or(x)\n            if x == 3 =>",
+            "    match y {\n        A => 1,\n        Some(x) if foo(x, 1) =>",
+            "    match y {\n        A => { 1 }\n        x =>",
+            "    let _ = x;\n    match (y, 0) {\n        (\n            x,\n            _\n        )\n        => {",
+            "    let _ = x;\n    match [y, 0] {\n        [\n            x,\n            _\n        ]\n        => {",
+            "    let _q = b'\"';\n    let mut x = x;\n    x += 5;",
+            "    let _ = match y {\n        x\n        => {\n            x > 101\n        }\n    };",
+            "    let _q = '\"';\n    let x = x + 5;",
+            "    [x, ..] = [1, 2];",
+            "    let _ = match x { 0 => 1, _ => 2 };\n    let _ = match o {\n        x => x > 101,\n    };",
+        ] {
+            assert_eq!(rebound(prelude), None, "{prelude}");
+        }
+        // Controls: unrelated names, fields, comparisons and a path segment
+        // do not decline the parameter.
+        for prelude in [
+            // A bare first-arm binder of the scrutinee's own name binds the same value.
+            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
+            "    let y = 7;",
+            "    let point = (1, 2);\n    let _ = point.0 <= 3 && x <= 3;",
+            "    let _ = self.x;",
+            "    let _ = m::x();",
+            "    let _ = x == 3;",
+            "    let _ = Foo { x: x };",
+            "    let _ = x >= y;",
+            "    match y {\n        _ => x + 1,\n    };",
+            "    match y {\n        0 => a + 1,\n        _ => x * 2,\n    };",
+            "    match y {\n        0 => a,\n        _ => foo(a, x),\n    };",
+            "    match y {\n        Some(v) if v > x =>",
+            "    match y {\n        Some(v) if foo(x, 1) =>",
+            "    match y {\n        A => x,\n        B =>",
+            "    match y {\n        A => foo(x, 1),\n        B =>",
+            "    match y {\n        A => {\n            x\n        }\n        B if y =>",
+            "    let _ = match o {\n        Some(v) => x\n            + v,\n        None => 0,\n    };",
+            "    let _s = \"let x = 1;\"; // let x = 2",
+            "    let _ = match x { 0 => 1, _ => 2 };",
+            "    let _ = match o { Some(v) => x, None => 0 };",
+            "    let _ = match o {\n        Some(v) => x + v,\n        None => x,\n    };",
+        ] {
+            assert_eq!(rebound(prelude), Some("x".to_string()), "{prelude}");
+        }
+        // A rebinding after the compared line is not before it.
+        let later = function("pub fn thr(x: i32) -> bool {\n    x > 102\n    let x = 1;\n}");
+        let parameters = function_parameters(&later);
+        assert_eq!(
+            credited_parameter(&later, &parameters, "x", &Some("x".to_string()), 2),
+            Some("x".to_string())
+        );
     }
 }
