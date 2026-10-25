@@ -5750,7 +5750,6 @@ pub(crate) fn ts_observes_decorated_method_call(
     class: &str,
     method: &str,
 ) -> bool {
-    let call = format!(".{method}(");
     let construct = format!("new {class}(");
     // A method replaced on the instance or prototype (`l.add = () => 99`,
     // `spyOn(l, "add")`, `defineProperty(l, "add", ...)`) bypasses the
@@ -5769,40 +5768,82 @@ pub(crate) fn ts_observes_decorated_method_call(
     if replaced {
         return false;
     }
-    observed.match_indices(&call).any(|(at, _)| {
-        let receiver = observed[..at].trim_end();
-        if receiver.ends_with(')') {
-            return receiver.rfind(&construct).is_some_and(|start| {
-                let open = start + construct.len() - 1;
-                let mut depth = 0usize;
-                for (offset, ch) in receiver[open..].char_indices() {
-                    match ch {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                return open + offset + 1 == receiver.len();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                false
-            });
-        }
-        let name: String = receiver
+    // The asserted value must be the decorated call itself: a comparison,
+    // `typeof`, ternary or `||` around it can hold for the edited result, or
+    // never run the call.
+    let mut observed = observed.trim();
+    while let Some(inner) = observed
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| matching_paren_end(&format!("({inner})"), 0) == Some(inner.len() + 1))
+    {
+        observed = inner.trim();
+    }
+    let observed = observed.strip_prefix("await ").unwrap_or(observed).trim();
+    let call = format!("{member}(");
+    if observed.starts_with(&construct) {
+        let Some(close) = matching_paren_end(observed, construct.len() - 1) else {
+            return false;
+        };
+        let rest = &observed[close + 1..];
+        return rest.starts_with(&call)
+            && matching_paren_end(rest, call.len() - 1) == Some(rest.len() - 1);
+    }
+    let Some(name_end) = observed.find('.') else {
+        return false;
+    };
+    let name = &observed[..name_end];
+    if name.is_empty()
+        || !name
             .chars()
-            .rev()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        !name.is_empty()
-            && ["const", "let", "var"]
-                .iter()
-                .any(|kw| test_body.contains(&format!("{kw} {name} = {construct}")))
-    })
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        || !observed[name_end..].starts_with(&call)
+        || matching_paren_end(&observed[name_end..], call.len() - 1)
+            != Some(observed.len() - name_end - 1)
+    {
+        return false;
+    }
+    // The receiver is bound once, by `const name = new Class(...)`, and never
+    // reassigned or redeclared in a nested scope.
+    let declaration = format!("const {name} = {construct}");
+    let declarations = ["const ", "let ", "var "]
+        .iter()
+        .map(|kw| test_body.matches(&format!("{kw}{name} ")).count())
+        .sum::<usize>()
+        + test_body.matches(&format!("{{ {name} ")).count()
+        + test_body.matches(&format!("({name})")).count()
+        + test_body.matches(&format!("({name},")).count()
+        + test_body.matches(&format!(", {name})")).count();
+    let assignments = test_body
+        .match_indices(name)
+        .filter(|(at, _)| {
+            let before = test_body[..*at].chars().next_back();
+            let after = test_body[at + name.len()..].trim_start();
+            before.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.')))
+                && after.starts_with('=')
+                && !after.starts_with("==")
+                && !after.starts_with("=>")
+        })
+        .count();
+    test_body.contains(&declaration) && declarations == 1 && assignments == 1
+}
+
+/// Byte index of the `)` matching the `(` at `open`, or `None`.
+fn matching_paren_end(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in text[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `true` when `line` is inside the pass-through return a decorated-method

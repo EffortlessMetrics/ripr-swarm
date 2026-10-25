@@ -207,3 +207,31 @@ fn returned_value_must_be_the_originals_result_combined_only_by_add_or_subtract(
         );
     }
 }
+
+#[test]
+fn decorated_call_must_be_the_whole_asserted_value_on_a_single_bound_receiver() {
+    use super::super::classifier::ts_observes_decorated_method_call as observes;
+    let body = "const l = new Ledger();";
+    assert!(observes("l.add(2, 3)", body, "Ledger", "add"));
+    assert!(observes("(l.add(2, 3))", body, "Ledger", "add"));
+    assert!(observes("await l.add(2, 3)", body, "Ledger", "add"));
+    for observed in [
+        "typeof new Ledger().add(2, 3)",
+        "new Ledger().add(2, 3) > 0",
+        "true ? 5 : l.add(2, 3)",
+        "5 || l.add(2, 3)",
+        "l.add(2, 3) + l.add(1, 1)",
+    ] {
+        assert!(!observes(observed, body, "Ledger", "add"), "{observed}");
+    }
+    // A receiver that is reassigned, redeclared in a nested scope, or bound
+    // as a parameter is not known to be the decorated class.
+    for body in [
+        "let l = new Ledger();\n  l = { add: (x, y) => x + y };",
+        "const l = new Ledger();\n  { const l = { add: (x, y) => x + y }; }",
+        "const l = new Ledger();\n  run((l) => 1);",
+        "l = new Ledger();",
+    ] {
+        assert!(!observes("l.add(2, 3)", body, "Ledger", "add"), "{body}");
+    }
+}
