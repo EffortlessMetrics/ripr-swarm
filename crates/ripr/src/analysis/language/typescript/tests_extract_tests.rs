@@ -230,6 +230,12 @@ test.describe.fixme("fixme suite", () => {
         expect(applyDiscount(100, 100)).toBe(90);
     });
 });
+test.describe.only.skip("active then disabled suite", () => {
+    test("disabled case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+test.describe.configure({ mode: "serial" });
 runner.describe("unknown root", () => {
     test("unknown case", () => {
         expect(applyDiscount(100, 100)).toBe(90);
