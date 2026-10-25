@@ -12,7 +12,7 @@
 //! row adds one, so parallel PRs never edit neighbouring lines of one list.
 
 use super::coverage::Ledger;
-use super::{CaseRow, Outcome, coverage};
+use super::{CaseRow, Outcome, TruthState, coverage};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -150,6 +150,38 @@ pub(crate) fn known_false_gate(
     }
 }
 
+/// Rows where the tests discriminate the change but ripr abstained instead of
+/// crediting it: a safe answer that still leaves credit unclaimed.
+fn missed_credit(rows: &[CaseRow]) -> usize {
+    rows.iter()
+        .filter(|row| row.truth == TruthState::Discriminated && row.outcome == Outcome::Abstained)
+        .count()
+}
+
+/// Gate `missed_credit_ceiling`: above it is a regression and fails. Below it
+/// is an improvement that passes with a note to lower the ceiling; failing
+/// there would make every concurrent fix PR edit the same number and
+/// deadlock main. A ledger without a ceiling does not gate missed credit.
+fn missed_credit_gate(
+    missed: usize,
+    ledger: &Ledger,
+    ledger_label: &str,
+) -> Result<Option<String>, String> {
+    let Some(ceiling) = ledger.missed_credit_ceiling else {
+        return Ok(None);
+    };
+    if missed > ceiling {
+        return Err(format!(
+            "verdict-corpus: {missed} abstained rows had tests that catch the change, above the missed_credit_ceiling of {ceiling} in {ledger_label}; a verdict stopped crediting a discriminating test. Fix the regression; raising the ceiling is a reviewed edit with a reason"
+        ));
+    }
+    Ok((missed < ceiling).then(|| {
+        format!(
+            "verdict-corpus: {missed} abstained rows had tests that catch the change, below the missed_credit_ceiling of {ceiling} in {ledger_label}; lower the ceiling to {missed} so the improvement cannot regress"
+        )
+    }))
+}
+
 /// Join the ledger gate's failure to `existing`. A case subset cannot see the
 /// whole corpus's false rows, and a corpus without a ledger has no gate.
 pub(crate) fn apply_known_false_gate(
@@ -166,15 +198,24 @@ pub(crate) fn apply_known_false_gate(
         .iter()
         .map(|row| (row.case_id.as_str(), row.outcome))
         .collect();
-    Ok(
-        match known_false_gate(&scored, &ledger, &coverage::ledger_label(dir)) {
-            Ok(()) => existing,
-            Err(failure) => Some(match existing {
-                Some(existing) => format!("{existing}\n{failure}"),
-                None => failure,
-            }),
-        },
-    )
+    let label = coverage::ledger_label(dir);
+    let mut failures: Vec<String> = known_false_gate(&scored, &ledger, &label)
+        .err()
+        .into_iter()
+        .collect();
+    match missed_credit_gate(missed_credit(rows), &ledger, &label) {
+        Ok(Some(note)) => println!("{note}"),
+        Ok(None) => {}
+        Err(failure) => failures.push(failure),
+    }
+    if failures.is_empty() {
+        return Ok(existing);
+    }
+    let failure = failures.join("\n");
+    Ok(Some(match existing {
+        Some(existing) => format!("{existing}\n{failure}"),
+        None => failure,
+    }))
 }
 
 #[cfg(test)]
@@ -245,6 +286,48 @@ mod tests {
         let ownerless = "[[known_false]]\ncase = \"a\"\nissue = 0\nreason = \" \"\n";
         let err = failure(&[("a", Outcome::FalseSilent)], ownerless);
         assert!(err.contains("owning `issue`"), "{err}");
+    }
+
+    fn ceiling(value: Option<usize>) -> Result<Ledger, String> {
+        let line = value.map_or(String::new(), |v| format!("missed_credit_ceiling = {v}\n"));
+        ledger(&line)
+    }
+
+    #[test]
+    fn missed_credit_ceiling_fails_up_and_notes_down() -> Result<(), String> {
+        assert_eq!(missed_credit_gate(3, &ceiling(Some(3))?, "l.toml")?, None);
+        let up = missed_credit_gate(4, &ceiling(Some(3))?, "l.toml").err();
+        assert!(
+            up.is_some_and(|e| e.contains("above")),
+            "regression must fail"
+        );
+        // An improvement passes with a note, so concurrent fix PRs do not collide.
+        let down = missed_credit_gate(2, &ceiling(Some(3))?, "l.toml")?;
+        assert!(down.is_some_and(|n| n.contains("lower the ceiling to 2")));
+        // No ceiling, no gate.
+        assert_eq!(missed_credit_gate(99, &ceiling(None)?, "l.toml")?, None);
+        Ok(())
+    }
+
+    /// A ceiling set above the real count would pass the gate with only a
+    /// note, so pin each committed ceiling to its blessed rows.
+    #[test]
+    fn committed_ceilings_equal_the_blessed_missed_credit() -> Result<(), String> {
+        for language in ["rust", "typescript", "python", "perl"] {
+            let dir = crate::dogfood::repo_rooted_fixture_path(&format!(
+                "fixtures/{language}-verdict-corpus"
+            ));
+            let rows = super::super::expected_report(&dir)?.rows;
+            let ledger = coverage::load_ledger(&dir)?;
+            let missed = missed_credit(&rows);
+            assert!(missed > 0, "{language} has no missed credit to count");
+            assert_eq!(
+                ledger.missed_credit_ceiling,
+                Some(missed),
+                "{language} missed_credit_ceiling must equal the blessed count"
+            );
+        }
+        Ok(())
     }
 
     fn committed_rust_rows() -> Result<(std::path::PathBuf, Vec<CaseRow>), String> {
