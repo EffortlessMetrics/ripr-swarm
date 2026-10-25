@@ -38,7 +38,7 @@
     "RIPR-SPEC-0258#8"
   ],
   "labeling_observation": {
-    "ripr_commit": "9b4ae643",
+    "ripr_commit": "ef845a07",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

@@ -1683,6 +1683,50 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Medium,
         ),
         (
+            "module.exports = { projects: [{ root: \"x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ workspace: \"x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }].concat([\"./other\"]) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }].map(load) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const base = {};\nmodule.exports = { projects: [{ ...base, displayName: \"a\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ ...require(\"./base\") }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: load(\"a\") }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"./preset.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: base }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" }], testTimeout: 5000 };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }] }; // trailing",
+            OracleStrength::Strong,
+        ),
+        (
             "module.exports = { projects: [{ displayName: \"a\" }, \"<rootDir>/pkg\"] };",
             OracleStrength::Medium,
         ),

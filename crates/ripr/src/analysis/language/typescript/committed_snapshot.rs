@@ -404,6 +404,33 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(text, key))
 }
 
+/// `true` when a `preset` value in `text` is not a plain package name: a
+/// path (`./p.js`, `/abs/preset`), a file name, or a non-literal value can
+/// carry a `rootDir`, `roots` or `snapshotResolver` this walk never reads.
+fn preset_may_name_a_file(text: &str) -> bool {
+    text.match_indices("preset").any(|(index, matched)| {
+        let before = text.get(..index).unwrap_or_default();
+        if before.chars().next_back().is_some_and(is_identifier_char) {
+            return false;
+        }
+        let rest = text.get(index + matched.len()..).unwrap_or_default();
+        let rest = rest.strip_prefix(['"', '\'', '`']).unwrap_or(rest);
+        // `preset` not followed by `:` is a value or a word, not a key.
+        let Some(value) = skip_trivia(rest).strip_prefix(':').map(skip_trivia) else {
+            return false;
+        };
+        let Some(name) = value.strip_prefix(['"', '\'']) else {
+            // A non-literal value (`preset: base`) is not read.
+            return true;
+        };
+        let name = name.split(['"', '\'']).next().unwrap_or_default();
+        name.starts_with(['.', '/'])
+            || [".js", ".cjs", ".mjs", ".json", ".ts"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+    })
+}
+
 /// `text` with its one `projects: [ { ... }, { ... } ]` array removed, when
 /// every element is an inline object literal that moves nothing: no string,
 /// identifier, spread or call at the array's top level (those name other
@@ -458,8 +485,11 @@ fn without_plain_inline_projects(text: &str) -> Option<String> {
                     chars.next();
                 }
             }
-            '[' | '(' if depth == 1 => return None,
-            '{' | '[' | '(' => depth += 1,
+            // A call can build a project at run time, and a nested array at
+            // the top level is not an inline object.
+            '(' => return None,
+            '[' if depth == 1 => return None,
+            '{' | '[' => depth += 1,
             '}' | ']' | ')' => {
                 depth -= 1;
                 if depth == 0 {
@@ -474,14 +504,24 @@ fn without_plain_inline_projects(text: &str) -> Option<String> {
             _ => {}
         }
     }
-    let inside = array.get(..end?)?;
+    let end = end?;
+    let inside = array.get(..end)?;
     if delegates_to_other_config(inside)
         || mentions_named_key(inside, "rootDir")
         || mentions_named_key(inside, "roots")
+        || inside.contains("...")
+        || preset_may_name_a_file(inside)
     {
         return None;
     }
-    let tail_start = text.len() - after_colon.len() + 1 + end? + 1;
+    // A method call or index on the array (`.concat(["./other"])`) can add
+    // entries this scan never saw; only a list separator or the end of the
+    // object may follow the closing bracket.
+    let after_array = skip_trivia(array.get(end + 1..)?);
+    if !(after_array.is_empty() || after_array.starts_with([',', '}', ';'])) {
+        return None;
+    }
+    let tail_start = text.len() - after_colon.len() + 1 + end + 1;
     Some(format!("{}{}", text.get(..index)?, text.get(tail_start..)?))
 }
 
