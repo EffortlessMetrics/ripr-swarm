@@ -198,6 +198,9 @@ fn doctor_json(
         language_detection_elapsed,
     );
     report.apply_environment(environment.facts);
+    if let Some(verdict) = mcp_config_verdict(root) {
+        report.add_mcp_config_check(verdict.ok, verdict.text);
+    }
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
     {
@@ -776,6 +779,14 @@ Point RIPR_CACHE_DIR at a writable directory.",
     }
     if let output::doctor::DoctorArtifactTracking::Tracked { warning } = &cache.artifact_tracking {
         lines.push(warning.clone());
+    }
+
+    if let Some(verdict) = mcp_config_verdict(root) {
+        lines.push(format!(
+            "{} {}",
+            if verdict.ok { "✓" } else { "~" },
+            verdict.text
+        ));
     }
 
     lines.extend(preview_language_enable_suggestions(
@@ -3323,6 +3334,74 @@ fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -
         }
         Some(_) => None,
     }
+}
+
+/// Largest `.mcp.json` doctor reads; a real one is a few hundred bytes.
+const MCP_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// What doctor found in a root's `.mcp.json` (#10347): whether it wires up
+/// `ripr mcp --stdio` the way `ripr init --mcp` writes it. Advisory only.
+struct McpConfigVerdict {
+    ok: bool,
+    text: String,
+}
+
+/// Judges `<root>/.mcp.json`; `None` when the file is absent (or not a regular
+/// file), because a project without MCP config has nothing to verify.
+fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
+    let path = root.join(".mcp.json");
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    let verdict = match crate::bounded_input::read_to_string_with_limit(&path, MCP_CONFIG_MAX_BYTES)
+    {
+        Err(error) => Err(format!(".mcp.json could not be read ({error})")),
+        Ok(text) => mcp_config_problem(&text),
+    };
+    Some(match verdict {
+        Ok(()) => McpConfigVerdict {
+            ok: true,
+            text: ".mcp.json: `ripr` MCP server runs `ripr mcp --stdio`".to_string(),
+        },
+        Err(problem) => McpConfigVerdict {
+            ok: false,
+            text: format!(
+                ".mcp.json: {problem}; rerun `ripr init --mcp` (add `--force` to replace a customized `ripr` entry)"
+            ),
+        },
+    })
+}
+
+/// `Ok` when the document has a `ripr` server whose command is `ripr` with
+/// args ending in `mcp --stdio` (the entry `ripr init --mcp` writes).
+fn mcp_config_problem(text: &str) -> Result<(), String> {
+    let document: serde_json::Value = serde_json::from_str(text)
+        .map_err(|error| format!("is not valid JSON ({})", display_text(&error.to_string())))?;
+    let servers = document
+        .get("mcpServers")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "has no `mcpServers` object".to_string())?;
+    let entry = servers
+        .get("ripr")
+        .ok_or_else(|| "has no `ripr` server entry".to_string())?;
+    let command = entry.get("command").and_then(serde_json::Value::as_str);
+    let args: Vec<&str> = entry
+        .get("args")
+        .and_then(serde_json::Value::as_array)
+        .map(|args| args.iter().filter_map(serde_json::Value::as_str).collect())
+        .unwrap_or_default();
+    if command == Some("ripr") && args.ends_with(&["mcp", "--stdio"]) {
+        return Ok(());
+    }
+    Err(format!(
+        "`ripr` server entry runs `{}`, not `ripr mcp --stdio`",
+        display_text(
+            &std::iter::once(command.unwrap_or("<no command>"))
+                .chain(args.iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    ))
 }
 
 /// Workspace-relative Cargo config paths Cargo reads `[env]` from, in Cargo's
@@ -5880,6 +5959,76 @@ mod tests {
             "when both config names exist the extensionless redirect must win: {conflicting:?}"
         );
         assert_eq!(too_big, None);
+        Ok(())
+    }
+
+    fn mcp_verdict_for(name: &str, text: Option<&str>) -> Result<Option<(bool, String)>, String> {
+        let root = unique_command_test_dir(name);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        if let Some(text) = text {
+            std::fs::write(root.join(".mcp.json"), text)
+                .map_err(|err| format!("write .mcp.json: {err}"))?;
+        }
+        let verdict = mcp_config_verdict(&root).map(|verdict| (verdict.ok, verdict.text));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(verdict)
+    }
+
+    #[test]
+    fn mcp_config_verdict_accepts_what_init_writes_and_names_each_problem() -> Result<(), String> {
+        // Absent file: nothing to verify, no line.
+        assert_eq!(mcp_verdict_for("mcp-cfg-absent", None)?, None);
+
+        // The exact entry `ripr init --mcp` writes, beside another server.
+        let ok = mcp_verdict_for(
+            "mcp-cfg-ok",
+            Some(
+                r#"{"mcpServers":{"other":{"command":"x"},"ripr":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+            ),
+        )?;
+        assert!(
+            ok.as_ref()
+                .is_some_and(|(ok, text)| *ok && text.contains("runs `ripr mcp --stdio`")),
+            "{ok:?}"
+        );
+
+        let cases = [
+            ("mcp-cfg-bad-json", "{ not json", "is not valid JSON"),
+            (
+                "mcp-cfg-no-servers",
+                r#"{"mcpServers":[]}"#,
+                "no `mcpServers` object",
+            ),
+            (
+                "mcp-cfg-other-server",
+                r#"{"mcpServers":{"other":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+                "no `ripr` server entry",
+            ),
+            (
+                "mcp-cfg-wrong-args",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp"]}}}"#,
+                "runs `ripr mcp`, not `ripr mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-wrong-command",
+                r#"{"mcpServers":{"ripr":{"command":"/opt/ripr","args":["mcp","--stdio"]}}}"#,
+                "runs `/opt/ripr mcp --stdio`, not `ripr mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-no-command",
+                r#"{"mcpServers":{"ripr":{"args":["mcp","--stdio"]}}}"#,
+                "runs `<no command> mcp --stdio`",
+            ),
+        ];
+        for (name, text, expected) in cases {
+            let verdict = mcp_verdict_for(name, Some(text))?;
+            assert!(
+                verdict
+                    .as_ref()
+                    .is_some_and(|(ok, line)| !*ok && line.contains(expected)),
+                "{name}: {verdict:?}"
+            );
+        }
         Ok(())
     }
 
