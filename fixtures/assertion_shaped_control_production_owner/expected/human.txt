@@ -15,7 +15,10 @@ Start here:
   Why unknown: the change reaches a sink but infection could not be determined statically
   Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==100
   Changed behavior: amount >= 100
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: a related test passes `amount` the result of a call (`boundary_amount()`), whose value ripr does not evaluate statically, so it cannot tell…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: a related test passes
+    `amount` the result of a call (`boundary_amount()`), whose value ripr does not evaluate
+    statically, so it cannot tell which side of the boundary that call reaches; activation/infection
+    is unknown
   Related test: tests/pricing.rs:8 discounted_total_at_boundary
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,

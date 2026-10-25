@@ -6155,13 +6155,24 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "  next action:",
         "  full packet: ripr agent packet ",
         "--seam-id 67fc764ba37d77bd --json",
-        // #5008: the human summary names the dirty-draft state verbatim, not
-        // the `{:?}` debug spelling.
-        "accepted_dirty_draft",
+        // #5008/#9244: the human summary words the dirty-draft state for a
+        // newcomer, not the `{:?}` debug or snake_case wire spelling.
+        "(your uncommitted working tree)",
+        "  done when: the selected route closes the gap;",
     ] {
         assert!(
             human_stdout.contains(needle),
             "missing {needle:?}:\n{human_stdout}"
+        );
+    }
+    for absent in [
+        "schema: repair_card.v1",
+        "accepted_dirty_draft",
+        "closed_by_selected_route",
+    ] {
+        assert!(
+            !human_stdout.contains(absent),
+            "human summary must not print {absent:?}:\n{human_stdout}"
         );
     }
 
