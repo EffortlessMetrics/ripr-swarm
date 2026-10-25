@@ -86,20 +86,34 @@ const DYNAMIC_LOADERS: [&str; 13] = [
     "__dict__",
 ];
 
-impl ForeignWrites {
-    /// The writes in every source but `own`, with `unknown` when some
-    /// workspace file went unread.
-    pub(super) fn scan<'a>(
-        own: &Path,
+/// What each workspace source contributes to [`ForeignWrites`], parsed and
+/// tokenized once so a diff that changes many Python files does not repeat
+/// the whole-workspace work per file (#10125).
+pub(super) struct ForeignIndex<'a> {
+    files: Vec<IndexedSource<'a>>,
+    /// Each word's only source, or None when two sources mention it. A
+    /// malformed file's own function/name is not an import.
+    references: std::collections::BTreeMap<&'a str, Option<&'a Path>>,
+    hidden_import: bool,
+    /// The reference index passed its bound or a file went unread.
+    unknown: bool,
+}
+
+struct IndexedSource<'a> {
+    file: &'a Path,
+    /// None when the file does not parse.
+    assigned: Option<Vec<String>>,
+    /// Holds a dynamic writer, or does not parse: every word is a possible write.
+    dynamic_words: Option<Vec<&'a str>>,
+}
+
+impl<'a> ForeignIndex<'a> {
+    pub(super) fn build(
         sources: impl Iterator<Item = (&'a Path, &'a str)>,
         unread_files: bool,
     ) -> Self {
-        let mut attributes = std::collections::BTreeSet::new();
-        let mut words = std::collections::BTreeSet::new();
-        // Keep each word's first source, or None when another source also
-        // mentions it. A malformed file's own function/name is not an import.
+        let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
-        let mut unparsed = Vec::new();
         let mut hidden_import = false;
         for (file, source) in sources {
             hidden_import |= DYNAMIC_LOADERS
@@ -115,34 +129,59 @@ impl ForeignWrites {
                 }
                 if references.len() > MAX_WORKSPACE_WORDS {
                     return Self {
+                        files: Vec::new(),
+                        references: std::collections::BTreeMap::new(),
+                        hidden_import,
                         unknown: true,
-                        ..Self::default()
                     };
                 }
             }
-            if file == own {
-                continue;
-            }
             let assigned = assigned_attributes(source);
-            if let Some(assigned) = &assigned {
-                attributes.extend(assigned.iter().cloned());
-            } else {
-                unparsed.push(file);
-            }
             let dynamic = assigned.is_none()
                 || DYNAMIC_WRITERS
                     .iter()
                     .any(|writer| mentions_identifier(source, writer))
                 || source.contains("sys.modules");
-            if dynamic {
-                words.extend(source_words(source).map(str::to_string));
+            files.push(IndexedSource {
+                file,
+                assigned,
+                dynamic_words: dynamic.then(|| source_words(source).collect()),
+            });
+        }
+        Self {
+            files,
+            references,
+            hidden_import,
+            unknown: unread_files,
+        }
+    }
+
+    /// The writes in every source but `own`, with `unknown` when some
+    /// workspace file went unread.
+    pub(super) fn excluding(&self, own: &Path) -> ForeignWrites {
+        if self.unknown && self.files.is_empty() {
+            return ForeignWrites {
+                unknown: true,
+                ..ForeignWrites::default()
+            };
+        }
+        let mut attributes = std::collections::BTreeSet::new();
+        let mut words = std::collections::BTreeSet::new();
+        let mut unparsed = Vec::new();
+        for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
+            match &indexed.assigned {
+                Some(assigned) => attributes.extend(assigned.iter().cloned()),
+                None => unparsed.push(indexed.file),
+            }
+            if let Some(dynamic) = &indexed.dynamic_words {
+                words.extend(dynamic.iter().map(|word| word.to_string()));
             }
         }
         // An unreferenced malformed production module cannot poison every
         // binding. Retain its words as potential writes, and fail closed on
         // references, implicit collection/initializers and hidden imports.
-        let unknown = unread_files
-            || (!unparsed.is_empty() && hidden_import)
+        let unknown = self.unknown
+            || (!unparsed.is_empty() && self.hidden_import)
             || unparsed.iter().any(|file| {
                 is_test_file(file)
                     || file
@@ -152,16 +191,29 @@ impl ForeignWrites {
                         .file_stem()
                         .and_then(|name| name.to_str())
                         .is_none_or(|stem| {
-                            references
+                            self.references
                                 .get(stem)
                                 .is_some_and(|first| first.is_none_or(|first| first != *file))
                         })
             });
-        Self {
+        ForeignWrites {
             attributes: attributes.into_iter().collect(),
             dynamic_words: words.into_iter().collect(),
             unknown,
         }
+    }
+}
+
+impl ForeignWrites {
+    /// The writes in every source but `own`; one-shot form of
+    /// [`ForeignIndex`] for callers that scan a single file.
+    #[cfg(test)]
+    pub(super) fn scan<'a>(
+        own: &Path,
+        sources: impl Iterator<Item = (&'a Path, &'a str)>,
+        unread_files: bool,
+    ) -> Self {
+        ForeignIndex::build(sources, unread_files).excluding(own)
     }
 
     /// Whether another file may rebind `name` of the module at `module_file`:

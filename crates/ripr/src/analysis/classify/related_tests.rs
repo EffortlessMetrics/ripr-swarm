@@ -2017,10 +2017,21 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 if !(local_root && names_entry) {
                     return false;
                 }
-                // Known limit (RIPR-SPEC-0159): a relative-prefixed import of
-                // the entry is never resolved. Only `crate::` from a unit test
-                // inside the library's `src/` stays credited.
-                !(in_src_unit_test && segments.first() == Some(&"crate"))
+                // `crate::` from a unit test inside the library's `src/` stays
+                // credited. A relative `self::`/`super::` import (#9971) is
+                // credited only when the scope-aware resolver proves it names
+                // the entry's own module; every other relative-prefixed
+                // import of the entry (an integration test's, an aliased or
+                // unresolved one) is never resolved and refuses.
+                !(in_src_unit_test
+                    && (segments.first() == Some(&"crate")
+                        || import.alias.is_none()
+                            && super::call_identity::unit_test_relative_import_names_entry(
+                                index,
+                                &test.file,
+                                &import.path,
+                                caller,
+                            )))
             })
     };
     if binds_entry_locally(&facts.source) || binds_entry_locally(&test.body) {
@@ -2039,7 +2050,22 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 .map(unraw)
                 .is_some_and(|first| is_lib_first(&first))
         });
-    if !uses_prefix {
+    // A resolved relative import (#9971) carries no library prefix, but its
+    // bare call still meets the nearer-binding vetoes below.
+    let uses_relative = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                let segments: Vec<&str> = import.path.split("::").collect();
+                matches!(segments.first(), Some(&("self" | "super")))
+                    && segments.last().map(|last| unraw(last)).as_deref()
+                        == Some(caller.name.as_str())
+            })
+    };
+    let relative_route = in_src_unit_test
+        && !uses_prefix
+        && (uses_relative(&facts.source) || uses_relative(&test.body));
+    if !uses_prefix && !relative_route {
         return true;
     }
     // Resolve the imported suffix, not just the prefix: every import of the
@@ -2196,6 +2222,9 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         )
     {
         return false;
+    }
+    if relative_route {
+        return true;
     }
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;

@@ -401,17 +401,23 @@ This order is the existing behavior and is normative:
      and `x.type(1)` do not count; `getattr (o, n)` now counts.
    - a subscript call counts when `]` is followed by `(` outside strings.
    - `__getattr__` counts as a whole identifier.
-   - `lambda` counts as a keyword token followed by a space or `:`, so
-     `'lambda x'` does not count and `lambda: 0`, missed today, does.
+   - `lambda` counts as a keyword token followed by a space, `:` or `(`.
+     On a plain line (no `{`, backslash or triple quote) a `lambda` inside
+     a string or comment does not count; on any other line it counts,
+     because an f-string expression or a multi-line string edge can run
+     it. `lambda: 0`, missed before, counts.
    - an import alias counts at an identifier boundary: the character
      before is not an identifier character or `.`, and `(` or `.`
      follows. `pos.x` does not match alias `os`, and `score(` does not
      match alias `re`.
    - `mocked_module` body calls count for `patch(`, `patch.object(` and
-     `patch.multiple(` only when the callee is bare or its receiver is
-     `mock`, `unittest.mock`, `mocker`, or a name the test file imports
-     from `unittest.mock` or `mock`. `client.patch(` does not count. The
-     `monkeypatch` forms and decorator rule are unchanged.
+     `patch.multiple(` at an identifier boundary, except an HTTP request:
+     a receiver that is `client`, `test_client`, `api_client`,
+     `async_client`, `session`, `requests` or `httpx` (alone or after
+     `self.`), in a test whose body and imports never mention a mock. Any
+     other receiver, and any test that mentions a mock, keeps the limit
+     (fail closed). The `monkeypatch` forms and decorator rule are
+     unchanged.
 
 ### Sink alignment
 

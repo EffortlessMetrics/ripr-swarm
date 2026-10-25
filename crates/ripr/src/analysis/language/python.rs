@@ -1027,15 +1027,15 @@ impl PythonAdapter {
         let workspace_incomplete = refused_files > 0
             || !workspace_read.limits.is_empty()
             || !workspace_read.io_failures.is_empty();
+        let foreign_index = module_value::ForeignIndex::build(
+            workspace_read
+                .sources
+                .iter()
+                .map(|(file, source)| (file.as_path(), source.as_str())),
+            workspace_incomplete,
+        );
         for changed in &python_changed_files {
-            let foreign = module_value::ForeignWrites::scan(
-                &changed.path,
-                workspace_read
-                    .sources
-                    .iter()
-                    .map(|(file, source)| (file.as_path(), source.as_str())),
-                workspace_incomplete,
-            );
+            let foreign = foreign_index.excluding(&changed.path);
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
                 .iter_mut()

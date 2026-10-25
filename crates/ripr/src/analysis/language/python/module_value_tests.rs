@@ -971,3 +971,35 @@ fn the_target_assertion_is_identified_before_crediting_its_line() -> Check {
     }
     Ok(())
 }
+
+#[test]
+fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
+    // #10125: the index is built once; each changed file sees every other
+    // file's writes and none of its own.
+    let sources = [
+        (Path::new("a.py"), "import b\nb.LIMIT = 1\n"),
+        (Path::new("b.py"), "LIMIT = 10\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    assert!(
+        index
+            .excluding(Path::new("b.py"))
+            .may_rebind("LIMIT", Path::new("b.py"))
+    );
+    assert!(
+        !index
+            .excluding(Path::new("a.py"))
+            .may_rebind("LIMIT", Path::new("b.py"))
+    );
+    for own in ["a.py", "b.py"] {
+        assert_eq!(
+            index.excluding(Path::new(own)),
+            super::module_value::ForeignWrites::scan(
+                Path::new(own),
+                sources.iter().copied(),
+                false
+            ),
+            "{own}"
+        );
+    }
+}
