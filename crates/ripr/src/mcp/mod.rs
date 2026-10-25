@@ -76,7 +76,7 @@ Options:
 
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
-`ripr_get_repair_attempt`, `ripr_get_receipt_status`, and
+`ripr_get_repair_attempt`, `ripr_get_receipt_status`,
 `ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
