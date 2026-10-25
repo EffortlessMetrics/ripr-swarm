@@ -20,15 +20,13 @@
 # Case ids containing `spec0234` were named before the TypeScript rules were
 # renumbered; they cite today's RIPR-SPEC-0243.
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. For
-# RIPR-SPEC-0243 a PR that adds an example need not raise it: the xtask test
-# asserts no 0243 example is uncovered, so an uncited example fails there, and
-# every PR editing this line conflicts with the others (#9859). Other specs
-# have no such assertion; raising the floor stays a separate decision.
-# Lowering it is a reviewed edit with a reason.
+# `spec-examples.lock` lists the covered examples `verdict-corpus check`
+# protects, one per line in sorted order. A locked example that loses its case
+# fails; covering a new one passes with a note naming the line to add. The
+# xtask test asserts no RIPR-SPEC-0243 example is uncovered. Dropping a lock
+# line is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 159
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
@@ -730,6 +728,11 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust-only out-parameter oracle credit; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
