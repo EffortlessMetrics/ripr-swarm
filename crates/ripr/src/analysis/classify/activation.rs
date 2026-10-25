@@ -1485,6 +1485,28 @@ fn has_name_token(text: &str, name: &str) -> bool {
     })
 }
 
+/// Where a `let` pattern ends: the first `;` or the `=` that starts the
+/// initializer. The `=` of a range pattern (`0..=9`), `==`, `<=`, `>=`, `!=`
+/// and `=>` belongs to the pattern or an expression, not the initializer.
+fn let_pattern_end(rest: &str) -> usize {
+    let bytes = rest.as_bytes();
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b';' => return at,
+            b'=' => {
+                let prev = at.checked_sub(1).map(|prior| bytes[prior]);
+                let next = bytes.get(at + 1).copied();
+                if matches!(prev, Some(b'.' | b'=' | b'!' | b'<' | b'>')) || next == Some(b'=') {
+                    continue;
+                }
+                return at;
+            }
+            _ => {}
+        }
+    }
+    rest.len()
+}
+
 /// Whether the text between two adjacent pipes may hold closure parameters:
 /// it has no `;` outside brackets. Brackets are not required to balance: a
 /// parenthesized or-pattern (`|(A(n) | B(n))|`) puts an internal pipe between
@@ -1547,8 +1569,7 @@ fn pattern_position_binds_before(
     // `let <pattern> =` / `let <pattern>;`, including `if let` and `while let`.
     let let_binds = keyword_at("let").into_iter().any(|after| {
         let rest = &prefix[after..];
-        let end = rest.find(['=', ';']).unwrap_or(rest.len());
-        has_name_token(&rest[..end], name)
+        has_name_token(&rest[..let_pattern_end(rest)], name)
     });
     // `for <pattern> in`.
     let for_binds = keyword_at("for").into_iter().any(|after| {
@@ -9410,6 +9431,14 @@ assert_eq!(input.amount, 100);"#
                 "let Foo { a, .. } = foo;\n    ",
             ),
             ("let &n = &7;\n    ", "let &a = &7;\n    "),
+            (
+                "if let (0..=9, n) = t {\n        drop(n);\n    }\n    ",
+                "if let (0..=9, a) = t {\n        drop(a);\n    }\n    ",
+            ),
+            (
+                "let Some((1..=5, n)) = opt else {\n        return 0;\n    };\n    ",
+                "let Some((1..=5, a)) = opt else {\n        return 0;\n    };\n    ",
+            ),
             (
                 "let f = |(n, m)| n + m;\n    ",
                 "let f = |(a, b)| a + b;\n    ",
