@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-count-nested-alias",
+  "origin": "authored",
+  "version_label": "authored@5762d56b-10174-nested",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "bridge.ts",
+      "sha256": "4d32a6856a0ffd3d4ffa11fa7b6e850e808726a02df816abcdd713a562b84318"
+    },
+    {
+      "path": "package.json",
+      "sha256": "1239d4d885dcad42201a27ed9324f8f0f760b78700d8db9ced39a511cffe7eae"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "f4d980358bb4c2ece9665e5aeadb8ef3fe50467b8bda462dc8aae8a3db1a36b7"
+    },
+    {
+      "path": "src/notify.ts",
+      "sha256": "7c66d10c8683e3c67234e940948f27b3c597b9321316bd8bfbafa09612ae96d6"
+    },
+    {
+      "path": "test/notify.test.ts",
+      "sha256": "caec29f8104b06f86c415a9945367c92fbf89739fecdb77b3d439f3d7093eb30"
+    }
+  ]
+}

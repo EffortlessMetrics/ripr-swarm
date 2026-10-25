@@ -5349,7 +5349,13 @@ pub(crate) fn strongest_family_matching_oracle(
         if !candidate_observes_owner_call(candidate) {
             continue;
         }
-        for assertion in &candidate.test.assertions {
+        let mock_counts =
+            if matches!(probe_family, ProbeFamily::SideEffect) && !mock_facts.line_added() {
+                mock_call_count_assertions(candidate.test)
+            } else {
+                Vec::new()
+            };
+        for (assertion_index, assertion) in candidate.test.assertions.iter().enumerate() {
             let (kind, strength) = match (&assertion.error_payload, &assertion.mock_payload) {
                 (Some(payload), _)
                     if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
@@ -5384,7 +5390,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 // changes the count, so it keeps the exact reading.
                 _ if matches!(probe_family, ProbeFamily::SideEffect)
                     && !mock_facts.line_added()
-                    && mock_call_count_assertion(assertion) =>
+                    && mock_counts.get(assertion_index).copied().unwrap_or(false) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Weak)
                 }

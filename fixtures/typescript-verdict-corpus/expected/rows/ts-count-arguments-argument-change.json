@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-count-arguments-argument-change",
+  "subject_id": "authored-ts-count-arguments",
+  "origin": "authored",
+  "anchor": "src/notify.ts:2",
+  "behavior_family": "call_argument",
+  "test_shape": "node_mock_arguments",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

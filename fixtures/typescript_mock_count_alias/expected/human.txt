@@ -1,0 +1,51 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_mock_count_alias/input
+config: <cwd>/fixtures/typescript_mock_count_alias/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: limitations below (analysis incomplete)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: some changed files were not analyzed during language analysis; file: test/notify.test.ts; affected items: 1; recovery: inspect the failure — Some test files (affected items) register tests in shapes the TypeScript extractor does not index; the JSON limitation detail names samples. Check whether they exercise the changed code before trusting a no-path or weak result, or register them as top-level `test`/`it` calls with plain string titles (array-form `.each` is indexed).
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  File: src/notify.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: sender.send(2 * id);
+  Missing discriminator (1 of 2): Related test reaches `notify` with a mock interaction oracle, but TypeScript preview does not yet establish the changed call payload; keep the item advisory until mock-shape…
+  Related test: test/notify.test.ts:10 notify alias
+  Next step — TypeScript preview advisory: related mock interaction evidence is present, but mock
+    payloads are not yet a safe discriminator for `call sender.send includes 2 * id`; no actionable
+    repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and
+    edit boundaries
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach yes: 1 related test(s) found for owner `notify`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_mock_count_alias/input --diff <cwd>/fixtures/typescript_mock_count_alias/diff.patch --mode fast probe:src_notify.ts:typescript_preview:ea4f6421
+  ripr context --root <cwd>/fixtures/typescript_mock_count_alias/input --diff <cwd>/fixtures/typescript_mock_count_alias/diff.patch --mode fast --at probe:src_notify.ts:typescript_preview:ea4f6421
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_notify.ts:typescript_preview:ea4f6421 --root <cwd>/fixtures/typescript_mock_count_alias/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
