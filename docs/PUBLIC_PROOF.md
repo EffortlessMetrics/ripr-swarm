@@ -733,11 +733,11 @@ One agent per crate was given a real test gap and only ripr's own help output, a
 
 | Crate | Answer-key mutants caught | ripr commands to fix | Tool steps to fix | False weak findings after the fix |
 | --- | --- | --- | --- | --- |
-| bytesize | 3 | 17 | 19 | 2 |
-| humantime | 3 | 21 | 22 | 2 |
-| semver | 3 | 20 | 21 | 1 |
+| bytesize | 3 | 7 | 8 | 0 |
+| humantime | 3 | 8 | 9 | 4 |
+| semver | 3 | 10 | 9 | 1 |
 
-Across the runs: fix success 100.0%, stale re-check cycles 3, white-box tests written only to satisfy ripr 1.
+Across the runs: fix success 100.0%, stale re-check cycles n/a, white-box tests written only to satisfy ripr 0.
 
 ## The corpus behind the numbers
 
