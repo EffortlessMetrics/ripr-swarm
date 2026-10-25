@@ -396,3 +396,29 @@ fn a_rewritten_member_alias_of_a_namespace_records_no_import() {
         );
     }
 }
+
+#[test]
+fn a_namespace_whose_members_are_replaced_yields_no_member_import() {
+    // `lib.f = stub` makes the later `lib.f` the stub, not the module's
+    // export (#10464 review).
+    for source in [
+        "const lib = require('./lib');\nlib.f = () => 1;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib['f'] = () => 1;\nconst { f: s } = lib;\n",
+        "const lib = require('./lib');\ndelete lib.f;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nObject.assign(lib, stubs);\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nObject.defineProperty(lib, 'f', desc);\nconst s = lib.f;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+    // Passing a member value, or reading, does not replace anything.
+    assert!(
+        imports_of("const lib = require('./lib');\nuse(lib.g);\nconst s = lib.f;\n")
+            .iter()
+            .any(|import| !import.3 && import.0 == "./lib" && import.1.as_deref() == Some("f")),
+    );
+}

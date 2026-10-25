@@ -1402,6 +1402,9 @@ fn extract_imports_from_statements_inner(
     // `lib` later reads as that module's member (#10447).
     let mut namespaces: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    // Names whose members the file may replace (computed on the first
+    // namespace binding).
+    let mut mutated_names: Option<std::collections::HashSet<String>> = None;
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
         if let Statement::ImportDeclaration(import) = stmt {
@@ -1555,7 +1558,14 @@ fn extract_imports_from_statements_inner(
                     if direct_source.is_none() || written(name) {
                         continue;
                     }
-                    if !mutable {
+                    // A namespace whose members the file replaces
+                    // (`lib.f = stub`) no longer holds the module's export
+                    // there, so members read off it are not imports.
+                    if !mutable
+                        && !mutated_names
+                            .get_or_insert_with(|| member_mutations(statements))
+                            .contains(name)
+                    {
                         namespaces.insert(name.to_string(), source_str.clone());
                     }
                     push_unique_import(
@@ -2128,6 +2138,69 @@ fn collect_ambient_ranges(
             ));
         }
     }
+}
+
+/// Every identifier whose members the statements may replace: the root of a
+/// member assignment target (`lib.f = v`, `lib.a.b = v`, `lib[k] = v`), of a
+/// `delete lib.f`, or the bare identifier passed to any call
+/// (`Object.assign(lib, ...)`, `Object.defineProperty(lib, ...)`).
+fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+    use oxc_ast::ast::Expression;
+    fn root(mut expr: &Expression<'_>) -> Option<String> {
+        loop {
+            match expr.get_inner_expression() {
+                Expression::Identifier(id) => return Some(id.name.to_string()),
+                Expression::StaticMemberExpression(member) => expr = &member.object,
+                Expression::ComputedMemberExpression(member) => expr = &member.object,
+                _ => return None,
+            }
+        }
+    }
+    #[derive(Default)]
+    struct Mutations(std::collections::HashSet<String>);
+    impl<'a> oxc_ast_visit::Visit<'a> for Mutations {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            match target {
+                oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => {
+                    self.0.extend(root(&member.object));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+                    self.0.extend(root(&member.object));
+                }
+                _ => {}
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_unary_expression(&mut self, unary: &oxc_ast::ast::UnaryExpression<'a>) {
+            if unary.operator == oxc_ast::ast::UnaryOperator::Delete {
+                self.0.extend(root(&unary.argument));
+            }
+            oxc_ast_visit::walk::walk_unary_expression(self, unary);
+        }
+
+        fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+            for argument in &call.arguments {
+                // Only the namespace itself escapes; `f(lib.member)` passes a
+                // member value.
+                if let Some(Expression::Identifier(id)) = argument
+                    .as_expression()
+                    .map(Expression::get_inner_expression)
+                {
+                    self.0.insert(id.name.to_string());
+                }
+            }
+            oxc_ast_visit::walk::walk_call_expression(self, call);
+        }
+    }
+    let mut mutations = Mutations::default();
+    for statement in statements {
+        oxc_ast_visit::walk::walk_statement(&mut mutations, statement);
+    }
+    mutations.0
 }
 
 /// Every identifier the statements assign to: plain and destructuring
