@@ -17366,6 +17366,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::else_branch_registration_names_the_negated_guard",
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_nested_under_an_if_guards_its_tests",
   "crates/ripr/src/analysis/language/typescript/tests.rs::unguarded_registration_keeps_assertion_credit",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
   "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",

@@ -662,13 +662,15 @@ impl TypeScriptAdapter {
                 if let Some(gap) = conditional_credit_gap {
                     conditional_credit_gaps.push(gap);
                 }
-                if let Some(test) = tests
+                // One gap per guarded test, so a finding is marked partial only
+                // by the guarded tests it actually relates to (review on #10456).
+                for test in tests
                     .iter()
-                    .find(|test| test.conditional_registration.is_some())
+                    .filter(|test| test.conditional_registration.is_some())
                 {
                     conditional_registration_gaps.push(TypeScriptConditionalCreditGap {
                         file: relative.to_path_buf(),
-                        sample_line: test.factory_call_line.unwrap_or(test.line),
+                        sample_line: test.line,
                         condition: test.conditional_registration.clone().unwrap_or_default(),
                     });
                 }
@@ -1187,6 +1189,11 @@ impl TypeScriptAdapter {
             .flat_map(|finding| finding.related_tests.iter())
             .map(|related| normalized_path(&related.file))
             .collect();
+        let consulted_test_lines: std::collections::BTreeSet<(String, usize)> = findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .map(|related| (normalized_path(&related.file), related.line))
+            .collect();
         let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
             consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
         } else {
@@ -1197,7 +1204,13 @@ impl TypeScriptAdapter {
         }
         let consulted_registration_gaps: Vec<&TypeScriptConditionalCreditGap> =
             if test_index_consumed {
-                self::consulted_credit_gaps(&conditional_registration_gaps, &consulted_test_files)
+                conditional_registration_gaps
+                    .iter()
+                    .filter(|gap| {
+                        consulted_test_lines
+                            .contains(&(normalized_path(&gap.file), gap.sample_line))
+                    })
+                    .collect()
             } else {
                 Vec::new()
             };

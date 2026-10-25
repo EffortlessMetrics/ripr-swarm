@@ -18774,3 +18774,38 @@ fn unguarded_registration_keeps_assertion_credit() {
     assert_eq!(tests[0].conditional_registration, None);
     assert!(!tests[0].assertions.is_empty());
 }
+
+/// Review on #10456: a guarded test the finding never relates to must not
+/// mark the analysis partial just because it shares a file with the related,
+/// unguarded test.
+#[test]
+fn unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("guard-unrelated")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function f(a: number): number {\n  return a + 1;\n}\nexport function g(a: number): number {\n  return a * 2;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/mixed.test.ts"),
+        "import { f, g } from '../src/calc';\nif (isWindows) {\n  test('g doubles', () => {\n    expect(g(2)).toBe(4);\n  });\n}\ntest('f increments', () => {\n  expect(f(1)).toBe(2);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/calc.ts", &[(2, "  return a + 1;")])],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_conditional_registration"))),
+        "{:?}",
+        result.limitations
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
