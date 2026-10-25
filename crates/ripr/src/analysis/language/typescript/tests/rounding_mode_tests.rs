@@ -313,3 +313,70 @@ fn loop_rows_resolve_only_a_single_untouched_literal_table() {
         None
     );
 }
+
+const HALF: &str =
+    "export function half(a: number, b: number): number {\n  return Math.round(b / 2);\n}\n";
+const HALF_OLD: &str = "  return Math.round(b / 2);";
+
+fn half(label: &str, call: &str) -> Result<Finding, String> {
+    rounding_finding(
+        label,
+        HALF,
+        HALF_OLD,
+        &HALF_OLD.replace("Math.round", "Math.floor"),
+        2,
+        &format!(
+            "import {{ expect, it }} from \"vitest\";\nimport {{ half }} from \"../src/subject\";\n\nit(\"halves\", () => {{\n  expect({call}).toBe(3);\n}});\n"
+        ),
+    )
+}
+
+#[test]
+fn a_spread_argument_leaves_later_positions_unread() -> Result<(), String> {
+    // Without the spread, `half(4, 5)` binds b = 5: 2.5 rounds to 3 and floors
+    // to 2, so the call tells the functions apart.
+    let plain = half("round-plain", "half(4, 5)")?;
+    assert_eq!(plain.class, ExposureClass::Exposed);
+    // An empty spread shifts `4` into `a` and `5` into `b`, but by position
+    // alone `4` would bind `b` (2, whole) and withdraw the credit.
+    let spread = half("round-spread", "half(...[], 4, 5)")?;
+    assert_eq!(spread.class, ExposureClass::Exposed, "{:?}", spread.missing);
+    Ok(())
+}
+
+#[test]
+fn every_positional_reader_marks_positions_after_a_spread_unreadable() {
+    // `owner_call_arguments`, the whole-call reader and the member-call reader
+    // feed the rounding, dropped-term, boundary, boolean-pin, lookup-table and
+    // object-argument guards (#9645).
+    let unreadable_after = |prefix: &[&str]| {
+        let mut arguments: Vec<String> = prefix.iter().map(|a| a.to_string()).collect();
+        arguments.resize(16, "...".to_string());
+        arguments
+    };
+    let calls = owner_call_arguments(
+        "half(1, 2) + half(...xs, 4, 5) + half(1, ...xs, 5)",
+        "half",
+        &[],
+    );
+    assert_eq!(
+        calls,
+        vec![
+            vec!["1".to_string(), "2".to_string()],
+            unreadable_after(&[]),
+            unreadable_after(&["1"]),
+        ]
+    );
+    assert_eq!(
+        positional_prefix(vec![
+            "1".to_string(),
+            " ...rest".to_string(),
+            "3".to_string()
+        ]),
+        unreadable_after(&["1"])
+    );
+    assert_eq!(
+        positional_prefix(vec!["a".to_string(), "b".to_string()]),
+        vec!["a".to_string(), "b".to_string()]
+    );
+}

@@ -156,7 +156,12 @@ nothing else in the file references, and the pattern is a plain array
 destructuring of identifiers, each owner call whose argument is a loop
 variable folds once for every row (#9653). A computed row, a second
 reference to the table, a nested or defaulted pattern or any other
-statement outside the test keeps the pre-rule credit.
+statement outside the test keeps the pre-rule credit. A spread argument
+(`owner(...xs, 4, 5)`) can supply any number of values, so the arguments
+after it sit at unknown positions and are not bound to parameters; every
+reader of an owner call's arguments (this rule, rule 1 and the other
+position-binding guards) reads each position from the first spread on as
+unreadable, neither a later argument nor an absent one (#9645).
 
 ### Decisions
 

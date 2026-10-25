@@ -4332,10 +4332,31 @@ pub(crate) fn owner_call_arguments(
             continue;
         };
         if let Some(arguments) = balanced_call_arguments(inner) {
-            calls.push(arguments);
+            calls.push(positional_prefix(arguments));
         }
     }
     calls
+}
+
+/// Parameter positions a spread call keeps marked unreadable.
+const SPREAD_UNREADABLE_POSITIONS: usize = 16;
+
+/// The call arguments with every position at or after the first spread
+/// (`f(...xs, 5)`) replaced by the spread marker. A spread can supply any
+/// number of values, so a later argument sits at an unknown position and a
+/// parameter there is unreadable rather than absent: a reader that binds
+/// arguments by index neither mistakes `5` for the next parameter nor reads
+/// the missing value as `undefined` (#9645).
+pub(crate) fn positional_prefix(mut arguments: Vec<String>) -> Vec<String> {
+    let Some(at) = arguments
+        .iter()
+        .position(|argument| argument.trim_start().starts_with("..."))
+    else {
+        return arguments;
+    };
+    arguments.truncate(at);
+    arguments.resize(at.max(SPREAD_UNREADABLE_POSITIONS), "...".to_string());
+    arguments
 }
 
 /// Split the text after a call's opening parenthesis into its top-level
@@ -8181,6 +8202,7 @@ fn ts_whole_owner_call_arguments(
         .map(str::trim_start)
         .find(|rest| ts_is_one_argument_list(rest))
         .and_then(|rest| balanced_call_arguments(&rest[1..]))
+        .map(positional_prefix)
 }
 
 /// RIPR-SPEC-0246 rule 3: the arguments of the owner call (named as
@@ -8204,7 +8226,11 @@ fn ts_owner_call_member_arguments(
         .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
     let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
     for rest in bare.chain(qualified).map(str::trim_start) {
-        let Some(arguments) = rest.strip_prefix('(').and_then(balanced_call_arguments) else {
+        let Some(arguments) = rest
+            .strip_prefix('(')
+            .and_then(balanced_call_arguments)
+            .map(positional_prefix)
+        else {
             continue;
         };
         let Some(end) = call_list_end(rest) else {
