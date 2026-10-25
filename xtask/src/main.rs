@@ -65,6 +65,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod size_scaling;
 mod termination_qualification;
 mod types;
 mod work_adapter_identity;
