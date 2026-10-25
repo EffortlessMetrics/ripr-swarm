@@ -350,10 +350,6 @@ fn missing_input_is_withheld_for_every_unclosed_shape() -> Result<(), String> {
             "function helper() {\n  return applyDiscount(100);\n}\ntest('below', () => {\n  helper();\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
         ),
         (
-            "rebound owner name in the body",
-            "test('below', () => {\n  const applyDiscount = (n: number) => n;\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
-        ),
-        (
             "unknown constant import",
             "import { BOUND } from '../src/other';\ntest('below', () => {\n  expect(applyDiscount(BOUND)).toBe(50);\n});\n".to_string(),
         ),
@@ -368,6 +364,12 @@ fn missing_input_is_withheld_for_every_unclosed_shape() -> Result<(), String> {
     ];
     for (label, body) in cases {
         let finding = classify(&PREDICATE_CHANGE, &format!("{IMPORT}{body}"))?;
+        // Each shape must still produce a related row, so the check below
+        // cannot pass vacuously.
+        assert!(
+            !finding.related_tests.is_empty(),
+            "{label}: the shape produced no related row"
+        );
         for row in &finding.related_tests {
             assert_ne!(
                 row.miss,
@@ -382,6 +384,23 @@ fn missing_input_is_withheld_for_every_unclosed_shape() -> Result<(), String> {
             );
         }
     }
+    // A body that rebinds the owner name is not related at all: no row
+    // exists to carry the miss.
+    let rebound = classify(
+        &PREDICATE_CHANGE,
+        &format!(
+            "{IMPORT}test('below', () => {{\n  const applyDiscount = (n: number) => n;\n  expect(applyDiscount(50)).toBe(50);\n}});\n"
+        ),
+    )?;
+    assert!(
+        rebound.related_tests.is_empty(),
+        "rebound owner name: {:?}",
+        rebound
+            .related_tests
+            .iter()
+            .map(|r| (&r.name, r.miss))
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 
