@@ -3355,7 +3355,10 @@ fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
     }
     let verdict = match crate::bounded_input::read_to_string_with_limit(&path, MCP_CONFIG_MAX_BYTES)
     {
-        Err(error) => Err(format!(".mcp.json could not be read ({error})")),
+        Err(error) => Err((
+            format!(".mcp.json could not be read ({error})"),
+            MCP_REPAIR_FIX_FILE,
+        )),
         Ok(text) => mcp_config_problem(&text),
     };
     Some(match verdict {
@@ -3363,44 +3366,68 @@ fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
             ok: true,
             text: ".mcp.json: `ripr` MCP server runs `ripr mcp --stdio`".to_string(),
         },
-        Err(problem) => McpConfigVerdict {
+        Err((problem, repair)) => McpConfigVerdict {
             ok: false,
-            text: format!(
-                ".mcp.json: {problem}; rerun `ripr init --mcp` (add `--force` to replace a customized `ripr` entry)"
-            ),
+            text: format!(".mcp.json: {problem}; {repair}"),
         },
     })
 }
 
+/// Repair advice per failure category: `ripr init --mcp` refuses to touch a
+/// file that is not a JSON object with an object `mcpServers`, so those need a
+/// manual fix first.
+const MCP_REPAIR_FIX_FILE: &str = "fix or remove the file, then run `ripr init --mcp`";
+const MCP_REPAIR_INIT: &str = "run `ripr init --mcp`";
+const MCP_REPAIR_FORCE: &str = "run `ripr init --mcp --force` to replace the customized entry";
+
 /// `Ok` when the document has a `ripr` server whose command is `ripr` with
-/// args ending in `mcp --stdio` (the entry `ripr init --mcp` writes).
-fn mcp_config_problem(text: &str) -> Result<(), String> {
-    let document: serde_json::Value = serde_json::from_str(text)
-        .map_err(|error| format!("is not valid JSON ({})", display_text(&error.to_string())))?;
+/// args exactly `mcp --stdio` (the entry `ripr init --mcp` writes; `ripr mcp`
+/// rejects any other leading argument). `Err` carries the problem and repair.
+fn mcp_config_problem(text: &str) -> Result<(), (String, &'static str)> {
+    let document: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        (
+            format!("is not valid JSON ({})", display_text(&error.to_string())),
+            MCP_REPAIR_FIX_FILE,
+        )
+    })?;
     let servers = document
         .get("mcpServers")
         .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| "has no `mcpServers` object".to_string())?;
+        .ok_or_else(|| {
+            (
+                "has no `mcpServers` object".to_string(),
+                MCP_REPAIR_FIX_FILE,
+            )
+        })?;
     let entry = servers
         .get("ripr")
-        .ok_or_else(|| "has no `ripr` server entry".to_string())?;
+        .ok_or_else(|| ("has no `ripr` server entry".to_string(), MCP_REPAIR_INIT))?;
     let command = entry.get("command").and_then(serde_json::Value::as_str);
-    let args: Vec<&str> = entry
-        .get("args")
-        .and_then(serde_json::Value::as_array)
-        .map(|args| args.iter().filter_map(serde_json::Value::as_str).collect())
-        .unwrap_or_default();
-    if command == Some("ripr") && args.ends_with(&["mcp", "--stdio"]) {
+    let args = entry.get("args").and_then(serde_json::Value::as_array);
+    let exact = args.is_some_and(|args| {
+        args.len() == 2 && args[0].as_str() == Some("mcp") && args[1].as_str() == Some("--stdio")
+    });
+    if command == Some("ripr") && exact {
         return Ok(());
     }
-    Err(format!(
-        "`ripr` server entry runs `{}`, not `ripr mcp --stdio`",
-        display_text(
-            &std::iter::once(command.unwrap_or("<no command>"))
-                .chain(args.iter().copied())
+    let shown = args
+        .map(|args| {
+            args.iter()
+                .map(|arg| arg.as_str().map_or_else(|| arg.to_string(), str::to_string))
                 .collect::<Vec<_>>()
-                .join(" ")
-        )
+        })
+        .unwrap_or_default();
+    Err((
+        format!(
+            "`ripr` server entry runs `{}`, not `ripr mcp --stdio`",
+            display_text(
+                &std::iter::once(command.unwrap_or("<no command>").to_string())
+                    .chain(shown)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        ),
+        MCP_REPAIR_FORCE,
     ))
 }
 
@@ -6015,6 +6042,16 @@ mod tests {
                 "runs `/opt/ripr mcp --stdio`, not `ripr mcp --stdio`",
             ),
             (
+                "mcp-cfg-extra-leading-arg",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["bogus","mcp","--stdio"]}}}"#,
+                "runs `ripr bogus mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-non-string-arg",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":[1,"mcp","--stdio"]}}}"#,
+                "runs `ripr 1 mcp --stdio`",
+            ),
+            (
                 "mcp-cfg-no-command",
                 r#"{"mcpServers":{"ripr":{"args":["mcp","--stdio"]}}}"#,
                 "runs `<no command> mcp --stdio`",
@@ -6026,6 +6063,33 @@ mod tests {
                 verdict
                     .as_ref()
                     .is_some_and(|(ok, line)| !*ok && line.contains(expected)),
+                "{name}: {verdict:?}"
+            );
+        }
+        // Repair advice matches what `ripr init --mcp` can actually do.
+        for (name, text, advice) in [
+            ("mcp-cfg-fix-json", "{ not json", "fix or remove the file"),
+            (
+                "mcp-cfg-fix-servers",
+                r#"{"mcpServers":[]}"#,
+                "fix or remove the file",
+            ),
+            (
+                "mcp-cfg-fix-missing",
+                r#"{"mcpServers":{}}"#,
+                "run `ripr init --mcp`",
+            ),
+            (
+                "mcp-cfg-fix-custom",
+                r#"{"mcpServers":{"ripr":{"command":"x"}}}"#,
+                "`ripr init --mcp --force`",
+            ),
+        ] {
+            let verdict = mcp_verdict_for(name, Some(text))?;
+            assert!(
+                verdict
+                    .as_ref()
+                    .is_some_and(|(_, line)| line.contains(advice)),
                 "{name}: {verdict:?}"
             );
         }
