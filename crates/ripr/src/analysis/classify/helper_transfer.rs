@@ -2481,27 +2481,26 @@ const TRANSPARENT_MACROS: &[&str] = &[
 /// Whether `body` invokes a macro outside [`TRANSPARENT_MACROS`] (#10284).
 /// A path-qualified macro (`tracing::info!`) is judged by its last segment.
 fn caller_invokes_opaque_macro(body: &str) -> bool {
+    // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
+    // any other identifier before `!` and a delimiter is a macro path, even
+    // with whitespace between (`bail ! (qty)` is valid Rust).
+    const PREFIX_KEYWORDS: &[&str] = &["if", "while", "match", "return", "in", "break", "yield"];
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
-    let bytes = masked.as_bytes();
     masked.match_indices('!').any(|(at, _)| {
         let is_invocation = masked
             .get(at + 1..)
             .is_some_and(|rest| rest.trim_start().starts_with(['(', '[', '{']));
-        let name_start = masked
-            .get(..at)
-            .and_then(|head| {
-                head.char_indices()
-                    .rev()
-                    .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
-                    .map(|(index, c)| index + c.len_utf8())
-            })
+        let head = masked.get(..at).unwrap_or_default().trim_end();
+        let name_start = head
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+            .map(|(index, c)| index + c.len_utf8())
             .unwrap_or(0);
-        let name = masked.get(name_start..at).unwrap_or_default();
+        let name = head.get(name_start..).unwrap_or_default();
         is_invocation
-            && at
-                .checked_sub(1)
-                .and_then(|before| bytes.get(before))
-                .is_some_and(|&before| before.is_ascii_alphanumeric() || before == b'_')
+            && !name.is_empty()
+            && !PREFIX_KEYWORDS.contains(&name)
             && !TRANSPARENT_MACROS.contains(&name)
     })
 }
@@ -3734,6 +3733,30 @@ mod tests {
         }
     }
 
+    // #10284 review: keyword-prefixed negation is not a macro, while a
+    // user macro stays opaque with or without space before its `!`.
+    #[test]
+    fn opaque_macro_detection_separates_keywords_from_macro_paths() {
+        for body in [
+            "if !(a && b) { 1 } else { 0 }",
+            "return !(flag);",
+            "while !(done) {}",
+            "let same = a != b;",
+            "assert_eq!(a, b); write!(out, \"x\"); vec![1]",
+            "let s = \"bail!(x)\"; // bail!(x)",
+        ] {
+            assert!(!caller_invokes_opaque_macro(body), "{body}");
+        }
+        for body in [
+            "bail!(x);",
+            "bail ! (x);",
+            "bail !\n{ x };",
+            "crate::m::bail![x];",
+        ] {
+            assert!(caller_invokes_opaque_macro(body), "{body}");
+        }
+    }
+
     // #6694 / #6672: an exact oracle on the wrapper's result stands for the
     // helper's result only when the wrapper hands that result to its return.
     #[test]
@@ -3794,6 +3817,7 @@ mod tests {
             // #10284: a user macro may hide an early `return`
             "pub fn w(qty: u32) -> u32 {\n    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    crate::bail![qty];\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    bail_at_ten ! (qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
         ] {
             assert!(
                 !chain_forwards_owner_result("is_bulk", &one_hop_chain(body)),
