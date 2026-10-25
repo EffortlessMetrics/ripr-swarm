@@ -141,14 +141,39 @@ fn a_call_count_on_a_mock_the_owner_never_receives_is_not_made_unknown() -> Resu
 
 const REAL_VALUE: &str = "  const real = mock.fn(async () => \"ok\");\n  assert.equal(await withRetry(real, 3), \"ok\");";
 
-fn assert_stays_a_gap(label: &str, body: &str) -> Result<(), String> {
-    let finding = run(label, RETRY, OLD, NEW, &retry_test(body))?;
-    assert_ne!(
+fn assert_gap(label: &str, finding: &Finding) {
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{label}: {:?}",
+        finding.missing
+    );
+    assert!(
+        !finding
+            .stop_reasons
+            .contains(&StopReason::GapEvidenceUnresolved),
+        "{label}: {:?}",
+        finding.stop_reasons
+    );
+}
+
+fn assert_abstains(label: &str, finding: &Finding) {
+    assert_eq!(
         finding.class,
         ExposureClass::StaticUnknown,
         "{label}: {:?}",
         finding.missing
     );
+    assert_eq!(
+        finding.stop_reasons,
+        vec![StopReason::GapEvidenceUnresolved],
+        "{label}"
+    );
+}
+
+fn assert_stays_a_gap(label: &str, body: &str) -> Result<(), String> {
+    let finding = run(label, RETRY, OLD, NEW, &retry_test(body))?;
+    assert_gap(label, &finding);
     Ok(())
 }
 
@@ -287,12 +312,7 @@ fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), S
             "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({call}, /down/);\n  assert.equal(fn.mock.callCount(), 2);"
         );
         let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
-        assert_eq!(
-            finding.class,
-            ExposureClass::StaticUnknown,
-            "{label}: {:?}",
-            finding.missing
-        );
+        assert_abstains(label, &finding);
     }
     for (label, setup, call, count) in [
         (
@@ -336,12 +356,7 @@ fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), S
             "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  {setup}\n  await assert.rejects({call}, /down/);\n  assert.equal({count}, 2);"
         );
         let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
-        assert_eq!(
-            finding.class,
-            ExposureClass::StaticUnknown,
-            "{label}: {:?}",
-            finding.missing
-        );
+        assert_abstains(label, &finding);
     }
     let labelled = RETRY.replace(OLD, "  outer: for (let i = 0; i < attempts; i++) {");
     let labelled_new = "  outer: for (let i = 0; i < attempts - 1; i++) {";
@@ -352,12 +367,7 @@ fn every_way_of_handing_the_counted_mock_to_the_owner_abstains() -> Result<(), S
         labelled_new,
         &retry_test(COUNTED),
     )?;
-    assert_eq!(
-        finding.class,
-        ExposureClass::StaticUnknown,
-        "{:?}",
-        finding.missing
-    );
+    assert_abstains("loop-label", &finding);
     let alias = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  const task = fn;\n  await assert.rejects(withRetry(task, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
     let finding = run("loop-carrier", RETRY, OLD, NEW, &retry_test(alias))?;
     assert_eq!(
@@ -411,4 +421,85 @@ fn a_method_owner_called_through_a_receiver_abstains() -> Result<(), String> {
         finding.missing
     );
     Ok(())
+}
+
+#[test]
+fn assignment_and_annotated_carriers_abstain() -> Result<(), String> {
+    for (label, setup) in [
+        ("loop-reassigned", "let task = real;\n  task = fn;"),
+        ("loop-annotated", "const task: () => Promise<string> = fn;"),
+    ] {
+        let body = format!(
+            "  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  {setup}\n  await assert.rejects(withRetry(task, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_abstains(label, &finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_callback_parameter_named_like_the_mock_is_not_the_mock() -> Result<(), String> {
+    assert_stays_a_gap(
+        "loop-param-shadow",
+        "  const fn = mock.fn();\n  assert.equal(await withRetry(async (fn = async () => \"ok\") => fn(), 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
+    )?;
+    assert_stays_a_gap(
+        "loop-function-shadow",
+        "  const fn = mock.fn();\n  assert.equal(await withRetry(async function (fn: any) { return fn(); }, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
+    )
+}
+
+const SVC: &str = "export class Svc {\n  async retry<T>(fn: () => Promise<T>, attempts: number): Promise<T> {\n  for (let i = 0; i < attempts; i++) {\n    try {\n      return await fn();\n    } catch (error) {}\n  }\n  throw new Error(\"down\");\n  }\n}\n";
+
+fn svc_test(body: &str) -> String {
+    format!(
+        "import {{ it, mock }} from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ Svc }} from \"../src/retry\";\n\nit(\"x\", async () => {{\n  const svc = new Svc();\n{body}\n}});\n"
+    )
+}
+
+#[test]
+fn a_method_owner_keeps_its_receiver_identity() -> Result<(), String> {
+    let counted = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(svc.retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
+    // A same-named local cannot shadow the method property.
+    let beside_local = format!("  const retry = () => \"unrelated\";\n  retry();\n{counted}");
+    let finding = run("loop-method-local", SVC, OLD, NEW, &svc_test(&beside_local))?;
+    assert_abstains("loop-method-local", &finding);
+    // Another receiver's same-named member is another binding.
+    let other = "  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  const other = { retry: (f: unknown, n: number) => n };\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  other.retry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);";
+    let finding = run("loop-method-other", SVC, OLD, NEW, &svc_test(other))?;
+    assert_gap("loop-method-other", &finding);
+    Ok(())
+}
+
+#[test]
+fn every_asserted_count_spelling_abstains_and_an_unasserted_read_does_not() -> Result<(), String> {
+    let thrower = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(withRetry(fn, 2), /down/);";
+    for (label, count) in [
+        (
+            "loop-mock-alias",
+            "const m = fn.mock;\n  assert.equal(m.callCount(), 2);",
+        ),
+        (
+            "loop-calls-destructure",
+            "const { calls } = fn.mock;\n  assert.equal(calls.length, 2);",
+        ),
+        (
+            "loop-count-local",
+            "const n = fn.mock.callCount();\n  assert.equal(n, 2);",
+        ),
+        ("loop-sinon-count", "assert.equal(fn.callCount, 2);"),
+        ("loop-sinon-called", "assert.equal(fn.calledTwice, true);"),
+        ("loop-reversed", "assert.equal(2, fn.mock.callCount());"),
+    ] {
+        let body = format!("{thrower}\n  {count}");
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_abstains(label, &finding);
+    }
+    // A count that no assertion reads cannot fail the test.
+    let unasserted = "  const fn = mock.fn(async () => \"ok\");\n  assert.equal(await withRetry(fn, 3), \"ok\");\n  fn.mock.callCount();\n  console.log(fn.mock.callCount());";
+    assert_stays_a_gap("loop-unasserted", unasserted)?;
+    // A property mock is not the local handed to the owner.
+    let property = "  const fn = mock.fn(async () => \"ok\");\n  const other = { fn: mock.fn(async () => \"ok\") };\n  assert.equal(await withRetry(fn, 3), \"ok\");\n  assert.equal(other.fn.mock.callCount(), 0);";
+    assert_stays_a_gap("loop-property-count", property)
 }

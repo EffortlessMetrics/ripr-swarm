@@ -321,41 +321,49 @@ discriminates the change; that credit is deferred (Decision 9).
 
 **Rule 8. A counted-loop header change read only through a mock call count is
 unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
-both counted `for (init; test; update)` headers that differ (whitespace
-beside brackets, commas and comparison operators is ignored; literal contents
-and `+`/`-` spacing are not, and a header holding a `/` is compared as
-written), and a related test that calls the owner directly, by import, through a
-renamed, default or namespace import, or as a method through a receiver
-reads the call count of a mock (`m.mock.callCount()`, `m.mock.calls.length`,
-`m.callCount()` after `const m = x.mock`, `expect(m).toHaveBeenCalledTimes(n)`,
-`m` any identifier in the receiver, so `(m as any).mock...` and `ms[0].mock...`
-count) that the same statement as an owner run mentions. Owner binding and
-mock flow are separate: the call names come from `ts_owner_call_names`, and a
-local that runs one (`const r = owner`, `const go = (f) => owner(f)`,
-`function go(f) { return owner(f); }`) is the owner too. The mock flows by
-mention, not by argument position: `m`, or a local assigned from an
-expression that mentions it (`const task = m`, `const args = [m, 2]`,
-`const { run } = { run: m }`, `let t; t = m`, `const h = { m }`), is a free
-identifier in a statement that mentions the owner in any spelling
-(`owner(m)`, `owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`,
-`owner(() => m())`, `owner(m.bind(null))`, `owner(m as any)`, `owner(...args)`),
-as does `owner?.(m)`. That is the conservative policy: a handoff the rule
-cannot see abstains rather than reads `weakly_exposed`, and so does a mock
-that merely shares a statement with the owner. A member value
-(`owner(other.m)`), an object key (`{ m: x }`), a member call on a plain
-function owner (`other.owner(m)`, including `other. owner(m)` and
-`other./* c */owner(m)`), a count assigned to a local (`const n =
-m.mock.callCount()`), and text in a comment or string do not. A call count on
-a mock no owner statement mentions stays an actionable gap. A labelled
-header (`outer: for (...)`) is a counted header, and a `;` or `)` inside a
-string in a clause does not end it. An owner spelling the adapter does not link
-as a call (`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`)
-has only a heuristic relation and an advisory finding, never a repair target;
-the rule reads it as a handoff once a relation exists. A ladder result of
-`weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
-`gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
-loop header, and the adapter does not model how many iterations the loop
-runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
+both counted `for (init; test; update)` headers that differ (a leading label
+is skipped; whitespace beside brackets, commas and comparison operators is
+ignored; literal contents and `+`/`-` spacing are not, and a header holding a
+`/` is compared as written), and a related test that runs the owner asserts
+the call count of a mock whose flow the rule cannot rule out of the owner, a
+ladder result of `weakly_exposed` with a strong oracle reads `static_unknown`
+with stop reason `gap_evidence_unresolved`.
+
+*Counted mock.* Only an assertion counts: a count read in the observed or
+expected expression (`m.mock.callCount()`, `m.mock.calls.length`,
+`m.callCount`, `m.calledTwice`, `m.getCalls()`), a local that holds one
+(`const n = m.mock.callCount(); assert.equal(n, 2)`), a local that aliases
+`m.mock` (`const { calls } = m.mock`), or `expect(m).toHaveBeenCalledTimes(n)`.
+The mock is the root of the receiver (`other.m.mock.callCount()` counts
+`other`). A count that no assertion reads cannot fail the test and asserts
+nothing.
+
+*Unresolved flow.* Owner binding and mock flow are separate. The owner names
+come from `ts_owner_call_names`, plus a local whose declaration, assignment,
+function or class mentions one (`const r = owner`, `const go = (f) =>
+owner(f)`, `function go(f) { return owner(f); }`, `class H { go(f) {...} }`).
+For methods, only receivers the test builds from the owner's class count
+(`svc.retry`), and a same-named local cannot shadow the property. The mock
+and every local assigned from an expression that mentions it (declaration,
+assignment, destructuring, container, multi-line) are carriers. The rule
+abstains when a statement that mentions the owner also mentions a carrier, or
+when a carrier is used anywhere the rule cannot show is unrelated: not a plain
+local binding, not a state read (`.mock`, `.callCount`, `.calledOnce`), not a
+direct invocation outside any call, not an argument of a member call on a
+receiver that is neither the owner nor a carrier and does not store its
+arguments (`console.log(m)`, `other.owner(m)`), and not an argument of a
+body-local function that does not reach the owner. An unknown callee is
+unresolved flow and abstains. A member value (`owner(other.m)`), an object key
+(`{ m: x }`), a callback or function parameter that rebinds the name
+(`async (m = g) => m()`) and text in a comment or string are not uses of the
+mock. A call count on a mock that never leaves its declaration and its count
+reads stays an actionable gap. An owner spelling the adapter does not link as
+a call (`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`)
+has only a heuristic relation and an advisory finding, never a repair target.
+Multi-line `for (` headers, `while`, and chained labels are not read. The
+predicate-boundary witness does not apply to a loop header, and the adapter
+does not model how many iterations the loop runs, so neither a gap nor a
+credit is established. `for...of`, `for...in`,
 `while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
 `static_unknown`; it credits nothing. The credit, which needs an iteration
 count model, is tracked in #9874.
