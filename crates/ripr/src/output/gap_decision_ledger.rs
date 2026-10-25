@@ -536,7 +536,12 @@ fn repo_exposure_analysis_coverage(
     {
         return None;
     }
-    let corpus = source.pointer("/source_subject/corpus")?;
+    // The input identity is a top-level producer field (not part of the
+    // checkout-path independent `source_subject`); the coverage corpus carries
+    // both.
+    let mut corpus = source.pointer("/source_subject/corpus")?.clone();
+    corpus["analysis_inputs"] = source.get("analysis_inputs")?.clone();
+    let corpus = &corpus;
     if !corpus_identity_is_well_formed(corpus)
         || crate::output::gap_source_subject::analyzed_production_files(corpus).is_none()
         || crate::output::gap_source_subject::analysis_inputs(corpus).is_none()
@@ -7905,8 +7910,19 @@ mod tests {
             "cache_schema_version": SCHEMA,
             "files_content_hash": "0123456789abcdef",
             "analyzed_production_files": ["src/lib.rs"],
-            "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d", "workspace_manifests_hash": "e", "lockfile_hash": "f", "toolchain_hash": "g", "analyzer_version": "h"},
         })
+    }
+
+    fn test_inputs() -> Value {
+        serde_json::json!({"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d", "workspace_manifests_hash": "e", "lockfile_hash": "f", "toolchain_hash": "g", "analyzer_version": "h"})
+    }
+
+    /// The corpus a coverage disclosure carries: the source corpus plus the
+    /// top-level input identity.
+    fn test_coverage_corpus() -> Value {
+        let mut corpus = test_corpus();
+        corpus["analysis_inputs"] = test_inputs();
+        corpus
     }
 
     #[test]
@@ -7918,7 +7934,7 @@ mod tests {
                     "scope": "rust_workspace",
                     "basis": "repo_exposure_complete_run",
                     "run_status": "complete",
-                    "corpus": test_corpus(),
+                    "corpus": test_coverage_corpus(),
                     "records_total": records.len(),
                     "records_digest": gap_records_digest(records),
                 }
@@ -7992,6 +8008,7 @@ mod tests {
             "run_status": "complete",
             "seams": vec![serde_json::json!({}); seams],
             "source_subject": {"corpus": test_corpus()},
+            "analysis_inputs": test_inputs(),
         })
     }
 
@@ -8069,6 +8086,17 @@ mod tests {
             corpus.remove("analyzed_production_files");
         }
         assert!(repo_exposure_analysis_coverage(Some(&missing), true, &records).is_none());
+        let mut no_inputs = complete.clone();
+        if let Some(object) = no_inputs.as_object_mut() {
+            object.remove("analysis_inputs");
+        }
+        assert!(repo_exposure_analysis_coverage(Some(&no_inputs), true, &records).is_none());
+        // The input identity is carried into the coverage corpus.
+        let with_inputs = repo_exposure_analysis_coverage(Some(&complete), true, &records);
+        assert_eq!(
+            with_inputs.and_then(|coverage| coverage.pointer("/corpus/analysis_inputs").cloned()),
+            Some(test_inputs())
+        );
         // Language guidance entries do not narrow Rust coverage.
         let guided = with(serde_json::json!({"limitations": [{"category": "python_diff_first"}]}));
         assert!(repo_exposure_analysis_coverage(Some(&guided), true, &records).is_some());

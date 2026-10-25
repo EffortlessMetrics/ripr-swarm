@@ -276,11 +276,33 @@ fn classified_cache_cargo_home_fallback_and_relative_home_match_cold() -> Result
                 "relative home edit must miss the old classified key despite different caller cwd"
             );
             assert_eq!(edited["seams"], edited_cold["seams"]);
+            // The checkout-independent corpus is untouched by the Cargo
+            // configuration edit; the top-level input identity (#9599) moves
+            // in its manifest component only.
             assert_eq!(edited.pointer("/source_subject/corpus"), Some(corpus));
             assert_eq!(edited_cold.pointer("/source_subject/corpus"), Some(corpus));
+            for document in [&edited, &edited_cold] {
+                let edited_inputs = document
+                    .pointer("/analysis_inputs")
+                    .ok_or("edited inputs")?;
+                assert_ne!(
+                    edited_inputs["workspace_manifests_hash"],
+                    initial["analysis_inputs"]["workspace_manifests_hash"],
+                    "a Cargo configuration edit must change the disclosed manifest identity"
+                );
+                let mut left = edited_inputs.clone();
+                let mut right = initial["analysis_inputs"].clone();
+                for value in [&mut left, &mut right] {
+                    if let Some(inputs) = value.as_object_mut() {
+                        inputs.remove("workspace_manifests_hash");
+                    }
+                }
+                assert_eq!(left, right);
+            }
             fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
             let (restored, trace) = run(&cache)?;
             assert_eq!(restored.pointer("/source_subject/corpus"), Some(corpus));
+            assert_eq!(restored["analysis_inputs"], initial["analysis_inputs"]);
             assert!(
                 trace.contains("phase=total status=cache_hit"),
                 "relative home revert must reuse preserved facts: {trace}"

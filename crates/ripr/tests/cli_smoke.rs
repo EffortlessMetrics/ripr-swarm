@@ -1150,6 +1150,29 @@ fn normalize_unchanged_repo_exposure_producer_fixture(
     if let Some(artifact) = value["artifact"].as_object_mut() {
         artifact.remove("generated_at");
     }
+    // The top-level `analysis_inputs` (#9599) carry the build identity, toolchain
+    // label and Cargo configuration identity of the producing machine, which a
+    // portable fixture cannot pin. Their presence and shape stay asserted; the
+    // machine-bound values are normalized to fixed placeholders.
+    if let Some(inputs) = value
+        .pointer_mut("/analysis_inputs")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for key in [
+            "analyzer_version",
+            "toolchain_hash",
+            "workspace_manifests_hash",
+        ] {
+            assert!(
+                inputs.contains_key(key),
+                "analysis_inputs must disclose {key}"
+            );
+            inputs.insert(
+                key.to_string(),
+                serde_json::json!("normalized-for-portable-fixture"),
+            );
+        }
+    }
     let mut raw = serde_json::to_string_pretty(&value)?;
     raw.push('\n');
     serde_json::from_str(&recommit_repo_exposure_json(raw)).map_err(Into::into)

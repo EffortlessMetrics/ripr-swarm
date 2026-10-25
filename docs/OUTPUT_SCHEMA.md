@@ -3925,7 +3925,7 @@ envelope whose governed `content_sha256` still matches the bytes read;
 guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
 present; every seam converted to a record; and a `source_subject.corpus` carrying
 the producer's `cache_schema_version`, 16-lowercase-hex `files_content_hash`, and
-`analyzed_production_files` array and `analysis_inputs` object; a refused disclosure is named in the fallback
+`analyzed_production_files` array, plus the top-level `analysis_inputs` object (carried into the coverage `corpus`); a refused disclosure is named in the fallback
 `gap_ledger_artifact` scope's additive `coverage_refused` array):
 `scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
 `corpus`, `records_total` and `records_digest` (SHA-256 over every record's
@@ -18594,8 +18594,11 @@ top-level `source_subject`:
   seams and recomputed before cache lookup. Evidence-only sources, generated
   exclusions and no-follow symlink aliases are absent. Missing or malformed
   membership cannot establish baseline coverage; an empty list covers no paths.
-  They also carry `corpus.analysis_inputs`, an object of eight required strings
-  from the same cache key: `cfg_features_hash`, `config_hash` (classified config
+  They also carry a top-level `analysis_inputs` object (deliberately outside
+  `source_subject`, whose corpus identity stays checkout-path independent for
+  byte-identical workspaces; the ledger copies it into
+  `analysis_coverage.corpus.analysis_inputs`), eight required strings from the
+  same cache key: `cfg_features_hash`, `config_hash` (classified config
   including raw `ripr.toml` bytes), `test_intent_hash`, `suppressions_hash`,
   `workspace_manifests_hash` (Cargo manifests and configuration, bound to the
   checkout path), `lockfile_hash`, `toolchain_hash` and `analyzer_version`.

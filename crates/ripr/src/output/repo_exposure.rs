@@ -364,6 +364,7 @@ fn write_repo_exposure_json<W: io::Write>(
             ts_guidance,
             python_guidance,
             generated_skip,
+            analysis_inputs: None,
         },
         None,
         None,
@@ -393,8 +394,6 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         let subject = source_subject
             .get_or_insert_with(|| serde_json::json!({"digest_algorithm": "sha256", "files": []}));
         subject["corpus"] = crate::output::gap_source_subject::captured_rust_corpus_subject(key);
-        subject["corpus"]["analysis_inputs"] =
-            crate::output::gap_source_subject::analysis_inputs_subject(key);
         if let Some(files) = context.analyzed_production_files.as_deref()
             && let Some(files) = crate::output::gap_source_subject::production_files_subject(files)
         {
@@ -407,10 +406,15 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         source_subject_started.elapsed(),
     );
     let mut hasher = Sha256Writer::new();
+    let analysis_inputs = context
+        .corpus_key
+        .as_ref()
+        .map(crate::output::gap_source_subject::analysis_inputs_subject);
     let disclosures = RepoExposureJsonDisclosures {
         ts_guidance,
         python_guidance,
         generated_skip,
+        analysis_inputs: analysis_inputs.as_ref(),
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -576,6 +580,9 @@ struct RepoExposureJsonDisclosures<'a> {
     ts_guidance: Option<&'a TsFullRepoGuidance>,
     python_guidance: Option<&'a PythonRepoExposureGuidance>,
     generated_skip: Option<&'a GeneratedRustSkip>,
+    /// Non-Rust analysis input identity (#9599). Top-level, not inside
+    /// `source_subject`, whose corpus identity stays checkout-path independent.
+    analysis_inputs: Option<&'a serde_json::Value>,
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -590,6 +597,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
         ts_guidance,
         python_guidance,
         generated_skip,
+        analysis_inputs,
     } = disclosures;
     // The seams' own slice: the entry index below can never run past it.
     let classified = seams.classified;
@@ -606,6 +614,9 @@ fn write_repo_exposure_json_document<W: io::Write>(
     }
     if let Some(source_subject) = source_subject {
         writeln!(out, "  \"source_subject\": {},", source_subject)?;
+    }
+    if let Some(analysis_inputs) = analysis_inputs {
+        writeln!(out, "  \"analysis_inputs\": {},", analysis_inputs)?;
     }
     writeln!(out, "  \"scope\": \"repo\",")?;
 
@@ -1683,6 +1694,7 @@ mod tests {
             ts_guidance: None,
             python_guidance: None,
             generated_skip: None,
+            analysis_inputs: None,
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();

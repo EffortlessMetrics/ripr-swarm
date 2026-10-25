@@ -1,4 +1,14 @@
 {
+  "analysis_inputs": {
+    "analyzer_version": "normalized-for-portable-fixture",
+    "cfg_features_hash": "cbf29ce484222325",
+    "config_hash": "881255e2f498d9f2",
+    "lockfile_hash": "0b74165b4cea4f09",
+    "suppressions_hash": "cbf29ce484222325",
+    "test_intent_hash": "cbf29ce484222325",
+    "toolchain_hash": "normalized-for-portable-fixture",
+    "workspace_manifests_hash": "normalized-for-portable-fixture"
+  },
   "artifact": {
     "analysis": {
       "base_revision": null,
@@ -10,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:ea1ec281aac0fd0a78ecd01048f2a44fcd359409d19c22c4cd75e33da25d7994",
+    "content_sha256": "sha256:2863c8efc89774693f840895ea4aac5665a3e31f2cad10ef46d17b363aeadc95",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -402,6 +412,9 @@
   ],
   "source_subject": {
     "corpus": {
+      "analyzed_production_files": [
+        "src/lib.rs"
+      ],
       "cache_schema_version": "1.101",
       "files_content_hash": "16ab297ea99e68bf",
       "scope": "rust_workspace"
