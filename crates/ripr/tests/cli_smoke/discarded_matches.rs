@@ -125,6 +125,22 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
 /// distinguish them. This exercises the current binary, not constructed facts.
 /// Discarded-only subjects have no other observer: reach must survive while
 /// their finding and related test receive no oracle, including weak credit.
+/// Replace the repair-route advisory text with a fixed slot so the wording
+/// stays owned by `RepairRouteRefusal::advisory` (#9244).
+fn blank_repair_advisory(bytes: &[u8]) -> Vec<u8> {
+    String::from_utf8_lossy(bytes)
+        .split_inclusive('\n')
+        .map(|line| {
+            if line.starts_with("  no repair start offered:") {
+                "  no repair start offered:\n"
+            } else {
+                line
+            }
+        })
+        .collect::<String>()
+        .into_bytes()
+}
+
 #[test]
 fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> Result<(), String> {
     let root = unique_temp_workspace("discarded-matcher-cli-5713");
@@ -321,6 +337,18 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                             .map_err(|error| format!("{id}: current human legend: {error}"))?
                     } else {
                         actual
+                    };
+                    // The advisory wording is owned by
+                    // `RepairRouteRefusal::advisory` (#9244); the historical
+                    // human.txt capture keeps its original bytes and only the
+                    // advisory slot is compared.
+                    let (actual, expected_bytes) = if file == "human.txt" {
+                        (
+                            blank_repair_advisory(&actual),
+                            blank_repair_advisory(&expected_bytes),
+                        )
+                    } else {
+                        (actual, expected_bytes)
                     };
                     assert_eq!(
                         actual.as_slice(),

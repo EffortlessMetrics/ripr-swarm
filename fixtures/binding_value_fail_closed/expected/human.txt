@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_value_fail_closed/input --diff <cwd>/fixtures/binding_value_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:d9aa811b
   ripr context --root <cwd>/fixtures/binding_value_fail_closed/input --diff <cwd>/fixtures/binding_value_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:d9aa811b
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:d9aa811b --root <cwd>/fixtures/binding_value_fail_closed/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/binding_value_fail_closed/input --at src/lib.rs:4 --kind predicate
 
