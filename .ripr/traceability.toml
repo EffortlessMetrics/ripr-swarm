@@ -19180,6 +19180,34 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0360"
+name = "A changed update of a zero-initialized loop accumulator the owner returns is credited only by a pin that walks a non-empty literal input and pins a nonzero total"
+spec = "docs/specs/RIPR-SPEC-0360-rust-loop-accumulator-update.md"
+tests = [
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_nonempty_literal_input_and_a_nonzero_total_credit_the_update",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_negative_total_from_a_subtracting_update_credits_it",
+  "crates/ripr/tests/loop_accumulator_pin.rs::an_empty_literal_input_never_reaches_the_update_and_keeps_the_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_zero_total_separates_nothing_and_keeps_the_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_call_that_is_never_asserted_stays_a_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::an_exact_pin_on_a_bound_input_is_withheld_not_called_a_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_computed_expectation_is_withheld_not_called_a_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_helper_that_pins_literal_runs_credits_the_update",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_helper_that_only_pins_empty_and_zero_runs_keeps_the_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_nonzero_start_conditional_update_or_extra_use_is_not_the_shape",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/syntax/loop_accumulator.rs",
+  "crates/ripr/src/analysis/classify/pinned_shape.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0360-rust-loop-accumulator-update.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0347"
 name = "Changed trybuild fixtures are named on stderr as not analyzed as test oracles"
 spec = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
