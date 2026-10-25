@@ -1396,6 +1396,7 @@ mod tests {
             cli_receiver_names: Vec::new(),
             route_paths: Vec::new(),
             route_methods: Vec::new(),
+            route_receivers: Vec::new(),
             dynamic_route_decorators: Vec::new(),
             unplain_decorators: Vec::new(),
             decorator_lines: None,
