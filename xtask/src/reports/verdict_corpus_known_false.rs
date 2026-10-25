@@ -260,8 +260,12 @@ fn missed_credit_gate(
         .map(|e| e.case.as_str())
         .collect();
     let unlisted: Vec<&str> = missed.difference(&accepted).copied().collect();
+    let stale: Vec<&str> = accepted.difference(missed).copied().collect();
+    // Report both sides together so a count-preserving swap names the row to
+    // fix and the entry to delete in one run.
+    let mut failures = Vec::new();
     if !unlisted.is_empty() {
-        return Err(format!(
+        failures.push(format!(
             "verdict-corpus: {} abstained row(s) had tests that catch the change but {ledger_label} accepts no missed credit for them; a verdict stopped crediting a discriminating test. Fix the regression; accepting it adds an `[[entry]]` with a reason to {MISSED_CREDIT_FILE} and is a reviewed edit:\n{}",
             unlisted.len(),
             unlisted
@@ -271,15 +275,18 @@ fn missed_credit_gate(
                 .join("\n")
         ));
     }
-    let stale: Vec<&str> = accepted.difference(missed).copied().collect();
-    if stale.is_empty() {
-        return Ok(());
+    if !stale.is_empty() {
+        failures.push(format!(
+            "verdict-corpus: {} accepted missed-credit row(s) in {ledger_label} no longer miss credit; delete its `[[entry]]` from {MISSED_CREDIT_FILE} so the improvement cannot regress: {}",
+            stale.len(),
+            stale.join(", ")
+        ));
     }
-    Err(format!(
-        "verdict-corpus: {} accepted missed-credit row(s) in {ledger_label} no longer miss credit; delete its `[[entry]]` from {MISSED_CREDIT_FILE} so the improvement cannot regress: {}",
-        stale.len(),
-        stale.join(", ")
-    ))
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// Join the ledger gate's failure to `existing`. A case subset cannot see the
@@ -415,7 +422,12 @@ mod tests {
         let swapped = missed_credit_gate(&set(&["a", "c"]), &accepted, "l.toml")
             .err()
             .unwrap_or_default();
-        assert!(swapped.contains("  - c"), "{swapped}");
+        assert!(
+            swapped.contains("  - c")
+                && swapped.contains("no longer miss credit")
+                && swapped.contains(": b"),
+            "{swapped}"
+        );
         // An improvement leaves a stale entry: the entries must equal the
         // blessed missed rows, so the gate fails and names the entry to delete.
         let stale = missed_credit_gate(&set(&["a"]), &accepted, "l.toml")
