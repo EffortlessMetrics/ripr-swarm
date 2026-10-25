@@ -1,0 +1,45 @@
+{
+  "case_id": "py-caplog-absence-text-retry-added",
+  "subject_id": "authored-py-pytest-caplog-absence",
+  "diff": "cases/py-caplog-absence-text-retry-added.diff",
+  "anchor": {
+    "file": "absence/audit.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_caplog_text_absence_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "log.warning(\"settled: %s, retry queued\", amount)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_audit.py::test_settle_does_not_queue_a_retry",
+        "equivalence_review": "not equivalent: the logged message gains the asserted-absent text"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test asserts the retry text is absent from caplog.text, and the edit adds it.",
+  "labeling_observation": {
+    "ripr_commit": "9ca14aac",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

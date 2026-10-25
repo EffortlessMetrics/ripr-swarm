@@ -84,6 +84,7 @@ mod probe_shape;
 mod reexports;
 mod related_tests;
 mod repo;
+mod route_client;
 mod row_miss;
 mod row_reach;
 mod setup_receivers;
@@ -240,6 +241,9 @@ struct PythonOwner {
     /// Lowercase HTTP verbs each `route_paths` entry accepts, index-aligned;
     /// an empty entry means the verb is not statically known.
     route_methods: Vec<Vec<String>>,
+    /// Receiver of each route decorator (`app` in `@app.get`), index-aligned
+    /// with `route_paths`.
+    route_receivers: Vec<String>,
     dynamic_route_decorators: Vec<String>,
     /// Decorator names whose binding is not the plain name they spell: a
     /// decorator written as a call (`@final(wrapper)`) or one whose first
@@ -1291,6 +1295,9 @@ mod reexport_tests;
 
 #[cfg(test)]
 mod replaced_block_tests;
+
+#[cfg(test)]
+mod route_identity_tests;
 
 #[cfg(test)]
 mod row_miss_tests;

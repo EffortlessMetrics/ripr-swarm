@@ -18,9 +18,6 @@ floor = 203
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-# 144 (#9197): `strsim-sorensen-dice-equal` compares a local rebound from the
-# parameter (`let a = a.chars()..collect()`), so the name-only credit is
-# withheld and the row abstains; fail-closed by design.
 missed_credit_ceiling = 144
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
@@ -65,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 36
+trap_floor = 37
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
