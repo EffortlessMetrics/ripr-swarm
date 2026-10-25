@@ -548,6 +548,9 @@ pub(super) fn collect_tests_from_statements(
                         &text_for_range(source, function.range),
                     ),
                 });
+                if let Some(test) = out.last_mut() {
+                    super::caplog_alias::mark_output_assertions(test);
+                }
             }
             Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {

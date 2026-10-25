@@ -120,13 +120,14 @@ pub(super) fn python_log_evidence(
     {
         let assertion =
             select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()?;
-        let literals = caplog_required_literals(&assertion.gate_text);
+        let rows = owner_call_rows_for_candidate(owner, &constants, candidate)?;
+        let literals = super::caplog_alias::required_literals(candidate.test, assertion, &rows)
+            .unwrap_or_else(|| caplog_required_literals(&assertion.gate_text));
         if literals.is_empty() {
             // Another assertion may catch the edit too; this reading only
             // proves what the caplog assertions say.
             return None;
         }
-        let rows = owner_call_rows_for_candidate(owner, &constants, candidate)?;
         let pin = level_pin(candidate.test, owner)?;
         let mut old_texts = Vec::new();
         let mut new_texts = Vec::new();

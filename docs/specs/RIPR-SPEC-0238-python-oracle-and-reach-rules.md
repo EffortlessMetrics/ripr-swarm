@@ -810,6 +810,17 @@ mutant calibrates the rule; ripr reports only the static shape.
     concatenation, an assertion message and a membership joined by `and`
     all read the same way, while a membership against any other receiver
     is not read.
+    A synchronous test may read `caplog.text` or `caplog.messages` through
+    one local snapshot (`msgs = caplog.messages`, then `assert <text> in msgs`),
+    assigned after every owner call and before the assertion, either at test
+    scope or inside the capture-level block. The alias must occur only as
+    that single assignment target and as a membership operand in one parsed
+    assertion; all conjuncts must be readable alias memberships. Rebinding,
+    mutation, deletion, augmented assignment, escape, early snapshots,
+    nested scopes, f-strings and multiple assertions on one line withhold this
+    alias evaluation. Message equality, text containment and absence retain
+    the inline read's semantics. General alias chains and records aliases
+    remain outside this bound (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;

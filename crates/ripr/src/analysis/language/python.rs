@@ -60,6 +60,7 @@ mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
+mod caplog_alias;
 mod caplog_text;
 mod classify;
 mod deleted_lines;

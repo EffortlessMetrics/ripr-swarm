@@ -16629,6 +16629,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::caplog_local_alias_after_calls_credits_and_preserves_read_kind",
+  "crates/ripr/src/analysis/language/python/tests.rs::caplog_local_alias_unsafe_lifetimes_never_credit",
+  "crates/ripr/src/analysis/language/python/tests.rs::caplog_local_alias_does_not_relabel_a_same_line_callable_assertion",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_owner_body_is_deferred_then_no_changed_effect_is_credited",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_deferred_owner_is_only_a_method_token_then_no_branch_restores_credit",
   "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_synchronous_field_helper_when_body_runs_then_changed_effect_stays_credited",
@@ -16661,6 +16664,9 @@ fixtures = [
   "fixtures/python_empty_sink_module_comparison",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/caplog_alias.rs",
+  "crates/ripr/src/analysis/language/python/caplog_text.rs",
+  "crates/ripr/src/analysis/language/python/owners_tests.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/message_pin.rs",

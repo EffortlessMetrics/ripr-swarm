@@ -8991,3 +8991,125 @@ fn comprehension_over_other_output_keeps_its_assertion_shape() {
         "{shapes:?}"
     );
 }
+
+#[test]
+fn caplog_local_alias_after_calls_credits_and_preserves_read_kind() -> Result<(), String> {
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    assert (\"low balance: 5\" in msgs), \"captured log\""
+        ));
+        for call in [
+            "log.warning(\"balance low: %s\", balance)",
+            "log.info(\"low balance: %s\", balance)",
+        ] {
+            assert_eq!(
+                classify_log_text_edit(AUDIT_OWNER, call, &test)?,
+                (ExposureClass::Exposed, None),
+                "{read} / {call}"
+            );
+        }
+        let expected = if read == "messages" {
+            ExposureClass::Exposed
+        } else {
+            ExposureClass::WeaklyExposed
+        };
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"low balance: %s (retry)\", balance)",
+                &test
+            )?,
+            (expected, None),
+            "{read}"
+        );
+        for pinned in [
+            test.replace("    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False", "    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False"),
+            test.replace(&format!("    msgs = caplog.{read}\n    assert"), &format!("        msgs = caplog.{read}\n        assert")),
+        ] {
+            assert_eq!(classify_log_text_edit(AUDIT_OWNER, "log.warning(\"balance low: %s\", balance)", &pinned)?, (ExposureClass::Exposed, None), "{pinned}");
+        }
+        let absence = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    assert \"deprecated warning\" not in msgs"
+        ));
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &absence)?,
+            (ExposureClass::Exposed, None),
+            "absence {read}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_local_alias_unsafe_lifetimes_never_credit() -> Result<(), String> {
+    for read in ["messages", "text"] {
+        for tail in [
+            "msgs = frozen\n    assert \"low balance: 5\" in msgs",
+            "msgs.append(\"low balance: 5\")\n    assert \"low balance: 5\" in msgs",
+            "msgs.clear()\n    assert \"low balance: 5\" in msgs",
+            "del msgs[0]\n    assert \"low balance: 5\" in msgs",
+            "del msgs\n    assert \"low balance: 5\" in msgs",
+            "msgs += [\"low balance: 5\"]\n    assert \"low balance: 5\" in msgs",
+            "msgs[0] = \"low balance: 5\"\n    assert \"low balance: 5\" in msgs",
+            "other = msgs\n    assert \"low balance: 5\" in msgs",
+            "assert any(\"low balance: 5\" in msgs for msgs in [\"low balance: 5\"])",
+            "def inner():\n        assert \"low balance: 5\" in msgs\n    assert \"low balance: 5\" in msgs",
+            "assert \"low balance: 5\" in msgs and (\"never\" in msgs or \"also never\" in msgs)",
+            "assert \"low balance: 5\" in msgs and False",
+            "f'{(msgs := [\"low balance: 5\"])}'\n    assert \"low balance: 5\" in msgs",
+            "assert \"low balance: 5\" in msgs; assert False",
+            "assert \"low balance: 5\" in msgs; assert \"never\" in other",
+        ] {
+            let test = captured_records_test(&format!("msgs = caplog.{read}\n    {tail}"));
+            assert_ne!(
+                classify_log_text_edit(
+                    AUDIT_OWNER,
+                    "log.warning(\"balance low: %s\", balance)",
+                    &test
+                )?
+                .0,
+                ExposureClass::Exposed,
+                "{read} / {tail}"
+            );
+        }
+        for test in [
+            format!(
+                "def test_low_balance(caplog):\n    msgs = caplog.{read}\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"low balance: 5\" in msgs\n"
+            ),
+            captured_records_test(&format!(
+                "msgs = caplog.{read}\n    check_balance(5)\n    assert \"low balance: 5\" in msgs"
+            )),
+            captured_records_test(&format!(
+                "if True:\n        msgs = caplog.{read}\n    assert \"low balance: 5\" in msgs"
+            )),
+        ] {
+            assert_ne!(
+                classify_log_text_edit(
+                    AUDIT_OWNER,
+                    "log.warning(\"balance low: %s\", balance)",
+                    &test
+                )?
+                .0,
+                ExposureClass::Exposed,
+                "{test}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_local_alias_does_not_relabel_a_same_line_callable_assertion() {
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_log(caplog):\n    check_balance(5)\n    msgs = caplog.messages\n    assert \"low balance: 5\" in msgs; self.assertEqual(1, 2)\n",
+    );
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert!(
+        tests[0]
+            .assertions
+            .iter()
+            .all(|assertion| assertion.oracle_shape != PythonOracleShape::OutputAssertion)
+    );
+}
