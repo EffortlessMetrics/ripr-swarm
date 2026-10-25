@@ -19,7 +19,10 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount >= threshold) {
-  Missing discriminator (1 of 2): Related test reaches `applyDiscount` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or…
+  Missing discriminator (1 of 2): Related test reaches `applyDiscount` but the strongest extracted
+    oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` /
+    `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class
+    reference)
   Related test: tests/discount.test.ts:3 applyDiscount applies discount when amount meets threshold (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == threshold`; the repair packet is complete and delegatable (advisory)

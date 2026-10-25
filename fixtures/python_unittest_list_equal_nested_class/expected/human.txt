@@ -19,7 +19,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return [1, 2]
-  Analyzer limit: Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or…
+  Analyzer limit: Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom
+    assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or
+    determine whether it already observes the changed discriminator
   Related test: tests/test_labels.py:7 test_labels
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

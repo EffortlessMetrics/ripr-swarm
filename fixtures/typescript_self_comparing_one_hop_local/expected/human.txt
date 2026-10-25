@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return amount - 20;
-  Missing discriminator (1 of 2): Related test reaches `price` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a…
+  Missing discriminator (1 of 2): Related test reaches `price` but the strongest extracted oracle is
+    `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`)
+    assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/lib.test.ts:3 price (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `return value == amount - 20`; no actionable repair packet is emitted until

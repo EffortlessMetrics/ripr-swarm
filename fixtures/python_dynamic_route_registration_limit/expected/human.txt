@@ -19,7 +19,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return {"detail": "coupon expired"}
-  Analyzer limit: Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route registration `api.post`; syntax-first preview evidence cannot safely match client calls to a…
+  Analyzer limit: Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route
+    registration `api.post`; syntax-first preview evidence cannot safely match client calls to a
+    concrete route path
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

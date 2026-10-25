@@ -515,3 +515,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_pkg_discovery_single_package (23)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_single_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
