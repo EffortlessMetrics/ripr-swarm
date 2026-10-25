@@ -3687,9 +3687,12 @@ pub(in crate::analysis) fn expr_ending_at_has_type(code: &str, end: usize, ty: &
     let lets = before.rfind(';').map_or("", |at| &before[..=at]);
     let end = before.trim_end().len();
     match code.as_bytes().get(end.wrapping_sub(1)) {
-        Some(b')' | b'}') => bracketed_expr_has_type(code, end, ty, lets, false),
-        Some(_) => ident_ending_at(code, end)
-            .is_some_and(|ident| ident == ty || let_binding_mentions_type(lets, ident, ty)),
+        Some(b')' | b'}') => {
+            bracketed_expr_has_type(code, end, ty, lets, false, SelfFactories::NONE)
+        }
+        Some(_) => ident_ending_at(code, end).is_some_and(|ident| {
+            ident == ty || let_binding_mentions_type(lets, ident, ty, SelfFactories::NONE)
+        }),
         None => false,
     }
 }
@@ -3702,13 +3705,14 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     body: &str,
     binding: &str,
     type_name: &str,
+    factories: SelfFactories<'_>,
 ) -> bool {
     last_let_statement(body, binding)
-        .and_then(let_statement_type_head)
+        .and_then(|stmt| let_statement_type_head(stmt, factories))
         .is_some_and(|head| head == type_name)
 }
 
-fn let_statement_type_head(stmt: &str) -> Option<&str> {
+fn let_statement_type_head<'a>(stmt: &'a str, factories: SelfFactories<'_>) -> Option<&'a str> {
     let eq = stmt.find('=')?;
     let pattern = &stmt[..eq];
     if let Some(colon) = pattern.find(':') {
@@ -3737,7 +3741,7 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     }
     let init = &stmt[eq + 1..];
     initializer_is_one_head_expr(init)
-        .then(|| initializer_type_head(init))
+        .then(|| initializer_type_head(init, factories))
         .flatten()
 }
 
@@ -3801,6 +3805,66 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
     path_start(bytes, path_end) == 0
 }
 
+/// Associated functions of one impl type whose declared return type is that
+/// type (`fn with_langs(..) -> Self`), read from the indexed impl rather than
+/// guessed from a `new_*`/`from_*`/`with_*` spelling (#10301). A receiver
+/// matcher without this authority treats only the conventional constructors as
+/// producing the type, so [`SelfFactories::NONE`] fails closed.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct SelfFactories<'a>(Option<&'a BTreeSet<String>>);
+
+impl<'a> SelfFactories<'a> {
+    pub(in crate::analysis) const NONE: Self = Self(None);
+
+    pub(in crate::analysis) fn of(names: &'a BTreeSet<String>) -> Self {
+        Self(Some(names))
+    }
+
+    fn admits(self, name: &str) -> bool {
+        self.0.is_some_and(|names| names.contains(name))
+    }
+}
+
+/// [`SelfFactories`] names per impl type (or only `only`), from the indexed
+/// inherent impls. A name another inherent impl of the same compact type
+/// declares with a different return type is dropped: the compact type cannot
+/// tell the two apart, so neither authorises credit.
+pub(in crate::analysis) fn self_factories_by_type(
+    index: &RustIndex,
+    only: Option<&str>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut seen: BTreeMap<String, BTreeMap<String, bool>> = BTreeMap::new();
+    for function in index.functions().iter() {
+        if function.item.has_self_param {
+            continue;
+        }
+        let FunctionContainer::Inherent { self_ty } = &function.item.container else {
+            continue;
+        };
+        let Some(ty) = compact_impl_type_name(self_ty) else {
+            continue;
+        };
+        if only.is_some_and(|only| only != ty) {
+            continue;
+        }
+        let all_return_owner = seen
+            .entry(ty)
+            .or_default()
+            .entry(function.name.clone())
+            .or_insert(true);
+        *all_return_owner &= function.item.returns_owner_type;
+    }
+    seen.into_iter()
+        .map(|(ty, names)| {
+            let factories = names
+                .into_iter()
+                .filter_map(|(name, all_return_owner)| all_return_owner.then_some(name))
+                .collect();
+            (ty, factories)
+        })
+        .collect()
+}
+
 /// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
 /// `Site(..)`, one of the conventional constructors (`Site::new(..)`,
 /// `Site::default()`, `Site::from(..)`), an enum tuple variant
@@ -3808,10 +3872,11 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 /// Any other associated call (`Site::make_cache()`) may return another type
 /// and fails closed. So do the `new_*`/`from_*`/`with_*` spellings: the prefix
 /// is a naming convention, not a return type, and `Site::with_cache()` may
-/// return a `Cache` (#8782 item 2). There is no return-type lookup here.
+/// return a `Cache` (#8782 item 2). Only a name in `factories`, whose declared
+/// return type the index established, reads as the type (#10301).
 /// Module-qualified heads stay unresolved: this matcher receives only a
 /// compact impl name, so the final segment cannot establish type identity.
-fn initializer_type_head(expr: &str) -> Option<&str> {
+fn initializer_type_head<'a>(expr: &'a str, factories: SelfFactories<'_>) -> Option<&'a str> {
     let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
         // A CamelCase call after a module segment is a qualified tuple
@@ -3822,7 +3887,8 @@ fn initializer_type_head(expr: &str) -> Option<&str> {
             None
         }
         ([ty, call], Some(b'(')) => {
-            (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
+            (is_constructor_name(call) || is_variant_name(call) || factories.admits(call))
+                .then_some(*ty)
         }
         ([last], Some(b'(') | Some(b'{')) => Some(last),
         ([ty, _assoc], None) => Some(ty),
@@ -3926,6 +3992,7 @@ fn text_resolves_method_to_type(
     impl_trait: Option<&str>,
     body_for_lets: &str,
     whole_body: bool,
+    factories: SelfFactories<'_>,
 ) -> bool {
     let bytes = text.as_bytes();
     let mut search = 0usize;
@@ -3971,12 +4038,18 @@ fn text_resolves_method_to_type(
                         // A raw call line is unmasked, so a literal quoted in
                         // a string or comment there must not type a receiver.
                         || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type(body_for_lets, recv, impl_type)
+                        || let_binding_mentions_type(body_for_lets, recv, impl_type, factories)
                     {
                         return true;
                     }
                 } else if whole_body
-                    && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
+                    && receiver_expr_resolves_to_type(
+                        text,
+                        at - 1,
+                        impl_type,
+                        body_for_lets,
+                        factories,
+                    )
                 {
                     return true;
                 }
@@ -4076,7 +4149,7 @@ fn first_argument_has_type(
                 return false;
             };
             match stmt[..eq].find(':') {
-                Some(_) => let_statement_type_head(stmt) == Some(impl_type),
+                Some(_) => let_statement_type_head(stmt, SelfFactories::NONE) == Some(impl_type),
                 None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
             }
         });
@@ -4101,7 +4174,7 @@ fn literal_type_head(expr: &str) -> Option<&str> {
     if !literal || expr.contains("::<") || !initializer_is_one_head_expr(expr) {
         return None;
     }
-    initializer_type_head(expr)
+    initializer_type_head(expr, SelfFactories::NONE)
 }
 
 /// Whether the bracketed receiver expression ending just before the `.` at
@@ -4114,8 +4187,9 @@ fn receiver_expr_resolves_to_type(
     dot: usize,
     impl_type: &str,
     body_for_lets: &str,
+    factories: SelfFactories<'_>,
 ) -> bool {
-    bracketed_expr_has_type(text, dot, impl_type, body_for_lets, false)
+    bracketed_expr_has_type(text, dot, impl_type, body_for_lets, false, factories)
 }
 
 /// `whole`: the bracketed expression must be all of `text[..end]`, so a
@@ -4127,6 +4201,7 @@ fn bracketed_expr_has_type(
     impl_type: &str,
     body_for_lets: &str,
     mut whole: bool,
+    factories: SelfFactories<'_>,
 ) -> bool {
     // Iterative so deeply nested parentheses in hostile input cannot
     // exhaust the stack.
@@ -4186,7 +4261,7 @@ fn bracketed_expr_has_type(
             }
             if !inner.is_empty() && inner.bytes().all(is_ident_byte) {
                 return inner == impl_type
-                    || let_binding_mentions_type(body_for_lets, inner, impl_type);
+                    || let_binding_mentions_type(body_for_lets, inner, impl_type, factories);
             }
             text = inner;
             end = inner.len();
@@ -4206,7 +4281,8 @@ fn bracketed_expr_has_type(
         {
             return false;
         }
-        return initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type);
+        return initializer_type_head(&text[start..=close], factories)
+            .is_some_and(|head| head == impl_type);
     }
 }
 
@@ -4299,7 +4375,7 @@ fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> O
 /// Unresolved receivers fail closed (#4760).
 #[cfg(test)]
 fn method_call_resolves_to_impl_type(test: &TestSummary, method: &str, impl_type: &str) -> bool {
-    method_call_resolves_to_impl(test, method, impl_type, None)
+    method_call_resolves_to_impl(test, method, impl_type, None, SelfFactories::NONE)
 }
 
 /// Whether a test invokes `method` on a receiver bound to `impl_type`, as
@@ -4311,12 +4387,13 @@ pub(in crate::analysis) fn method_call_resolves_to_impl(
     method: &str,
     impl_type: &str,
     impl_trait: Option<&str>,
+    factories: SelfFactories<'_>,
 ) -> bool {
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
     let masked_body = mask_comments_and_strings(&test.body);
-    method_call_resolves_to_impl_in(test, &masked_body, method, impl_type, impl_trait)
+    method_call_resolves_to_impl_in(test, &masked_body, method, impl_type, impl_trait, factories)
 }
 
 /// [`method_call_resolves_to_impl`] with no trait and the test body already masked
@@ -4328,7 +4405,14 @@ pub(in crate::analysis) fn method_call_resolves_to_impl_type_in(
     method: &str,
     impl_type: &str,
 ) -> bool {
-    method_call_resolves_to_impl_in(test, masked_body, method, impl_type, None)
+    method_call_resolves_to_impl_in(
+        test,
+        masked_body,
+        method,
+        impl_type,
+        None,
+        SelfFactories::NONE,
+    )
 }
 
 fn method_call_resolves_to_impl_in(
@@ -4337,6 +4421,7 @@ fn method_call_resolves_to_impl_in(
     method: &str,
     impl_type: &str,
     impl_trait: Option<&str>,
+    factories: SelfFactories<'_>,
 ) -> bool {
     if method.is_empty() || impl_type.is_empty() {
         return false;
@@ -4348,6 +4433,7 @@ fn method_call_resolves_to_impl_in(
         impl_trait,
         masked_body,
         true,
+        factories,
     ) {
         return true;
     }
@@ -4360,6 +4446,7 @@ fn method_call_resolves_to_impl_in(
                 impl_trait,
                 masked_body,
                 false,
+                factories,
             )
     })
 }
@@ -4377,7 +4464,15 @@ pub(in crate::analysis) fn resolves_method_in_prefix(
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
+    text_resolves_method_to_type(
+        prefix,
+        method,
+        impl_type,
+        impl_trait,
+        prefix,
+        true,
+        SelfFactories::NONE,
+    )
 }
 
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming
@@ -4402,6 +4497,7 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
         &owner.name,
         &impl_type,
         owner_dispatch_trait(owner).as_deref(),
+        SelfFactories::NONE,
     ) {
         return true;
     }
@@ -4481,7 +4577,13 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
         let prior_bindings = before.rfind(';').map_or("", |end| &before[..=end]);
         ident_ending_at(before, before.len())
             .is_some_and(|receiver| dispatch_operand_has_type(receiver, prior_bindings, &impl_type))
-            || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
+            || receiver_expr_resolves_to_type(
+                before,
+                before.len(),
+                &impl_type,
+                prior_bindings,
+                SelfFactories::NONE,
+            )
     })
 }
 
@@ -4490,9 +4592,16 @@ fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bo
     let expr = expr.trim().strip_prefix('&').unwrap_or(expr).trim();
     let expr = expr.strip_prefix("mut ").unwrap_or(expr).trim();
     if !expr.is_empty() && expr.bytes().all(is_ident_byte) {
-        return let_binding_mentions_type(preceding, expr, impl_type);
+        return let_binding_mentions_type(preceding, expr, impl_type, SelfFactories::NONE);
     }
-    bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
+    bracketed_expr_has_type(
+        expr,
+        expr.len(),
+        impl_type,
+        preceding,
+        true,
+        SelfFactories::NONE,
+    )
 }
 
 fn owner_call_relation_reason(
@@ -4646,7 +4755,22 @@ fn owner_call_relation_reason(
         return RelationReason::DirectOwnerCall;
     }
     let impl_trait = owner_dispatch_trait(owner);
-    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
+    // The declared-return-type authority is read only when the test names
+    // `Type::` at all, so the index scan stays off the common path.
+    let factory_names = if test.body.contains(&format!("{impl_type}::")) {
+        self_factories_by_type(index, Some(&impl_type))
+            .remove(&impl_type)
+            .unwrap_or_default()
+    } else {
+        BTreeSet::new()
+    };
+    if method_call_resolves_to_impl(
+        test,
+        owner_name,
+        &impl_type,
+        impl_trait.as_deref(),
+        SelfFactories::of(&factory_names),
+    ) {
         RelationReason::DirectOwnerCall
     } else {
         RelationReason::WeakTokenSubstring
@@ -6496,7 +6620,13 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         for (body, impl_trait, expected) in cases {
             let summary = test("tests/render.rs", "t", body);
             assert_eq!(
-                method_call_resolves_to_impl(&summary, "render", "f64", impl_trait),
+                method_call_resolves_to_impl(
+                    &summary,
+                    "render",
+                    "f64",
+                    impl_trait,
+                    SelfFactories::NONE
+                ),
                 expected,
                 "{body} with trait {impl_trait:?}"
             );
@@ -6530,7 +6660,13 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         ] {
             let summary = test("tests/render.rs", "t", body);
             assert_eq!(
-                method_call_resolves_to_impl(&summary, "render", "Site", Some("Render")),
+                method_call_resolves_to_impl(
+                    &summary,
+                    "render",
+                    "Site",
+                    Some("Render"),
+                    SelfFactories::NONE
+                ),
                 expected,
                 "{body}"
             );
@@ -6556,7 +6692,13 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 text: line.to_string().into(),
             }];
             assert!(
-                !method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
+                !method_call_resolves_to_impl(
+                    &summary,
+                    "render",
+                    "f64",
+                    Some("Render"),
+                    SelfFactories::NONE
+                ),
                 "{line}"
             );
         }
@@ -11262,6 +11404,37 @@ let r = try_parse_summary(\"x\");",
     // constructor-named associated call, a struct literal, or a
     // parenthesised binding. A type named nearby, or a non-constructor
     // associated call, does not resolve it.
+    // (#10301) A prefixed factory reads as its type only when the indexed impl
+    // declares it returning `Self`/the type; a same-named factory returning
+    // another type, an unlisted name and a foreign type's factory stay out.
+    #[test]
+    fn declared_self_factories_resolve_prefixed_constructors() {
+        let names: BTreeSet<String> = ["with_langs".to_string(), "from_vec".to_string()].into();
+        let factories = SelfFactories::of(&names);
+        let cases = [
+            ("Site::with_langs(1).build();", true),
+            ("let s = Site::with_langs(1); s.build();", true),
+            ("let s = Site::from_vec(v); (s).build();", true),
+            ("Site::with_cache().build();", false),
+            ("let c = Site::with_cache(); c.build();", false),
+            ("Cache::with_langs(1).build();", false),
+            ("Site::with_langs(1).cache().build();", false),
+        ];
+        for (body, expected) in cases {
+            let summary = test("tests/site.rs", "factory", body);
+            assert_eq!(
+                method_call_resolves_to_impl(&summary, "build", "Site", None, factories),
+                expected,
+                "{body}"
+            );
+            assert!(
+                !method_call_resolves_to_impl(&summary, "build", "Site", None, SelfFactories::NONE)
+                    || !body.contains("with_langs") && !body.contains("from_vec"),
+                "no declared authority, no prefixed-factory credit: {body}"
+            );
+        }
+    }
+
     #[test]
     fn method_call_receiver_resolves_only_from_its_own_expression() {
         let cases = [
@@ -11376,7 +11549,13 @@ let r = try_parse_summary(\"x\");",
         ] {
             let summary = test("tests/site.rs", "foreign_only", body);
             assert!(
-                !method_call_resolves_to_impl(&summary, "build", "Site", Some("Render")),
+                !method_call_resolves_to_impl(
+                    &summary,
+                    "build",
+                    "Site",
+                    Some("Render"),
+                    SelfFactories::NONE
+                ),
                 "a compact Site name cannot identify the qualified receiver: {body}"
             );
         }
@@ -11654,7 +11833,11 @@ let r = try_parse_summary(\"x\");",
             ("let x = &mut Site::new()", Some("Site")),
         ];
         for (stmt, expected) in cases {
-            assert_eq!(let_statement_type_head(stmt), expected, "{stmt}");
+            assert_eq!(
+                let_statement_type_head(stmt, SelfFactories::NONE),
+                expected,
+                "{stmt}"
+            );
         }
     }
 

@@ -1107,6 +1107,13 @@ pub struct FunctionItemFact {
     /// Whether the item has a body block (a trait's required method does
     /// not).
     pub has_body: bool,
+    /// Whether this is an associated function (no `self` receiver) of an
+    /// inherent `impl` whose declared return type is `Self` or the impl's own
+    /// plain type path. A `new_*`/`from_*`/`with_*` name alone says nothing
+    /// about the return type (#8782 item 2); this is the declared authority
+    /// (#10301). Absent in an older cache entry, which fails closed.
+    #[serde(default)]
+    pub returns_owner_type: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

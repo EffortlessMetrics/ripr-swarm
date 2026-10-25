@@ -291,6 +291,7 @@ pub(super) fn match_direct_owner_call(
                 &owner.name,
                 impl_type,
                 owner.impl_trait.as_deref(),
+                context.self_factories(impl_type),
             ) {
                 continue;
             }

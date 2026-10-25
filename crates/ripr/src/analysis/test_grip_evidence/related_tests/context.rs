@@ -38,6 +38,10 @@ pub(crate) struct CompactGripContext<'a> {
     /// Per-seam `OwnerContext` resolution reads this instead of scanning
     /// `index.functions` per seam.
     function_name_counts: BTreeMap<String, usize>,
+    /// Inherent associated functions declared to return their own type, per
+    /// compact impl type (#10301). Built once; receiver matching reads it
+    /// instead of guessing from a `new_*`/`from_*`/`with_*` name.
+    self_factories: BTreeMap<String, BTreeSet<String>>,
     name_module_candidates: NameModuleCandidateIndex,
     owner_named_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     same_module_cache: Mutex<BTreeMap<String, Vec<usize>>>,
@@ -298,6 +302,19 @@ impl<'a> CompactGripContext<'a> {
         }
     }
 
+    /// The declared `Self`-returning associated functions of `impl_type`,
+    /// as receiver-matching authority (#10301).
+    pub(super) fn self_factories(
+        &self,
+        impl_type: &str,
+    ) -> crate::analysis::classify::SelfFactories<'_> {
+        self.self_factories
+            .get(impl_type)
+            .map_or(crate::analysis::classify::SelfFactories::NONE, |names| {
+                crate::analysis::classify::SelfFactories::of(names)
+            })
+    }
+
     pub(crate) fn new(index: &'a RustIndex) -> Self {
         match Self::build(index, || Ok::<(), std::convert::Infallible>(())) {
             Ok(context) => context,
@@ -404,6 +421,9 @@ impl<'a> CompactGripContext<'a> {
         checkpoint()?;
         let function_name_counts =
             context_build_phase("function_name_counts", || count_functions_by_name(index));
+        let self_factories = context_build_phase("self_factories", || {
+            crate::analysis::classify::self_factories_by_type(index, None)
+        });
         checkpoint()?;
         let qualified_helper_modules =
             QualifiedHelperModules::new(&helper_owner_calls_by_module_path);
@@ -638,6 +658,7 @@ impl<'a> CompactGripContext<'a> {
             tests_by_crate_root_file,
             tests_by_import_token,
             function_name_counts,
+            self_factories,
             name_module_candidates,
             owner_named_cache: Mutex::new(BTreeMap::new()),
             same_module_cache: Mutex::new(BTreeMap::new()),

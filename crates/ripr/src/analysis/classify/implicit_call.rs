@@ -28,7 +28,7 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
+    SelfFactories, expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
     let_binding_mentions_type, owner_trait_name,
 };
 use super::reveal::contains_as_whole_word;
@@ -698,7 +698,7 @@ fn named_binding_operand(name: Option<&str>, lets: &str, scope: &str, ty: &str) 
     let Some(name) = name else {
         return Operand::Unknown;
     };
-    if let_binding_mentions_type(lets, name, ty) {
+    if let_binding_mentions_type(lets, name, ty, SelfFactories::NONE) {
         return Operand::Bound;
     }
     match let_binding_certain_type_head(lets, name) {

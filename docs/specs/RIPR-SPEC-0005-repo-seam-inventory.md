@@ -96,7 +96,7 @@ the type or hide a qualified trailing path.
 Owner-aware direct call paths keep their existing authority. Only the
 conventional constructors `Type::new(..)`, `Type::default()` and
 `Type::from(..)` read as that type; `new_*`, `from_*` and `with_*` spellings
-are a naming convention, not a return type, and stay unresolved (#8782). This
+are a naming convention, not a return type, and stay unresolved (#8782) unless the indexed inherent `impl` declares that associated function returning `Self` or the type itself, in which case it reads as that type; a same-named function declared with any other return type in another `impl` of the same type name withholds the credit (#10301). This
 rule adds no general type resolution, factory-return inference, unique-name
 receiver proof or borrowed-helper context expansion.
 

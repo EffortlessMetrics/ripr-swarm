@@ -1061,10 +1061,19 @@ fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
     let has_self_param = function
         .param_list()
         .is_some_and(|params| params.self_param().is_some());
+    let returns_owner_type = !has_self_param
+        && match (&container, function.ret_type().and_then(|ret| ret.ty())) {
+            (FunctionContainer::Inherent { self_ty }, Some(ret)) => {
+                let ret = compact_syntax_text(ret.syntax().text().to_string());
+                ret == "Self" || ret == *self_ty
+            }
+            _ => false,
+        };
     FunctionItemFact {
         container,
         has_self_param,
         has_body: function.body().is_some(),
+        returns_owner_type,
     }
 }
 

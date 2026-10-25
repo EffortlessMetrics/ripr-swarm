@@ -1976,6 +1976,7 @@ fn item_container_stops_at_the_nearest_item() {
             },
             has_self_param: true,
             has_body: true,
+            returns_owner_type: false,
         })
     );
     assert_eq!(
@@ -1997,7 +1998,37 @@ fn item_container_stops_at_the_nearest_item() {
             },
             has_self_param: true,
             has_body: false,
+            returns_owner_type: false,
         })
+    );
+}
+
+#[test]
+fn self_factories_come_from_the_declared_return_type() {
+    // #10301: a `new_*`/`from_*`/`with_*` name is a convention; the declared
+    // return type is the authority.
+    let source = "pub struct Site;\npub struct Cache;\nimpl Site {\n    pub fn with_langs(n: u8) -> Self { Site }\n    pub fn from_vec(v: Vec<u8>) -> Site { Site }\n    pub fn with_cache() -> Cache { Cache }\n    pub fn try_new() -> Option<Self> { None }\n    pub fn shared() -> Self { Site }\n    pub fn build(&self) -> Self { Site }\n}\nimpl Cache {\n    pub fn shared() -> Cache { Cache }\n}\nimpl Other {\n    pub fn shared() -> u8 { 0 }\n}\nimpl Clone for Site {\n    fn clone(&self) -> Self { Site }\n}\n";
+    let index = index(&[(LIB, source)]);
+    let by_type = crate::analysis::classify::self_factories_by_type(&index, None);
+    let site: Vec<&str> = by_type
+        .get("Site")
+        .map(|names| names.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(site, ["from_vec", "shared", "with_langs"]);
+    let cache: Vec<&str> = by_type
+        .get("Cache")
+        .map(|names| names.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(cache, ["shared"]);
+    assert!(
+        by_type
+            .get("Other")
+            .is_some_and(std::collections::BTreeSet::is_empty)
+    );
+    let only = crate::analysis::classify::self_factories_by_type(&index, Some("Cache"));
+    assert_eq!(
+        only.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["Cache"]
     );
 }
 
