@@ -18829,6 +18829,27 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0352"
+name = "An inherent receiver blocked only by an assertion macro ripr cannot verify, because target-root placement is unavailable, is a named limitation and not a gap"
+spec = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
+tests = [
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::the_repository_consumer_credits_nothing_for_the_unplaced_call",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::available_placement_keeps_the_rebound_root_gap_and_the_plain_credit",
+]
+code = [
+  "crates/ripr/src/analysis/classify/receiver_unestablished.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "verdict_corpus_false_actionable_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0351"
 name = "A test that asserts on the local it passed as &mut observes the change only when the changed expression writes through that parameter"
 spec = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"

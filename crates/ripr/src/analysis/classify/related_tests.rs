@@ -4346,6 +4346,7 @@ pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionS
 /// never a raw captured-line comment or a binding in an expired inner block.
 /// Aliases, receiver value flow and unsupported binding scopes stay unresolved.
 /// This does not establish general type or Cargo-target identity.
+#[cfg(test)]
 pub(in crate::analysis) fn inherent_receiver_call_resolves(
     test: &TestSummary,
     method: &str,
@@ -4353,6 +4354,49 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     index: Option<&RustIndex>,
     pin_syntax: &super::OwnerPinSyntax,
 ) -> bool {
+    inherent_receiver_call_resolves_with(
+        test,
+        method,
+        impl_type,
+        index,
+        PinGate::enforced(pin_syntax),
+    )
+}
+
+/// How a receiver check reads the standard assertion macros. `enforced` is the
+/// only production reading: an assertion operand counts only when the macro
+/// binding is verified. `trusted` exists solely to name a refusal that rests on
+/// that unverifiable binding (RIPR-SPEC-0352) and never credits anything.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct PinGate<'a> {
+    syntax: &'a super::OwnerPinSyntax,
+    gate_macros: bool,
+}
+
+impl<'a> PinGate<'a> {
+    pub(in crate::analysis) fn enforced(syntax: &'a super::OwnerPinSyntax) -> Self {
+        Self {
+            syntax,
+            gate_macros: true,
+        }
+    }
+
+    fn trusted(syntax: &'a super::OwnerPinSyntax) -> Self {
+        Self {
+            syntax,
+            gate_macros: false,
+        }
+    }
+}
+
+fn inherent_receiver_call_resolves_with(
+    test: &TestSummary,
+    method: &str,
+    impl_type: &str,
+    index: Option<&RustIndex>,
+    pin: PinGate<'_>,
+) -> bool {
+    let pin_syntax = pin.syntax;
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
     // The AST below establishes the same bounded type heads in live scope.
@@ -4378,7 +4422,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
             }
         })
     };
-    executable_call_resolves(test, index, pin_syntax, &|node, scope| {
+    executable_call_resolves_with(test, index, pin, &|node, scope| {
         inherent_call_node_resolves(
             node,
             scope,
@@ -4450,6 +4494,16 @@ fn executable_call_resolves(
     pin_syntax: &super::OwnerPinSyntax,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
+    executable_call_resolves_with(test, index, PinGate::enforced(pin_syntax), resolves)
+}
+
+fn executable_call_resolves_with(
+    test: &TestSummary,
+    index: Option<&RustIndex>,
+    pin: PinGate<'_>,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
+    let pin_syntax = pin.syntax;
     let parse = match index {
         Some(index) => index.source_syntax.parse_fragment(&test.body),
         None => crate::analysis::syntax::parse_clean_source_file(&test.body),
@@ -4471,22 +4525,23 @@ fn executable_call_resolves(
             .filter(executable)
             .filter_map(ast::MacroCall::cast)
             .any(|call| {
-                let binding_admitted = index.is_none_or(|index| {
-                    let offset = u32::from(call.syntax().text_range().start()) as usize;
-                    let line = test.start_line
-                        + test.body[..offset]
-                            .bytes()
-                            .filter(|byte| *byte == b'\n')
-                            .count();
-                    call.path().is_some_and(|path| {
-                        pin_syntax.targeted_macro_binding_is_unambiguous(
-                            test,
-                            line,
-                            &path.syntax().text().to_string(),
-                            index,
-                        )
-                    })
-                });
+                let binding_admitted = !pin.gate_macros
+                    || index.is_none_or(|index| {
+                        let offset = u32::from(call.syntax().text_range().start()) as usize;
+                        let line = test.start_line
+                            + test.body[..offset]
+                                .bytes()
+                                .filter(|byte| *byte == b'\n')
+                                .count();
+                        call.path().is_some_and(|path| {
+                            pin_syntax.targeted_macro_binding_is_unambiguous(
+                                test,
+                                line,
+                                &path.syntax().text().to_string(),
+                                index,
+                            )
+                        })
+                    });
                 binding_admitted && assertion_arguments_resolve(&call, index, resolves)
             })
 }
@@ -4850,6 +4905,27 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
         ) == RelationReason::DirectOwnerCall
 }
 
+/// Whether `test` fails the inherent receiver check for `owner` only because
+/// the standard assertion macro binding cannot be verified, and cannot be
+/// verified because target-root placement is unavailable (RIPR-SPEC-0352).
+/// The check is the complete owner-call relation, so module/type shadows and a
+/// wrong or message-only receiver still refuse; only the macro gate is lifted.
+/// The answer names a limit. It never grants the relation.
+pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    pin_syntax: &super::OwnerPinSyntax,
+) -> bool {
+    let relation = |pin| {
+        owner_call_relation_reason_gated(test, Some(owner), &owner.name, &[], index, false, pin)
+    };
+    requires_inherent_receiver_identity(owner)
+        && pin_syntax.target_placement_unavailable(index)
+        && relation(PinGate::enforced(pin_syntax)) != RelationReason::DirectOwnerCall
+        && relation(PinGate::trusted(pin_syntax)) == RelationReason::DirectOwnerCall
+}
+
 /// Whether the last call of `method` in `prefix` (masked test source cut at
 /// the end of one statement, with earlier calls of the same name blanked by
 /// the caller) has a receiver bound to `impl_type`, under the same receiver
@@ -4989,6 +5065,26 @@ fn owner_call_relation_reason(
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
     pin_syntax: &super::OwnerPinSyntax,
+) -> RelationReason {
+    owner_call_relation_reason_gated(
+        test,
+        owner_fn,
+        owner_name,
+        same_name_ids,
+        index,
+        fmt_dispatch_resolved,
+        PinGate::enforced(pin_syntax),
+    )
+}
+
+fn owner_call_relation_reason_gated(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    owner_name: &str,
+    same_name_ids: &[&str],
+    index: &RustIndex,
+    fmt_dispatch_resolved: bool,
+    pin: PinGate<'_>,
 ) -> RelationReason {
     let test_source = index
         .files()
@@ -5134,12 +5230,12 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(
+        return if inherent_receiver_call_resolves_with(
             test,
             owner_name,
             &impl_type,
             Some(index),
-            pin_syntax,
+            pin,
         ) {
             RelationReason::DirectOwnerCall
         } else {

@@ -18,7 +18,12 @@ floor = 190
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 135
+# 135 -> 136 (RIPR-SPEC-0352): serde-derive-rename-field-upper and
+# serde-derive-rename-variant-lower read a false `gap` before the rule and
+# read `limited` after it (serde_core mounts generated code with an unresolved
+# `include!`, so macro trust cannot be established). Both are now abstained
+# rows whose tests catch the change; they were never credited soundly.
+missed_credit_ceiling = 136
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;

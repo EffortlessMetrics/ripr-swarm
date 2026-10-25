@@ -474,6 +474,14 @@ pub enum StaticLimitKind {
     /// or that the arm's value reaches the compared items. The gap is
     /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240 / #5503.
     RustCallerLoopSelectorUnresolved,
+    /// A Rust test calls an inherent method of the changed owner through a
+    /// standard assertion, and the call resolves if the assertion macro is the
+    /// standard one, but ripr cannot verify the macro binding because
+    /// target-root placement is unavailable (an unresolved `include!` or
+    /// `#[path]` somewhere in the workspace). The receiver was never shown to
+    /// mismatch. The gap is withheld and the class is `static_unknown`. See
+    /// RIPR-SPEC-0352.
+    RustInherentReceiverUnestablished,
 }
 
 impl StaticLimitKind {
@@ -538,6 +546,9 @@ impl StaticLimitKind {
             StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
             StaticLimitKind::RustPinnedShapeUnresolved => "rust_pinned_shape_unresolved",
             StaticLimitKind::RustImplicitCallUnresolved => "rust_implicit_call_unresolved",
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "rust_inherent_receiver_unestablished"
+            }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "rust_caller_loop_selector_unresolved"
             }
@@ -698,6 +709,14 @@ impl StaticLimitKind {
                  receiver whose type ripr does not infer (`dyn Trait`, a second impl of the \
                  trait), but ripr does not follow that call to the changed method. ripr does \
                  not claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "A Rust test calls the changed inherent method inside a standard assertion, and \
+                 the receiver resolves to the owner's type if that assertion macro is the \
+                 standard one, but ripr cannot verify the macro binding because it cannot place \
+                 the test in a Cargo target (an unresolved `include!` or `#[path]` in the \
+                 workspace). The receiver was not shown to differ. ripr does not claim a gap; \
+                 this is a named limitation, not a coverage claim."
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "This match arm is selected by a bounded loop inside an iterator's `next`, and a \
@@ -1057,6 +1076,10 @@ mod tests {
             StaticLimitKind::RustImplicitCallUnresolved.as_str(),
             "rust_implicit_call_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustInherentReceiverUnestablished.as_str(),
+            "rust_inherent_receiver_unestablished"
+        );
     }
 
     #[test]
@@ -1091,6 +1114,7 @@ mod tests {
             StaticLimitKind::RustPinnedShapeUnresolved,
             StaticLimitKind::RustImplicitCallUnresolved,
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
+            StaticLimitKind::RustInherentReceiverUnestablished,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust gap whose only refusal is that ripr cannot verify the standard assertion macro around an inherent-method call, because target-root placement is unavailable (an unresolved `include!` such as a build-script output, or `#[path]`), now reads `static_unknown` with the new `rust_inherent_receiver_unestablished` limit instead of `weakly_exposed` or `reachable_unrevealed`. Nothing is credited; a wrong receiver, or a rebound `std` while placement is available, keeps its gap (RIPR-SPEC-0352, #9611).

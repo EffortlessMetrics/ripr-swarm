@@ -163,6 +163,15 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    // RIPR-SPEC-0352: record a receiver blocked only by an unverifiable macro
+    // while the run-shared syntax memo is in scope; the language post-pass
+    // decides.
+    super::classify::mark_receiver_unestablished(
+        &mut finding,
+        owner_fn,
+        index,
+        candidate_index.owner_pin_syntax(),
+    );
     finding
 }
 

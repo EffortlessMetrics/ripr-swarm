@@ -2259,6 +2259,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
+        StaticLimitKind::RustInherentReceiverUnestablished,
     ]
     .iter()
     .any(|known| known.as_str() == kind)

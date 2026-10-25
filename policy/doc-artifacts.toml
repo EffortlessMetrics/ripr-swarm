@@ -1882,3 +1882,12 @@ path = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the out-parameter oracle contract: an assert_eq! on the very local a direct call of the changed method received as &mut, bound once and asserted after the call in the same test, is an oracle for that call, and every other shape fails closed."
+
+
+[[artifact]]
+id = "RIPR-SPEC-0352"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the inherent-receiver unestablished contract: a gap whose only refusal is an assertion macro binding that cannot be verified because target-root placement is unavailable reads static_unknown under rust_inherent_receiver_unestablished, credits nothing, and keeps every real receiver mismatch and every available-placement rebinding as a gap."

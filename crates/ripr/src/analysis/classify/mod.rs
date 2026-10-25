@@ -30,6 +30,7 @@ mod owner_shape;
 mod pinned_shape;
 mod propagation_witness;
 mod reach;
+mod receiver_unestablished;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
@@ -119,6 +120,9 @@ pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
     reach_evidence, relation_establishes_reach,
+};
+pub(in crate::analysis) use receiver_unestablished::{
+    mark_receiver_unestablished, withhold_receiver_unestablished_gap,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
