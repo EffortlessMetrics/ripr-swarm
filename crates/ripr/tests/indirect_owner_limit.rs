@@ -578,3 +578,56 @@ mod tests {
         "trailing comment",
     )
 }
+
+// #10162: an item the test brings into scope under the owner's leaf name is
+// not the owner, whether it is imported or defined in the test body.
+#[test]
+fn an_imported_same_leaf_value_beside_a_direct_call_keeps_the_gap() -> Result<(), String> {
+    for import in [
+        "use super::other::inc;",
+        "use super::other::{inc};",
+        "use super::other::inc as step;\n        use super::other::inc;",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]
+    fn positive() {{
+        {import}
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [10, 11]);
+    }}
+"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, import)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_fn_named_like_the_owner_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        fn inc(x: u32) -> u32 {
+            x + 9
+        }
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [10, 11]);
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "nested fn shadows the owner name")
+}
+
+#[test]
+fn importing_the_owner_itself_is_still_a_limit() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        use super::inc;
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+",
+    ));
+    withheld(&lib, BEFORE, AFTER, "use of the owner's own path")
+}

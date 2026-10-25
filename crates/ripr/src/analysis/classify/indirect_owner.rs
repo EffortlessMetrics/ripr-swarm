@@ -235,7 +235,7 @@ fn names_owner_as_value(code: &str, owner: &FunctionFact) -> bool {
 }
 
 fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
-    if is_bound_locally(code, name) {
+    if is_bound_locally(code, name) || is_shadowed_by_item(code, name, owner_names) {
         return false;
     }
     identifier_offsets(code, name).any(|at| {
@@ -368,6 +368,47 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
                 && !after.starts_with("::")
                 && code[..at].trim_end().ends_with(['(', ',', '|'])
         })
+}
+
+/// The test body brings another item named `name` into scope: a nested
+/// `fn name`, or a `use` that imports `name` (or renames something to it) from
+/// a path whose last segment does not locate the owner. A later bare `name` is
+/// then that item, not the owner (`use super::other::inc;`). `use super::inc;`
+/// imports the owner itself and shadows nothing.
+fn is_shadowed_by_item(code: &str, name: &str, owner_names: &[String]) -> bool {
+    let nested_fn = identifier_offsets(code, name).any(|at| {
+        let before = code[..at].trim_end();
+        before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2])
+    });
+    nested_fn
+        || identifier_offsets(code, "use").any(|at| {
+            let rest = &code[at + 3..];
+            let statement = &rest[..rest.find(';').unwrap_or(rest.len())];
+            use_statement_shadows(statement, name, owner_names)
+        })
+}
+
+fn use_statement_shadows(statement: &str, name: &str, owner_names: &[String]) -> bool {
+    identifier_offsets(statement, name).any(|at| {
+        let before = statement[..at].trim_end();
+        let after = statement[at + name.len()..].trim_start();
+        if before.ends_with(" as") || before.ends_with("\nas") {
+            return true;
+        }
+        if !(after.is_empty() || after.starts_with([',', '}']) || after.starts_with("as ")) {
+            return false;
+        }
+        // A group import (`a::b::{x, name}`) takes the path before its brace.
+        let prefix = match before.rfind('{') {
+            Some(brace) if !before[brace..].contains('}') => before[..brace].trim_end(),
+            _ => before,
+        };
+        let Some(path) = prefix.strip_suffix("::") else {
+            return false;
+        };
+        let last = path.rsplit("::").next().unwrap_or(path).trim();
+        !owner_names.iter().any(|known| known == last)
+    })
 }
 
 /// Byte ranges of `code` that are binding patterns: from `let`/`for` to the
