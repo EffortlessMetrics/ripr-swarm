@@ -23,7 +23,7 @@
 
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
-    ImportedMacros, MacroScope, calls_only_at_top_level, first_macro_call, macro_scope,
+    ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -113,18 +113,32 @@ impl MacroVisibility {
         self.collect_inherited(file, 0, &mut walk);
         self.collect_imports(file, first_call, 0, &mut walk);
         let mut path_imports = Vec::new();
-        for import in own
-            .uses
-            .iter()
-            .filter(|import| self.generators.contains(&import.name))
-        {
+        let mut blanked_prefixes = Vec::new();
+        let calls = generator_calls(source, &self.generators).unwrap_or_default();
+        let local: BTreeSet<&str> = own.macros.iter().map(|m| m.name.as_str()).collect();
+        let imported_by_use: BTreeSet<&str> =
+            own.uses.iter().map(|import| import.name.as_str()).collect();
+        for (name, calls) in &calls {
+            let by_use = imported_by_use.contains(name.as_str());
+            // A bare call with no `use` could be a glob import or an
+            // extern-crate macro; the splice would shadow it. A file that
+            // defines the name itself is not importing it.
+            let usable = if by_use {
+                !calls.nested_bare
+            } else {
+                !calls.bare && !calls.crate_prefixes.is_empty()
+            };
+            if !usable || local.contains(name.as_str()) {
+                continue;
+            }
             // An import that does not resolve stays in the file, so the
             // expander refuses that one name; the others are unaffected.
-            if calls_only_at_top_level(source, &import.name)
-                && let Some(text) = self.exported_definition(file, &import.name)
-            {
+            if let Some(text) = self.exported_definition(file, name) {
                 walk.out.push(text);
-                path_imports.push(import.name.clone());
+                if by_use {
+                    path_imports.push(name.clone());
+                }
+                blanked_prefixes.extend(calls.crate_prefixes.iter().copied());
             }
         }
         if walk.refused {
@@ -139,6 +153,7 @@ impl MacroVisibility {
         ImportedMacros {
             definitions,
             path_imports,
+            blanked_prefixes,
         }
     }
 
@@ -530,6 +545,38 @@ mod tests {
         assert_eq!(
             path_imported(&files, "src/macros.rs").1,
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_crate_path_call_resolves_without_an_import_but_a_bare_call_does_not() {
+        let lib = ("src/lib.rs", "mod macros;\nmod cases;\n");
+        let files = [
+            lib,
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "crate::t!(a);\ncrate :: t!(b);\n"),
+        ];
+        let imported = visibility(&files).imported_macros(Path::new("src/cases.rs"));
+        assert!(imported.definitions.contains("macro_rules! t "));
+        assert_eq!(imported.blanked_prefixes.len(), 2);
+        assert!(imported.path_imports.is_empty());
+        let bare = [
+            lib,
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "crate::t!(a);\nt!(b);\n"),
+        ];
+        assert_eq!(
+            visibility(&bare).imported_macros(Path::new("src/cases.rs")),
+            ImportedMacros::default()
+        );
+        let nested = [
+            lib,
+            ("src/macros.rs", EXPORTED),
+            ("src/cases.rs", "fn f() { crate::t!(a); }\n"),
+        ];
+        assert_eq!(
+            visibility(&nested).imported_macros(Path::new("src/cases.rs")),
+            ImportedMacros::default()
         );
     }
 

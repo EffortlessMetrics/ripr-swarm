@@ -1075,6 +1075,7 @@ impl PythonAdapter {
                 continue;
             }
             changed_count += 1;
+            let file_start = findings.len();
             if is_test_file(&changed.path) {
                 continue;
             }
@@ -1225,6 +1226,7 @@ impl PythonAdapter {
                     findings.push(finding);
                 }
             }
+            classify::number_colliding_candidates(&mut findings[file_start..], &mut value_origins);
             // A deleted behavior line no added line pairs with is kept as
             // base-side evidence on its owner, as the Rust adapter keeps it
             // (#7587, RIPR-SPEC-0156).
