@@ -1,0 +1,12 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -12,7 +12,7 @@ def low_balance(balance):
+ 
+ def low_stock(count):
+     if count < 3:
+-        log.warning("low stock: %s", count)
++        log.warning("low stock: %s (retry)", count)
+         return False
+     return True
+ 
