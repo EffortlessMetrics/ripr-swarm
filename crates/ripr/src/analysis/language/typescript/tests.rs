@@ -1663,6 +1663,34 @@ fn normalized_path_strips_dot_prefix_and_normalizes_separators() {
 }
 
 #[test]
+fn normalized_path_eq_matches_plain_paths() {
+    assert!(normalized_path_eq(Path::new("src/a/b.ts"), "src/a/b.ts"));
+    assert!(normalized_path_eq(Path::new("./src/a.ts"), "src/a.ts"));
+    assert!(normalized_path_eq(Path::new("././x.ts"), "x.ts"));
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "src/b.ts"));
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "other/a.ts"));
+}
+
+#[test]
+fn normalized_path_eq_agrees_with_normalized_path_on_backslash_spellings() {
+    // #10024: a literal backslash-spelled path collides with the
+    // forward-slash spelling under normalized_path; the eq helper must keep
+    // recognizing it through the allocating slow path.
+    for (path, expected) in [
+        (r"src\a\b.ts", "src/a/b.ts"),
+        (r".\src\b.ts", "src/b.ts"),
+        (r"src/a\b.ts", "src/a/b.ts"),
+    ] {
+        assert!(
+            normalized_path_eq(Path::new(path), expected),
+            "{path:?} must equal {expected:?}"
+        );
+        assert_eq!(normalized_path(Path::new(path)), expected);
+    }
+    assert!(!normalized_path_eq(Path::new(r"src\a\b.ts"), "src/a/c.ts"));
+}
+
+#[test]
 fn extract_owners_recognizes_function_declaration() {
     let owners = extract_owners(
         Path::new("src/lib.ts"),
@@ -15544,6 +15572,69 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
     );
 }
 
+/// A test that still pins the pre-change value at the boundary input fails
+/// against the changed code, so its expectation tells the two behaviors
+/// apart: live. An expectation equal under both behaviors, or neither, is
+/// not.
+#[test]
+fn expected_side_is_live_credits_an_expectation_pinning_the_unchanged_value() {
+    let owner = boundary_witness_owner();
+    // At 100 the changed `>=` takes the discount (90); the unchanged
+    // behavior returned 100.
+    for expected in ["90", "100"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(true),
+            "{expected}"
+        );
+    }
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "95",
+        ),
+        Some(false),
+        "an expectation matching neither behavior stays dead"
+    );
+    let same_branches = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function applyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return 7;\n",
+                "    }\n",
+                "    return 7;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &same_branches,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "7",
+        ),
+        Some(false),
+        "an expectation equal under both behaviors discriminates nothing"
+    );
+}
+
 /// Signed matcher text (`-1`, `+1`) is a numeric expected value. On the
 /// discount boundary it matches neither 90 nor 100, so it is dead rather
 /// than an unparsed `None` that would leave the witness standing (#7647).
@@ -15618,7 +15709,7 @@ fn expected_side_is_live_credits_a_signed_live_expected_value() {
             "n",
             "0",
             &["0".to_string()],
-            "1",
+            "2",
         ),
         Some(false)
     );
@@ -18097,6 +18188,7 @@ mod class_entry_tests;
 mod committed_snapshot_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
+mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod default_object_member_tests;
 mod directory_specifier_tests;

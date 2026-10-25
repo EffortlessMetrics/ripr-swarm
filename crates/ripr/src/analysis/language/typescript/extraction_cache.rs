@@ -76,12 +76,18 @@ pub(crate) struct CacheKey {
     pub(crate) fingerprint: (u64, u64),
 }
 
-/// Two independent 64-bit hashes over different domain separators, composed
-/// into a 128-bit fingerprint of every input the facts depend on: workspace
+/// A 128-bit fingerprint of every input the facts depend on: workspace
 /// root, alias-map digest, path, and source bytes. Moved unchanged from the
 /// deleted export-facts cache (#10063); now the fingerprint of the combined
 /// facts cache (#10071). `DefaultHasher::new` is keyed deterministically
 /// within a process, which is all the cache needs.
+///
+/// One pass over the source bytes: the first lane hashes every input; the
+/// second lane hashes the finished first lane plus the identity metadata
+/// instead of re-reading the source (#10087 follow-up). The pair keeps the
+/// (u64, u64) shape, both lanes stay deterministic per process, and a
+/// process-lifetime cache capped at a few thousand entries sits far below
+/// the birthday bound of even a single 64-bit lane.
 pub(crate) fn facts_fingerprint(
     workspace_root: &Path,
     alias_digest: (u64, u64),
@@ -97,16 +103,17 @@ pub(crate) fn facts_fingerprint(
     first.write(path.as_bytes());
     first.write_u8(0x00);
     first.write(source.as_bytes());
+    let first = first.finish();
     let mut second = std::collections::hash_map::DefaultHasher::new();
     second.write_u8(0x5C);
-    second.write(source.as_bytes());
-    second.write_u8(0x00);
-    second.write(path.as_bytes());
-    second.write_u8(0x00);
+    second.write_u64(first);
+    second.write_u64(source.len() as u64);
     second.write_u64(alias_digest.1);
     second.write_u64(alias_digest.0);
+    second.write(path.as_bytes());
+    second.write_u8(0x00);
     workspace_root.hash(&mut second);
-    (first.finish(), second.finish())
+    (first, second.finish())
 }
 
 /// All per-file facts derived from one oxc parse (#10071): parse status,

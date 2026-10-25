@@ -1226,6 +1226,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1729,6 +1731,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1793,6 +1797,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1879,6 +1885,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1932,6 +1940,8 @@ fn same_stem_related_handles_missing_stems() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -2085,6 +2095,81 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
     if finding.language_status != Some(LanguageStatus::Preview) {
         return Err("language status should be Preview".to_string());
     }
+    Ok(())
+}
+
+/// #10125: the workspace foreign-write index is built once per run. A rebuild
+/// per changed file would parse every workspace source again for each one.
+#[test]
+fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result<(), String> {
+    fn parses_for(changed_modules: usize) -> Result<(usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-parse-once")?;
+        let mut changed_files = Vec::new();
+        for index in 0..3 {
+            let module = PathBuf::from(format!("settings{index}.py"));
+            write_file(&root.join(&module), &format!("LIMIT{index} = 12\n"))?;
+            write_file(
+                &root.join(format!("test_settings{index}.py")),
+                &format!(
+                    "from settings{index} import LIMIT{index}\n\n\ndef test_limit():\n    assert LIMIT{index} == 10\n"
+                ),
+            )?;
+            if index < changed_modules {
+                changed_files.push(ChangedFile {
+                    path: module,
+                    added_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 12"),
+                    }],
+                    removed_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 10"),
+                    }],
+                });
+            }
+        }
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::module_value::FOREIGN_PARSES.with(|parses| parses.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let parses = super::module_value::FOREIGN_PARSES.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((parses, result.findings.len()))
+    }
+
+    let (one_parses, one_findings) = parses_for(1)?;
+    let (three_parses, three_findings) = parses_for(3)?;
+    assert_eq!(one_findings, 1, "one changed constant is one finding");
+    assert_eq!(
+        three_findings, 3,
+        "three changed constants are three findings"
+    );
+    assert_eq!(
+        one_parses, 6,
+        "each of the six workspace sources is parsed once"
+    );
+    assert_eq!(
+        three_parses, one_parses,
+        "changing more files must not parse the workspace again"
+    );
     Ok(())
 }
 
@@ -4061,6 +4146,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4142,6 +4229,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4224,6 +4313,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -4874,5 +4965,122 @@ fn same_name_import_gate_leaves_class_owners_alone() -> Result<(), String> {
         .find(|owner| owner.file == Path::new("pkg/b.py"))
         .ok_or_else(|| "expected class owner".to_string())?;
     assert!(owner.rival_definition_modules.is_empty());
+    Ok(())
+}
+
+/// Run the diff pipeline over a lone `LIMIT = 10` -> `LIMIT = 12` replacement
+/// with `extra` workspace files, optionally listing the test file as changed
+/// too, and return the finding's class (#9423).
+fn module_constant_pipeline_class(
+    label: &str,
+    extra: &[(&str, &str)],
+    test_also_changed: bool,
+) -> Result<ExposureClass, String> {
+    let root = unique_tempdir(label)?;
+    let write_all = || -> Result<(), String> {
+        write_file(
+            &root.join("hostile/settings.py"),
+            "LIMIT = 12\n\n\ndef over_limit(n):\n    return n > LIMIT\n",
+        )?;
+        write_file(
+            &root.join("tests/test_settings.py"),
+            "from hostile.settings import over_limit\n\n\ndef test_it():\n    assert over_limit(11)\n",
+        )?;
+        for (file, source) in extra {
+            write_file(&root.join(file), source)?;
+        }
+        Ok(())
+    };
+    let written = write_all();
+    let line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 1,
+        new_side_line: 1,
+        text: text.to_string(),
+    };
+    let mut changed_files = vec![ChangedFile {
+        path: PathBuf::from("hostile/settings.py"),
+        added_lines: vec![line("LIMIT = 12")],
+        removed_lines: vec![line("LIMIT = 10")],
+    }];
+    if test_also_changed {
+        changed_files.push(ChangedFile {
+            path: PathBuf::from("tests/test_settings.py"),
+            added_lines: vec![line("from hostile.settings import over_limit")],
+            removed_lines: Vec::new(),
+        });
+    }
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let result = written.and_then(|()| {
+        PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files)
+    });
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    match result.findings.as_slice() {
+        [finding] => Ok(finding.class.clone()),
+        other => Err(format!("expected one finding, got {}", other.len())),
+    }
+}
+
+#[test]
+fn module_constant_edit_credits_through_the_diff_pipeline_only_when_the_workspace_is_quiet()
+-> Result<(), String> {
+    let reader = (
+        "app/main.py",
+        "from hostile import settings\n\nprint(settings.LIMIT)\n",
+    );
+    assert_eq!(
+        module_constant_pipeline_class("module-value-read", &[reader], false)?,
+        ExposureClass::Exposed
+    );
+    for (label, file) in [
+        (
+            "module-value-production-write",
+            (
+                "app/main.py",
+                "import os\nfrom hostile import settings\n\nsettings.LIMIT = int(os.environ['L'])\n",
+            ),
+        ),
+        (
+            "module-value-conftest-patch",
+            (
+                "tests/conftest.py",
+                "import pytest\nfrom hostile import settings\n\n\n@pytest.fixture(autouse=True)\ndef big(monkeypatch):\n    monkeypatch.setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "module-value-helper-setattr",
+            (
+                "tests/support.py",
+                "from hostile import settings\n\n\ndef bump():\n    setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+    ] {
+        assert_ne!(
+            module_constant_pipeline_class(label, &[file], false)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // The diff also edits the test file: its assertion is not a pre-existing oracle.
+    assert_ne!(
+        module_constant_pipeline_class("module-value-test-edited", &[reader], true)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

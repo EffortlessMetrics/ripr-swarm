@@ -1,7 +1,7 @@
 //! A function that writes an attribute of a module-scope object, read back by
 //! a test that imported that object from the owner's module.
 
-use super::classify::classify_change_with_old;
+use super::classify::{classify_change_with_old, classify_change_with_source};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::related_tests::apply_class_facts;
 use crate::domain::{ExposureClass, Finding};
@@ -173,6 +173,9 @@ fn classify_with_test(test_src: &str) -> Result<ExposureClass, String> {
         .find(|owner| owner.name == "checkout")
         .ok_or("owner checkout must be extracted")?;
     let tests = extract_tests(Path::new("tests/test_route.py"), test_src);
+    if tests.len() != 1 {
+        return Err("fixture must parse exactly one test".to_string());
+    }
     classify_change_with_old(
         Path::new(file),
         owner.start_line + 1,
@@ -192,10 +195,137 @@ fn patched_module_object_is_not_credited() -> Check {
         "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\n@patch(\"shop.route.response\")\ndef test_it(fake):\n    checkout(True)\n    assert response.status_code == 422\n",
         "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    with patch(\"shop.route.response\"):\n        checkout(True)\n    assert response.status_code == 422\n",
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    route.response = object()\n    checkout(True)\n    assert response.status_code == 422\n",
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    route.__setattr__(\"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it(monkeypatch):\n    mp = monkeypatch\n    mp.delattr(route, \"response\")\n    checkout(True)\n    assert response.status_code == 422\n",
         "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
     ] {
         let class = classify_with_test(test_src)?;
         assert_ne!(class, ExposureClass::Exposed, "{test_src}");
+    }
+    Ok(())
+}
+
+fn dynamic_namespace_module_class(writer: &str) -> Result<ExposureClass, String> {
+    classify_with_test(&format!(
+        "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\ndef test_it(monkeypatch):\n    mp = monkeypatch\n    {writer}\n    checkout(True)\n    assert response.status_code == 422\n"
+    ))
+}
+
+#[test]
+fn dynamic_namespace_reload_does_not_credit_module_object() -> Check {
+    assert_eq!(
+        dynamic_namespace_module_class("importlib.reload(route)")?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_dunder_setattr_does_not_credit_module_object() -> Check {
+    assert_eq!(
+        dynamic_namespace_module_class("route.__setattr__(\"response\", object())")?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_renamed_delattr_does_not_credit_module_object() -> Check {
+    assert_eq!(
+        dynamic_namespace_module_class("mp.delattr(route, \"response\")")?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_unknown_fixture_keeps_existing_limit() -> Check {
+    let class = classify_with_test(
+        "from shop import route\nfrom shop.route import checkout, response\n\ndef test_it(mp):\n    mp.delattr(route, \"response\")\n    checkout(True)\n    assert response.status_code == 422\n",
+    )?;
+    assert_eq!(class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_writers_keep_independent_instance_field_credit() -> Check {
+    let file = Path::new("shop/route.py");
+    let source =
+        "response = object()\n\nclass Counter:\n    def bump(self):\n        self.count = 2\n";
+    let mut owners = extract_owners(file, source);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "bump")
+        .ok_or("owner bump must be extracted")?;
+    for writer in [
+        "importlib.reload(route)",
+        "route.__setattr__(\"response\", object())",
+        "mp.delattr(route, \"response\")",
+    ] {
+        let tests = extract_tests(
+            Path::new("tests/test_route.py"),
+            &format!(
+                "import importlib\nfrom shop import route\nfrom shop.route import Counter\n\ndef test_it(monkeypatch):\n    mp = monkeypatch\n    {writer}\n    counter = Counter()\n    counter.bump()\n    assert counter.count == 2\n"
+            ),
+        );
+        assert_eq!(tests.len(), 1, "fixture must parse exactly one test");
+        let finding = classify_change_with_old(
+            file,
+            owner.start_line + 1,
+            "        self.count = 2",
+            Some("        self.count = 1"),
+            &owners,
+            &tests,
+        )
+        .ok_or("the change must yield a finding")?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{writer}");
+    }
+    Ok(())
+}
+
+/// Guard entry (#9833) credits a method's `self.attr` write only. A free
+/// function's module-object write stays direct-only, whatever the object is
+/// called, so a module object spelled `self` is not read as the method route.
+fn classify_guarded_module_write(object: &str) -> Result<ExposureClass, String> {
+    let src = format!(
+        "from types import SimpleNamespace\n\n{object} = SimpleNamespace(status_code=200)\n\n\ndef checkout(expired):\n    if expired == True:\n        {object}.status_code = 400\n"
+    );
+    let file = "shop/route.py";
+    let mut owners = extract_owners(Path::new(file), &src);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or("owner checkout must be extracted")?;
+    let tests = extract_tests(
+        Path::new("tests/test_route.py"),
+        &format!(
+            "from shop.route import checkout, {object}\n\n\ndef test_it():\n    checkout(True)\n    assert {object}.status_code == 422\n"
+        ),
+    );
+    if tests.len() != 1 {
+        return Err("fixture must parse exactly one test".to_string());
+    }
+    classify_change_with_source(
+        Path::new(file),
+        owner.start_line + 2,
+        &format!("        {object}.status_code = 400"),
+        Some(&format!("        {object}.status_code = 422")),
+        &owners,
+        &tests,
+        Some(&src),
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+#[test]
+fn guarded_module_write_stays_uncredited_even_when_every_call_enters_the_guard() -> Check {
+    for object in ["response", "self"] {
+        let class = classify_guarded_module_write(object)?;
+        assert_ne!(class, ExposureClass::Exposed, "module object `{object}`");
     }
     Ok(())
 }

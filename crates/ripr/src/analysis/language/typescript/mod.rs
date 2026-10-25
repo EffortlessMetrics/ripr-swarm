@@ -68,6 +68,7 @@ mod catch_arm_guard;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod deleted_lines;
 #[cfg(test)]
@@ -177,6 +178,7 @@ pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
+pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
@@ -747,9 +749,14 @@ impl TypeScriptAdapter {
             let file_has_decorators = source_by_normalized
                 .get(&normalized_path(&changed.path))
                 .is_none_or(|source| {
-                    source
-                        .lines()
-                        .any(|line| line.trim_start().starts_with('@'))
+                    // Fast path: no '@' byte at all means no line can start
+                    // with one; only pay the line-anchored scan when the
+                    // byte is present (a full `lines()` walk on a multi-MB
+                    // file runs per changed file).
+                    source.contains('@')
+                        && source
+                            .lines()
+                            .any(|line| line.trim_start().starts_with('@'))
                 });
             // Ambient declarations are type-only; their lines are found from
             // the syntax tree, since `declare` is also a legal runtime
@@ -793,7 +800,7 @@ impl TypeScriptAdapter {
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
-                    .filter(|owner| normalized_path(&owner.file) == changed_norm)
+                    .filter(|owner| normalized_path_eq(&owner.file, &changed_norm))
                     .cloned()
                     .collect(),
             );
@@ -1237,6 +1244,7 @@ impl TypeScriptAdapter {
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
         dedup_typescript_probe_ids(&mut findings);
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,
