@@ -417,7 +417,17 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             base_sha: repo["base_sha"].as_str().map(str::to_string),
             note: repo["why"].as_str().unwrap_or_default().to_string(),
             heavy: repo["tier"].as_str() != Some("fast"),
-            language: repo["language"].as_str().map(str::to_string),
+            // A present non-string value is an error, not an absent field:
+            // reading it as absent would file the entry under `rust`.
+            language: match &repo["language"] {
+                Value::Null => None,
+                Value::String(language) => Some(language.clone()),
+                other => {
+                    return Err(format!(
+                        "manifest repo `language` must be a string, got {other}"
+                    ));
+                }
+            },
         });
     }
     Ok((version, corpus))
@@ -2117,6 +2127,7 @@ fn repo_view(config: &Config, metrics: &[Value]) -> Vec<Value> {
         repos.push(json!({
             "id": entry.id,
             "sha": entry.sha,
+            "language": entry.language(),
             "note": entry.note,
             "status": if rows.is_empty() { "not_measured" } else { board_status(&counts) },
             "counts": counts,
