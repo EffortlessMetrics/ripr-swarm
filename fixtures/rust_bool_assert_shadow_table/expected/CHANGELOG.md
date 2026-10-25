@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_bool_assert_shadow_table (3)
+
+Reason:
+RIPR-SPEC-0353: re-bless for the #10426 evidence legend line after merging main (#9619)
+
+Command:
+`cargo xtask goldens bless rust_bool_assert_shadow_table --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
