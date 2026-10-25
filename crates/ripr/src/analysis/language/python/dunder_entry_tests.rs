@@ -321,6 +321,31 @@ fn removed_type_guard_stays_an_abstention_without_the_exact_shape() -> Check {
             money_test("    assert Money(1) == Money(1)"),
         ),
         (
+            "a builtin string method read off a str operand",
+            &unguarded
+                .replace(
+                    "self.cents = cents",
+                    "self.cents = cents\n        self.upper = cents",
+                )
+                .replace("other.cents", "other.upper"),
+            "        return self.cents == other.upper",
+            money_test("    assert Money(1) != 'x'"),
+        ),
+        (
+            "a short-circuited read",
+            &unguarded.replace("self.cents == other.cents", "False and other.cents"),
+            "        return False and other.cents",
+            foreign.clone(),
+        ),
+        (
+            "a test that catches the AttributeError",
+            unguarded.as_str(),
+            NEW_GUARD_LINE,
+            money_test(
+                "    try:\n        assert Money(1) != 1\n    except AttributeError:\n        pass",
+            ),
+        ),
+        (
             "a literal on the left, which the operator entry does not bind",
             unguarded.as_str(),
             NEW_GUARD_LINE,

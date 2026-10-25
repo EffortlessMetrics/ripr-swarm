@@ -9,13 +9,17 @@
 //!
 //! - the edit deletes the leading `isinstance(other, <own class>) and` of the
 //!   only statement of `__eq__`, with the rest of the line unchanged;
-//! - the remaining expression reads `other.<attr>` for attributes no builtin
-//!   literal type has, and uses `other` nowhere else, so a builtin operand
-//!   raises `AttributeError` where the guard used to answer `False`;
+//! - the remaining expression is exactly `self.<a> == other.<b>`: no call, no
+//!   boolean operator or conditional that could skip the read, and `<b>` is a
+//!   name the class stores on its instances (`self.<b> = ..`) that no builtin
+//!   literal type has, so a builtin operand raises `AttributeError` where the
+//!   guard used to answer `False`;
 //! - the class defines neither `__ne__` nor `__getattr__`, so `!=` runs the
 //!   edited `__eq__` and no foreign operand answers the attribute read;
 //! - a related test asserts `Class(...) != <int, float, str, bool or None
-//!   literal>` (either order, or `not ... ==`), which fails after the edit.
+//!   literal>` (or `not ... ==`), and contains no `try`, `with` or `raises`
+//!   that could catch the `AttributeError`, so the assertion fails after the
+//!   edit.
 //!
 //! Anything else (a custom foreign class, a computed operand, an `==` read
 //! that expects `False`) keeps the abstention.
@@ -23,9 +27,57 @@
 use super::related_tests::{PythonRelatedCandidate, PythonRelationKind, dunder_method_class};
 use super::{PythonAssertion, PythonOwner, PythonTest};
 
-/// Attributes the builtin literal types carry; reading one of them off a
-/// foreign operand would not raise, so it is never evidence.
+/// Public attributes the accepted literal types (`int`, `float`, `bool`,
+/// `str`, `None`) carry; reading one of them off a foreign operand would not
+/// raise, so it is never evidence. Dunder names are refused wholesale.
 const BUILTIN_ATTRIBUTES: &[&str] = &[
+    "capitalize",
+    "casefold",
+    "center",
+    "count",
+    "encode",
+    "endswith",
+    "expandtabs",
+    "find",
+    "format",
+    "format_map",
+    "index",
+    "isalnum",
+    "isalpha",
+    "isascii",
+    "isdecimal",
+    "isdigit",
+    "isidentifier",
+    "islower",
+    "isnumeric",
+    "isprintable",
+    "isspace",
+    "istitle",
+    "isupper",
+    "join",
+    "ljust",
+    "lower",
+    "lstrip",
+    "maketrans",
+    "partition",
+    "removeprefix",
+    "removesuffix",
+    "replace",
+    "rfind",
+    "rindex",
+    "rjust",
+    "rpartition",
+    "rsplit",
+    "rstrip",
+    "split",
+    "splitlines",
+    "startswith",
+    "strip",
+    "swapcase",
+    "title",
+    "translate",
+    "upper",
+    "zfill",
     "real",
     "imag",
     "numerator",
@@ -39,8 +91,6 @@ const BUILTIN_ATTRIBUTES: &[&str] = &[
     "is_integer",
     "hex",
     "fromhex",
-    "__class__",
-    "__doc__",
 ];
 
 /// One assertion that fails once the guard is gone.
@@ -61,7 +111,7 @@ pub(super) fn removed_type_guard_credit<'a>(
     }
     let class = dunder_method_class(owner)?.rsplit('.').next()?;
     let remaining = removed_guard_remainder(old_line_text?, line_text, class)?;
-    if !reads_only_custom_attributes(remaining)
+    if !reads_only_custom_attributes(remaining, owner_source)
         || !owner_is_one_return(owner, owner_source)
         || owner_source.contains("def __ne__")
         || owner_source.contains("__getattr__")
@@ -71,6 +121,7 @@ pub(super) fn removed_type_guard_credit<'a>(
     related_candidates
         .iter()
         .filter(|candidate| candidate.relation == PythonRelationKind::ProtocolEntryCall)
+        .filter(|candidate| test_cannot_catch_errors(candidate.test))
         .find_map(|candidate| {
             candidate
                 .test
@@ -97,37 +148,44 @@ fn removed_guard_remainder<'a>(old: &str, new: &'a str, class: &str) -> Option<&
         .then_some(remaining)
 }
 
-/// Every use of `other` is an attribute read of a name no builtin literal has.
-fn reads_only_custom_attributes(expression: &str) -> bool {
-    let bytes = expression.as_bytes();
-    let mut reads = 0;
-    let mut at = 0;
-    while let Some(found) = expression[at..].find("other") {
-        let start = at + found;
-        let end = start + "other".len();
-        at = end;
-        let before_ok = start == 0 || !is_identifier_byte(bytes[start - 1]);
-        let after_ok = bytes.get(end).is_none_or(|byte| !is_identifier_byte(*byte));
-        if !before_ok || !after_ok {
-            continue;
-        }
-        if bytes.get(end) != Some(&b'.') {
-            return false;
-        }
-        let name: String = expression[end + 1..]
-            .chars()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-            .collect();
-        if name.is_empty() || BUILTIN_ATTRIBUTES.contains(&name.as_str()) {
-            return false;
-        }
-        reads += 1;
-    }
-    reads > 0
+/// The expression is exactly `self.<a> == other.<b>`, where `<b>` is stored on
+/// the class's instances and no builtin literal has it. A call, boolean
+/// operator or conditional could skip or satisfy the read, so none is allowed.
+fn reads_only_custom_attributes(expression: &str, source: &str) -> bool {
+    let Some((left, right)) = expression.split_once(" == ") else {
+        return false;
+    };
+    let identifier = |text: &str| {
+        !text.is_empty()
+            && text
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+    };
+    let Some(own) = left.trim().strip_prefix("self.") else {
+        return false;
+    };
+    let Some(name) = right.trim().strip_prefix("other.") else {
+        return false;
+    };
+    identifier(own)
+        && identifier(name)
+        && !name.starts_with("__")
+        && !BUILTIN_ATTRIBUTES.contains(&name)
+        && (source.contains(&format!("self.{name} =")) || source.contains(&format!("self.{name}=")))
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
-    byte == b'_' || byte.is_ascii_alphanumeric()
+/// A test that cannot swallow the `AttributeError` the assertion relies on.
+fn test_cannot_catch_errors(test: &PythonTest) -> bool {
+    ![
+        "try:",
+        "except",
+        "with ",
+        "raises",
+        "suppress",
+        "contextlib",
+    ]
+    .iter()
+    .any(|marker| test.body_text.contains(marker))
 }
 
 /// `__eq__` is its `def` line plus the one `return` statement.
@@ -212,14 +270,39 @@ mod tests {
     }
 
     #[test]
-    fn only_custom_attribute_reads_of_other_count() {
-        assert!(reads_only_custom_attributes("self.cents == other.cents"));
-        assert!(!reads_only_custom_attributes("self.cents == other.real"));
-        assert!(!reads_only_custom_attributes(
-            "self.cents == getattr(other, 'cents')"
+    fn only_a_plain_stored_attribute_comparison_counts() {
+        let source = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n        self.count = cents\n        self.real = cents\n";
+        assert!(reads_only_custom_attributes(
+            "self.cents == other.cents",
+            source
         ));
-        assert!(!reads_only_custom_attributes("self.cents == 1"));
-        assert!(!reads_only_custom_attributes("other.cents == other"));
+        // Attributes `int` or `str` literals also carry would not raise.
+        for name in ["count", "real", "__hash__"] {
+            assert!(
+                !reads_only_custom_attributes(&format!("self.cents == other.{name}"), source),
+                "{name}"
+            );
+        }
+        // A name the class never stores on its instances (a property, a method).
+        assert!(!reads_only_custom_attributes(
+            "self.cents == other.total",
+            source
+        ));
+        // Anything beyond the one comparison could skip or satisfy the read.
+        for expression in [
+            "False and other.cents",
+            "self.cents == other.cents and other.cents",
+            "self.cents == other.cents.upper()",
+            "self.cents == (other.cents if self else 0)",
+            "self.cents == getattr(other, 'cents')",
+            "self.cents == 1",
+            "other.cents == other",
+        ] {
+            assert!(
+                !reads_only_custom_attributes(expression, source),
+                "{expression}"
+            );
+        }
     }
 
     #[test]
