@@ -127,8 +127,16 @@ More generally an effect oracle is ungated only when its text starts with an
 assertion macro in its tail. A root `loop` with no `break` and a root
 `std::process::exit` / `abort` call end the test like an earlier `return`, for every
 family that reads this admission. Not covered: `process::exit` reached through a
-`use` alias, and a boolean `assert!` / `debug_assert!` in a dead context still
-credits a `return_value` finding (#10389).
+`use` alias. A boolean `assert!` / `debug_assert!` takes the same admission for
+`return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
+context (after `return`, in an uncalled `fn` or closure, `if false`, `loop {}`,
+`cfg!(any())`) no longer credits (#10389). The one exception is an operand that
+nests only a known pure comparison macro (`approx_eq!` from `float_cmp`;
+`relative_eq!`, `abs_diff_eq!`, `ulps_eq!` from `approx`), imported by name, in a
+plain `#[test]` whose function has no other refusal: ripr does not expand
+third-party macros, so that nesting alone keeps the `return_value` credit. Any other
+nested macro, a local `macro_rules!` of that name, or an operand holding an exit
+token withholds it.
 
 Residual fail-open contexts. The admission is a syntactic reading, not a control
 flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as

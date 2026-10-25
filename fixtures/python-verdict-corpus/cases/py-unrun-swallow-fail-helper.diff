@@ -1,0 +1,12 @@
+diff --git a/unrun/core.py b/unrun/core.py
+--- a/unrun/core.py
++++ b/unrun/core.py
+@@ -35,7 +35,7 @@
+ 
+ 
+ def swallow_fail(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def skip_mark(a, b):
