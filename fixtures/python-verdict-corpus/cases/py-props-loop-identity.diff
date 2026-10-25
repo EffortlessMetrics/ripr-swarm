@@ -1,0 +1,12 @@
+diff --git a/props/core.py b/props/core.py
+--- a/props/core.py
++++ b/props/core.py
+@@ -15,7 +15,7 @@
+ 
+ 
+ def scale_d(a, b):
+-    return a * b
++    return a ** 2 * b
+ 
+ 
+ def scale_j(a, b):

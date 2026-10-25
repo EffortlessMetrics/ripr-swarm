@@ -1,0 +1,89 @@
+{
+  "subject_id": "authored-py-pytest-unrunnable",
+  "origin": "authored",
+  "version_label": "authored@b6491843",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "d83d4b7e4937bd61f95880d0b755f638dad705c211d98f390ce0b50728150067"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_dead_else.py",
+      "sha256": "9bde5b0efdddc7de397fa8e2f5c93bb9b6ada7e780047c1c88503ce0db19f8a3"
+    },
+    {
+      "path": "tests/test_dead_none.py",
+      "sha256": "4a58fb30348558c3b37c3bac6afcfcc094a309d565bb694e1c8ad7c14ebf12b1"
+    },
+    {
+      "path": "tests/test_dead_while.py",
+      "sha256": "73818c6cd4371802422d30d94780abaddaa8ef4da3560c2426e126ebcd7d1449"
+    },
+    {
+      "path": "tests/test_dead_zero.py",
+      "sha256": "6f9250a08c014f852995ecb792ddf4c37d039438763977179a38c68e55eedd70"
+    },
+    {
+      "path": "tests/test_skip_call.py",
+      "sha256": "f0580ef7f36595dd041dc603e269e2551308644f54c16ec5c2c6c1d04c5f392e"
+    },
+    {
+      "path": "tests/test_skip_import.py",
+      "sha256": "8b79d2b502b3bb0c2dfd987fc3dd9cba7e03091730bea4d3728d74de1e9ec80e"
+    },
+    {
+      "path": "tests/test_skip_mark.py",
+      "sha256": "5b6612486e16d4a3c2c982a2d3819e9021e29d6ddf042cf0a8e410c8fb1b3516"
+    },
+    {
+      "path": "tests/test_skip_tuple.py",
+      "sha256": "1849fdedb964f0bec7e7f9251cfca62165310d53cefc95a9f133d68078657212"
+    },
+    {
+      "path": "tests/test_skip_unless.py",
+      "sha256": "20d030fc42de60ad647f7bf5a7f4e7fd67111795cb9cbff2470803a9ef770d00"
+    },
+    {
+      "path": "tests/test_swallow_bare.py",
+      "sha256": "64f37128770f7486a28d9a3b890980ff61f8ea5ff1b3fd98f2ccf44f74709a63"
+    },
+    {
+      "path": "tests/test_swallow_builtins.py",
+      "sha256": "121a08ea2c2c7aaada132274991e24d60ad78aa6e3a4445f84afec9f519315e2"
+    },
+    {
+      "path": "tests/test_swallow_else.py",
+      "sha256": "b188374b6038dfe67e3adab0454da6793bd8292c581582b673f47c470e5b6075"
+    },
+    {
+      "path": "tests/test_swallow_fail.py",
+      "sha256": "d75f591320024a6b3b5eaf17c41294d0ace33ad0aef5c423173f2a3ca099f944"
+    },
+    {
+      "path": "tests/test_swallow_finally.py",
+      "sha256": "92f93b232a0aa520a41b007bc6505309f90efe5daec46746404b23ac13ffa029"
+    },
+    {
+      "path": "tests/test_swallow_tuple.py",
+      "sha256": "26b96ea30b61891761161bbce4e77062894c3844d63d32e74a823361c2f9a63f"
+    },
+    {
+      "path": "tests/test_xfail_false.py",
+      "sha256": "9af639451b0f158a428775a6c021e8742824ffe316f97eec0f6a3a85fb533f15"
+    },
+    {
+      "path": "unrun/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "unrun/core.py",
+      "sha256": "e98b5cbd2f6d748e643c971174ded42efe2ccfe2f39b56e13b193beffec51d52"
+    }
+  ]
+}

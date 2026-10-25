@@ -14,6 +14,8 @@ mod passthrough_item_macros;
 mod pattern_pin;
 pub(crate) mod run_memo;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
+#[cfg(test)]
+pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{

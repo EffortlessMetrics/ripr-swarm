@@ -239,6 +239,52 @@ The change is read inside `e`, so a branch, short circuit, block or macro in
 `e` keeps the earlier reading, as do `thread::spawn` (a path `use` could
 rebind), `unwrap_or`, and any operator applied to the join (#9490).
 
+### Rule 5: a returned closure applied in the pinned expression
+
+A changed `return_value` probe whose expression is the owner's whole tail
+`[move] |a, b| e` (one closure, no statement before it, parameters that are
+plain identifiers, and a body `e` that reads only the closure's parameters,
+the owner's parameters and constants, with no branch, short circuit, `?`,
+`return`, macro, block or nested closure) establishes the owner-return pin
+when the test compares the closure applied inline: `owner(args)(args)`. The
+application runs the closure exactly once, on the literals written there.
+The pin is read only when every argument of the owner call and application
+is a plain numeric literal, nonzero and pairwise different by value. A name
+such as `_2` is an identifier. Argument spelling alone does not establish
+discrimination: the complete closure body is evaluated with those inputs.
+
+The bounded body grammar is literals, parameters, same-scope uppercase literal `const`
+reads, parentheses, unary minus and binary `+`, `-`, `*`, `/`, `%`, with one to
+eight binary operations and depth sixteen. All parameters, the `Fn`,
+`FnMut` or `FnOnce` signature and the result must name the same unshadowed
+fixed-width primitive integer type or `f32`/`f64`. Calls (including uppercase
+callees), methods, casts, fields, qualified/imported constants, computed
+constants, pointer-width types and other unmodeled forms keep the earlier
+reading. Constants come from the owner's lexical item scope; a closure
+parameter shadows a same-named owner parameter. Unknown primitive authority
+or generic binding also keeps the earlier reading.
+
+For each binary node, replace only its operator with each other member of
+`+ - * / %`, retaining operand order and AST grouping, and evaluate the whole
+result again. Credit requires a different final value for every replacement.
+Integer widths and signed division/remainder follow the declared primitive;
+`f32` rounds at each operation. Overflow, division by zero, a non-finite
+result or another unestablished evaluation withholds credit, including for a
+replacement: no runtime overflow/panic profile is assumed. This is bounded
+static arithmetic evidence, not a claim about every possible mutation.
+
+Thus `(2)(3)` credits `n + x` and `n + x * TWO` with literal `TWO = 2`, while
+`n * x` at `(5)(1)` and `(5)(-1)`, `n - x` at `(4)(2)`, and
+`n + (x - OFFSET)` at `(2)(3)` with `OFFSET = 3` keep the earlier reading.
+A closure bound to a variable and called later, a non-literal call argument,
+a partial application and other operand shapes also keep it (#9490).
+
+The exact assertion must observe the applied owner result. An overwritten or
+shadowed result, a replaced closure, a same-name rival assertion, or an
+assertion inside an uninvoked closure keeps the earlier reading, and a shared
+owner or closure parameter name in an assertion cannot replace the admitted
+pin, including when the numeric model is unestablished.
+
 ### Decisions
 
 1. **Literal sequences only.** Adopted: an element is read only from a
@@ -317,6 +363,11 @@ rebind), `unwrap_or`, and any operator applied to the join (#9490).
    `if x > 0 { 2 * x } else { 0 }` in the closure, or the unqualified
    `thread::spawn`, it keeps the earlier reading (#9490).
 
+9. `fn make_adder(n: i32) -> impl Fn(i32) -> i32 { move |x| n + x }` with
+   `assert_eq!(make_adder(2)(3), 5)`: the return value reads `exposed`. With
+   `make_adder(0)(7)`, `make_adder(2)(2)`, a variable argument, or the closure
+   bound to a name and called later, it keeps the earlier reading (#9490).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
@@ -331,12 +382,18 @@ rebind), `unwrap_or`, and any operator applied to the join (#9490).
 - `crates/ripr/tests/pinned_shape_limit.rs`: rule 4's credited pin and its
   keeping controls (branch or short circuit in the closure, unqualified
   path, `unwrap_or`, an operator on the join).
+- `crates/ripr/tests/returned_closure_pin.rs`: rule 5's credited pin and its
+  keeping controls (zero, repeated and non-literal inputs, an unapplied
+  closure, a branch in the closure), effective arithmetic/capture collisions,
+  typed primitive authority, qualified owner identity and result attribution
+  (overwritten, shadowed, replaced, rival and uninvoked-closure assertions).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
   5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7
-  (`shape-collect-result-short-circuit`) and 8 (`shape-thread-join-result`).
+  (`shape-collect-result-short-circuit`), 8 (`shape-thread-join-result`) and
+  9 (`shape-closure-returned-adder`).
 
 ## Implementation Mapping
 
@@ -346,6 +403,8 @@ rebind), `unwrap_or`, and any operator applied to the join (#9490).
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`;
   `spawn_join_body` in `return_path_gate_from` (rule 4).
+  `ReturnPathGate::ReturnedClosure`, `owner_pin/returned_closure.rs` and
+  `owner_pin/returned_closure/arithmetic.rs` (rule 5).
 - `crates/ripr/src/analysis/classify/activation.rs`:
   `adaptor_element_view`, `element_boundary_discriminator`,
   `element_boundary_observations`.
@@ -359,3 +418,8 @@ rebind), `unwrap_or`, and any operator applied to the join (#9490).
 
 - `rust_iterator_adaptor_mismatch`: acceptance examples whose observed
   reading differs from this spec. Target: zero.
+
+Returned-closure changes require the admitted applied owner pin before token
+matching can confirm observation. A shared owner or closure parameter name in
+an assertion cannot replace that pin, including when the numeric model is
+unestablished.
