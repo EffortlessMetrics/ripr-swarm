@@ -166,6 +166,7 @@ jobs:
           $binaryHash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
           [ordered]@{ crate = $crate.Name; crate_sha256 = $crateHash; package_dir = $packageDir.FullName; binary = $binaryPath; binary_sha256 = $binaryHash; version = $metadata.version } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'crate-install-identity.json')
           "RIPR_PACKAGED=$binaryPath" >> $env:GITHUB_ENV
+          "RIPR_PACKAGED_SHA256=$binaryHash" >> $env:GITHUB_ENV
           "RIPR_PACKAGED_VERSION=$($metadata.version)" >> $env:GITHUB_ENV
 
       - name: Run isolated packaged CLI journey
@@ -225,7 +226,7 @@ jobs:
         working-directory: editors/vscode
         run: |
           $ErrorActionPreference = 'Stop'; $extract = Join-Path $env:QUAL_TEMP_ROOT 'vsix-extracted'; New-Item -ItemType Directory -Force -Path $extract | Out-Null; Expand-Archive -LiteralPath $env:RIPR_VSIX -DestinationPath $extract -Force
-          $env:RIPR_TEST_EXTENSION_PATH = Join-Path $extract 'extension'; $env:RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_WORKSPACE_TRUST = 'trusted'; $env:RIPR_TEST_ARTIFACT_ROOT = Join-Path $env:QUAL_TEMP_ROOT 'trusted-editor'
+          $env:RIPR_TEST_EXTENSION_PATH = Join-Path $extract 'extension'; $env:RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_PACKAGED_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_PACKAGED_SERVER_SHA256 = $env:RIPR_PACKAGED_SHA256; $env:RIPR_TEST_WORKSPACE_TRUST = 'trusted'; $env:RIPR_TEST_ARTIFACT_ROOT = Join-Path $env:QUAL_TEMP_ROOT 'trusted-editor'
           npm run test:e2e 2>&1 | Tee-Object (Join-Path $env:QUAL_ROOT 'editor-trusted.log'); if ($LASTEXITCODE -ne 0) { throw "trusted editor journey failed with exit $LASTEXITCODE" }
           $owned = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$env:QUAL_TEMP_ROOT*" -and ($_.Name -match 'ripr|Code|electron') }; if ($owned) { $owned | Format-List Name,ProcessId,CommandLine; throw 'trusted editor journey left an owned process' }
 

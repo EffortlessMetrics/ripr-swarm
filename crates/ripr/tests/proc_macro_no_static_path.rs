@@ -6,7 +6,10 @@
 //! Each control changes one thing about the shape: the manifest, or which
 //! target of the package the edit lands in.
 
-use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace, render_check};
+use ripr::{
+    CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace,
+    render_check,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -252,5 +255,80 @@ fn a_transitive_witness_survives_the_proc_macro_withhold() -> Result<(), String>
             finding.stop_reasons
         );
     }
+    Ok(())
+}
+
+// #10088: an unmodelled-syntax edit (`let mut depth = 1u32;`) is a
+// `static_unknown` probe. When its owner has a production caller the
+// classifier produced that class directly, so the `no_static_path` withhold
+// never saw it and the finding kept `reach no` and "No static test path
+// reaches this change" in a crate whose tests only reach it through derive
+// expansion (thiserror `f82a0cf`).
+const UNMODELLED_LIB: &str = "pub fn width(n: u32) -> u32 {\n    let mut depth = 1u32;\n    if n > 3 {\n        depth += 2;\n    }\n    depth\n}\n\nfn outer(n: u32) -> u32 {\n    width(n) + 1\n}\n\npub fn api(n: u32) -> u32 {\n    outer(n)\n}\n";
+const UNRELATED_TEST: &str = "#[test]\nfn unrelated() {\n    assert_eq!(1, 1);\n}\n";
+
+fn unmodelled_edit(manifest: &str) -> Result<TempRepo, String> {
+    TempRepo::create_with_files(
+        manifest,
+        &[
+            ("src/lib.rs", UNMODELLED_LIB),
+            ("tests/unrelated.rs", UNRELATED_TEST),
+        ],
+        "src/lib.rs",
+        2,
+        "    let mut depth = 0u32;",
+        "    let mut depth = 1u32;",
+    )
+}
+
+#[test]
+fn proc_macro_static_unknown_with_a_production_caller_does_not_claim_reach_no() -> Result<(), String>
+{
+    let repo = unmodelled_edit(PROC_MACRO)?;
+    let findings = repo.findings()?;
+    let unmodelled: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| finding.probe.family == ProbeFamily::StaticUnknown)
+        .collect();
+    assert!(
+        !unmodelled.is_empty(),
+        "premise: the edit is an unmodelled static_unknown probe: {findings:?}"
+    );
+    for finding in unmodelled {
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+        assert_eq!(finding.ripr.reach.state.as_str(), "unknown", "{finding:?}");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("proc_macro_expansion:")),
+            "{:?}",
+            finding.evidence
+        );
+    }
+    let human = repo.rendered(OutputFormat::HumanFull)?;
+    assert!(!human.contains("No static test path"), "{human}");
+    assert!(!human.contains("No reachable test oracle"), "{human}");
+    assert!(human.contains("derive or attribute expansion"), "{human}");
+    Ok(())
+}
+
+#[test]
+fn ordinary_static_unknown_with_a_production_caller_keeps_reach_no() -> Result<(), String> {
+    let repo = unmodelled_edit(ORDINARY)?;
+    let findings = repo.findings()?;
+    let unmodelled: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| finding.probe.family == ProbeFamily::StaticUnknown)
+        .collect();
+    assert!(
+        unmodelled.iter().any(|finding| {
+            finding.class == ExposureClass::StaticUnknown
+                && finding.ripr.reach.state.as_str() == "no"
+        }),
+        "premise: an ordinary crate keeps the ruled-out reach: {findings:?}"
+    );
+    let json = repo.rendered(OutputFormat::Json)?;
+    assert!(!json.contains("proc_macro_expansion:"), "{json}");
     Ok(())
 }

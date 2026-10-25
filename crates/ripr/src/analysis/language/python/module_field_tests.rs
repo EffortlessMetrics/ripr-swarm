@@ -1,7 +1,7 @@
 //! A function that writes an attribute of a module-scope object, read back by
 //! a test that imported that object from the owner's module.
 
-use super::classify::classify_change_with_old;
+use super::classify::{classify_change_with_old, classify_change_with_source};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::related_tests::apply_class_facts;
 use crate::domain::{ExposureClass, Finding};
@@ -159,6 +159,88 @@ fn local_binding_of_the_object_name_is_not_credited() -> Check {
         )
         .ok_or("the change must yield a finding")?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{local}");
+    }
+    Ok(())
+}
+
+fn classify_with_test(test_src: &str) -> Result<ExposureClass, String> {
+    let file = "shop/route.py";
+    let src = ROUTE.replace("= 422", "= 400");
+    let mut owners = extract_owners(Path::new(file), &src);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or("owner checkout must be extracted")?;
+    let tests = extract_tests(Path::new("tests/test_route.py"), test_src);
+    classify_change_with_old(
+        Path::new(file),
+        owner.start_line + 1,
+        "    response.status_code = 400",
+        Some("    response.status_code = 422"),
+        &owners,
+        &tests,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+#[test]
+fn patched_module_object_is_not_credited() -> Check {
+    for test_src in [
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it(monkeypatch):\n    monkeypatch.setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\n@patch(\"shop.route.response\")\ndef test_it(fake):\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    with patch(\"shop.route.response\"):\n        checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    route.response = object()\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
+    ] {
+        let class = classify_with_test(test_src)?;
+        assert_ne!(class, ExposureClass::Exposed, "{test_src}");
+    }
+    Ok(())
+}
+
+/// Guard entry (#9833) credits a method's `self.attr` write only. A free
+/// function's module-object write stays direct-only, whatever the object is
+/// called, so a module object spelled `self` is not read as the method route.
+fn classify_guarded_module_write(object: &str) -> Result<ExposureClass, String> {
+    let src = format!(
+        "from types import SimpleNamespace\n\n{object} = SimpleNamespace(status_code=200)\n\n\ndef checkout(expired):\n    if expired == True:\n        {object}.status_code = 400\n"
+    );
+    let file = "shop/route.py";
+    let mut owners = extract_owners(Path::new(file), &src);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or("owner checkout must be extracted")?;
+    let tests = extract_tests(
+        Path::new("tests/test_route.py"),
+        &format!(
+            "from shop.route import checkout, {object}\n\n\ndef test_it():\n    checkout(True)\n    assert {object}.status_code == 422\n"
+        ),
+    );
+    if tests.len() != 1 {
+        return Err("fixture must parse exactly one test".to_string());
+    }
+    classify_change_with_source(
+        Path::new(file),
+        owner.start_line + 2,
+        &format!("        {object}.status_code = 400"),
+        Some(&format!("        {object}.status_code = 422")),
+        &owners,
+        &tests,
+        Some(&src),
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+#[test]
+fn guarded_module_write_stays_uncredited_even_when_every_call_enters_the_guard() -> Check {
+    for object in ["response", "self"] {
+        let class = classify_guarded_module_write(object)?;
+        assert_ne!(class, ExposureClass::Exposed, "module object `{object}`");
     }
     Ok(())
 }

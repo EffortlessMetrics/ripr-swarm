@@ -1,0 +1,9 @@
+diff --git a/shapes/noter.py b/shapes/noter.py
+--- a/shapes/noter.py
++++ b/shapes/noter.py
+@@ -7,4 +7,4 @@
+             pass
+         else:
+             if kind == "error":
+-                self.last = "error"
++                self.last = "fault"

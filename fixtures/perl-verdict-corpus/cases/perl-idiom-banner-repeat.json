@@ -1,0 +1,63 @@
+{
+  "case_id": "perl-idiom-banner-repeat",
+  "subject_id": "authored-perl-idioms-toolkit",
+  "diff": "cases/perl-idiom-banner-repeat.diff",
+  "anchor": {
+    "file": "lib/Toolkit.pm",
+    "line": 48
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "string_repeat",
+  "test_shape": "ok_length_only",
+  "hard_case": "Only the length is truthy-checked, so width and character changes survive; an empty banner does not.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "'=' x ($width + 1)",
+        "mutated_line": "return '=' x ($width + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the banner is one too wide"
+      },
+      {
+        "replacement": "'-' x $width",
+        "mutated_line": "return '-' x $width;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the banner uses another character"
+      },
+      {
+        "replacement": "'=' x 0",
+        "mutated_line": "return '=' x 0;",
+        "outcome": "tests_failed",
+        "failing_test": "t/toolkit.t: banner has content",
+        "equivalence_review": "not equivalent: the banner is empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ok(length(banner(10))) accepts any non-empty banner. Spec cells: RIPR-SPEC-0064 oracle strength (ok smoke).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-idiom-banner-repeat.json",
+    "sha256": "f4053cb426158d54460b0d10da97953b5e1e8911f7ed3e6d51b99998078c979e",
+    "provenance": "producer"
+  }
+}
