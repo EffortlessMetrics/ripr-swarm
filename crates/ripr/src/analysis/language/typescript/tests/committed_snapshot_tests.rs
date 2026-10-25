@@ -1671,6 +1671,30 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
     let jest = jest_snap(&[("price 1", "140")]);
     for (text, expected) in [
         (
+            "module.exports = { projects: [{ displayName: \"projects\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"my root\", name: 'workspace' }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { displayName: \"root\", testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"projects\" }], projects: [\"./other\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", \"root\": \"./other\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", [\"root\"]: \"./other\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
             "module.exports = { projects: [{ displayName: \"unit\", preset: \"ts-jest\", testMatch: [\"<rootDir>/test/**/*.test.ts\"] }] };",
             OracleStrength::Strong,
         ),
