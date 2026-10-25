@@ -69,16 +69,15 @@ pub(crate) fn bound_root(root: &str) -> String {
 /// path. On Unix `\` is an ordinary filename character, so rewriting it would
 /// name a different directory; the root renders exactly as the filesystem
 /// spells it. Literal percent signs are never identity-encoded (#10116).
-/// Reducible Windows verbatim roots fold; other verbatim roots keep their
-/// native spelling, matching `output::path::human_path_text`.
+/// Reducible Windows verbatim roots fold through the existing command-path rule.
 pub(crate) fn root_path_display(path: &Path) -> String {
     root_path_text_for_host(&path.to_string_lossy(), cfg!(windows))
 }
 
 /// Executable command arguments preserve literal `%`, unlike encoded path
 /// identities. Keep the host explicit so Windows rendering is tested on Unix.
-/// This restates `output::path::human_path_text` because xtask includes this
-/// module without the product crate; the verbatim fold has one local owner.
+/// This module is dependency-free because xtask includes it without the
+/// product crate; the verbatim fold has one local owner.
 fn root_path_text_for_host(text: &str, windows: bool) -> String {
     if text.is_empty() {
         return ".".to_string();
@@ -86,13 +85,7 @@ fn root_path_text_for_host(text: &str, windows: bool) -> String {
     if !windows {
         return text.to_string();
     }
-    let folded = fold_verbatim_for_host(text.replace('\\', "/"), true);
-    if folded.starts_with("//?/") {
-        // Unknown verbatim forms have no plain spelling accepted by the OS.
-        text.to_string()
-    } else {
-        folded
-    }
+    fold_verbatim_for_host(text.replace('\\', "/"), true)
 }
 
 /// [`bound_root`] as a path: the one resolution rule shared by redirect
@@ -787,9 +780,12 @@ mod tests {
     }
 
     #[test]
-    fn root_path_rendering_preserves_unfoldable_verbatim_spelling() {
+    fn root_path_rendering_keeps_the_existing_unfoldable_verbatim_policy() {
         let root = r"\\?\Volume{1}\repo 100%\%25";
-        assert_eq!(root_path_text_for_host(root, true), root);
+        assert_eq!(
+            root_path_text_for_host(root, true),
+            "//?/Volume{1}/repo 100%/%25"
+        );
         assert_eq!(root_path_text_for_host(root, false), root);
     }
 
