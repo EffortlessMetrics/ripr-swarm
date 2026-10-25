@@ -458,15 +458,15 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "spec-b-0165-chain-beyond-bound"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Tests discriminate the change (runtime-verified) but ripr abstains by design: the d->c->b->a chain is four evaluations, one beyond the MAX_HELPER_HOPS=3 bound, and RIPR-SPEC-0165 Acceptance example 3 mandates that refusal. Crediting requires a spec amendment to the shared hop bound (#10304), not an analyzer fix; keep this entry until then."
 
 [[entry]]
 case = "spec-b-0165-computed-nested-argument"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Tests discriminate the change (runtime-verified) but ripr abstains by design: the nested call takes a computed argument (fix(kind)), which RIPR-SPEC-0165 Acceptance example 4 and the Required guards (strict literal-or-parameter binding only) mandate refusing. Crediting requires a spec amendment removing that refusal (#10304); keep this entry until then."
 
 [[entry]]
 case = "spec-b-0165-non-unique-nested-callee"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Tests discriminate the change (runtime-verified) but ripr abstains by design: two candidate helpers share the nested callee name, which RIPR-SPEC-0165 Acceptance example 5 and the Required guards (callee uniqueness) mandate refusing. Crediting requires a spec amendment removing that refusal (#10304); keep this entry until then."
 
 [[entry]]
 case = "spec0048-label-rendered-observed"
