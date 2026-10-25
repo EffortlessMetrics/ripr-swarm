@@ -4262,6 +4262,53 @@ mod tests {
         );
     }
 
+    /// A prose entry past the line budget used to hard-cut at 180 characters
+    /// with only an ellipsis for company — the old TypeScript preview card
+    /// ended "but helper-derived…" mid-thought, and the reader had no pointer
+    /// to the rest. The digest wraps like the next-step line so the
+    /// operative tail survives.
+    #[test]
+    fn digest_missing_discriminator_prose_wraps_instead_of_truncating() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        let prose = "No trusted TypeScript module-initializer observer for `x42`. Direct \
+                     `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers \
+                     are supported, but helper-derived values, shadowed aliases, dynamic \
+                     initialization, and non-expect references stay advisory in preview."
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        finding.missing = vec![prose.clone()];
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+
+        assert!(
+            digest.contains("stay advisory in preview"),
+            "the operative tail must survive in the digest; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains('…'),
+            "the digest must not clip the prose mid-word; got:\n{digest}"
+        );
+        assert!(
+            digest.lines().any(|line| {
+                line.starts_with("  Missing discriminator")
+                    && line.contains(": No trusted TypeScript module-initializer")
+            }),
+            "the label line leads the wrapped prose; got:\n{digest}"
+        );
+        assert!(
+            digest
+                .lines()
+                .any(|line| line.starts_with("    ") && line.contains("stay advisory in preview")),
+            "wrapped prose continues on an indented line; got:\n{digest}"
+        );
+    }
+
     #[test]
     fn digest_surfaces_preview_language_metadata() {
         let mut finding = sample_finding();

@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..a461dfc 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -45,7 +45,7 @@ sub slugify {
+ 
+ sub banner {
+     my ($width) = @_;
+-    return '=' x $width;
++    return "=" x $width;
+ }
+ 
+ 1;
