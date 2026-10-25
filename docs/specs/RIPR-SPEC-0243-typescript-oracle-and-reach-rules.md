@@ -1271,6 +1271,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 `import { price } from "../src/lib";` and one `test("price", () => { ...
 })` holding the snippet. `ripr.toml` enables `typescript`.
 
+New examples are written as `- example `slug`: ...` items listed
+alphabetically after the numbered ones (RIPR-SPEC-0245, acceptance example
+keys); do not take the next number.
+
 1. `expect(price(150)).toBe(130)`: `exact_value` / strong,
    `direct_owner_call`, `exposed` (unchanged).
 2. `expect(price(150)).toBeGreaterThan(100)`: `relational_check` / weak,
