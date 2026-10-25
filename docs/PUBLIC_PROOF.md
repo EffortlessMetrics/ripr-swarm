@@ -17,7 +17,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
-| `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (PR #5293); ripr 0.11.0 a7a089e |
+| `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94 |
 | `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
 | `metrics/public-proof/corpus-manifest.json` | Pinned reference corpus of real repositories | corpus 2026-10-04.5 | copy of the pinned manifest |
 
@@ -869,15 +869,15 @@ Install, from its own receipt:
 
 ## An agent using only ripr's help
 
-One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. Evidence: docs/AGENT_AS_USER_RUNS.md (PR #5293); ripr 0.11.0 a7a089e.
+One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. Evidence: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94.
 
 | Crate | Answer-key mutants caught | ripr commands to fix | Tool steps to fix | False weak findings after the fix |
 | --- | --- | --- | --- | --- |
-| bytesize | 3 | 17 | 19 | 2 |
-| humantime | 3 | 21 | 22 | 2 |
-| semver | 3 | 20 | 21 | 1 |
+| bytesize | 3 | 7 | 8 | 0 |
+| humantime | 3 | 8 | 9 | 4 |
+| semver | 3 | 10 | 9 | 1 |
 
-Across the runs: fix success 100.0%, stale re-check cycles 3, white-box tests written only to satisfy ripr 1.
+Across the runs: fix success 100.0%, stale re-check cycles n/a, white-box tests written only to satisfy ripr 0.
 
 ## The corpus behind the numbers
 

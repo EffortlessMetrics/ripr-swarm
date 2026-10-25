@@ -86,6 +86,16 @@ name and oracle fields on every selected finding, with an optional
 `relation_reason` pin for reach-identity cases. Deleting that JSON evidence
 cannot pass by retaining top-level oracle fields and human prose.
 
+The `rust_qualified_foreign_receiver` charter member pins one changed local
+method and strong oracle rows that call another crate's same-named type,
+including a Unicode module alias. Both rows must remain
+`weak_token_substring`. The finding is reported as `static_unknown`
+(`gap_evidence_unresolved`, from the implicit iterator-call gap); the class pin
+only holds the non-promotion, and the `weak_token_substring` relation pins
+carry the rejection of the old false reach claim. A second local method
+ensures Fast mode enters ambiguous-name matching without depending on foreign
+dependency indexing.
+
 Oracle projection validation also accepts the renderer's anchored related-test
 sentence (`- related test ... uses weak relational check oracle: ...`, or the
 strong exact-value counterpart). The descriptor before the assertion controls

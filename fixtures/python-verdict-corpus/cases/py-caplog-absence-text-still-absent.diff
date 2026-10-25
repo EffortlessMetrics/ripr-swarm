@@ -1,0 +1,12 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -33,7 +33,7 @@ def ship(parcel):
+ 
+ def archive(record):
+     if record > 0:
+-        log.warning("archived: %s", record)
++        log.warning("archive done: %s", record)
+         return True
+     return False
+ 
