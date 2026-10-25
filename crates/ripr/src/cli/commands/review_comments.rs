@@ -2103,6 +2103,85 @@ mod tests {
         Ok(())
     }
 
+    /// An expiry observed during owner attribution comes back as empty owners
+    /// (the helper swallows the abort), so the guarantee that it cannot be
+    /// published as a complete run rests on the deadline check that follows.
+    /// Pin it: a budget spent inside attribution is a typed timeout and no
+    /// artifacts are written (#1604).
+    #[test]
+    fn review_comments_budget_spent_in_owner_attribution_records_timeout() -> Result<(), String> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let fixture_path = unique_command_test_dir("review-owner-attribution-expiry");
+        std::fs::create_dir(&fixture_path)
+            .map_err(|error| format!("claim attribution fixture root: {error}"))?;
+        let fixture = OwnedDeadlineFixture(fixture_path);
+        let root = &fixture.0;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create attribution fixture: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_owner_attribution_expiry\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write attribution fixture manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write attribution fixture source: {error}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let attributed = Arc::new(AtomicBool::new(false));
+        let clock_flag = Arc::clone(&attributed);
+        let start = Instant::now();
+        let result = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--timeout-ms",
+                "1000",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+            move || {
+                if clock_flag.load(Ordering::SeqCst) {
+                    start + Duration::from_secs(1)
+                } else {
+                    start
+                }
+            },
+            GuidancePayloadCeiling::from_env,
+            move |_root, _lines| {
+                attributed.store(true, Ordering::SeqCst);
+                (Vec::new(), Vec::new())
+            },
+        );
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.with_file_name("run-receipt.json"))
+                .map_err(|error| format!("read attribution expiry receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse attribution expiry receipt: {error}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("limited_timeout") {
+            return Err(format!(
+                "budget spent in owner attribution must be a typed timeout: {receipt}; result {result:?}"
+            ));
+        }
+        if result.is_ok() {
+            return Err("run completed after its budget expired in attribution".to_string());
+        }
+        if out.exists() || out.with_extension("md").exists() {
+            return Err("expired attribution published review artifacts".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn review_comments_canonical_deadline_cancellation_records_timeout() -> Result<(), String> {
         use std::sync::{
