@@ -145,7 +145,8 @@ derives `product_discoverability_failure` for a route that cycles without a
 terminal instruction; the real TypeScript product no longer produces that
 cycle, which the added `installed_typescript_pilot_status_route_resolves_to_gap_start`
 row records (pilot to status to check ending in the gap-bound start).
-Python keeps its #9102 terminal reason and its rows are unchanged.
+Python's seam routes keep their #9102 reason and its rows here are unchanged;
+its gap-bound start is RIPR-SPEC-0311 item 9 (#10373).
 
 `cargo xtask check-fixture-contracts` also rebuilds the snapshot repository
 from `repository/<snapshot>/` using the manifest `construction_recipe` (offline,

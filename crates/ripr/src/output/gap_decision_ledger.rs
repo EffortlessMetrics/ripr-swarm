@@ -692,8 +692,7 @@ pub(crate) fn check_output_subject_paths(
     contents: &str,
     root: &Path,
 ) -> Result<BTreeSet<String>, String> {
-    let mut records = gap_records_from_check_output_json(contents)?;
-    attach_check_output_preview_receipt_routes(&mut records, &root.to_string_lossy());
+    let records = check_output_gap_records(contents, &root.to_string_lossy())?;
     let mut paths = BTreeSet::new();
     for record in &records {
         paths.extend(gap_source_subject::gap_record_subject_paths(
@@ -702,6 +701,18 @@ pub(crate) fn check_output_subject_paths(
         ));
     }
     Ok(paths)
+}
+
+/// The gap records a `ripr check` JSON document projects, with the preview
+/// receipt and regeneration routes attached for `root`: the records
+/// `ripr reports gap-ledger --check-output` would write for that document.
+pub(crate) fn check_output_gap_records(
+    contents: &str,
+    root: &str,
+) -> Result<Vec<GapRecord>, String> {
+    let mut records = gap_records_from_check_output_json(contents)?;
+    attach_check_output_preview_receipt_routes(&mut records, root);
+    Ok(records)
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {

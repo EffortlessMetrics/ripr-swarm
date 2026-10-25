@@ -35,6 +35,9 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
     "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
     "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
+    "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
+    "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
+    "      candidate line = changed line ripr considers for probes\n",
 );
 
 /// Project only the new, exact selected-digest legend out of current human

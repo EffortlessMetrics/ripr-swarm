@@ -41,6 +41,7 @@ use super::{
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
 use crate::analysis::diff::lines_look_alike;
+use crate::analysis::probes::{collision_ordinals, collision_rank_key};
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -1535,4 +1536,44 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         origins.record(&finding, files);
     }
     Some(finding)
+}
+
+/// Number a file's candidate-side findings that share a probe id (#10450).
+/// The id's eight-hex fingerprint can collide for different lines, and
+/// identical lines at one owner share it outright. Rank each group by full
+/// payload digest so the numbering does not follow diff order, leave the
+/// first unsuffixed, and move any value-origin receipts to the renamed probe.
+pub(super) fn number_colliding_candidates(
+    findings: &mut [Finding],
+    value_origins: &mut crate::value_origins::ValueOrigins,
+) {
+    let keys: Vec<[u8; 32]> = findings
+        .iter()
+        .map(|finding| {
+            collision_rank_key(
+                &finding.probe.id.0,
+                finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .map_or("", |owner| owner.0.as_str()),
+                &normalize_expression(&finding.probe.expression),
+            )
+        })
+        .collect();
+    let entries: Vec<(&str, [u8; 32])> = findings
+        .iter()
+        .zip(&keys)
+        .map(|(finding, key)| (finding.probe.id.0.as_str(), *key))
+        .collect();
+    let ordinals = collision_ordinals(&entries);
+    for (finding, ordinal) in findings.iter_mut().zip(ordinals) {
+        if ordinal <= 1 {
+            continue;
+        }
+        let original = finding.probe.clone();
+        finding.probe.id.0 = format!("{}.{ordinal}", finding.probe.id.0);
+        finding.id = finding.probe.id.0.clone();
+        value_origins.rebind_probe(&original, &finding.probe);
+    }
 }

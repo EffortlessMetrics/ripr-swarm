@@ -102,20 +102,77 @@ fn file_level_bindings_resolve_in_order_and_without_a_per_name_rescan() {
     );
 
     // 1,500 file-level bindings seen by 1,500 tests. Resolution walked every
-    // binding for every name for every test (cubic); it now groups once per
-    // test, so a regression shows up as a test timeout.
+    // binding for every name for every test (cubic, minutes in debug); it now
+    // groups once per test. The bound is generous against a loaded host and
+    // far below the old cost, and every test must resolve its own binding to
+    // its own constructor, not just produce a list of the right length.
+    // Two classes alternate, so a binding resolved to a neighbour's
+    // constructor fails the per-test check below.
+    let class_of = |index: usize| {
+        if index.is_multiple_of(2) {
+            "Cart"
+        } else {
+            "Basket"
+        }
+    };
     let count = 1_500;
     let mut text = String::new();
     for index in 0..count {
-        text.push_str(&format!("let v{index} = {index};\n"));
+        text.push_str(&format!("let v{index} = new {}();\n", class_of(index)));
     }
     for index in 0..count {
         text.push_str(&format!(
-            "test('t{index}', () => {{ expect(v{index}).toBe({index}); }});\n"
+            "test('t{index}', () => {{ expect(v{index}.total()).toBe({index}); }});\n"
         ));
     }
+    let started = std::time::Instant::now();
     let tests = extract_tests(Path::new("big.test.ts"), &text);
+    let elapsed = started.elapsed();
     assert_eq!(tests.len(), count);
-    assert_eq!(tests[0].scope_bindings.len(), count);
-    assert_eq!(tests[count - 1].scope_bindings.len(), count);
+    for (index, test) in tests.iter().enumerate() {
+        assert_eq!(test.scope_bindings.len(), count, "test {index}");
+        let own = format!("v{index}");
+        let binding = test
+            .scope_bindings
+            .iter()
+            .find(|binding| binding.name == own)
+            .map(|binding| binding.constructed_by.clone());
+        assert_eq!(
+            binding,
+            Some(Some(class_of(index).to_string())),
+            "test {index}"
+        );
+    }
+    assert!(
+        elapsed < std::time::Duration::from_secs(30),
+        "extraction took {elapsed:?}; per-name rescans are back"
+    );
+}
+
+#[test]
+fn an_unrecorded_write_withholds_the_binding_for_every_test() {
+    use super::tests_extract::extract_tests;
+    use std::path::Path;
+
+    // `b` is rewritten inside a helper the scope walk does not record, so
+    // its constructor is withheld in every test (`reset` is a plain function
+    // binding with no constructor); `a` keeps its own. The
+    // verdict is computed once per name and shared across tests, so every
+    // test must see the same answer.
+    let source = "let a = new Cart(); let b = new Cart();\nfunction reset() { b = null; }\ntest('one', () => { expect(a.total()).toBe(1); });\ntest('two', () => { expect(b.total()).toBe(2); });\n";
+    let tests = extract_tests(Path::new("rebound.test.ts"), source);
+    assert_eq!(tests.len(), 2);
+    for test in &tests {
+        let bound: Vec<(&str, Option<&str>)> = test
+            .scope_bindings
+            .iter()
+            .map(|binding| (binding.name.as_str(), binding.constructed_by.as_deref()))
+            .collect();
+        assert_eq!(
+            bound,
+            vec![("a", Some("Cart")), ("b", None), ("reset", None)],
+            "{}",
+            test.name
+        );
+    }
 }

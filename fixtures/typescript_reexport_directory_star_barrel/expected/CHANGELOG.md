@@ -251,3 +251,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_directory_star_barrel (22)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
