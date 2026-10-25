@@ -9,7 +9,7 @@ use crate::analysis::facts::build_index_with_test_harnesses;
 use crate::analysis::facts::model::FileFacts;
 use crate::domain::{OracleKind, OracleStrength};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -2675,6 +2675,50 @@ fn trials() -> Vec<libtest_mimic::Trial> {
         index.harness_subjects
     );
     assert!(index.tests().is_empty(), "{:?}", index.tests());
+    Ok(())
+}
+
+#[test]
+fn registered_attribute_in_a_file_no_target_compiles_adds_no_test()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("registered-attribute-stray")?;
+    write_workspace(
+        &root,
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn price(amount: i32) -> i32 { amount * 2 }\n",
+            ),
+            (
+                "benchmarks/hay.rs",
+                "use myco::contract_test;\n#[contract_test]\nfn hay_case() { assert_eq!(2 * 2, 4); }\n",
+            ),
+        ],
+    )?;
+    let target = "benchmarks/hay.rs";
+    let files = [PathBuf::from("src/lib.rs"), PathBuf::from(target)];
+    let registrations = [attribute_registration(target, "myco::contract_test")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index
+            .files()
+            .get(Path::new(target))
+            .is_some_and(|facts| facts.role_provenance.outside_module_tree),
+        "premise: the file is outside every target"
+    );
+    assert!(
+        index
+            .tests()
+            .iter()
+            .all(|test| test.file != Path::new(target)),
+        "a file Cargo never compiles cannot gain a registered test: {:?}",
+        index.tests()
+    );
+    assert!(index.harness_subjects.is_empty());
     Ok(())
 }
 

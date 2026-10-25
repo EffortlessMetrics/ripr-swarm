@@ -89,11 +89,11 @@ A case may cite the numbered spec acceptance examples it labels in
 `spec_examples` (`RIPR-SPEC-NNNN#K`). `spec-coverage.toml` scopes every spec
 with numbered acceptance examples in or out, waives in-scope examples no
 case can label (each with a reason), lists in-scope specs with prose
-examples as unmeasured, and records `floor`. The report's
+examples as unmeasured; `spec-examples.lock` lists the covered examples it protects. The report's
 `spec_example_coverage` section gives covered over in-scope minus waived
 examples and the uncovered example numbers per spec; `validate` and `check`
-fail when covered falls below `floor`; in CI the xtask test
-`committed_ledger_is_valid_and_meets_its_floor` enforces it.
+fail when a locked example loses its case; in CI the xtask test
+`committed_ledger_is_valid_and_locks_every_covered_example` enforces it.
 
 A case may also carry `axes`, tags for the coverage axes declared as `[[axis]]`
 in `spec-coverage.toml` (`test_library_idiom`, `language_shape`,
@@ -143,8 +143,8 @@ checkout (for an authored crate, the stored crate itself) before the
 expected state is refreshed with `cargo xtask verdict-corpus bless`.
 
 When a new case labels a spec example, add its id to the case's
-`spec_examples` and re-bless; raise `floor` in
-`spec-coverage.toml` to the new covered count (`check` prints it). A new
+`spec_examples` and re-bless; add the example's line to
+`spec-examples.lock` at its sorted place (`check` prints it). A new
 spec with numbered acceptance examples fails `validate` until it has a
 `[[spec]]` entry.
 
