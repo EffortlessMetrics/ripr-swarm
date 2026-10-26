@@ -1,0 +1,9 @@
+# Registers the #8983 assertion-macro admission tests under the owner-return
+# pins spec, which now lists assert_ne!, debug_assert_eq!, debug_assert_ne!,
+# assert! and debug_assert! as admitted macros.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/dead_context_assertion_admission.rs::dead_context_assertions_never_credit_and_live_ones_keep_credit",
+  "crates/ripr/tests/dead_context_assertion_admission.rs::helper_borne_assertions_keep_credit_for_every_admitted_macro",
+]

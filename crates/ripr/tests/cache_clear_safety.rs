@@ -695,6 +695,19 @@ fn root_flag_fixture(label: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// Whether a reported `cache_dir` names `dir` as a filesystem identity, not
+/// a spelling: on Windows the product prints the resolved root as given while
+/// the oracle's canonical path carries `\\?\` and mixed separators (#9660).
+fn names_dir(reported: &serde_json::Value, dir: &Path) -> bool {
+    let Some(text) = reported.as_str() else {
+        return false;
+    };
+    match (fs::canonicalize(text), fs::canonicalize(dir)) {
+        (Ok(reported), Ok(dir)) => reported == dir,
+        _ => false,
+    }
+}
+
 #[test]
 fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd()
 -> Result<(), String> {
@@ -737,7 +750,7 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
     let without = run_ripr_default_cache(&elsewhere, &["cache", "status", "--json"], &[])?;
     let without_json: serde_json::Value =
         serde_json::from_slice(&without.stdout).map_err(|error| error.to_string())?;
-    if without_json["cache_dir"].as_str() == real_cache.to_str() {
+    if names_dir(&without_json["cache_dir"], &real_cache) {
         return Err("cwd without --root unexpectedly resolved the checked root".to_string());
     }
 
@@ -750,7 +763,7 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
     let with_json: serde_json::Value =
         serde_json::from_slice(&with.stdout).map_err(|error| error.to_string())?;
     if !(with.status.success()
-        && with_json["cache_dir"].as_str() == real_cache.to_str()
+        && names_dir(&with_json["cache_dir"], &real_cache)
         && with_json["entry_count"].as_u64().unwrap_or(0) > 0
         && with_json["status"] != "not_found")
     {
@@ -763,7 +776,14 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
         &run_ripr_default_cache(&elsewhere, &["cache", "status", "--root", root_arg], &[])?.stderr,
     )
     .into_owned();
-    if !hint.contains(&format!("`ripr cache clear --root {root_arg} --force`")) {
+    // Windows quotes the printed root for cmd/PowerShell; a plain temp path
+    // needs no quoting on Unix.
+    let printed_root = if cfg!(windows) {
+        format!("\"{root_arg}\"")
+    } else {
+        root_arg.to_string()
+    };
+    if !hint.contains(&format!("`ripr cache clear --root {printed_root} --force`")) {
         return Err(format!("hint must carry --root: {hint}"));
     }
 

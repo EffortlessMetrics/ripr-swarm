@@ -199,6 +199,7 @@ pub(in crate::analysis) fn current_path_witness_with(
     let sink_identity = normalize_semantic_text(&sink.text);
     let edge_status = if is_question_mark_sink(sink)
         || returns_itself_on_its_line(probe, sink)
+        || accumulates_into_returned_local(probe, sink)
         || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
     {
         EdgeStatus::Established
@@ -348,10 +349,31 @@ pub(in crate::analysis) fn constant_tail_witness(
                 owner.start_line + tail.tail_line_offset,
                 "iterator_adaptor_owner_tail",
             ),
-            None => (
-                short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
-                "short_circuit_owner_tail",
-            ),
+            None => match spawn_join_owner_tail_line(owner, &probe.expression, &identity) {
+                // RIPR-SPEC-0265 rule 4: a `std::thread::spawn(move || e)
+                // .join().unwrap()` whole-body tail returns the closure's
+                // value; whether the pinned input runs all of `e` is the
+                // owner pin's question.
+                Some(line) => (line, "spawn_join_owner_tail"),
+                // RIPR-SPEC-0265 rule 5: a closure that is the owner's whole
+                // body is the value the owner returns; whether the pinned
+                // expression applies it on inputs that tell its operators
+                // apart is the owner pin's question.
+                None => {
+                    match super::owner_pin::returned_closure::owner_returned_closure_tail(owner)
+                        .filter(|tail| tail.tail_is(&probe.expression))
+                    {
+                        Some(tail) => (
+                            owner.start_line + tail.tail_line_offset,
+                            "returned_closure_owner_tail",
+                        ),
+                        None => (
+                            short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                            "short_circuit_owner_tail",
+                        ),
+                    }
+                }
+            },
         },
     };
     if tail_line != probe.location.line {
@@ -399,16 +421,24 @@ pub(in crate::analysis) fn constant_tail_witness(
 }
 
 /// The line of the owner's tail when the owner's whole body is one
-/// admitted short-circuit chain (`ShortCircuitTail`) whose normalized text
-/// is `identity`. Its operands are comparisons of parameters with literals
-/// and make no calls, so the chain's value is the owner's return.
-fn short_circuit_owner_tail_line(
+/// `std::thread::spawn(move || e).join().unwrap()` whose normalized text is
+/// `identity`: the join returns the closure's value.
+fn spawn_join_owner_tail_line(
     owner: &crate::analysis::facts::FunctionSummary,
     changed: &str,
     identity: &str,
 ) -> Option<usize> {
+    super::owner_pin::spawn_join_body(changed)?;
+    whole_body_tail_line(owner, identity)
+}
+
+/// The line of the owner's tail when the body is that tail alone and its
+/// normalized text is `identity`.
+fn whole_body_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    identity: &str,
+) -> Option<usize> {
     use ra_ap_syntax::{AstNode, ast};
-    super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
     let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
     let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
     let list = function.body()?.stmt_list()?;
@@ -422,6 +452,19 @@ fn short_circuit_owner_tail_line(
     let offset = usize::from(tail.syntax().text_range().start());
     let before = owner.body.get(..offset)?;
     Some(owner.start_line + before.matches('\n').count())
+}
+
+/// The line of the owner's tail when the owner's whole body is one
+/// admitted short-circuit chain (`ShortCircuitTail`) whose normalized text
+/// is `identity`. Its operands are comparisons of parameters with literals
+/// and make no calls, so the chain's value is the owner's return.
+fn short_circuit_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    changed: &str,
+    identity: &str,
+) -> Option<usize> {
+    super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
+    whole_body_tail_line(owner, identity)
 }
 
 /// The line of the owner's body when that body is exactly one constant
@@ -795,6 +838,35 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         && source.strip_prefix("return ").is_some_and(|payload| {
             let payload = payload.trim();
             call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
+}
+
+/// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) the
+/// local that the flow producer named as the owner's returned tail on the
+/// statement's own line. Only `loop_accumulator_at` makes flow emit that
+/// sink for an update statement, so equal names bind the update to the
+/// return. Whether a test observes the sum is reveal's question.
+fn accumulates_into_returned_local(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    if probe.family != ProbeFamily::ReturnValue
+        || sink.kind != FlowSinkKind::ReturnValue
+        || sink.line != probe.location.line
+    {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let local = normalize_semantic_text(&sink.text);
+    ["+=", "-="].iter().any(|op| {
+        source
+            .strip_prefix(local.as_str())
+            .is_some_and(|rest| rest.trim_start().starts_with(op))
+    }) || source
+        .strip_prefix(local.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix('='))
+        .is_some_and(|rest| {
+            rest.trim_start()
+                .strip_prefix(local.as_str())
+                .is_some_and(|rest| rest.trim_start().starts_with(['+', '-']))
         })
 }
 

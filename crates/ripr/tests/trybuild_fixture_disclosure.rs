@@ -110,6 +110,11 @@ fn trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report() -> Res
     let normalize = |output: &Output, scratch: &Scratch| -> String {
         String::from_utf8_lossy(&output.stdout)
             .replace(scratch.0.to_string_lossy().as_ref(), "<root>")
+            // The report echoes the root slash-unified on Windows.
+            .replace(
+                scratch.0.to_string_lossy().replace('\\', "/").as_str(),
+                "<root>",
+            )
     };
     let named_report = normalize(&named, &with_trybuild);
     assert!(
@@ -137,6 +142,11 @@ fn inherited_workspace_trybuild_never_names_and_direct_forms_still_do() -> Resul
     let normalize = |output: &Output, scratch: &Scratch| {
         String::from_utf8_lossy(&output.stdout)
             .replace(scratch.0.to_string_lossy().as_ref(), "<root>")
+            // The report echoes the root slash-unified on Windows.
+            .replace(
+                scratch.0.to_string_lossy().replace('\\', "/").as_str(),
+                "<root>",
+            )
     };
     let unrelated = "trybuild = { package = \"other_harness\", path = \"support/other\" }";
     let mut cases: Vec<(String, String, bool)> = Vec::new();

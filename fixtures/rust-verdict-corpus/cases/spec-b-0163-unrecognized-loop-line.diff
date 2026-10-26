@@ -1,0 +1,12 @@
+diff --git a/src/s_body.rs b/src/s_body.rs
+--- a/src/s_body.rs
++++ b/src/s_body.rs
+@@ -20,7 +20,7 @@
+ 
+ pub fn classify_body(input: &str) -> &'static str {
+     let final_state = scan_body(input);
+-    if final_state == "word" {
++    if final_state == "text" {
+         "word"
+     } else {
+         "blank"

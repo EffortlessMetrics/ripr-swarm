@@ -1,0 +1,12 @@
+diff --git a/src/g_neq.rs b/src/g_neq.rs
+--- a/src/g_neq.rs
++++ b/src/g_neq.rs
+@@ -1,7 +1,7 @@
+ //! An `!=` guard in a Result-returning test, the twin of assert!(a == b, ..).
+ 
+ pub fn tripled_g_neq(x: u32) -> u32 {
+-    x * 3
++    3 * x
+ }
+ 
+ #[cfg(test)]

@@ -387,7 +387,40 @@ const TAX_AFTER: &str = "    p / 10 + p";
 
 #[test]
 fn an_owner_called_inside_a_local_executor_is_a_limit_not_a_gap() -> Result<(), String> {
-    withheld(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER, "local block_on")
+    // #10143's framework rule reads this literal-expectation shape first, so
+    // either of the two named limits is the withhold; it is never a gap.
+    let findings = edited(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER)?;
+    let named = |f: &Finding| {
+        matches!(
+            f.static_limit_kind.map(|kind| kind.as_str()),
+            Some("rust_indirect_owner_call_unresolved" | "rust_framework_oracle_unresolved")
+        )
+    };
+    if findings.iter().any(is_gap) || !findings.iter().any(named) {
+        return Err(format!(
+            "local block_on: expected the indirect-owner or framework-oracle limit, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
+/// Runtime truth: `p + p / 10` to `p + p / 5` fails `120 != 110`, so the
+/// assertion discriminates, but the expectation is a binding, not a literal,
+/// which `framework_oracle` does not read. Only this rule withholds it.
+#[test]
+fn a_local_future_executor_with_a_bound_expected_value_is_a_limit_not_a_gap() -> Result<(), String>
+{
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "bound expected through a Future executor",
+    )
 }
 
 #[test]
@@ -683,4 +716,162 @@ fn an_alias_of_another_item_under_the_owner_name_keeps_the_gap() -> Result<(), S
 ",
     ));
     keeps_gap(&lib, BEFORE, AFTER, "use other::inc as inc")
+}
+
+// #10162: declaration syntax is not a function value, and lexical scopes
+// cannot lend their shadow to references in another block.
+#[test]
+fn item_declarations_alone_do_not_withhold_a_gap() -> Result<(), String> {
+    for declaration in [
+        "use super::other::\n            inc;",
+        "use super::\n            inc;",
+        "use super::{\n            inc\n        };",
+        "use super::inc as inc;",
+        "fn inc(x: u32) -> u32 { x + 9 }",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {declaration}\n        assert!(super::inc(1) > 0);\n    }}\n"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, declaration)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_scope_shadow_does_not_hide_an_outer_owner_value() -> Result<(), String> {
+    for shadow in [
+        "{ fn inc(x: u32) -> u32 { x + 9 } assert_eq!(inc(1), 10); }",
+        "{ use super::other::inc; assert_eq!(inc(1), 10); }",
+        "mod local { pub fn inc(x: u32) -> u32 { x + 9 } }",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {shadow}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", shadow)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn grouped_imports_preserve_each_leafs_full_path() -> Result<(), String> {
+    for import in [
+        "use super::{other::inc};",
+        "use super::{other::{inc}};",
+        "use super::{other::inc as inc};",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {import}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [10, 11]);\n    }}\n"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, import)?;
+    }
+    for import in [
+        "use super::{other::{inc as other_inc}, inc};",
+        "use super::{other::{inc as other_inc}, inc as inc};",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {import}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", import)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_inner_owner_import_overrides_an_outer_item_shadow() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        use super::other::inc;
+        assert!(super::inc(1) > 0);
+        assert_eq!(inc(1), 10);
+        {
+            use super::inc;
+            assert_eq!([1, 2].map(inc), [2, 3]);
+        }
+    }
+",
+    ));
+    withheld(&lib, BEFORE, "    x + 2", "inner owner import")
+}
+
+#[test]
+fn an_opaque_or_conditional_import_cannot_remove_the_owner_limit() -> Result<(), String> {
+    for import in [
+        "#[cfg(any())] use super::other::inc;",
+        "#[cfg(any())] fn inc(x: u32) -> u32 { x + 9 }",
+        "use super::other::*;\n        use super::inc;",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {import}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", import)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_real_value_after_an_import_on_the_same_line_is_still_a_limit() -> Result<(), String> {
+    for body in [
+        "use super::inc; assert!(super::inc(1) > 0); assert_eq!([1, 2].map(inc), [2, 3]);",
+        "use super::other::inc; assert!(super::inc(1) > 0); assert_eq!([1, 2].map(super::inc), [2, 3]);",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {body}\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", body)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn item_shadows_are_hoisted_only_within_their_own_block() -> Result<(), String> {
+    for declaration in ["fn inc(x: u32) -> u32 { x + 9 }", "use super::other::inc;"] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [10, 11]);\n        {declaration}\n    }}\n"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, declaration)?;
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n        {{ {declaration} assert_eq!(inc(1), 10); }}\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", declaration)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_import_from_the_owners_inline_module_is_still_a_limit() -> Result<(), String> {
+    let lib = "pub mod math {
+    pub fn inc(x: u32) -> u32 {
+    x + 1
+    }
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn positive() {
+        use super::math::inc;
+        assert!(super::math::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+}
+";
+    withheld(lib, BEFORE, "    x + 2", "owner inline-module import")
+}
+
+#[test]
+fn an_unresolved_reexport_of_the_owner_is_still_a_limit() -> Result<(), String> {
+    for rival in ["", "pub mod rival { pub fn inc(x: u32) -> u32 { x + 9 } }"] {
+        let lib = values(
+            "    #[test]
+    fn positive() {
+        use super::other::inc;
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+",
+        );
+        let lib = format!("{lib}\npub mod other {{ pub use super::inc; }}\n{rival}\n");
+        withheld(&lib, BEFORE, "    x + 2", "owner reexport")?;
+    }
+    Ok(())
 }

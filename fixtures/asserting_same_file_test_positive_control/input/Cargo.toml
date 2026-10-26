@@ -1,0 +1,4 @@
+[package]
+name = "asserting_same_file_test_positive_control_fixture"
+version = "0.0.0"
+edition = "2024"

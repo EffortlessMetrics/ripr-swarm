@@ -1,0 +1,12 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -12,7 +12,7 @@ def settle(amount):
+ 
+ def notify(user):
+     if user != "":
+-        log.warning("notified: %s", user)
++        log.warning("debug dump")
+         return True
+     return False
+ 

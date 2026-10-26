@@ -117,9 +117,62 @@ fn a_macro_generated_test_reads_like_the_hand_written_test() -> Result<(), Strin
     Ok(())
 }
 
+const TABLE: &str = "    macro_rules! gate_table {\n        ($($name:ident($input:expr, $want:expr))*) => {\n            $(\n                #[test]\n                fn $name() {\n                    assert_eq!(gate($input), $want);\n                }\n            )*\n        };\n    }\n\n";
+
+#[test]
+fn a_table_generated_test_reads_like_the_hand_written_test() -> Result<(), String> {
+    let generated = TempRepo::create(&format!(
+        "{TABLE}    gate_table! {{\n        nine_is_closed(9, false)\n        ten_is_open(10, true)\n    }}\n"
+    ))?
+    .predicate()?;
+    assert_eq!(state(&generated.ripr.reach.state), "Yes", "{generated:?}");
+    assert_eq!(generated.class, ExposureClass::Exposed, "{generated:?}");
+    let mut names: Vec<_> = generated
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["nine_is_closed", "ten_is_open"],
+        "{generated:?}"
+    );
+
+    // Rows that never reach the edge read like the same hand-written
+    // tests: reached, but nothing at the boundary.
+    let far = TempRepo::create(&format!(
+        "{TABLE}    gate_table! {{\n        zero(0, false)\n        far(50, true)\n    }}\n"
+    ))?
+    .predicate()?;
+    assert_eq!(state(&far.ripr.reach.state), "Yes", "{far:?}");
+    assert_ne!(far.class, ExposureClass::Exposed, "{far:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_the_expander_cannot_split_exactly_adds_no_test() -> Result<(), String> {
+    for rows in [
+        // A leftover token after the last row.
+        "nine_is_closed(9, false) ten_is_open(10, true) +",
+        // A row whose group has the wrong number of arguments.
+        "nine_is_closed(9) ten_is_open(10, true)",
+    ] {
+        let refused =
+            TempRepo::create(&format!("{TABLE}    gate_table! {{ {rows} }}\n"))?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{rows}: {refused:?}");
+        assert_ne!(
+            state(&refused.ripr.reach.state),
+            "Yes",
+            "{rows}: {refused:?}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn refused_shapes_and_uninvoked_generators_add_no_test() -> Result<(), String> {
-    // A repetition matcher is outside the bounded shape.
+    // `=>` between row elements is outside the table form.
     let repetition = TempRepo::create(
         "    macro_rules! gate_cases {\n        ($($name:ident: $input:expr => $want:expr),*) => {\n            $( #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases!(nine_is_closed: 9 => false, ten_is_open: 10 => true);\n",
     )?

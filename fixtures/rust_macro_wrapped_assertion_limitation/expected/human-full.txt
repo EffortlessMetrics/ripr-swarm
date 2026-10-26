@@ -41,9 +41,11 @@ Weakness
 
 Stop reasons:
   - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
+    Next: Pass a literal input in the test, or assert on a value derived from the fixture with an exact `assert_eq!`.
 
 Static limitation
   rust_macro_wrapped_assertion_unresolved — A reachable Rust test uses an assertion-like macro that ripr does not classify, so the assertion semantics are unresolved. This is a named limitation, not a coverage claim.
+  Next: Replace the assertion-like macro with `assert_eq!` or `assert!` on the changed value, or add one beside it.
 
 Where to look
   For example, the test `test_inner_with_custom_assertion_macro` (tests/it.rs:8) reaches the changed owner, then invokes assertion-like macro `assert_result!` at tests/it.rs:10. ripr does not classify that macro as an oracle.

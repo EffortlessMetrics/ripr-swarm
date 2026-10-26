@@ -24,6 +24,9 @@ pub(crate) struct MockCallFacts {
     module_calls: Vec<spy::ModuleObjectCall>,
     /// Rule 4: related test files that may spy on a `module_calls` object.
     spy_targets: Vec<spy::SpyTarget>,
+    /// The changed line has no removed counterpart, so it adds a call and a
+    /// mock call count can see the change (RIPR-SPEC-0243 decision 22).
+    line_added: bool,
 }
 
 /// A call `p(...)` or `p.m(...)` through the owner parameter `p` at
@@ -40,6 +43,14 @@ struct ParameterCall {
 const TEST_FRAMEWORK_MODULES: [&str; 2] = ["@jest/globals", "vitest"];
 
 impl MockCallFacts {
+    pub(crate) fn mark_line_added(&mut self, line_added: bool) {
+        self.line_added = line_added;
+    }
+
+    pub(crate) fn line_added(&self) -> bool {
+        self.line_added
+    }
+
     /// `owner_body` is the owner's source after the change; `None` (not
     /// readable) keeps no call, so rule 1 credits nothing.
     ///

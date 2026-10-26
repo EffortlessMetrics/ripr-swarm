@@ -16,9 +16,10 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:backoff_ms:return_value:return_value:base*3u64.pow_attempt
   Changed behavior: base * 3u64.pow(attempt)
   Related test: tests/backoff.rs:4 first_attempt_waits_the_base
-  Next step: The related test `first_attempt_waits_the_base` already asserts an exact value; the gap
-    is not the assertion shape. Add a test input where the changed branch behaves differently and
-    keep the exact assertion
+  Next step: The related test `first_attempt_waits_the_base` already has an exact assertion; this
+    does not establish observation of the returned value. Check whether the change can affect the
+    returned value. If it can, add a separating input and assert the exact returned value. If it
+    cannot, test the changed effect separately; another input cannot distinguish unchanged returns
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -27,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach backoff_ms: first_attempt_waits_the_base
     - infection weak: Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a…
     - 8 more detail line(s) in --format human-full
@@ -34,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/invisible_change_pow_agreement/input --diff <cwd>/fixtures/invisible_change_pow_agreement/diff.patch --mode fast probe:src_lib.rs:return_value:e97ba928
   ripr context --root <cwd>/fixtures/invisible_change_pow_agreement/input --diff <cwd>/fixtures/invisible_change_pow_agreement/diff.patch --mode fast --at probe:src_lib.rs:return_value:e97ba928
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:e97ba928 --root <cwd>/fixtures/invisible_change_pow_agreement/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/invisible_change_pow_agreement/input --at src/lib.rs:2 --kind return_value
 

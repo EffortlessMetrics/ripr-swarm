@@ -1,0 +1,45 @@
+{
+  "case_id": "py-channels-readouterr-local-after-owner",
+  "subject_id": "authored-py-pytest-channels",
+  "diff": "cases/py-channels-readouterr-local-after-owner.diff",
+  "anchor": {
+    "file": "channels/core.py",
+    "line": 53
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_capsys_local_after_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "print(\"hey \" + name)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_channels.py::test_say_j",
+        "equivalence_review": "not equivalent: the owner returns a different value (the test binds readouterr() to a local after the owner runs and pins its out)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 17: the test binds readouterr() to a local after the owner runs and pins its out.",
+  "labeling_observation": {
+    "ripr_commit": "4ce68788",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

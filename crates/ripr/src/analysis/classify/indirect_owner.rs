@@ -6,8 +6,10 @@
 //! `owner(..)` call it can pair with the assertion:
 //!
 //! - **function value**: the test names the owner without calling it
-//!   (`.map(owner)`, `let f: fn(u32) -> u32 = owner; f(2)`), so the call
-//!   happens inside machinery ripr does not follow;
+//!   (`.map(owner)`, an untyped `let f = owner; f(2)`), so the call
+//!   happens inside machinery ripr does not follow; a typed
+//!   `let f: fn(..) -> .. = owner;` binding is left to the typed
+//!   function-pointer reading (RIPR-SPEC-0115, #9478);
 //! - **generated owner**: the changed line is an item-position macro
 //!   invocation (`def_add!(add_five, 2 + 3);`) that defines the owner, and the
 //!   expansion is not source ripr reads;
@@ -150,13 +152,20 @@ fn judged_for_owner(
         // A test that names the owner as a value is a candidate only where it
         // can see the owner: its own file, or an integration test.
         let sees_owner = test.file == owner.file || is_test_file(&test.file);
-        if sees_owner && (!called || is_related(test, false)) && names_owner_as_value(&code, owner)
+        if sees_owner
+            && (!called || is_related(test, false))
+            && names_owner_as_value(&code, owner, test, index)
         {
             judged.push((label(test), Form::FunctionValue));
             continue;
         }
         let related_direct = is_related(test, true);
-        if related_direct && executor_wraps_owner_call(&code, &owner.name, test, index) {
+        // A sync owner's bare call is its value, not a future an executor
+        // drives: `block_on(owner(..))` on one stays a plain gap (#10143).
+        if related_direct
+            && super::owner_pin::declares_async(owner, index)
+            && executor_wraps_owner_call(&code, &owner.name, test, index)
+        {
             judged.push((label(test), Form::ExecutorWrapped));
         }
     }
@@ -230,30 +239,55 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 /// The test's code names `name` as a value: not called, not a macro, not a
 /// method, field label or definition, the test binds no local of that name,
 /// and a qualifying path (`other::inc`) can still name the owner.
-fn names_owner_as_value(code: &str, owner: &FunctionFact) -> bool {
-    names_value(code, &owner.name, &owner_path_names(owner))
+fn names_owner_as_value(
+    code: &str,
+    owner: &FunctionFact,
+    test: &TestFact,
+    index: &RustIndex,
+) -> bool {
+    use super::call_identity::{CallTarget, shared_owner_call_identity};
+
+    let identity = shared_owner_call_identity(index, owner);
+    names_value(
+        &test.body,
+        code,
+        &owner.name,
+        &owner_path_names(owner),
+        |path| {
+            let Some((leaf, qualifier)) = path.split_last() else {
+                return false;
+            };
+            leaf == &owner.name
+                && identity.as_ref().is_some_and(|identity| {
+                    identity.resolve_call(test, index, qualifier) == CallTarget::Other
+                })
+        },
+    )
 }
 
-fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
+fn names_value(
+    source: &str,
+    code: &str,
+    name: &str,
+    owner_names: &[String],
+    import_is_other: impl Fn(&[String]) -> bool,
+) -> bool {
     if is_bound_locally(code, name) {
         return false;
     }
-    // A bare `name` is the shadowing item; `super::name` still names the owner.
-    let shadowed = is_shadowed_by_item(code, name, owner_names);
+    let items = ItemBindings::read(source, name, import_is_other);
     identifier_offsets(code, name).any(|at| {
         let before = code[..at].trim_end();
-        if shadowed && !before.ends_with("::") {
+        if items.declaration_at(at) || (!before.ends_with("::") && items.shadows_at(at)) {
             return false;
         }
         let after = code[at + name.len()..].trim_start();
         let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
         let method = before.ends_with('.');
-        let imported = line_starts_with_use(code, at);
         let called = after.starts_with(['(', '!']) || after.starts_with("::<");
         let field_label = after.starts_with(':') && !after.starts_with("::");
         !(defined
             || method
-            || imported
             || called
             || field_label
             || typed_fn_pointer_initializer(code, at)
@@ -352,12 +386,6 @@ fn ends_at_boundary(text: &str) -> bool {
     text.chars().next_back().is_none_or(|ch| !is_ident_char(ch))
 }
 
-fn line_starts_with_use(code: &str, at: usize) -> bool {
-    let start = code[..at].rfind('\n').map_or(0, |newline| newline + 1);
-    let line = code[start..at].trim_start();
-    line.starts_with("use ") || line.starts_with("pub use ")
-}
-
 /// Whether `name` is bound as a local anywhere in the test: a typed or
 /// untyped pattern after `let` (`let name`, `let (name, n)`, `if let
 /// Some(name) =`), after `for` (`for (name, _) in`), a closure parameter
@@ -375,64 +403,96 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
         })
 }
 
-/// The test body brings another item named `name` into scope: a nested
-/// `fn name`, or a `use` that imports `name` (or renames something to it) from
-/// a path whose last segment does not locate the owner. A later bare `name` is
-/// then that item, not the owner (`use super::other::inc;`). `use super::inc;`
-/// imports the owner itself and shadows nothing.
-fn is_shadowed_by_item(code: &str, name: &str, owner_names: &[String]) -> bool {
-    let nested_fn = identifier_offsets(code, name).any(|at| {
-        let before = code[..at].trim_end();
-        before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2])
-    });
-    nested_fn
-        || identifier_offsets(code, "use").any(|at| {
-            let rest = &code[at + 3..];
-            let statement = &rest[..rest.find(';').unwrap_or(rest.len())];
-            use_statement_shadows(statement, name, owner_names)
-        })
+/// Declaration ranges and hoisted item bindings in the test's real lexical
+/// blocks. Macro arguments remain text: their function values are token trees,
+/// not `PathExpr` nodes. An unreadable parse cannot prove a shadow.
+#[derive(Default)]
+struct ItemBindings {
+    declarations: Vec<ra_ap_syntax::TextRange>,
+    scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
 }
 
-fn use_statement_shadows(statement: &str, name: &str, owner_names: &[String]) -> bool {
-    identifier_offsets(statement, name).any(|at| {
-        let before = statement[..at].trim_end();
-        let after = statement[at + name.len()..].trim_start();
-        if let Some(imported) = before
-            .strip_suffix("as")
-            .filter(|rest| rest.ends_with(char::is_whitespace))
-        {
-            // `use super::inc as inc;` renames the owner to its own name.
-            let imported = imported.trim_end();
-            return !imported
-                .strip_suffix(name)
-                .is_some_and(|qualifier| path_locates_owner(qualifier, owner_names));
+impl ItemBindings {
+    fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
+        use crate::analysis::syntax::{UseBinding, parse_clean_source_file, use_item_bindings};
+        use ra_ap_syntax::{
+            AstNode,
+            ast::{self, HasAttrs, HasName},
+        };
+
+        let Some(parse) = parse_clean_source_file(source) else {
+            return Self::default();
+        };
+        let mut result = Self::default();
+        for node in parse.tree().syntax().descendants() {
+            let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
+                let Some(declared) = function.name() else {
+                    continue;
+                };
+                if declared.text().trim_start_matches("r#") != name {
+                    continue;
+                }
+                result.declarations.push(declared.syntax().text_range());
+                function.attrs().next().is_none()
+            } else if let Some(import) = ast::Use::cast(node.clone()) {
+                result.declarations.push(node.text_range());
+                let scope = use_item_bindings(&import);
+                let matching: Vec<_> = scope
+                    .imports
+                    .iter()
+                    .filter(|import| import.bound.trim_start_matches("r#") == name)
+                    .collect();
+                if matching.is_empty() && scope.globs.is_empty() {
+                    continue;
+                }
+                import.attrs().next().is_none()
+                    && scope.globs.is_empty()
+                    && !matching.is_empty()
+                    && matching.iter().all(|import| match &import.binding {
+                        // Absence from a lexical owner-name list is not
+                        // evidence of a different definition: reexports and
+                        // unreadable module layouts retain the limit.
+                        UseBinding::Path(path) | UseBinding::Renamed(path) => import_is_other(path),
+                        UseBinding::Opaque => false,
+                    })
+            } else {
+                continue;
+            };
+            // Items in a nested module or impl belong to its ItemList, not the
+            // surrounding test. Never climb across that boundary.
+            if let Some(block) = node.parent().and_then(ast::StmtList::cast) {
+                result.scopes.push((block.syntax().text_range(), shadow));
+            }
         }
-        // The source side of `name as other` is judged where the alias is.
-        let renamed = after
-            .strip_prefix("as")
-            .is_some_and(|rest| rest.starts_with(char::is_whitespace));
-        if renamed {
+        result
+    }
+
+    fn declaration_at(&self, at: usize) -> bool {
+        self.declarations
+            .iter()
+            .any(|range| contains_offset(*range, at))
+    }
+
+    fn shadows_at(&self, at: usize) -> bool {
+        let Some((innermost, _)) = self
+            .scopes
+            .iter()
+            .filter(|(range, _)| contains_offset(*range, at))
+            .min_by_key(|(range, _)| range.len())
+        else {
             return false;
-        }
-        (after.is_empty() || after.starts_with([',', '}']))
-            && !path_locates_owner(before, owner_names)
-    })
+        };
+        // A nearer owner-preserving import overrides an outer shadow. An
+        // opaque, conditional or competing binding cannot prove another owner.
+        self.scopes
+            .iter()
+            .filter(|(range, _)| range == innermost)
+            .all(|(_, shadow)| *shadow)
+    }
 }
 
-/// Whether the path written before an imported leaf (`super::`, `a::{`) ends in
-/// a segment that locates the owner. A group import takes the path before its
-/// open brace.
-fn path_locates_owner(before: &str, owner_names: &[String]) -> bool {
-    let before = before.trim_end();
-    let prefix = match before.rfind('{') {
-        Some(brace) if !before[brace..].contains('}') => before[..brace].trim_end(),
-        _ => before,
-    };
-    let Some(path) = prefix.strip_suffix("::") else {
-        return false;
-    };
-    let last = path.rsplit("::").next().unwrap_or(path).trim();
-    owner_names.iter().any(|known| known == last)
+fn contains_offset(range: ra_ap_syntax::TextRange, at: usize) -> bool {
+    usize::from(range.start()) <= at && at < usize::from(range.end())
 }
 
 /// Byte ranges of `code` that are binding patterns: from `let`/`for` to the
@@ -506,17 +566,25 @@ fn executor_wraps_owner_call(code: &str, owner: &str, test: &TestFact, index: &R
         if !is_ident(leaf) || leaf == owner {
             return false;
         }
-        if KNOWN_EXECUTORS.contains(&leaf) {
-            return true;
-        }
-        // A local helper: defined in the test's file, taking a future.
-        callee == leaf
+        let defined_locally = callee == leaf
             && !open[..callee_start].trim_end().ends_with('.')
-            && index.functions().iter().any(|function| {
+            && index
+                .functions()
+                .iter()
+                .any(|function| function.name == leaf && function.file == test.file);
+        if defined_locally {
+            // A helper of the test's own file counts only when it takes a
+            // `Future`: a same-named synchronous identity wrapper is not an
+            // executor, and a literal expectation through a helper is also
+            // read by `framework_oracle` (#10143), which reaches the same
+            // withhold. A non-literal expectation falls only to this rule.
+            return index.functions().iter().any(|function| {
                 function.name == leaf
                     && function.file == test.file
                     && signature(function).contains("Future")
-            })
+            });
+        }
+        KNOWN_EXECUTORS.contains(&leaf)
     })
 }
 
@@ -560,7 +628,14 @@ mod tests {
     }
 
     fn value(code: &str, name: &str) -> bool {
-        names_value(code, name, &owner_names())
+        let source = format!("fn test_body() {{ {code} }}");
+        names_value(
+            &source,
+            &mask_comments_and_strings(&source),
+            name,
+            &owner_names(),
+            |_| false,
+        )
     }
 
     #[test]

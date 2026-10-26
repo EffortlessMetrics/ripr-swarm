@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An operator impl whose changed line shares no token with the test's assertion (a result built through `Self(..)` or `Self { .. }`, a destructured result) read `weakly_exposed` after operator crediting (#9746), a "add a test" signal for code a test pins. Such a finding stays `static_unknown` under `rust_implicit_call_unresolved` until an assertion confirms the change; a confirmed credit still reads `exposed` (RIPR-SPEC-0240, #9567).
