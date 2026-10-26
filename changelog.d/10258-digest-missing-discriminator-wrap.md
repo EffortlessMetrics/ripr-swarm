@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- The digest finding card wraps the `Missing discriminator` line instead of cutting it at 180 characters with an ellipsis, so the operative tail of the explanation (for example `...stay advisory in preview`) is no longer lost. `--format human-full`, JSON and machine output are unchanged (#10258).
+- Long `Missing discriminator` explanations on digest finding cards no longer lose their tail to 180-character clipping. The text now wraps, preserving details such as `stay advisory in preview`; `--format human-full`, JSON and machine output are unchanged (#10258).
