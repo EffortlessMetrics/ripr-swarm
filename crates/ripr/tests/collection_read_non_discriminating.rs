@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[test]
 fn non_discriminating_collection_reads_never_credit_exposed() -> Result<(), String> {
     let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("collection_read_nd");
-    let production = "pub struct Bag { pub items: Vec<u32> }\nimpl Bag {\n    pub fn new() -> Self { Bag { items: Vec::new() } }\n    pub fn add(&mut self, x: u32) {\n        self.items.push(x);\n    }\n}\n";
+    let production = "pub struct Bag { pub items: Vec<u32>, pub tag: String }\nimpl Bag {\n    pub fn new() -> Self { Bag { items: Vec::new(), tag: String::new() } }\n    pub fn add(&mut self, x: u32) {\n        self.items.push(x);\n    }\n}\n";
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,3 +4,3 @@ impl Bag {\n     pub fn add(&mut self, x: u32) {\n-        self.items.push(x + 1);\n+        self.items.push(x);\n     }\n";
     // (name, test body, credited)
     let cases = [
@@ -48,6 +48,11 @@ fn non_discriminating_collection_reads_never_credit_exposed() -> Result<(), Stri
         (
             "spaced_readonly_use_does_not_make_twins_independent",
             "let mut c = Bag::new();\nlet mut d = Bag::new();\nlet _ = c . items.len();\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
+            "sibling_field_read_is_not_history",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nlet _ = c.tag;\nlet _ = c.tag.len();\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
             false,
         ),
         (

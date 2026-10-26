@@ -633,6 +633,48 @@ fn field_collection_observer_confirms(
     })
 }
 
+/// `code` without plain reads of a sibling field of `binding` (`c.tag`,
+/// `c.tag.len()`, `c.tag == 1`): they neither seed nor drive the collection
+/// under test, so they are not part of its history. Method calls on the
+/// sibling and anything that could write it stay in the code.
+fn strip_sibling_field_reads(code: &str, binding: &str, path: &str) -> String {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut out = String::new();
+    let mut last = 0;
+    for (at, _) in code.match_indices(binding) {
+        let end = at + binding.len();
+        if at < last
+            || code[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+        {
+            continue;
+        }
+        let Some(after) = code[end..].strip_prefix('.') else {
+            continue;
+        };
+        let field_len = after.find(|ch: char| !ident(ch)).unwrap_or(after.len());
+        let field = &after[..field_len];
+        if field.is_empty() || field == path {
+            continue;
+        }
+        let rest = after[field_len..].trim_start();
+        let read = rest.is_empty()
+            || rest.starts_with([')', ',', ']'])
+            || rest.starts_with(".len(")
+            || rest.starts_with(".is_empty(")
+            || rest.starts_with("==")
+            || rest.starts_with("!=");
+        if read {
+            out.push_str(&code[last..at]);
+            last = end + 1 + field_len;
+        }
+    }
+    out.push_str(&code[last..]);
+    out
+}
+
 /// `code` without whitespace around `.`, so spaced and tight spellings of one
 /// field access compare equal.
 fn tighten_dots(code: &str) -> String {
@@ -744,9 +786,10 @@ fn equivalent_owner_histories(
                 }
                 constructed = true;
                 history.push(format!("let {}", abstracted(rhs, binding)));
-            } else if mentions(code, binding)
-                && !only_field_reads_between(code, 0, code.len(), binding, None, path)
-            {
+            } else if mentions(code, binding) && {
+                let stripped = strip_sibling_field_reads(code, binding, path);
+                !only_field_reads_between(&stripped, 0, stripped.len(), binding, None, path)
+            } {
                 history.push(abstracted(text, binding));
             }
         }
