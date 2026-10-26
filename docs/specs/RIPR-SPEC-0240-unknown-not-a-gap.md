@@ -427,9 +427,10 @@ non-ignored related test matches one of these shapes:
   is its only argument (a hand-written `block_on`). The owner's bare call is a
   future, so the compared value comes out of the helper, which ripr does not
   read. A sync owner, a helper defined elsewhere, a second argument and a
-  non-literal expectation keep the finding. Whether a bounded rule can credit a
-  single-argument local executor is left open; until then the gap is withheld,
-  never credited.
+  non-literal expectation keep the finding. A helper that
+  RIPR-SPEC-0197 verifies as a poll-to-completion loop over standard
+  primitives (#9478) is read as `owner(..).await` and credits; every other
+  single-argument local executor stays withheld, never credited.
 
 Any one matching related test withholds the finding: a weaker sibling test
 reads as evidence ripr gathered, not as the oracle that decides, and the
@@ -632,9 +633,9 @@ under `rust_indirect_owner_call_unresolved`:
   value, whatever the helper returns), a second argument, or a same-file
   helper that does not take a `Future` keeps the gap; a literal expectation
   through a same-file helper is also read by the local-executor rule. The
-  assertion reads the helper's result, and a bounded rule that follows a
-  single-argument helper to the future's output is not specified, so the
-  finding is limited rather than credited.
+  assertion reads the helper's result, and only a helper RIPR-SPEC-0197
+  verifies as a poll-to-completion loop is followed to the future's output
+  (#9478); every other helper leaves the finding limited rather than credited.
 
 These forms are limited, not credited: crediting needs the iterator chain or
 the executor's return evaluated, and a wrong credit is worse than an honest
@@ -741,7 +742,19 @@ A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
-`Index`, `Drop` and the iterator traits keep the abstention until their own
+`a[i]` credits the same way (#10552). A read runs `Index::index` and a write
+(`a[i] = v`, `a[i] += v`, `&mut a[i]`) runs `IndexMut::index_mut`, so a site is
+credited to the one impl it runs. The receiver is a whole operand typed as the
+impl's self type (a leading `&` or `&mut` is allowed because indexing
+auto-dereferences; a field, method chain or helper return is not), a read whose
+value is discarded runs nothing a test can observe, and a site whose result is
+projected further (`a[i].len()`, `a[i].x`, `a[i][j]`) is credited to neither
+trait because the projection may borrow either way. A second `Index` impl for
+the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
+as for operators. An unconfirmed credit stays withheld; an assertion-free test
+stays a real `weakly_exposed` gap.
+
+`Drop` and the iterator traits keep the abstention until their own
 readings are added. `Drop` and `Iterator::next` need more than a relation: the
 observed value (a counter behind a shared cell, a `collect`ed vector) shares no
 token with the changed line, so a relation without observation confirmation

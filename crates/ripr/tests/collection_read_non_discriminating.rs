@@ -308,3 +308,93 @@ fn local_collection_twins_never_credit_exposed() -> Result<(), String> {
     assert!(wrong.is_empty(), "{wrong:#?}");
     Ok(())
 }
+
+/// Getter-spelled reads, owner-built (chained) sides, same-line rewrites and
+/// differing conditional guards (#7135 follow-up, #10657).
+#[test]
+fn twin_history_edges_getter_chain_guard_and_same_line() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("collection_read_nd_edges");
+    let production = "#[derive(Clone)]\npub struct Bag { pub items: Vec<u32> }\nimpl Bag {\n    pub fn new() -> Self { Bag { items: Vec::new() } }\n    pub fn history(&self) -> &[u32] { &self.items }\n    pub fn add(&mut self, x: u32) -> &mut Self {\n        self.items.push(x);\n        self\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -6,4 +6,4 @@ impl Bag {\n     pub fn add(&mut self, x: u32) -> &mut Self {\n-        self.items.push(x + 1);\n+        self.items.push(x);\n         self\n     }\n";
+    // (name, test body, credited)
+    let cases = [
+        (
+            "getter_twin_ran_owner",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nc.add(20);\nd.add(20);\nassert_eq!(c.history(), d.history());",
+            false,
+        ),
+        (
+            "getter_readonly_use_does_not_make_twins_independent",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nc.add(20);\nd.add(20);\nlet _ = d.history().len();\nassert_eq!(c.history(), d.history());",
+            false,
+        ),
+        (
+            "getter_twin_with_extra_driver_keeps_credit",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nc.add(20);\nd.add(20);\nd.add(20);\nassert_eq!(c.history(), d.history());",
+            true,
+        ),
+        (
+            "owner_built_twin_through_chain",
+            "let mut c = Bag::new();\nc.add(20);\nlet d = Bag::new().add(20).clone();\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
+            "same_line_rewrite_keeps_credit",
+            "let mut c = Bag::new();\nc.add(20);\nlet mut d = Bag::new();\nd.add(20);\nd.items.clear(); d.items.push(20); assert_eq!(c.items, d.items);",
+            true,
+        ),
+        (
+            "different_guards_stay_refused",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nif left() {\nc.items.push(1);\n}\nif right() {\nd.items.push(1);\n}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
+            "chained_let_after_the_read_is_not_evidence",
+            "let mut c = Bag::new();\nc.add(20);\nlet d = Bag { items: vec![20] };\nassert_eq!(c.items, d.items);\nlet d = Bag::new().add(20).clone();",
+            true,
+        ),
+        (
+            "equivalent_spelled_guards_stay_refused",
+            "let ready = true;\nlet mut c = Bag::new();\nlet mut d = Bag::new();\nif ready {\nc.items.push(1);\n}\nif ready == true {\nd.items.push(1);\n}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
+            "same_guard_twins_stay_refused",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nif ready() {\nc.items.push(1);\n}\nif ready() {\nd.items.push(1);\n}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (name, body, credited) in cases {
+        let source = format!(
+            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\n#[test]\nfn bag_observed() {{\n{body}\n}}\n}}\n"
+        );
+        let root = root_dir.join(name);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"bag_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let classes: Vec<String> = report
+            .findings
+            .iter()
+            .map(|f| format!("{}={}", f.probe.family.as_str(), f.class.as_str()))
+            .collect();
+        let any_exposed = report
+            .findings
+            .iter()
+            .any(|f| f.class.as_str() == "exposed");
+        if report.findings.is_empty() || any_exposed != credited {
+            wrong.push(format!("{name}: {classes:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
