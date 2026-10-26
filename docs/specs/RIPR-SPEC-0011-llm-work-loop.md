@@ -172,6 +172,22 @@ before configuration loading or repair/store writes. A missing value retains
 its missing-value refusal. Canonical phase meanings and the existing `--help`
 short circuit remain unchanged.
 
+### Repeated value flags refuse (#10542)
+
+Every `ripr agent` value flag is single-use. A second occurrence of the same
+value flag is a usage error, refused with exit 2, empty stdout, and
+`<command> takes <flag> once` on stderr before any artifact or state write.
+For example, `ripr agent brief --seam-id s --max-seams 1 --max-seams 10`
+refuses with `agent brief takes --max-seams once` instead of silently keeping
+the last cap, and `ripr agent verify --before a --before b --after c --json`
+refuses with `agent verify takes --before once` instead of comparing `b`
+against itself. Two deliberate exceptions keep their family contracts:
+`--root` stays last-win everywhere, including the pattern-setting parsers, so
+scripted double-root invocations keep working; and `agent receipt --command`
+stays a repeatable accumulator. An empty `agent verify --gap-id` is refused at
+the parser with the same exit-2 usage-error shape, naming the empty flag
+instead of flowing the empty id into the artifact layer.
+
 ## JSON Shape
 
 The status report uses schema version `0.1`:
