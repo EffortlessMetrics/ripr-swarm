@@ -1056,6 +1056,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1072,6 +1073,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1104,6 +1106,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;

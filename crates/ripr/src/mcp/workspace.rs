@@ -317,6 +317,31 @@ fn bounded_detail(detail: impl Into<String>) -> String {
     bounded
 }
 
+/// Which input a `ripr_refresh` analyzes (#7357). `Committed` is the
+/// default and the only behavior of an omitted argument; `Worktree` is the
+/// opt-in saved tracked-worktree diff (staged and unstaged tracked edits).
+/// The requested source (session) and the captured source (snapshot) are
+/// distinct facts: a failed worktree request never relabels a retained
+/// committed snapshot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RefreshSource {
+    #[default]
+    Committed,
+    Worktree,
+}
+
+impl RefreshSource {
+    pub(crate) const COMMITTED_NAME: &'static str = "committed";
+    pub(crate) const WORKTREE_NAME: &'static str = "worktree";
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Committed => Self::COMMITTED_NAME,
+            Self::Worktree => Self::WORKTREE_NAME,
+        }
+    }
+}
+
 /// The completed-snapshot authority for one MCP session. Immutable once
 /// committed: refresh replaces the whole snapshot, never mutates it.
 pub(crate) struct Snapshot {
@@ -348,6 +373,13 @@ pub(crate) struct Snapshot {
     /// names it so a snapshot never reads as the default-branch diff when it
     /// was analyzed against another revision.
     pub(crate) base: Option<String>,
+    /// The source the analysis was actually captured under (#7357). Worktree
+    /// snapshots carry it in the snapshot identity; committed identities are
+    /// unchanged. A worktree snapshot binds no seam inventory and no card
+    /// producers: no consumed-source commitment spans the findings and
+    /// those later live-file producers, so cards and repair readiness are
+    /// withheld rather than claimed current.
+    pub(crate) source: RefreshSource,
     /// The producer's mixed-language completeness view bound at commit time
     /// (#6475). Served as `session.language_completeness`; deliberately not
     /// part of the snapshot identity, so existing identities are unchanged.
@@ -390,6 +422,7 @@ impl Snapshot {
         output: &crate::app::CheckOutput,
         root_identity: Option<&str>,
         admission: &super::repair_admission::SeamAdmission,
+        source: RefreshSource,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -443,7 +476,7 @@ impl Snapshot {
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
         let scope = ScopeFacts::from_output(output);
-        let snapshot_id = snapshot_identity(&outcome, &items, &scope).map_err(|error| {
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
         })?;
         let profile_identity = format!(
@@ -478,6 +511,7 @@ impl Snapshot {
             selection,
             scope,
             base: None,
+            source,
             language_view: None,
         })
     }
@@ -494,6 +528,7 @@ impl Snapshot {
             output,
             root_identity,
             &super::repair_admission::SeamAdmission::unevaluated(),
+            RefreshSource::Committed,
         )
     }
 
@@ -517,6 +552,7 @@ fn snapshot_identity(
     outcome: &AnalysisOutcome,
     items: &[GapItem],
     scope: &ScopeFacts,
+    source: RefreshSource,
 ) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
@@ -527,7 +563,7 @@ fn snapshot_identity(
         .iter()
         .map(|item| item.evidence_sha256.as_str())
         .collect::<Vec<_>>();
-    let payload = json!({
+    let mut payload = json!({
         "outcome_digest": outcome_digest,
         "items": item_ids,
         "evidence": evidence_digests,
@@ -536,6 +572,14 @@ fn snapshot_identity(
         // share an identity (#5995 review).
         "scope": scope.identity_key(),
     });
+    // #7357: the source kind is load-bearing identity. Equal findings under
+    // a committed and a saved-worktree capture are different snapshots
+    // (different scope, different withheld claims), so a worktree snapshot
+    // never shares an id with a committed one. The committed payload is
+    // unchanged, so existing committed identities do not move.
+    if source == RefreshSource::Worktree {
+        payload["source"] = json!(source.as_str());
+    }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
     Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
@@ -581,6 +625,10 @@ pub(crate) struct WorkspaceSession {
     /// The explicit base revision of the most recent refresh request, `None`
     /// when it asked for the default branch (or none was requested yet).
     pub(crate) desired_base: Option<String>,
+    /// The source of the most recent refresh request (#7357). Distinct from
+    /// the retained snapshot's captured `source`: a failed worktree request
+    /// leaves a committed last-good tagged committed.
+    pub(crate) desired_source: RefreshSource,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -1058,12 +1106,15 @@ impl WorkspaceSession {
     /// detail, per progressive disclosure.
     pub(crate) fn session_document(&self, profile: &SessionProfile) -> Value {
         let last_completed = self.last_good.as_ref().map(|snapshot| {
-            json!({
-                "snapshot_id": snapshot.snapshot_id,
-                "outcome_kind": snapshot.outcome.kind.as_str(),
-                "finding_count": snapshot.outcome.counts.finding_count,
-                "total_items": snapshot.selection.total_canonical_items,
-            })
+            tag_source(
+                json!({
+                    "snapshot_id": snapshot.snapshot_id,
+                    "outcome_kind": snapshot.outcome.kind.as_str(),
+                    "finding_count": snapshot.outcome.counts.finding_count,
+                    "total_items": snapshot.selection.total_canonical_items,
+                }),
+                snapshot,
+            )
         });
         let analysis_outcome = self
             .last_good
@@ -1073,7 +1124,7 @@ impl WorkspaceSession {
         let last_known_good = self
             .last_good
             .as_ref()
-            .map(|snapshot| json!({ "snapshot_id": snapshot.snapshot_id }));
+            .map(|snapshot| tag_source(json!({ "snapshot_id": snapshot.snapshot_id }), snapshot));
         let last_failure = self
             .last_failure
             .as_ref()
@@ -1090,6 +1141,11 @@ impl WorkspaceSession {
         if let Some(base) = &self.desired_base {
             desired_input["base"] = json!("explicit");
             desired_input["base_revision"] = json!(base);
+        }
+        // Source-less callers keep the unchanged v1 shape: `source` appears
+        // only after a worktree refresh was requested (#7357).
+        if self.desired_source == RefreshSource::Worktree {
+            desired_input["source"] = json!(RefreshSource::WORKTREE_NAME);
         }
         let mut document = json!({
             "schema_version": SESSION_SCHEMA_VERSION,
@@ -1207,9 +1263,12 @@ impl Drop for InFlightAttempt {
 /// untracked files exist, the note never offers bare `--worktree` as the
 /// remedy: they are invisible to both the committed diff and `--worktree`
 /// (#5258), so the disclosure names staging or an explicit diff instead,
-/// the same contract as the human note. `ripr_refresh` takes no diff-source
-/// argument, so there is no in-protocol expansion to promise.
+/// the same contract as the human note. The in-protocol expansion is the
+/// explicit `source: "worktree"` refresh argument (#7357).
 fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    if snapshot.source == RefreshSource::Worktree {
+        return Some(worktree_scope_disclosure(snapshot));
+    }
     let mut disclosure = tracked_scope_disclosure(snapshot);
     let scope = &snapshot.scope;
     if scope.ignored.is_empty() {
@@ -1235,6 +1294,60 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         })
     });
     base["ignored_edits"] = ignored_edits;
+    disclosure
+}
+
+/// The scope disclosure for a saved tracked-worktree snapshot (#7357). It
+/// always exists: the snapshot never covers unsaved editor buffers, untracked
+/// files or gitignored files, and it carries no consumed-source commitment,
+/// so a clean or empty result is never an all-clear and no currentness is
+/// claimed beyond the refresh that produced it.
+fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
+    const NAMED_PATHS: usize = 3;
+    let scope = &snapshot.scope;
+    let analyzed = match &snapshot.base {
+        Some(base) => format!("saved tracked-worktree diff against base `{base}`"),
+        None => "saved tracked-worktree diff against the default branch".to_string(),
+    };
+    let mut disclosure = json!({
+        "analyzed": analyzed,
+        "uncommitted_edits": "saved tracked edits included",
+        "note": "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers, untracked files and gitignored files are outside it. It carries no consumed-source commitment, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
+        "consumed_source_commitment": "not_established",
+        "repair_cards": "withheld",
+    });
+    if !scope.untracked.is_empty() {
+        let named = scope
+            .untracked
+            .iter()
+            .take(NAMED_PATHS)
+            .cloned()
+            .collect::<Vec<_>>();
+        let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
+        let listing = if more > 0 {
+            format!("{} and {more} more", named.join(", "))
+        } else {
+            named.join(", ")
+        };
+        disclosure["untracked_edits"] = json!({
+            "files": named,
+            "total": scope.untracked.len(),
+            "more": more,
+            "listing_example": listing,
+            "remedy": "untracked files are invisible to this analysis; stage them (`git add -N <paths>` intent-to-add is enough) and rerun ripr_refresh with source `worktree`",
+        });
+    }
+    if !scope.ignored.is_empty() {
+        let language_label = analyzed_language_label(&snapshot.findings);
+        let named = scope.ignored.iter().take(NAMED_PATHS).collect::<Vec<_>>();
+        disclosure["ignored_edits"] = json!({
+            "files": named,
+            "total": scope.ignored.len(),
+            "more": scope.ignored.len().saturating_sub(NAMED_PATHS),
+            "languages_analyzed": language_label,
+            "remedy": format!("gitignored {language_label} files were excluded and not analyzed; stage them with `git add -f -N <paths>` (force intent-to-add) and rerun ripr_refresh with source `worktree`"),
+        });
+    }
     disclosure
 }
 
@@ -1283,7 +1396,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return Some(json!({
             "analyzed": analyzed_label(snapshot),
             "uncommitted_edits": "outside this analysis",
-            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
+            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with ripr_refresh source `worktree` or `ripr check --worktree --format json` in the repository",
         }));
     }
     let listing = if more > 0 {
@@ -1294,7 +1407,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     Some(json!({
         "analyzed": analyzed_label(snapshot),
         "uncommitted_edits": "outside this analysis",
-        "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
+        "note": "this snapshot reads each file as committed at HEAD; ripr_refresh source `worktree` (or `ripr check --worktree --format json`) adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
         "untracked_edits": {
             "files": named,
             "total": scope.untracked.len(),
@@ -1305,17 +1418,29 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     }))
 }
 
+/// Tag a snapshot summary with its captured source (#7357). Committed
+/// summaries keep the unchanged v1 shape; only a worktree capture adds it.
+fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
+    if snapshot.source == RefreshSource::Worktree {
+        summary["source"] = json!(RefreshSource::WORKTREE_NAME);
+    }
+    summary
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
-        json!({
-            "snapshot_id": snapshot.snapshot_id,
-            "outcome_kind": snapshot.outcome.kind.as_str(),
-            "finding_count": snapshot.outcome.counts.finding_count,
-            "total_items": snapshot.selection.total_canonical_items,
-            "list_route": "ripr_list_gaps",
-            "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
-        })
+        tag_source(
+            json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "outcome_kind": snapshot.outcome.kind.as_str(),
+                "finding_count": snapshot.outcome.counts.finding_count,
+                "total_items": snapshot.selection.total_canonical_items,
+                "list_route": "ripr_list_gaps",
+                "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
+            }),
+            snapshot,
+        )
     });
     // `requested_base` appears only when the request named one, so a base-less
     // refresh keeps the unchanged v1 shape.
@@ -1338,7 +1463,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "last_known_good": session
             .last_good
             .as_ref()
-            .map(|snapshot| json!({ "snapshot_id": snapshot.snapshot_id })),
+            .map(|snapshot| tag_source(json!({ "snapshot_id": snapshot.snapshot_id }), snapshot)),
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
@@ -1347,6 +1472,20 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
+    }
+    // #7357: requested and captured source are distinct facts. Both appear
+    // only once a worktree source is involved, so source-less callers keep
+    // the unchanged v1 shape.
+    let captured_worktree = session
+        .last_good
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.source == RefreshSource::Worktree);
+    if session.desired_source == RefreshSource::Worktree || captured_worktree {
+        document["requested_source"] = json!(session.desired_source.as_str());
+        document["captured_source"] = session
+            .last_good
+            .as_ref()
+            .map_or(Value::Null, |snapshot| json!(snapshot.source.as_str()));
     }
     document
 }
@@ -1479,6 +1618,7 @@ pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
     base: Option<&str>,
+    source: RefreshSource,
 ) -> Result<Snapshot, AttemptFailure> {
     let config = crate::config::load_for_root(root).map_err(|error| {
         AttemptFailure::new(
@@ -1493,6 +1633,9 @@ pub(crate) fn run_check(
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
+    if source == RefreshSource::Worktree {
+        return run_worktree_check(input, &config, root_identity, base);
+    }
     let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
         .map_err(|error| check_failure(&error, base))?;
     // The seam inventory is gathered once inside this bounded attempt and
@@ -1507,7 +1650,12 @@ pub(crate) fn run_check(
         crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
         &inventory.completeness,
     );
-    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
+    let mut snapshot = Snapshot::from_output_admitted(
+        &output,
+        root_identity,
+        &admission,
+        RefreshSource::Committed,
+    )?;
     snapshot.base = base.map(str::to_string);
     snapshot.language_view = language_view;
     // Bind the repair-card producers inside the same bounded attempt, after
@@ -1519,6 +1667,43 @@ pub(crate) fn run_check(
     super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
     Ok(snapshot)
 }
+
+/// The saved tracked-worktree refresh (#7357): the shared worktree check
+/// producer's findings, bound into a snapshot tagged `worktree`. It
+/// deliberately gathers no seam inventory and binds no card producers. Those
+/// producers read live files after the findings pass and no shared
+/// consumed-source commitment spans the two, so a worktree snapshot could
+/// pair findings from one saved state with seams from another. Repair
+/// readiness is refused for every finding and the card read discloses
+/// unavailability instead of claiming currentness.
+fn run_worktree_check(
+    input: crate::app::CheckInput,
+    config: &crate::config::RiprConfig,
+    root_identity: Option<&str>,
+    base: Option<&str>,
+) -> Result<Snapshot, AttemptFailure> {
+    let (output, language_view) =
+        crate::app::check_workspace_worktree_with_config_typed(input, config)
+            .map_err(|error| check_failure(&error, base))?;
+    let admission = super::repair_admission::SeamAdmission::withheld(
+        &output.findings,
+        super::repair_admission::SEAM_WORKTREE_SOURCE,
+        WORKTREE_CARD_WITHHELD_DETAIL,
+    );
+    let mut snapshot = Snapshot::from_output_admitted(
+        &output,
+        root_identity,
+        &admission,
+        RefreshSource::Worktree,
+    )?;
+    snapshot.base = base.map(str::to_string);
+    snapshot.language_view = language_view;
+    Ok(snapshot)
+}
+
+/// Why a saved tracked-worktree snapshot carries no repair readiness or
+/// repair card (#7357).
+pub(crate) const WORKTREE_CARD_WITHHELD_DETAIL: &str = "this snapshot analyzed saved tracked-worktree edits; no consumed-source commitment spans its findings and the live seam inventory that repair readiness and cards need, so they are withheld rather than claimed current. Commit the change and run ripr_refresh without `source` for repair cards";
 
 /// Project a shared-check refusal into the attempt failure. The recovery
 /// names routes this server can actually take: base resolution is retried
@@ -1686,6 +1871,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1902,6 +2088,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -2106,6 +2293,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -2186,6 +2374,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3448,6 +3637,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -3521,6 +3711,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -3637,6 +3828,71 @@ mod tests {
         Ok(())
     }
 
+    /// #7357: identical producer output captured under the committed and the
+    /// saved-worktree source must never share a snapshot identity, the
+    /// committed identity stays the unchanged pre-source payload, and a
+    /// worktree snapshot discloses its limits and refuses repair readiness.
+    #[test]
+    fn worktree_source_tags_identity_and_withholds_repair_claims() -> Result<(), String> {
+        let mut equal = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        equal.findings.push(gaps::test_finding()?);
+        let committed = Snapshot::from_output(&equal, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        let admission = super::super::repair_admission::SeamAdmission::withheld(
+            &equal.findings,
+            super::super::repair_admission::SEAM_WORKTREE_SOURCE,
+            WORKTREE_CARD_WITHHELD_DETAIL,
+        );
+        let worktree = Snapshot::from_output_admitted(
+            &equal,
+            Some("root:sha256:test"),
+            &admission,
+            RefreshSource::Worktree,
+        )
+        .map_err(|failure| failure.detail)?;
+        assert_eq!(worktree.source, RefreshSource::Worktree);
+        assert_eq!(committed.source, RefreshSource::Committed);
+        assert_eq!(committed.items.len(), worktree.items.len());
+        assert_ne!(
+            committed.snapshot_id, worktree.snapshot_id,
+            "equal findings under different sources must not share an identity"
+        );
+        // The committed payload carries no source key, so existing committed
+        // identities do not move.
+        let outcome_digest = committed.outcome.semantic_digest()?;
+        let expected = json!({
+            "outcome_digest": outcome_digest,
+            "items": committed.items.iter().map(|item| item.canonical_id.as_str()).collect::<Vec<_>>(),
+            "evidence": committed.items.iter().map(|item| item.evidence_sha256.as_str()).collect::<Vec<_>>(),
+            "scope": committed.scope.identity_key(),
+        });
+        let bytes = serde_json::to_vec(&expected).map_err(|error| error.to_string())?;
+        assert_eq!(
+            committed.snapshot_id,
+            format!("snapshot:sha256:{}", sha256_hex(&bytes))
+        );
+        let scope = scope_disclosure(&worktree).ok_or("a worktree snapshot always discloses")?;
+        assert_eq!(scope["consumed_source_commitment"], "not_established");
+        assert_eq!(scope["repair_cards"], "withheld");
+        assert_eq!(scope["uncommitted_edits"], "saved tracked edits included");
+        assert!(
+            scope["analyzed"]
+                .as_str()
+                .is_some_and(|analyzed| analyzed.starts_with("saved tracked-worktree diff"))
+        );
+        assert!(scope_disclosure(&committed).is_none());
+        assert!(
+            worktree
+                .items
+                .iter()
+                .all(|item| !item.repair_readiness.ready
+                    && item.repair_readiness.ineligibility.is_some()),
+            "no worktree item is repair ready"
+        );
+        assert!(worktree.card_producers.is_none());
+        Ok(())
+    }
+
     #[test]
     fn portable_snapshot_identity_survives_distinct_absolute_checkouts() -> Result<(), String> {
         // #5254 item 6: the same finding content committed from two checkouts
@@ -3710,8 +3966,12 @@ mod tests {
                 item.evidence_sha256 = sha256_hex(&bytes);
                 lengths.push(bytes.len());
             }
-            let original_id =
-                snapshot_identity(&snapshot.outcome, &original_items, &snapshot.scope)?;
+            let original_id = snapshot_identity(
+                &snapshot.outcome,
+                &original_items,
+                &snapshot.scope,
+                RefreshSource::Committed,
+            )?;
             assert_eq!(snapshot.snapshot_id, original_id);
 
             let session = WorkspaceSession {
@@ -3722,6 +3982,7 @@ mod tests {
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
                 desired_base: None,
+                desired_source: RefreshSource::Committed,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items

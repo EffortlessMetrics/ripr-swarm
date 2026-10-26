@@ -113,8 +113,9 @@ impl McpServer {
         arguments: Option<serde_json::Map<String, Value>>,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["base"])?;
+        reject_unknown_arguments(&arguments, &["base", "source"])?;
         let base = optional_nonempty_string_argument(&arguments, "base")?;
+        let source = refresh_source_argument(&arguments)?;
         if let Some(base) = &base
             && base.len() > MAX_BASE_REVISION_BYTES
         {
@@ -146,10 +147,11 @@ impl McpServer {
             }
             session.in_flight = true;
             session.desired_base = base.clone();
+            session.desired_source = source;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref(), source)
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -572,6 +574,30 @@ fn optional_string_argument(
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
             Some(serde_json::json!({ "argument": name, "expected": "string" })),
+        )),
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
+/// meaning of omission) or `worktree`. Any other value, including an empty
+/// string, wrong case or a non-string, is invalid params; nothing coerces.
+fn refresh_source_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+) -> Result<workspace::RefreshSource, ErrorData> {
+    match optional_string_argument(arguments, "source")?.as_deref() {
+        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(workspace::RefreshSource::Committed)
+        }
+        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(_other) => Err(ErrorData::invalid_params(
+            "source must be one of: committed, worktree",
+            Some(serde_json::json!({
+                "argument": "source",
+                "expected": [
+                    workspace::RefreshSource::COMMITTED_NAME,
+                    workspace::RefreshSource::WORKTREE_NAME,
+                ],
+            })),
         )),
     }
 }
