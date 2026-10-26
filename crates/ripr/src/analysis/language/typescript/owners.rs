@@ -2152,6 +2152,15 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 Expression::Identifier(id) => return Some(id.name.to_string()),
                 Expression::StaticMemberExpression(member) => expr = &member.object,
                 Expression::ComputedMemberExpression(member) => expr = &member.object,
+                Expression::ChainExpression(chain) => match &chain.expression {
+                    oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                        expr = &member.object
+                    }
+                    oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                        expr = &member.object
+                    }
+                    _ => return None,
+                },
                 _ => return None,
             }
         }
@@ -2176,6 +2185,19 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
                     self.mutated.extend(root(&member.object));
+                }
+                // `(lib.f as any) = stub`: the member read underneath is a write.
+                oxc_ast::ast::SimpleAssignmentTarget::TSAsExpression(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::TSSatisfiesExpression(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::TSNonNullExpression(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::TSTypeAssertion(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
                 }
                 _ => {}
             }

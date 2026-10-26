@@ -431,6 +431,9 @@ fn an_escaping_namespace_yields_no_member_import() {
         "const lib = require('./lib');\nconst alias = lib;\nalias.f = () => 1;\nconst s = lib.f;\n",
         "const lib = require('./lib');\nconst box = { lib };\nbox.lib.f = () => 1;\nconst s = lib.f;\n",
         "const lib = require('./lib');\nmutate([lib]);\nconst s = lib.f;\n",
+        "const lib = require('./lib');\n(lib.f as any) = stub;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\n(lib.f)! = stub;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\ndelete lib?.f;\nconst s = lib.f;\n",
     ] {
         assert!(
             !imports_of(source)
