@@ -1474,3 +1474,29 @@ fn partial_extraction_disclosure_matches_every_extracted_start_in_a_large_file()
         "the one registration inside a helper must still be disclosed"
     );
 }
+
+#[test]
+fn skipped_suite_bindings_retain_thrown_runner_mutation() {
+    let file = Path::new("test/binding.test.ts");
+    let source = "try { throw describe; } catch (d) { d.skip = custom; } describe.skip('runs', () => { it('live', () => {}); });";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "{tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref().is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        "{source}: {gap:?}"
+    );
+}
+
+#[test]
+fn skipped_suite_bindings_retain_evaluated_constructor_body() {
+    let file = Path::new("test/binding.test.ts");
+    let source = "describe.skip(new (function () { it('live', () => {}); })(), () => { it('dormant', () => {}); });";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "{tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref().is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        "{source}: {gap:?}"
+    );
+}
