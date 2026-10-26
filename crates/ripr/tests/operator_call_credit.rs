@@ -759,6 +759,112 @@ mod named {
     };
     assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
 
+    // A path call on another type is not a call of this impl: still syntax-only (#10551).
+    let other_type_path = Case {
+        label: "other_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Wrapper::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&other_type_path)?, [ExposureClass::StaticUnknown]);
+
+    // A longer method name is not the owner (#10551).
+    let longer_method_path = Case {
+        label: "longer_method_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::address(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&longer_method_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A type whose name merely ends in the impl type is another type (#10551).
+    let longer_type_path = Case {
+        label: "longer_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = MyMoney::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&longer_type_path)?, [ExposureClass::StaticUnknown]);
+
+    // `Type::method(..)` names the owner like `.method(..)`, so the finding is judged by that test's own evidence (#10551).
+    let type_path_call = Case {
+        label: "type_path_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&type_path_call)?, [ExposureClass::WeaklyExposed]);
+
+    // `<Type as Trait>::method(..)` names the owner too (#10551).
+    let qualified_path_call = Case {
+        label: "qualified_path_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = <Money as Add>::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&qualified_path_call)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
     // Same-named tests in different inline modules are different tests. The
     // later one calls the method and observes the sum, so the finding is
     // judged by that test too (it was once dropped as a duplicate by name).

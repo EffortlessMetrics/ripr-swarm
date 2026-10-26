@@ -209,6 +209,7 @@ fn reached_only_through_syntax(
     if direct.peek().is_none() {
         return false;
     }
+    let self_type = impl_self_type_name(&owner.id.0);
     direct.all(|related| {
         index
             .tests()
@@ -221,6 +222,9 @@ fn reached_only_through_syntax(
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
+                    && !self_type
+                        .as_deref()
+                        .is_some_and(|ty| calls_by_type_path(&code, &owner.name, ty))
             })
     })
 }
@@ -973,6 +977,36 @@ fn calls_method_named(code: &str, name: &str) -> bool {
     })
 }
 
+/// Whether `code` (comments and strings masked) calls `name` through the
+/// owner's own type, as `Type::name(..)` or `<Type as Trait>::name(..)`. The
+/// qualifier must be exactly the impl type: another type's `add`, a longer
+/// identifier ending in the type, or a longer method name is a different call
+/// and leaves the test syntax-only (#10551).
+fn calls_by_type_path(code: &str, name: &str, self_type: &str) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    code.match_indices(name).any(|(at, _)| {
+        let rest = code[at + name.len()..].trim_start();
+        if !(rest.starts_with('(') || rest.starts_with("::<")) {
+            return false;
+        }
+        let Some(qualifier) = code[..at].trim_end().strip_suffix("::") else {
+            return false;
+        };
+        let qualifier = qualifier.trim_end();
+        let is_type = |text: &str| {
+            text.strip_suffix(self_type)
+                .is_some_and(|rest| !rest.ends_with(word) && !rest.ends_with("::"))
+        };
+        is_type(qualifier)
+            || qualifier.strip_suffix('>').is_some_and(|inner| {
+                let inner = inner.rsplit_once('<').map_or("", |(_, inner)| inner);
+                inner
+                    .split_once(" as ")
+                    .is_some_and(|(ty, _)| ty.trim() == self_type)
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1123,5 +1157,33 @@ mod tests {
         assert!(!calls_method_named("s.areas()", "area"));
         assert!(!calls_method_named("s.total_area()", "area"));
         assert!(!calls_method_named("s.area", "area"));
+    }
+
+    #[test]
+    fn type_path_calls_need_the_owner_type_and_a_whole_name() {
+        assert!(calls_by_type_path("Money::add(a, b)", "add", "Money"));
+        assert!(calls_by_type_path("Money::add::<u8>(a, b)", "add", "Money"));
+        assert!(calls_by_type_path(
+            "<Money as Add>::add(a, b)",
+            "add",
+            "Money"
+        ));
+        // A module-qualified path may name another module's `Money`; stay
+        // conservative and leave the test syntax-only.
+        assert!(!calls_by_type_path(
+            "crate::Money::add(a, b)",
+            "add",
+            "Money"
+        ));
+        assert!(!calls_by_type_path("Other::add(a, b)", "add", "Money"));
+        assert!(!calls_by_type_path("MyMoney::add(a, b)", "add", "Money"));
+        assert!(!calls_by_type_path("Money::address(a)", "add", "Money"));
+        assert!(!calls_by_type_path("Money::add", "add", "Money"));
+        assert!(!calls_by_type_path(
+            "<Other as Add>::add(a, b)",
+            "add",
+            "Money"
+        ));
+        assert!(!calls_by_type_path("m.add(a)", "add", "Money"));
     }
 }

@@ -717,8 +717,12 @@ differs between "an assertion matched but cannot confirm" and "no assertion
 matched", and both leave the credit unconfirmed): it stays `static_unknown`
 under `rust_implicit_call_unresolved`. A finding whose infection or propagation
 is not read, such as a changed line behind a branch the test never takes,
-keeps its class. A path-form call (`Money::add(a, b)`) is not `.name(` and
-reads as syntax-only. A confirmed
+keeps its class. A call that names the owner decides reach itself and is
+judged by its own evidence: `.name(`, `Money::name(`, or `<Money as Trait>::name(`
+where the qualifier is exactly the impl type. Another type's `name`, a type that
+only ends in the impl type, a longer method name, and a module-qualified path
+(`crate::Money::name(`, which may name another module's `Money`) do not count and
+leave the test syntax-only. A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
