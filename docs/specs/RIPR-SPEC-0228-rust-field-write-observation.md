@@ -166,11 +166,11 @@ owner moves both sides together (#7135). The refusal needs equivalent
 histories: each binding has the same constructor and the same ordered
 statements using it (arguments included, binding name abstracted; read-only
 uses of the collection are not history, whether spelled as the field or as the
-read's getter: `d.history().len()`). A statement inside a block carries the
-block's condition (`if ready() { c.items.push(1); }`), so differing conditions
-make differing histories. The history window ends at the `assert` on the read
+read's getter: `d.history().len()`). Block conditions are not part of the history: two conditions cannot be proven
+to diverge from their text (`if ready` against `if ready == true`), so twins
+that match except for their guards stay refused. The history window ends at the `assert` on the read
 line, so a rewrite on the same line before it counts. A different argument
-(`c.add(2); d.add(4)`), call count, condition or seeding (`d.items.push(20)`)
+(`c.add(2); d.add(4)`), call count or seeding (`d.items.push(20)`)
 leaves the credit alone, because the sides diverge when the owner changes. A
 constructor that cannot be found or that names the other binding
 (`let d = c.clone()`) counts as equivalent; its statement is compared up to the
@@ -180,8 +180,8 @@ credit alone, except a twin built through the owner in its own `let`
 (`let d = Bag::new().add(20).clone()`): that side's history is not
 recoverable, so the comparison refuses. Only the declaration live at the read counts, so a later `let` of the same
 name is not evidence. Histories compare source text, so equivalent spellings
-(`if ready` against `if ready == true`) read as different histories and keep
-the credit; chained sides refuse whatever their arguments. The owner call is
+of an argument (`10 + 10` against `20`) read as different and keep the
+credit; chained sides refuse whatever their arguments. The owner call is
 found as a
 `binding.owner(..)` statement by method name only: a twin built through another
 helper or builder, or fed by a same-named method of another type, is not

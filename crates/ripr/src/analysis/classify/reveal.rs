@@ -760,11 +760,11 @@ fn equivalent_owner_histories(
     let mut start = 0;
     for (at, ch) in before_masked.char_indices() {
         if matches!(ch, ';' | '{' | '}') {
-            statements.push((start, at, ch));
+            statements.push((start, at));
             start = at + 1;
         }
     }
-    statements.push((start, before_masked.len(), ';'));
+    statements.push((start, before_masked.len()));
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mentions = |text: &str, name: &str| {
         text.match_indices(name).any(|(at, found)| {
@@ -794,10 +794,11 @@ fn equivalent_owner_histories(
     for (binding, getter) in bindings {
         let mut history = Vec::new();
         let mut constructed = false;
-        // Guards (`if f1 {`) of the blocks the statement sits in: part of the
-        // statement's meaning once the block contributes to the history.
-        let mut guards: Vec<(String, bool)> = Vec::new();
-        for &(from, to, terminator) in &statements {
+        // Block conditions (`if f1 {`) are deliberately not part of the
+        // history: two conditions cannot be proven to diverge from their text
+        // (`if ready` against `if ready == true`), so a pair that matches
+        // except for its guards stays refused.
+        for &(from, to) in &statements {
             let (Some(code), Some(text)) = (before_masked.get(from..to), before.get(from..to))
             else {
                 return true;
@@ -834,20 +835,7 @@ fn equivalent_owner_histories(
                 entry = Some(abstracted(text, binding));
             }
             if let Some(entry) = entry {
-                for (guard, added) in &mut guards {
-                    if !*added {
-                        history.push(format!("if {guard}"));
-                        *added = true;
-                    }
-                }
                 history.push(entry);
-            }
-            match terminator {
-                '{' => guards.push((abstracted(text, binding), false)),
-                '}' => {
-                    guards.pop();
-                }
-                _ => {}
             }
         }
         if !constructed {

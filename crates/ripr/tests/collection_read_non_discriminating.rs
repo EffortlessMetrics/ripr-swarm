@@ -344,14 +344,19 @@ fn twin_history_edges_getter_chain_guard_and_same_line() -> Result<(), String> {
             true,
         ),
         (
-            "different_guards_keep_credit",
+            "different_guards_stay_refused",
             "let mut c = Bag::new();\nlet mut d = Bag::new();\nif left() {\nc.items.push(1);\n}\nif right() {\nd.items.push(1);\n}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
-            true,
+            false,
         ),
         (
             "chained_let_after_the_read_is_not_evidence",
             "let mut c = Bag::new();\nc.add(20);\nlet d = Bag { items: vec![20] };\nassert_eq!(c.items, d.items);\nlet d = Bag::new().add(20).clone();",
             true,
+        ),
+        (
+            "equivalent_spelled_guards_stay_refused",
+            "let ready = true;\nlet mut c = Bag::new();\nlet mut d = Bag::new();\nif ready {\nc.items.push(1);\n}\nif ready == true {\nd.items.push(1);\n}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
         ),
         (
             "same_guard_twins_stay_refused",
