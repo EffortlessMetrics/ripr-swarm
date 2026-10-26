@@ -1,6 +1,7 @@
 //! Exercise the collect-all command through the actual xtask driver and leaves.
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "../../tools/repo-policy/tests/common/git_environment.rs"]
 mod git_environment;
@@ -19,11 +20,17 @@ const CHECKS: &[(&str, &str)] = &[
 
 struct Fixture(PathBuf);
 
+/// Parallel tests in this process can read the same wall-clock value (#10344:
+/// on Windows two `git init`s raced in one directory), so the name also
+/// carries a per-process sequence number.
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
 impl Fixture {
     fn new() -> Result<Self, String> {
         let root = std::env::temp_dir().join(format!(
-            "xtask-policy-all-{}-{}",
+            "xtask-policy-all-{}-{}-{}",
             std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|error| error.to_string())?

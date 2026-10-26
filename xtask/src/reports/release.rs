@@ -511,11 +511,7 @@ pub(crate) fn run_packaged_install(
     // an install from the workspace path (#9312). Cargo's own install record
     // names the source the binary was built from, so require it to be the
     // extracted package root.
-    let install_record = install_root.join(".crates2.json");
-    let provenance = fs::read_to_string(&install_record)
-        .map_err(|err| format!("read {}: {err}", crate::normalize_path(&install_record)))
-        .and_then(|record| validate_install_provenance(&record, &extracted_root, crate_version));
-    match provenance {
+    match check_install_provenance(&install_root, &extracted_root, crate_version) {
         Ok(source) => details.push(format!("installed from packaged crate root: {source}")),
         Err(err) => {
             details.push(err);
@@ -706,6 +702,19 @@ fn validate_binary_identity(workspace_digest: &str, installed_digest: &str) -> R
     Ok(())
 }
 
+/// Read Cargo's install record under `install_root` and require it to name
+/// `package_root` as the source of the installed `ripr` (#9312).
+fn check_install_provenance(
+    install_root: &Path,
+    package_root: &Path,
+    version: &str,
+) -> Result<String, String> {
+    let install_record = install_root.join(".crates2.json");
+    let record = fs::read_to_string(&install_record)
+        .map_err(|err| format!("read {}: {err}", crate::normalize_path(&install_record)))?;
+    validate_install_provenance(&record, package_root, version)
+}
+
 /// Require Cargo's install record (`<root>/.crates2.json`) to hold exactly one
 /// `ripr <version>` install whose `path+file://` source is `package_root`, so
 /// a binary installed from the workspace path cannot pass as the packaged
@@ -786,6 +795,17 @@ fn file_url_path(url: &str) -> Result<String, String> {
     let drive = path.as_bytes();
     if drive.len() >= 3 && drive[0] == b'/' && drive[1].is_ascii_alphabetic() && drive[2] == b':' {
         return Ok(path[1..].to_string());
+    }
+    // A Windows network share is written `file://server/share/...`, so the
+    // authority arrives as the first path segment (#10339). Only Windows
+    // resolves that form; elsewhere it stays refused.
+    if cfg!(windows)
+        && let Some((server, share)) = path.split_once('/')
+        && !server.is_empty()
+        && !share.is_empty()
+        && !share.starts_with('/')
+    {
+        return Ok(format!(r"\\{server}\{}", share.replace('/', r"\")));
     }
     if !path.starts_with('/') {
         return Err(format!(
@@ -3709,12 +3729,12 @@ mod tests {
     use super::{
         CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
-        create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
-        file_url_path, init_pin_version_check_from, latency_parity_contradiction,
-        latency_readiness_from, latest_released_version_in, missing_required_needles,
-        package_version, packaged_archive_commit, parse_release_readiness_args, read_crate_version,
-        readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, repo_exposure_latency_output_parity,
+        check_install_provenance, create_external_doctor_fixture, extension_version_check_from,
+        extract_packaged_crate, file_url_path, init_pin_version_check_from,
+        latency_parity_contradiction, latency_readiness_from, latest_released_version_in,
+        missing_required_needles, package_version, packaged_archive_commit,
+        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
+        release_readiness_markdown, release_readiness_status, repo_exposure_latency_output_parity,
         repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
         validate_install_provenance, validate_installed_version, validate_installed_version_result,
         validate_package_entry, vsix_start_current_repair_command_present,
@@ -4023,12 +4043,94 @@ mod tests {
         // Built at runtime: a literal drive path trips check-local-context.
         let drive = format!("{}:/pkg/ripr-0.11.0", 'D');
         assert_eq!(file_url_path(&format!("/{drive}"))?, drive);
-        for bad in ["/tmp/%zz", "/tmp/%2", "relative/path", "/tmp/%ff"] {
+        for bad in ["/tmp/%zz", "/tmp/%2", "/tmp/%ff", "server", "server/"] {
             if file_url_path(bad).is_ok() {
                 return Err(format!("`{bad}` must be refused"));
             }
         }
+        // `file://server/share/...`: a network share on Windows (#10339),
+        // and not a local path anywhere else.
+        let share = file_url_path("build-srv/share/a%20b/ripr-0.11.0");
+        if cfg!(windows) {
+            assert_eq!(share?, r"\\build-srv\share\a b\ripr-0.11.0");
+        } else if share.is_ok() {
+            return Err(format!("a host authority must be refused: {share:?}"));
+        }
         Ok(())
+    }
+
+    #[test]
+    fn packaged_install_provenance_reads_cargos_real_install_record() -> Result<(), String> {
+        // End-to-end control for #10339: a real `cargo install --path` writes
+        // the record `run_packaged_install` reads, so a change in where Cargo
+        // keeps it or how it encodes the source fails here, not at the cut.
+        let base = std::env::temp_dir().join(format!(
+            "ripr-10339-install-record-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos()
+        ));
+        let result = (|| -> Result<(), String> {
+            let package = base.join("package #dir é/ripr-0.11.0");
+            let workspace = base.join("workspace/crates/ripr");
+            for dir in [&package, &workspace] {
+                fs::create_dir_all(dir.join("src")).map_err(|err| err.to_string())?;
+                fs::write(
+                    dir.join("Cargo.toml"),
+                    "[package]\nname = \"ripr\"\nversion = \"0.11.0\"\nedition = \"2024\"\n\n[workspace]\n",
+                )
+                .map_err(|err| err.to_string())?;
+                fs::write(dir.join("src/main.rs"), "fn main() {}\n")
+                    .map_err(|err| err.to_string())?;
+            }
+            let install = |source: &Path, root: &Path| -> Result<(), String> {
+                // Own target dir: a shared CARGO_TARGET_DIR must not receive
+                // a stand-in `ripr` binary.
+                let args = [
+                    "install".to_string(),
+                    "--offline".to_string(),
+                    "--path".to_string(),
+                    ".".to_string(),
+                    "--root".to_string(),
+                    root.to_string_lossy().into_owned(),
+                    "--target-dir".to_string(),
+                    base.join("target").to_string_lossy().into_owned(),
+                ];
+                let output =
+                    crate::run::capture_output_in_dir("cargo", &args, source, "cargo install")?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("cargo install failed: {}", output.stderr))
+                }
+            };
+            let package_root = base.join("package-install");
+            install(&package, &package_root)?;
+            let source = check_install_provenance(&package_root, &package, "0.11.0")?;
+            if fs::canonicalize(&source).ok() != fs::canonicalize(&package).ok() {
+                return Err(format!("recorded source {source} is not the package root"));
+            }
+            if check_install_provenance(&package_root, &package, "0.11.1").is_ok() {
+                return Err("a version mismatch must refuse".to_string());
+            }
+            let workspace_root = base.join("workspace-install");
+            install(&workspace, &workspace_root)?;
+            // The workspace record itself is well formed: it validates
+            // against its own source, so the refusal below is the root check.
+            check_install_provenance(&workspace_root, &workspace, "0.11.0")?;
+            match check_install_provenance(&workspace_root, &package, "0.11.0") {
+                Err(err) if err.contains("not the extracted package root") => {}
+                other => return Err(format!("a workspace-path install must refuse: {other:?}")),
+            }
+            match check_install_provenance(&base.join("no-install"), &package, "0.11.0") {
+                Err(err) if err.contains(".crates2.json") => Ok(()),
+                other => Err(format!("a missing install record must refuse: {other:?}")),
+            }
+        })();
+        let _ = fs::remove_dir_all(&base);
+        result
     }
 
     #[test]

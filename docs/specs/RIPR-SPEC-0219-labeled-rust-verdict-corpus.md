@@ -306,6 +306,7 @@ twice by one case.
   than counted. The list is maintained by hand: nothing detects an in-scope
   prose spec that is missing from it.
 - `spec-examples.lock`, beside the ledger, lists the covered examples the gate protects: one `RIPR-SPEC-NNNN#<number or slug>` per line, sorted and unique (the loader rejects anything else). It replaced a single `floor` count, which every corpus PR edited and which could not tell a swap (one example lost, another gained) from no change (#9859).
+- `spec-scopes/<RIPR-SPEC-NNNN>.toml`, beside the ledger, holds one spec entry per file (`id`, `scope`, `reason`, `waived`, or `unmeasured = true` with a `reason`), merged with the inline entries. New specs add a file instead of appending to the ledger tail, which parallel corpus PRs all edited. A file whose name differs from its `id`, a missing field, a non-`.toml` entry, or a spec named both inline and in a file fails `validate`; only an absent directory is optional (#9859).
 
 `validate` fails when a spec with numbered examples is missing from the
 ledger (a new spec cannot leave the denominator silently), when the ledger
@@ -426,12 +427,22 @@ listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
 
-`missed_credit_ceiling` in `spec-coverage.toml` counts `abstained` rows whose
-truth is `discriminated`: tests that catch the change while ripr says
-unknown. A whole-corpus `check` fails when the count rises above the ceiling
-and passes with a printed note when it falls below it, so a fix lowers the
-ceiling but concurrent fixes never deadlock on the same number. A corpus
-without the key is not gated.
+Missed credit, an `abstained` row whose truth is `discriminated` (tests that
+catch the change while ripr says unknown), is accepted one row per block:
+`missed-credit.toml` in the corpus directory holds `[[entry]]` blocks (`case`
+and a `reason`), sorted by case and unique, with a blank line between blocks.
+The count is derived from the entries, never stored, so PRs that add or
+remove rows far apart in the sorted list touch different hunks and merge
+cleanly; edits to adjacent blocks can still conflict, which is a bounded
+reduction of the old shared-line hotspot, not its elimination (a
+`missed_credit_ceiling` line in `spec-coverage.toml` is rejected). A
+whole-corpus `check` fails on a missed-credit row without an entry, naming it
+(a swap that keeps the count still fails), and equally fails when an
+accepted row no longer misses credit, naming the entry to delete: the entries
+must equal the blessed missed rows, so a stale entry fails early in `check-all`
+rather than after the full test step (#10341). A fix deletes its own block,
+which does not collide with concurrent fixes deleting other blocks. A `--case`
+subset is never gated on it.
 
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is

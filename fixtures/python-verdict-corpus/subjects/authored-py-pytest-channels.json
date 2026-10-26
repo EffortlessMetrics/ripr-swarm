@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-channels",
+  "origin": "authored",
+  "version_label": "authored@b6491843",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "channels/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "channels/core.py",
+      "sha256": "fe6a4c2179022093fbe6865e927d5c538381ed2029983817616f82d7ea17e421"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "92df058a56377be29ac236c34f71439a7c4260832eb22a4e6a826ce5ffe1bd49"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_channels.py",
+      "sha256": "db7908b493cf678fba259d94f6053d8eb449c6a814c6c0fef5f6a718ab00b2cf"
+    }
+  ]
+}

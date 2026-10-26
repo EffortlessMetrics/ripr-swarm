@@ -22,6 +22,7 @@ Linked issues:
 
 - #6488
 - #9619
+- #10386
 
 Linked PRs:
 
@@ -64,7 +65,8 @@ boundary when every item holds:
 3. No function other than the related tests calls the owner by name.
 4. Every related test reaches the owner only by direct calls with plain
    boolean or decimal literal arguments, one owner call per line, with no
-   table, builder, helper or user macro that could feed other inputs.
+   builder, helper or user macro that could feed other inputs. The one
+   table form read is the constant table loop below.
    Each such test is a plain `#[test]` (no `#[ignore]`, `#[should_panic]` or
    other attribute) whose body is only top-level `assert!([!]owner(..));` or
    `assert_eq!`/`assert_ne!` of an owner call against `true`/`false`: a row
@@ -81,13 +83,46 @@ boundary when every item holds:
    complete, so a strong exact oracle on the call reads `exposed`. Without
    rules 1 to 5 the sink stays unknown and propagation is unchanged.
 
+Constant table loop. A related test may instead be a plain `#[test]` that
+holds only a table of bool-literal tuples and one loop over it,
+
+```rust
+let rows = [(true, true, true), (true, false, false), (false, true, false)];
+for (paid, in_stock, want) in rows {
+    assert_eq!(can_ship(paid, in_stock), want);
+}
+```
+
+where every owner argument is a loop variable or a bool literal, the expected
+value is a loop variable, every cell read is a bool literal, and the loop body
+is exactly one `assert_eq!` of the owner call with an optional plain string
+message (a message with format arguments, a
+`continue`, an `if`, a computed or short row, a rebound name or a second
+statement declines). Each tuple is one run, in the owner's parameter order,
+and joins the direct-call runs under rule 5. A property loop over inputs
+(`for paid in [true, false]`) is not a table and keeps its reading.
+
+Assertion macros are trusted by name for every row, direct or table. When any
+indexed file defines, imports or may glob in a macro under `assert`,
+`assert_eq` or `assert_ne`, the owner counts as having other callers (the same
+refusal as rule 3), because the rows may never be compared (#10386). A no-op
+`macro_rules! assert_eq` ahead of the tests keeps `infection_unknown`.
+
 Conditions the code adds to rule 3: a bare-name mention of the owner in any
 non-test function, or in a `macro_rules!` body, counts as another caller (the
 `macro_rules!` scan now also runs for `return_value` probes); a literal
 boundary in the changed expression or an unresolved boundary input keeps the
 existing reading; a related test that never names the owner and calls no other
 related test cannot call the owner and contributes neither a run nor its table
-rows (this skipping is shared with the #7970 short-circuit rule).
+rows (this skipping is shared with the #7970 short-circuit rule). The reading
+also declines, for the predicate and the `return_value` probe alike, when any
+indexed file rebinds `assert`, `assert_eq` or `assert_ne` (a `macro_rules!`
+definition, an import, or a glob or `#[macro_use]` that may bring one in): it
+takes `assert_eq!(owner(..), want)` as a comparison by the macro's name, and a
+rebound name may compare nothing (#10386). This is a workspace-wide condition,
+separate from rule 4's reading of the call sites. It is conservative: the
+scan also records any non-std macro call whose arguments mention those names
+(`proptest! { .. }`), so one such call anywhere withholds the reading.
 
 Anything else keeps its existing reading. The rule decides that the rows reach
 and separate the mutations and that the chain is the returned value; it grants
@@ -99,14 +134,17 @@ no oracle strength, which stays the reveal stage's judgment.
   `(true,false)`, `(false,true)`) on `in_stock && paid` reads infection
   `yes`.
 - Negatives: a single row, a test pinning only `(true, true)` and `(false,
-  false)`, a loop-fed argument (`for banned in [true, false]`) with a surviving mutant that must not read `exposed`, a table-driven test, an owner with another
+  false)`, a loop-fed argument (`for banned in [true, false]`) with a surviving mutant that must not read `exposed`, an owner with another
   caller, a comparison operand and an owner body with a leading statement
-  each keep `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`.
+  each keep `infection_unknown`; the constant table loop above reads `yes` with
+  the same rows as direct calls, while a table that can skip a row (`continue`),
+  an unasserted call, a computed cell, a short row, a one-row table and a
+  property loop over inputs stay `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`; the same three rows with `assert_eq` redefined by a `macro_rules!` that discards its operands, in the test file or in another file, keep `infection_unknown` and do not read `exposed`.
 
 ## Known Limits
 
-- Table-driven and helper-fed rows (`for (a, b, want) in cases`) are not
-  read here; they stay `infection_unknown`.
+- Helper-fed rows and tables other than the constant bool-tuple loop above
+  are not read here; they stay `infection_unknown`.
 - The rows must separate the listed one-step mutations. Multi-step mutations
   are not claimed.
 - Process success, oracle strength and propagation stay separate axes.

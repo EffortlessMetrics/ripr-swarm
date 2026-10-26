@@ -102,8 +102,9 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
-The same execution/macro-context admission applies to `assert_eq!` and `assert!`
-oracles for `side_effect` and `call_deletion` probes (#8927). Calling the changed
+The same execution/macro-context admission applies to `assert_eq!`, `assert_ne!`,
+`assert!` and their `debug_` twins (bare or `std::`/`core::` qualified) for
+`side_effect` and `call_deletion` probes (#8927, #8983). Calling the changed
 owner before `return`, a literal-false block or an uncalled closure establishes
 reach without establishing that an assertion inside the skipped context runs.
 Refuse that assertion through the shared admission decision and retain the
@@ -123,24 +124,35 @@ compound and takes the same gate rather than reading as a plain macro path.
 More generally an effect oracle is ungated only when its text starts with an
 `assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
 `!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
-assertion macro in its tail. A root `loop` with no `break` and a root
-`std::process::exit` / `abort` call end the test like an earlier `return`, for every
-family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
-(#8983), and `process::exit` reached through a `use` alias.
+assertion macro in its tail. A root `loop` or `while true` that no `break` leaves, and a
+root `std::process::exit` / `abort` call, end the test like an earlier `return`, for every
+family that reads this admission. A `break` leaves the root loop only when it belongs to
+it: an inner loop's unlabeled `break`, one in a closure or async block, or a labeled
+`break` naming an inner loop or block does not. The process exit may be spelled in full
+(`std::process::exit`), through an imported module under any name (`use std::process;`,
+`use std::process as quit;`) or as an imported leaf (`use std::process::exit;`); a
+file-wide `use` is read, so an over-match only withholds credit. A boolean `assert!` /
+`debug_assert!` takes the same admission for `return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
+context (after `return`, in an uncalled `fn` or closure, `if false`, `loop {}`,
+`cfg!(any())`) no longer credits (#10389). The one exception is an operand that
+nests only a known pure comparison macro (`approx_eq!` from `float_cmp`;
+`relative_eq!`, `abs_diff_eq!`, `ulps_eq!` from `approx`), imported by name, in a
+plain `#[test]` whose function has no other refusal: ripr does not expand
+third-party macros, so that nesting alone keeps the `return_value` credit. Any other
+nested macro, a local `macro_rules!` of that name, or an operand holding an exit
+token withholds it.
 
 Residual fail-open contexts. The admission is a syntactic reading, not a control
 flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 `exposed` for `side_effect` and `call_deletion` (non-blocking, disclosed by
-review of #8934; tracked with the #8983 follow-up unless a separate issue says
+review of #8934; tracked with #8983 unless a separate issue says
 otherwise):
 
-- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
-  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
-  divergence detection treats any descendant `break` as an exit of the root loop.
-  The return family credits these too.
-- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
-  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
-  is named above; the other two are equally undetected.
+- A non-root divergence before the assertion, such as `{ std::process::exit(0); }`
+  or `if true { loop {} }`. Only the body's own statement list is read.
+- A `loop` whose only `break` sits behind a condition that never holds
+  (`loop { if false { break; } }`): any `break` that belongs to the loop counts as
+  an exit.
 
 Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
 qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root

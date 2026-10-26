@@ -223,7 +223,6 @@ fn extract_tests_expanding_suite_factories(
             &ret.program.body,
             file,
             &SourceText::new(source),
-            &mocks,
             &imports,
             &mut scope,
             &mut tests,
@@ -242,6 +241,13 @@ fn extract_tests_expanding_suite_factories(
             .chain(scope.names.iter().cloned())
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
+        // File-wide lists are held once and shared by every test of the file.
+        let shared_mocks: Shared<String> = mocks.into();
+        let shared_imports: Shared<TypeScriptImport> = imports.clone().into();
+        for test in &mut tests {
+            test.mocks_in_file = shared_mocks.clone();
+            test.imports_in_file = shared_imports.clone();
+        }
         let code = blank_ranges(source, &masked);
         let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
         let unstable_member_roots: Vec<String> = imports
@@ -255,35 +261,41 @@ fn extract_tests_expanding_suite_factories(
             })
             .map(|import| import.local.clone())
             .collect();
+        let unstable_member_roots: Shared<String> = unstable_member_roots.into();
         for test in &mut tests {
             test.unstable_member_roots_in_file = unstable_member_roots.clone();
         }
         let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
+            let helpers: Shared<_> = helpers.into();
             for test in &mut tests {
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
         let member_only = default_member_only_locals(&imports, &code);
         if !member_only.is_empty() {
+            let member_only: Shared<_> = member_only.into();
             for test in &mut tests {
                 test.default_member_only_locals_in_file = member_only.clone();
             }
         }
         let rewritten = rewritten_identifier_names(&code);
         if !rewritten.is_empty() {
+            let rewritten: Shared<_> = rewritten.into();
             for test in &mut tests {
                 test.written_locals_in_file = rewritten.clone();
             }
         }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
+            let factories: Shared<_> = factories.into();
             for test in &mut tests {
                 test.mock_factories_in_file = factories.clone();
             }
         }
         let spread_sources = mock_spread_sources(&ret.program.body, &code);
         if !spread_sources.is_empty() {
+            let spread_sources: Shared<_> = spread_sources.into();
             for test in &mut tests {
                 test.mock_spread_sources_in_file = spread_sources.clone();
             }
@@ -842,7 +854,6 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     statements: &'s [Statement<'a>],
     file: &Path,
     source: &SourceText<'_>,
-    mocks: &[String],
     imports: &[TypeScriptImport],
     scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
@@ -864,6 +875,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
+    let mut shared_bindings: Option<ScopeBindings> = None;
+    let mut registration_scope: Option<(TypeScriptAdmissionContext, RegistrationNames)> = None;
     for stmt in statements {
         if !returned {
             collect_const_iterables(stmt, &mut iterables);
@@ -963,21 +976,37 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
-            && !scope.admission.registration_is_known(
-                call,
-                call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe),
-                scope
-                    .levels
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(depth, level)| {
-                        level.iter().map(move |(name, _, phase)| {
-                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
-                        })
-                    })
-                    .chain(scope.registration_levels.iter().flatten().cloned()),
-            )
+            && !{
+                // The context and the visible bindings are the same for every
+                // registration in this statement list, so they are built once
+                // (#10017).
+                let (context, names) = registration_scope.get_or_insert_with(|| {
+                    (
+                        scope.admission.registration_context(),
+                        RegistrationNames::new(
+                            scope
+                                .levels
+                                .iter()
+                                .enumerate()
+                                .flat_map(|(depth, level)| {
+                                    level.iter().map(move |(name, _, phase)| {
+                                        (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                                    })
+                                })
+                                .chain(scope.registration_levels.iter().flatten().cloned()),
+                        ),
+                    )
+                });
+                context.registration_is_known_in(
+                    call,
+                    call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                        || call_callee_is_active_each_declaration(
+                            call,
+                            TestDeclarationRoot::Describe,
+                        ),
+                    names,
+                )
+            }
         {
             continue;
         }
@@ -1007,11 +1036,54 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.describe_names.push(describe_name);
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
+            continue;
+        }
+        if let Statement::IfStatement(if_stmt) = stmt
+            && constant_condition_value(&if_stmt.test).is_none()
+        {
+            // #10438: a registration under a platform or environment guard
+            // is indexed so it reaches its owner, marked conditional so its
+            // assertions earn no credit. The condition is the guard for the
+            // consequent; the alternate runs under its negation.
+            let condition = snippet_for_span(
+                source.text(),
+                if_stmt.test.span().start as usize,
+                if_stmt.test.span().end as usize,
+            );
+            for (branch, guard) in std::iter::once((&if_stmt.consequent, condition.clone())).chain(
+                if_stmt
+                    .alternate
+                    .iter()
+                    .map(|alternate| (alternate, format!("!({condition})"))),
+            ) {
+                scope.guards.push(guard);
+                match branch {
+                    Statement::BlockStatement(block) => collect_tests_from_statements(
+                        &block.body,
+                        file,
+                        source,
+                        mocks,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                    other => collect_tests_from_statements(
+                        std::slice::from_ref(other),
+                        file,
+                        source,
+                        mocks,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                }
+                scope.guards.pop();
+            }
             continue;
         }
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
@@ -1027,7 +1099,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.iterables.push(Vec::new());
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
@@ -1053,19 +1125,32 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &assertion_bindings,
             &functions,
         ) {
-            test.mocks_in_file = mocks.to_vec();
-            test.imports_in_file = imports.to_vec();
             if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters = statement_callback_parameter_names(stmt)
+            let parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
-            test.scope_bindings = scope.resolve_with(parameters);
+            // Tests with no parameters of their own see the same scope, so
+            // they share one resolved list (#10017).
+            test.scope_bindings = if parameters.is_empty() {
+                shared_bindings
+                    .get_or_insert_with(|| scope.resolve_with(Vec::new()).into())
+                    .clone()
+            } else {
+                scope.resolve_with(parameters).into()
+            };
             test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
+            if !scope.guards.is_empty() {
+                // Fail-closed cap: the test still reaches its owner, but a
+                // registration that may not happen cannot credit an oracle.
+                test.conditional_registration = Some(scope.guards.join(" && "));
+                test.assertions.clear();
+                test.assertion_admission = TypeScriptAssertionAdmission::Unresolved;
+            }
             tests.push(test);
         }
     }
@@ -1229,6 +1314,9 @@ pub(crate) struct TestScope {
     assertion_bindings: TypeScriptAssertionBindings,
     /// File-wide facts for each test's assertion admission (#5524).
     admission: TypeScriptAdmissionContext,
+    /// The unevaluated `if` conditions the statements being walked sit
+    /// under, outermost first (#10438).
+    guards: Vec<String>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1270,27 +1358,41 @@ impl TestScope {
         let levels: Vec<&Vec<ScopeEntry>> = std::iter::once(&innermost)
             .chain(self.levels.iter().rev())
             .collect();
-        for (depth, level) in levels.iter().enumerate() {
-            let mut names: Vec<&str> = level.iter().map(|(name, _, _)| name.as_str()).collect();
-            names.sort_unstable();
-            names.dedup();
-            for name in names {
-                if resolved.iter().any(|binding| binding.name == name) {
+        // Each level grouped by name once, in source order within a name, so a
+        // file with thousands of top-level bindings is not rescanned per name
+        // (#10017). The map is ordered, which keeps the output order that the
+        // sorted, deduplicated name list gave before.
+        let grouped: Vec<std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>>> = levels
+            .iter()
+            .map(|level| {
+                let mut by_name: std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>> =
+                    std::collections::BTreeMap::new();
+                for (name, value, phase) in level.iter() {
+                    by_name
+                        .entry(name.as_str())
+                        .or_default()
+                        .push((value, *phase));
+                }
+                by_name
+            })
+            .collect();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (depth, by_name) in grouped.iter().enumerate() {
+            for (&name, found) in by_name {
+                if !seen.insert(name) {
                     continue;
                 }
-                let mut writes: Vec<(&ScopeValue, Phase)> = level
-                    .iter()
-                    .filter(|(bound, _, _)| bound == name)
-                    .map(|(_, value, phase)| (value, *phase))
-                    .collect();
+                let mut writes = found.clone();
                 // Stable: source order is kept within a phase.
                 writes.sort_by_key(|(_, phase)| *phase);
                 let constructed_by = match writes.last() {
                     // An enclosing `beforeEach` runs after this `beforeAll`.
                     Some((_, Phase::BeforeAll))
-                        if levels[depth + 1..].iter().any(|outer| {
-                            outer.iter().any(|(bound, _, phase)| {
-                                bound == name && *phase == Phase::BeforeEach
+                        if grouped[depth + 1..].iter().any(|outer| {
+                            outer.get(name).is_some_and(|outer_writes| {
+                                outer_writes
+                                    .iter()
+                                    .any(|(_, phase)| *phase == Phase::BeforeEach)
                             })
                         }) =>
                     {
@@ -1613,35 +1715,65 @@ fn withhold_rebound_scope_receivers(
 ) {
     let code = blank_ranges(source, masked);
     let opaque = identifier_occurrences(&code, "eval").next().is_some() || code.contains("\\u");
-    let rebound: Vec<String> = identifier_writes(&code)
+    let rebound: std::collections::HashSet<String> = identifier_writes(&code)
         .into_iter()
         .map(|(name, _)| name)
         .chain(declared_names(&code))
         .collect();
+    let sites: std::collections::HashSet<usize> = sites.iter().copied().collect();
+    // Both verdicts depend on the file and the name alone, not on the test,
+    // so each is computed once. A file-level binding is listed on every test,
+    // and rescanning the file for it per test was cubic (#10017).
+    let mut constructor_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let mut name_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    // Tests that see the same scope share one list; withhold each distinct
+    // list once and hand every test the result (#10017).
+    let mut withheld: std::collections::HashMap<*const Vec<TypeScriptScopeBinding>, ScopeBindings> =
+        std::collections::HashMap::new();
     for test in tests {
-        for binding in &mut test.scope_bindings {
+        let identity = test.scope_bindings.identity();
+        if let Some(done) = withheld.get(&identity) {
+            test.scope_bindings = done.clone();
+            continue;
+        }
+        let mut bindings = test.scope_bindings.to_vec();
+        for binding in &mut bindings {
             let Some(constructor) = &binding.constructed_by else {
                 continue;
             };
             let root = constructor.split('.').next().unwrap_or(constructor);
             // `Cart.prototype` anywhere (a spy or method assignment in a
             // hook) may replace the method the test calls.
-            let constructor_rebound = rebound.iter().any(|name| name == root)
-                || identifier_occurrences(&code, root).any(|at| {
-                    code[at + root.len()..]
-                        .trim_start()
-                        .strip_prefix('.')
-                        .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
-                })
-                || (constructor.contains('.') && member_assigned(&code, constructor));
+            let constructor_rebound = *constructor_verdicts
+                .entry(constructor.clone())
+                .or_insert_with(|| {
+                    rebound.contains(root)
+                        || identifier_occurrences(&code, root).any(|at| {
+                            code[at + root.len()..]
+                                .trim_start()
+                                .strip_prefix('.')
+                                .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
+                        })
+                        || (constructor.contains('.') && member_assigned(&code, constructor))
+                });
             if opaque
                 || constructor_rebound
-                || identifier_occurrences(&code, &binding.name)
-                    .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
+                || *name_verdicts
+                    .entry(binding.name.clone())
+                    .or_insert_with(|| {
+                        identifier_occurrences(&code, &binding.name).any(|at| {
+                            !sites.contains(&at) && !is_plain_read(&code, at, &binding.name)
+                        })
+                    })
             {
                 binding.constructed_by = None;
             }
         }
+        let rewritten = ScopeBindings::from(bindings);
+        withheld.insert(identity, rewritten.clone());
+        test.scope_bindings = rewritten;
     }
 }
 
@@ -3026,20 +3158,21 @@ pub(crate) fn test_from_statement<'s, 'a>(
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
-        mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        imports_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        conditional_registration: None,
     })
 }
 
@@ -4219,6 +4352,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
             extracted_starts: &extracted_starts,
             covered: covered.as_deref().unwrap_or_default(),
             admission,
+            shadowed: Vec::new(),
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -4292,16 +4426,59 @@ struct UnextractedTestFinder<'a> {
     /// expansions already stand for.
     covered: &'a [std::ops::Range<usize>],
     admission: TypeScriptAdmissionContext,
+    /// Parameter names of the enclosing functions. A call through one is the
+    /// parameter's value, not a runner registration (`async function run({
+    /// test }) { await test(); }`).
+    shadowed: Vec<String>,
     gap: Option<(usize, &'static str, String)>,
 }
 
 impl UnextractedTestFinder<'_> {
+    fn callee_is_parameter(&self, callee: &Expression<'_>) -> bool {
+        callee_root_name(callee).is_some_and(|name| self.shadowed.iter().any(|s| s == name))
+    }
+
+    fn with_parameters(
+        &mut self,
+        params: &oxc_ast::ast::FormalParameters<'_>,
+        visit: impl FnOnce(&mut Self),
+    ) {
+        let depth = self.shadowed.len();
+        let rest = params
+            .rest
+            .iter()
+            .flat_map(|rest| rest.rest.argument.get_binding_identifiers());
+        self.shadowed.extend(
+            params
+                .items
+                .iter()
+                .flat_map(|param| param.pattern.get_binding_identifiers())
+                .chain(rest)
+                .map(|identifier| identifier.name.to_string()),
+        );
+        visit(self);
+        self.shadowed.truncate(depth);
+    }
+
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
+        // A declaration in this block can rebind a parameter's name to
+        // something else (`const test = runner`). Fail closed: the name no
+        // longer counts as a parameter inside this block.
+        let mut rebound = Vec::new();
+        collect_block_declared_names(statements, &mut rebound);
+        let outer = (!rebound.is_empty()).then(|| {
+            let outer = self.shadowed.clone();
+            self.shadowed.retain(|name| !rebound.contains(name));
+            outer
+        });
         for stmt in statements {
             if self.gap.is_some() {
-                return;
+                break;
             }
             self.visit_statement(stmt);
+        }
+        if let Some(outer) = outer {
+            self.shadowed = outer;
         }
     }
 
@@ -4395,7 +4572,9 @@ impl UnextractedTestFinder<'_> {
 
     fn visit_function(&mut self, func: &Function<'_>) {
         if let Some(body) = &func.body {
-            self.visit_statements(&body.statements);
+            self.with_parameters(&func.params, |finder| {
+                finder.visit_statements(&body.statements);
+            });
         }
     }
 
@@ -4420,7 +4599,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, statement_position);
             }
             Expression::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
@@ -4431,6 +4612,7 @@ impl UnextractedTestFinder<'_> {
                 // with no nested test-shaped call for `visit_call` to find.
                 if statement_position
                     && let Expression::CallExpression(call) = &await_expr.argument
+                    && !self.callee_is_parameter(&call.callee)
                     && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
                         && self
@@ -4549,7 +4731,7 @@ impl UnextractedTestFinder<'_> {
         if callee_is_skipped_describe(call) {
             return;
         }
-        if statement_position && self.gap.is_none() {
+        if statement_position && self.gap.is_none() && !self.callee_is_parameter(&call.callee) {
             // Tagged-template `.each`: `` test.each`table`('name', fn) `` — the
             // tagged template sits in CALLEE position, so the call's callee is
             // not an identifier/member the extractor recognizes at all; the
@@ -4681,7 +4863,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, false);
             }
             Argument::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Argument::FunctionExpression(func) => self.visit_function(func),
             Argument::ClassExpression(class) => self.visit_class(class),

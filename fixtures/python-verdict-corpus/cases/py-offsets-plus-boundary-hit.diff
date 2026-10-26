@@ -1,0 +1,12 @@
+diff --git a/offsets/core.py b/offsets/core.py
+--- a/offsets/core.py
++++ b/offsets/core.py
+@@ -8,7 +8,7 @@
+ 
+ 
+ def tier_b(n):
+-    if n < LIMIT + 1:
++    if n <= LIMIT + 1:
+         return "low"
+     return "high"
+ 

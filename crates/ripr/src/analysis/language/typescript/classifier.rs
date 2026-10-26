@@ -5054,6 +5054,17 @@ impl Folder<'_> {
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
 
+/// True when every oracle-eligible related test is registered under an
+/// unevaluable `if` condition (#10438).
+fn only_conditionally_registered_tests(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+    let mut eligible = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .peekable();
+    eligible.peek().is_some()
+        && eligible.all(|candidate| candidate.test.conditional_registration.is_some())
+}
+
 /// True when every oracle-eligible related test holds assertion-like code the
 /// extractor could not resolve, so the absence of a discriminator is unproven.
 fn unresolved_assertions_only(
@@ -6009,6 +6020,18 @@ pub(crate) fn classify_resolved_owner(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
+    // A one-line guard whose condition is unchanged was edited in its
+    // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
+    // the changed behavior; the shape stays unrecognised rather than crediting
+    // a test at an unchanged threshold.
+    let probe_shape = if probe_shape.specific
+        && inline_guard_condition(line_text).is_some_and(|condition| {
+            old_line_text.and_then(inline_guard_condition) == Some(condition)
+        }) {
+        TypeScriptProbeShape::ambiguous_fallback()
+    } else {
+        probe_shape
+    };
     // RIPR-SPEC-0243 rule 15: a declared concise arrow is the owner's return
     // only when it declares the owner itself; a local arrow nested in the
     // owner binds another name and returns nothing.
@@ -6421,6 +6444,22 @@ pub(crate) fn classify_resolved_owner(
                 owner.name
             )],
         )
+    } else if only_conditionally_registered_tests(related_candidates) {
+        // #10438: every oracle-eligible related test is registered under a
+        // condition static analysis cannot evaluate, so whether any of them
+        // runs, and whether its oracle discriminates, is not established.
+        // Unknown, not an actionable gap: a guarded test that does run may
+        // pin the change (the `ts-trap-platform-matched` control).
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Yes,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "Related tests reach `{}` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they assert, is not established either way.",
+                owner.name
+            )],
+        )
     } else if reach_only_through_module_entry {
         // An exact oracle on a same-module entry cannot say whether the
         // entry's own code carries the owner's effect to the assertion, so
@@ -6625,7 +6664,10 @@ pub(crate) fn classify_resolved_owner(
         && super::loop_count_guard::ts_loop_count_unmodeled(
             old_line_text,
             line_text,
+            owner,
             related_candidates,
+            alias_map,
+            workspace_root,
         );
     if loop_count_unknown {
         verdict.class = ExposureClass::StaticUnknown;
@@ -6741,6 +6783,7 @@ pub(crate) fn classify_resolved_owner(
                 pin_facts: &pin_facts,
                 changed_field: changed_field.as_ref(),
             },
+            boundary_fact: missing_discriminators.first(),
         },
         related_candidates,
         &predicate_activations,
