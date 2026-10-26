@@ -4505,8 +4505,7 @@ fn method_entry_uses_plain_receiver(
     if super::helper_transfer::body_has_unresolved_macro_bindings(&test.body, index) {
         return false;
     }
-    let wrapped = format!("fn __ripr_entry() {{\n{}\n}}\n", test.body);
-    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&wrapped) else {
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
         return false;
     };
     let Some(statements) = parsed
