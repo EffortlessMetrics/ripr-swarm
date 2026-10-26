@@ -500,8 +500,20 @@ fn non_utf8_tracked_path_recovery_works_in_every_mode() -> Result<(), String> {
         // Negative control: the rename alone is still refused.
         let from = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
         let to = root.join("src/good.rs");
-        fs::rename(&from, &to).map_err(|e| format!("rename failed: {e}"))?;
-        git(&root, &["add", "-A"])?;
+        let mv = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("mv")
+            .arg(&from)
+            .arg(&to)
+            .output()
+            .map_err(|e| format!("git mv spawn failed: {e}"))?;
+        if !mv.status.success() {
+            return Err(format!(
+                "git mv failed: {}",
+                String::from_utf8_lossy(&mv.stderr)
+            ));
+        }
         let staged = ripr(&root, &args, &[])?;
         assert_non_utf8_refusal(&staged, &format!("{what}, rename staged"))?;
 
@@ -528,19 +540,33 @@ fn non_utf8_untracked_path_recovery_is_a_filesystem_rename() -> Result<(), Strin
     assert_lib_finding(&fixed, "untracked, renamed")
 }
 
-/// A byte-invalid file that no analyzer routes is not an overbroad refusal.
+/// A byte-invalid file *name* that no analyzer routes is not an overbroad
+/// refusal in any selection mode: the tracked `<ff>.bin` is modified beside the
+/// Rust change and the real `src/lib.rs` finding still appears.
 #[cfg(target_os = "linux")]
 #[test]
 fn non_utf8_unrouted_bin_does_not_refuse() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
     let scratch = Scratch::new("nonutf8-bin")?;
-    let root = scratch.path.join("bin");
-    repo(&root, |root| {
-        change_lib(root)?;
-        fs::write(root.join("data.bin"), b"\xff\xfe\x00").map_err(|e| format!("write failed: {e}"))
-    })?;
-    fs::write(root.join("data.bin"), b"\xff\xfe\x01").map_err(|e| format!("write failed: {e}"))?;
-    let ran = ripr(&root, &["check", "--base", "main"], &[])?;
-    assert_lib_finding(&ran, "unrouted .bin")
+    for (index, mode) in [None, Some("--worktree"), Some("--committed")]
+        .into_iter()
+        .enumerate()
+    {
+        let root = scratch.path.join(format!("bin-{index}"));
+        let bin = root.join(OsStr::from_bytes(b"\xff.bin"));
+        repo(&root, |root| {
+            change_lib(root)?;
+            fs::write(root.join(OsStr::from_bytes(b"\xff.bin")), b"\x00")
+                .map_err(|e| format!("write failed: {e}"))
+        })?;
+        fs::write(&bin, b"\x01").map_err(|e| format!("write failed: {e}"))?;
+        let mut args = vec!["check", "--base", "main"];
+        args.extend(mode);
+        let ran = ripr(&root, &args, &[])?;
+        assert_lib_finding(&ran, &format!("unrouted byte-named .bin, mode {mode:?}"))?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
