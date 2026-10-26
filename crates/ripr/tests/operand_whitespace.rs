@@ -302,7 +302,8 @@ fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), 
     .map(str::to_string)
     .chain(disjoint_operator_sources())
     .chain(unread_rebinding_sources())
-    .chain(sink_shadow_sources());
+    .chain(sink_shadow_sources())
+    .chain(sink_condition_sources());
     let mut findings = Vec::new();
     for (case, source) in sources.enumerate() {
         assert_binding_class(&source, ExposureClass::Exposed)?;
@@ -427,6 +428,45 @@ fn sink_shadow_sources() -> Vec<String> {
             )
     })
     .collect()
+}
+
+#[test]
+fn sink_if_let_chains_cannot_borrow_outer_primitive_evidence() -> Result<(), String> {
+    assert_condition_shadow(0)
+}
+
+#[test]
+fn sink_while_let_chains_cannot_borrow_outer_primitive_evidence() -> Result<(), String> {
+    assert_condition_shadow(1)
+}
+
+fn assert_condition_shadow(case: usize) -> Result<(), String> {
+    let sources = sink_condition_sources();
+    let source = sources
+        .get(case)
+        .ok_or_else(|| format!("missing condition-shadow fixture {case}"))?;
+    assert_binding_class(source, ExposureClass::Exposed)
+}
+
+fn sink_condition_sources() -> Vec<String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "shipping: i64)")
+        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)")
+        .replace(
+            "pub fn quote(",
+            "fn observe(_: Quote) -> bool { false }\n\npub fn quote(",
+        );
+    ["if", "while"]
+        .into_iter()
+        .map(|condition| {
+            source
+                .replace("    Quote {", &format!("    {condition} let shipping = Shipping && observe(Quote {{"))
+                .replace(
+                    "    }\n}\n\n#[cfg(test)]",
+                    "    }) {}\n    Quote {\n        subtotal_cents: subtotal,\n        total_cents: subtotal,\n        add_calls: ADD_CALLS.load(Ordering::SeqCst),\n    }\n}\n\n#[cfg(test)]",
+                )
+        })
+        .collect()
 }
 
 #[test]

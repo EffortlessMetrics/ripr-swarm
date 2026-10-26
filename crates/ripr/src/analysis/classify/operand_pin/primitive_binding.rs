@@ -276,7 +276,15 @@ fn field_in_owner_body(function: &ast::Fn, expression: &str) -> bool {
         }
         if matches!(
             scope.kind(),
-            SyntaxKind::STMT_LIST | SyntaxKind::CLOSURE_EXPR | SyntaxKind::MATCH_ARM
+            SyntaxKind::STMT_LIST
+                | SyntaxKind::CLOSURE_EXPR
+                | SyntaxKind::MATCH_ARM
+                | SyntaxKind::IF_EXPR
+                | SyntaxKind::WHILE_EXPR
+                | SyntaxKind::FOR_EXPR
+                | SyntaxKind::LOOP_EXPR
+                | SyntaxKind::MATCH_EXPR
+                | SyntaxKind::LET_EXPR
         ) {
             return false;
         }

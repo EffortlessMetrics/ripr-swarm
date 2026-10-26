@@ -920,8 +920,10 @@ wrong credits.
    let-else and attributed lets refuse this proof instead of silently keeping
    a parameter's earlier type.
    The constructed field must have the owner's direct statement-list context.
-   A nested block, closure or match arm can replace a value at that sink;
-   those contexts refuse this operand proof, including genuinely primitive
+   A nested block, closure, match arm or binding-control expression can
+   replace a value at that sink. This includes condition-side `if`/`while`
+   let chains, before entering their body. Those contexts refuse this operand
+   proof, including genuinely primitive
    nested constructions, rather than borrowing outer primitive evidence.
    Direct-body return, let and call wrappers introduce no additional binding
    scope and remain eligible. This is not general lexical value resolution.
