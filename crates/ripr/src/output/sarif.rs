@@ -403,12 +403,12 @@ fn seam_result(entry: &ClassifiedSeam, config: &RiprConfig) -> Option<Value> {
     );
     result.insert(
         "partialFingerprints".to_string(),
-        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file) }),
+        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, line) }),
     );
     // #2627: also emit top-level fingerprints for GitHub Code Scanning cross-run dedup.
     result.insert(
         "fingerprints".to_string(),
-        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file) }),
+        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, line) }),
     );
     result.insert("properties".to_string(), seam_properties(entry, severity));
     if entry.class == SeamGripClass::Suppressed {
@@ -938,16 +938,17 @@ fn seam_message(entry: &ClassifiedSeam) -> String {
     )
 }
 
-/// Fingerprints deliberately exclude the line: `finding.id` and the seam id
-/// are content-addressed and line-stable, so adding the line back would mint
-/// a "new" alert and orphan the old suppression on every pure line move in
-/// the code scanning dedup that consumes these.
+/// Keep a supported native finding/probe identity across display-line moves.
+/// Location-bound producer IDs retain their own limits; the renderer does not
+/// infer semantic equivalence or alias historical suppression selectors.
 fn finding_fingerprint(rule_id: &str, finding: &Finding, file: &str) -> String {
     format!("{rule_id}|{}|{}|{file}", finding.id, finding.probe.id.0)
 }
 
-fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str) -> String {
-    format!("{rule_id}|{}|{file}", entry.seam.id().as_str())
+fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str, line: usize) -> String {
+    // Seam IDs already include a normalized byte offset. Preserve the prior
+    // fingerprint shape rather than claiming an unsupported seam migration.
+    format!("{rule_id}|{}|{file}|{line}", entry.seam.id().as_str())
 }
 
 fn finding_rule_id(class: &ExposureClass) -> String {
@@ -1353,6 +1354,182 @@ mod tests {
         assert_eq!(
             result["partialFingerprints"]["riprFingerprintV1"],
             "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/pricing.rs"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries()
+    -> Result<(), String> {
+        let original = sample_output();
+        let render = |output: &CheckOutput| {
+            parse_json(&render_findings_sarif(output, &RiprConfig::default(), &[]))
+        };
+        let base = render(&original)?;
+        let base = first_result(&base)?;
+        let mut moved = original.clone();
+        moved.findings[0].probe.location.line += 5;
+        let moved = render(&moved)?;
+        let moved = first_result(&moved)?;
+        assert_eq!(moved["fingerprints"], base["fingerprints"]);
+        assert_eq!(moved["partialFingerprints"], base["partialFingerprints"]);
+        assert_eq!(
+            moved["locations"][0]["physicalLocation"]["region"]["startLine"],
+            93
+        );
+
+        let mut other_file = original.clone();
+        other_file.findings[0].probe.location.file = PathBuf::from("src/other.rs");
+        let other_file = render(&other_file)?;
+        assert_ne!(
+            first_result(&other_file)?["fingerprints"],
+            base["fingerprints"]
+        );
+        let mut other_rule = original;
+        other_rule.findings[0].class = ExposureClass::ReachableUnrevealed;
+        let other_rule = render(&other_rule)?;
+        assert_ne!(
+            first_result(&other_rule)?["fingerprints"],
+            base["fingerprints"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_seam_identity_retains_its_location_bound_contract() -> Result<(), String> {
+        use crate::analysis::seams::CrlfPairPositions;
+        let source = "fn discount() {\n    if amount >= threshold { return 5; }\n}\n";
+        let make = |source: &str, file: &str, class| -> Result<ClassifiedSeam, String> {
+            let offset = source.find("if amount").ok_or("missing seam expression")?;
+            let line = source[..offset]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            let mut entry = weakly_gripped_classified();
+            entry.seam = RepoSeam::new_in_source(
+                file,
+                "discount",
+                SeamKind::PredicateBoundary,
+                offset,
+                line,
+                "amount >= threshold",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "amount == threshold".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+                &CrlfPairPositions::build(source),
+            );
+            entry.evidence.seam_id = entry.seam.id().clone();
+            entry.class = class;
+            Ok(entry)
+        };
+        let render = |entry| {
+            parse_json(&render_repo_seams_sarif(
+                &[entry],
+                None,
+                &RiprConfig::default(),
+            ))
+        };
+        let base_entry = make(source, "src/pricing.rs", SeamGripClass::WeaklyGripped)?;
+        let expected = format!(
+            "ripr.seam.weakly_gripped|{}|src/pricing.rs|2",
+            base_entry.seam.id().as_str()
+        );
+        let base = render(base_entry)?;
+        let base = first_result(&base)?;
+        assert_eq!(base["partialFingerprints"]["riprFingerprintV1"], expected);
+        assert_eq!(base["fingerprints"], base["partialFingerprints"]);
+        let moved = render(make(
+            &format!("\n{source}"),
+            "src/pricing.rs",
+            SeamGripClass::WeaklyGripped,
+        )?)?;
+        assert_ne!(
+            first_result(&moved)?["fingerprints"],
+            base["fingerprints"],
+            "offset-based seams are explicitly not line-stable"
+        );
+        assert_eq!(
+            first_result(&moved)?["locations"][0]["physicalLocation"]["region"]["startLine"],
+            3
+        );
+        let other_file = render(make(source, "src/other.rs", SeamGripClass::WeaklyGripped)?)?;
+        assert_ne!(
+            first_result(&other_file)?["fingerprints"],
+            base["fingerprints"]
+        );
+        let other_rule = render(make(source, "src/pricing.rs", SeamGripClass::Ungripped)?)?;
+        assert_ne!(
+            first_result(&other_rule)?["fingerprints"],
+            base["fingerprints"]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sarif_finding_identity_keeps_distinct_native_unix_filenames() -> Result<(), String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        let root = parent.join(format!(
+            "ripr-sarif-native-files-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _scratch = Scratch(root.clone());
+        std::fs::create_dir_all(root.join("src/a")).map_err(|error| error.to_string())?;
+        let literal_backslash = root.join(r"src/a\b.rs");
+        let nested = root.join("src/a/b.rs");
+        std::fs::write(&literal_backslash, "fn discount() { return 5; }\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(&nested, "fn discount() { return 7; }\n")
+            .map_err(|error| error.to_string())?;
+        assert_ne!(
+            literal_backslash
+                .canonicalize()
+                .map_err(|error| error.to_string())?,
+            nested.canonicalize().map_err(|error| error.to_string())?
+        );
+        assert_ne!(
+            std::fs::read(&literal_backslash).map_err(|error| error.to_string())?,
+            std::fs::read(&nested).map_err(|error| error.to_string())?
+        );
+
+        let mut output = sample_output();
+        output.root = root;
+        let mut second = output.findings[0].clone();
+        output.findings[0].probe.location.file = literal_backslash;
+        second.probe.location.file = nested;
+        second.probe.location.line += 5;
+        // The renderer accepts opaque producer IDs. Distinct native files
+        // must remain distinct even when a producer supplied the same IDs.
+        output.findings.push(second);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let rows = results(&sarif)?;
+        assert_eq!(rows.len(), 2);
+        let mut identities = std::collections::BTreeSet::new();
+        for row in rows {
+            assert_eq!(row["fingerprints"], row["partialFingerprints"]);
+            identities.insert(
+                row["fingerprints"]["riprFingerprintV1"]
+                    .as_str()
+                    .ok_or("missing fingerprint")?,
+            );
+        }
+        assert_eq!(
+            identities.len(),
+            2,
+            "distinct native Unix filenames must not collapse after removing display lines"
         );
         Ok(())
     }

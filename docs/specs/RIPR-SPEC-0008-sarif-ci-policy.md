@@ -126,14 +126,44 @@ rule_id | finding_id | probe_id | normalized_file
 Seam fingerprints should prefer:
 
 ```text
-rule_id | seam_id | normalized_file
+rule_id | seam_id | normalized_file | line
 ```
 
-The line is intentionally absent: `finding_id` and `seam_id` are
-content-addressed and line-stable, and the consumer of these fingerprints is
-cross-run dedup. Including the line would mint a "new" alert and orphan the
-existing suppression on every pure line move — the exact instability the
-stable identifiers exist to prevent.
+The finding's display line is intentionally absent. When the producer's native
+finding/probe identity remains stable, moving the same changed behavior updates
+its physical location without creating a new fingerprint. Rust, Python and
+TypeScript retain their existing native identity rules and collision limits.
+The Perl projection uses the named-owner semantic payload described in
+[SPEC-0064](RIPR-SPEC-0064-perl-fact-packet-contract.md#ripr-derived-identities);
+unnamed or ambiguous owners retain an explicitly location-bound fallback.
+The renderer does not infer semantic identity from display text.
+
+Repo seam IDs hash a normalized byte offset as well as file, owner and kind.
+They are stable for identical inputs and LF/CRLF spellings, but inserting lines
+before a seam changes that offset and ID. Seam fingerprints therefore retain
+their prior line-bound shape; this change does not promise seam move tracking
+or migrate seam suppression identities.
+
+Both `partialFingerprints.riprFingerprintV1` and
+`fingerprints.riprFingerprintV1` carry the same string. File and rule segments
+remain part of identity: moving a finding to a different file or changing its
+exposure class is not a pure line move. Native exposure suppressions still
+match exact `finding.id` values, independently of SARIF fingerprint text.
+Distinct native filenames must remain distinct after path normalization. In
+particular, Unix `src/a\b.rs` and `src/a/b.rs` name different files; retaining a
+file segment alone does not establish this property. The native-filename
+control below covers equal producer IDs at different display lines, where a
+line-free fingerprint must still preserve the file boundary.
+
+Dropping the finding line changes existing fingerprint strings once, including
+stationary findings. The policy reader compares opaque strings and supplies no
+legacy alias, so an old SARIF baseline may report unchanged findings as new.
+Review and refresh that baseline after the transition. Perl's new native IDs
+also require reviewed replacement of old finding-ID selectors; an ambiguous old
+owner-based selector must never suppress either or both new behaviors by alias.
+Unmatched selectors remain unapplied with a visible warning. These contracts do
+not establish live code-scanning ingestion, producer digest correctness or
+universal collision freedom.
 
 `normalized_file` and the physical location `uri` do not depend on how
 `--root` is spelled: `.`, `./` and the checkout's absolute path render the
@@ -283,6 +313,9 @@ Implemented renderer tests:
 
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_findings_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_retains_its_location_bound_contract`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_seam_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_omits_off_seam_class`
@@ -300,6 +333,9 @@ Implemented policy tests:
 - `xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result`
 - `xtask/src/main.rs::tests::sarif_policy_ignores_note_when_threshold_warning`
 - `xtask/src/main.rs::tests::sarif_policy_missing_baseline_is_advisory_by_default`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_preserves_perl_changes_and_supported_line_shifts`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_keeps_native_suppression_exact_and_legacy_selector_stale`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_legacy_finding_baselines_require_explicit_transition`
 
 ## Implementation Mapping
 
