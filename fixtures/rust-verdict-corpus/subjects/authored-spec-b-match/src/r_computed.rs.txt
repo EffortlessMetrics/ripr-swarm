@@ -1,0 +1,34 @@
+//! The nested call passes a computed argument.
+
+fn fix(_kind: &str) -> &'static str {
+    "text"
+}
+
+pub fn label_rc(kind: &str) -> &'static str {
+    match kind {
+        "word" => label_rc(fix(kind)),
+        "text" => "beta",
+        "a" => "alpha",
+        _ => "other",
+    }
+}
+
+pub fn classify_rc(input: &str) -> &'static str {
+    let final_label = label_rc(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_computed_argument_still_selects_an_arm_r_computed() {
+        assert_eq!(classify_rc("word"), "blank");
+        assert_eq!(classify_rc("a"), "word");
+    }
+}

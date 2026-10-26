@@ -48,11 +48,18 @@ limitation-only non-claim. The stable enum token is
 
 ## Acceptance Examples
 
-- Accept a changed `rfind(...).map_or(...)` or `len_utf8().map_or(...)`
-  binding followed by an equality on the same binding in the same owner.
-- Reject comments, string literals, `map_or_else`, member-name lookalikes,
-  shadowed bindings, missing owners, missing related tests, and unsupported
-  value shapes.
+1. Accept: a changed `rfind(...).map_or(...)` binding followed by an
+   equality on the same binding in the same owner.
+2. Accept: a changed `len_utf8().map_or(...)` binding followed by an
+   equality on the same binding in the same owner.
+3. Reject: a family name that appears only in a comment.
+4. Reject: a family name that appears only in a string literal.
+5. Reject: `map_or_else`.
+6. Reject: a member-name lookalike.
+7. Reject: a shadowed binding.
+8. Reject: a missing owner.
+9. Reject: a missing related test.
+10. Reject: an unsupported value shape.
 
 ## Test Mapping
 
@@ -60,6 +67,12 @@ The production-path Rust adapter fixture covers the `rfind`/`map_or` binding
 feeding an equality predicate with two exact related tests. Negative controls
 cover a non-family `len` binding and must not receive this limitation. The
 stable enum wire string and LSP accepted-kind catalog are tested separately.
+
+`crates/ripr/tests/spec_b_binding_contracts.rs` checks the numbered corpus
+programs through typed production findings: negative guards refuse this specific
+limitation, direct predicate retargets carry no limitation kind, and the static
+`LazyLock` initializer has no function owner. The retained macro-guarded adapter
+test is the positive fallback-kind oracle; citation coverage does not replace it.
 
 ## Non-Goals
 

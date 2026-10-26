@@ -1,0 +1,3 @@
+pub fn label(count: u32) -> String {
+    format!("{count} items")
+}

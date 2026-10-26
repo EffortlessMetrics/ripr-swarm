@@ -30,7 +30,7 @@ Evidence
   - observation no: No test reaches the changed owner, so no test can observe this change
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches call effect: try_parse_summary(raw).map_err(Into::into) (line 26)
-  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses medium exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("callee pin should observe ParseSummaryError::MalformedSource".into()); }; misses: no call to the changed code found; linked by name only
+  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses medium exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("callee pin should observe ParseSummaryError::MalformedSource".into()); }; misses: no established call path to the changed code; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 6
 
 Next step
@@ -62,7 +62,7 @@ Evidence
   - observation no: No test reaches the changed owner, so no test can observe this change
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 26)
-  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("callee pin should observe ParseSummaryError::MalformedSource".into()); }; misses: no call to the changed code found; linked by name only
+  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("callee pin should observe ParseSummaryError::MalformedSource".into()); }; misses: no established call path to the changed code; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 6
 
 Weakness

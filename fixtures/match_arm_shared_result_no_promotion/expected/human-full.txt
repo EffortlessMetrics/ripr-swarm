@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:3
 Changed
   before: "sensor" => "sensor-v1",
   after:  "sensor" =>
+          (arm head only; open the arm at ./src/lib.rs:3 to read its new body)
 
 Probe
   family: match_arm

@@ -65,6 +65,14 @@ pub(crate) const RECOVERY_GAP_LIST_TOO_LARGE: &str =
     "this page was already narrowed to fit; there is no narrower MCP read of this list page";
 pub(crate) const RECOVERY_SNAPSHOT_TOO_LARGE: &str =
     "page identities with ripr_list_gaps; this snapshot document exceeds the MCP response bound";
+/// The non-pageable disclosure overflow that filtering cannot cause: only
+/// then is the snapshot identity route the honest recovery (#9895).
+pub(crate) const RECOVERY_GAP_LIST_IDENTITY_ROUTE: &str = "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap";
+/// The overflow the snapshot identity route cannot fix: when the echoed
+/// filter value is the difference between a fitting shell and an
+/// overflowing one, the truthful recovery names the filter, not the page
+/// (#9895).
+pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter value, not the page, exceeds the response bound; narrow the file/class/language filter and retry ripr_list_gaps";
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
@@ -340,6 +348,10 @@ pub(crate) struct Snapshot {
     /// names it so a snapshot never reads as the default-branch diff when it
     /// was analyzed against another revision.
     pub(crate) base: Option<String>,
+    /// The producer's mixed-language completeness view bound at commit time
+    /// (#6475). Served as `session.language_completeness`; deliberately not
+    /// part of the snapshot identity, so existing identities are unchanged.
+    pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
 }
 
 /// The scope-relevant working-tree facts one snapshot was analyzed against.
@@ -466,6 +478,7 @@ impl Snapshot {
             selection,
             scope,
             base: None,
+            language_view: None,
         })
     }
 
@@ -671,20 +684,68 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
-        let shell_bytes = {
+        let shell = {
             let scope = GapListScope {
                 selection,
                 requested,
                 filter,
                 filtered,
             };
-            let shell =
-                self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?;
-            document_bytes(&shell)?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
         };
+        let shell_bytes = document_bytes(&shell)?;
+        // The same shell with an empty filter echo isolates the echo's
+        // contribution: when the echo is the difference between a fitting
+        // shell and an overflowing one, the overflow is filter-driven and
+        // the refusal must name the filter, not the identity route (#9895).
+        // `filtered` stays as counted so only the echo differs between the
+        // two probes.
+        let shell_without_filter = {
+            let scope = GapListScope {
+                selection,
+                requested,
+                filter: &GapListFilter::default(),
+                filtered,
+            };
+            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+        };
+        let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
+        let shell_envelope_overflows =
+            crate::mcp::protocol::structured_envelope_overflows(&shell, max_envelope_bytes)
+                .map_err(|error| {
+                    AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                })?;
         // Reserve covers the array syntax around the summaries and the
         // byte-accounting margin; per-item commas are charged below.
         let reserve = 256usize;
+        // The recovery names what the caller can change: a shell that fits
+        // once the filter echo is removed overflowed because of the filter;
+        // any other overflow is a disclosure the page cannot narrow.
+        let recovery_for_envelope =
+            |shell_without_filter_envelope_overflows: bool| -> &'static str {
+                if shell_envelope_overflows && !shell_without_filter_envelope_overflows {
+                    RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+                } else {
+                    RECOVERY_GAP_LIST_IDENTITY_ROUTE
+                }
+            };
+        // The overflow side carries the same reserve margin the page budget
+        // charges: the final document adds the echoed window (for example a
+        // past-end offset renders longer than the zero-page shell probe), so
+        // a shell that fits raw can still overflow once page metadata is
+        // rendered. Attributing that overflow without the reserve would
+        // fall back to the identity route even when dropping the echo
+        // leaves a fitting shell (#9895 review).
+        let recovery_for_document = || -> &'static str {
+            if shell_bytes.saturating_add(reserve) > super::MAX_TOOL_DOCUMENT_BYTES
+                && shell_without_filter_bytes.saturating_add(reserve)
+                    <= super::MAX_TOOL_DOCUMENT_BYTES
+            {
+                RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+            } else {
+                RECOVERY_GAP_LIST_IDENTITY_ROUTE
+            }
+        };
         let page_budget =
             super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
 
@@ -763,13 +824,21 @@ impl WorkspaceSession {
                 // includes empty pages whose echoed filters fill the shell;
                 // fail closed instead of shipping a text-only success that
                 // breaks the outputSchema contract (#6021 review, #7768).
+                let shell_without_filter_overflows =
+                    crate::mcp::protocol::structured_envelope_overflows(
+                        &shell_without_filter,
+                        max_envelope_bytes,
+                    )
+                    .map_err(|error| {
+                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                    })?;
                 return Err(AttemptFailure::new(
                     CODE_RESULT_TOO_LARGE,
                     format!(
                         "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {max_envelope_bytes}-byte id-aware envelope budget ({}-byte response bound minus the request id and outer reserve)",
                         super::MAX_RESPONSE_BYTES
                     ),
-                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                    recovery_for_envelope(shell_without_filter_overflows),
                 )
                 .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
             }
@@ -787,7 +856,8 @@ impl WorkspaceSession {
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
         // disclosure alone) outgrows the ceiling cannot be narrowed by
-        // paging; fail closed naming the identity route (#6021).
+        // paging; fail closed naming what the caller can change (#6021,
+        // #9895).
         let bytes = document_bytes(&document)?;
         if bytes > super::MAX_TOOL_DOCUMENT_BYTES {
             return Err(AttemptFailure::new(
@@ -796,7 +866,7 @@ impl WorkspaceSession {
                     "gap list cannot fit even one wire-fitting page: its non-pageable disclosure renders {bytes} bytes against the {}-byte page ceiling",
                     super::MAX_TOOL_DOCUMENT_BYTES
                 ),
-                "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                recovery_for_document(),
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
@@ -1021,7 +1091,7 @@ impl WorkspaceSession {
             desired_input["base"] = json!("explicit");
             desired_input["base_revision"] = json!(base);
         }
-        json!({
+        let mut document = json!({
             "schema_version": SESSION_SCHEMA_VERSION,
             "attempt_state": self.attempt_state(),
             "current_attempt": if self.in_flight {
@@ -1051,8 +1121,35 @@ impl WorkspaceSession {
                     "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
                 ])
                 .collect::<Vec<_>>(),
-        })
+        });
+        // Additive (#6475): per-language completeness from the committed
+        // snapshot's aggregate view. Absent without a snapshot or a view, so
+        // consumers that ignore the field see the unchanged v1 shape.
+        if let Some(view) = self
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.language_view.as_ref())
+        {
+            document["language_completeness"] = language_completeness_document(view);
+        }
+        document
     }
+}
+
+/// `[{language, status}]` in label order, straight from the aggregate-owned
+/// view: one row per canonical language label, with the closed status
+/// spelling the aggregate records (`complete`, `complete_zero`, `partial`,
+/// `unavailable`, `invalid`, `failed`, `unsupported`, `not_selected`,
+/// `no_current_scope`).
+fn language_completeness_document(
+    view: &crate::analysis::language_outcome::LanguageCompletenessView,
+) -> Value {
+    Value::Array(
+        view.rows
+            .iter()
+            .map(|row| json!({ "language": row.label, "status": row.status.as_str() }))
+            .collect(),
+    )
 }
 
 /// Guard that clears [`WorkspaceSession::in_flight`] on every terminal path.
@@ -1396,7 +1493,7 @@ pub(crate) fn run_check(
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace_with_config_typed(input, &config)
+    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
         .map_err(|error| check_failure(&error, base))?;
     // The seam inventory is gathered once inside this bounded attempt and
     // feeds both consumers: the shared repair validator that decides each
@@ -1412,6 +1509,7 @@ pub(crate) fn run_check(
     );
     let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     snapshot.base = base.map(str::to_string);
+    snapshot.language_view = language_view;
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
@@ -1553,6 +1651,7 @@ mod tests {
         limitations: Vec<AnalysisLimitation>,
     ) -> Result<crate::app::CheckOutput, String> {
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1597,6 +1696,192 @@ mod tests {
             Err(failure) if failure.code == code => Ok(()),
             Err(failure) => Err(format!("expected {code}, got {}", failure.code)),
         }
+    }
+
+    /// A session whose committed snapshot carries a producer view: rust ran
+    /// to its boundary with nothing found, python was not selected.
+    fn session_with_language_view() -> Result<WorkspaceSession, String> {
+        use crate::analysis::language_outcome::{
+            FixtureDiffResult, LanguageAggregate, LanguageAnalysisOutcomeV1,
+            LanguageCompletenessView,
+        };
+        let touched = std::collections::BTreeSet::from(["rust".to_string()]);
+        let mut aggregate = LanguageAggregate::new("full".to_string());
+        for child in LanguageAnalysisOutcomeV1::from_diff_result(
+            crate::domain::LanguageId::Rust,
+            &FixtureDiffResult {
+                changed_files: 1,
+                ..FixtureDiffResult::default()
+            },
+            &[],
+            &touched,
+            "full",
+        ) {
+            aggregate.record(child);
+        }
+        aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+            "python",
+            1,
+            "language not in the effective [languages].enabled set",
+            "full",
+        ));
+        let view = LanguageCompletenessView::from_aggregate(&aggregate.finish());
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        snapshot.language_view = Some(view);
+        session.last_good = Some(Arc::new(snapshot));
+        Ok(session)
+    }
+
+    #[test]
+    fn status_serves_per_language_completeness_from_the_view() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        // Literal expectation, independent of the view code under test.
+        assert_eq!(
+            document["language_completeness"],
+            json!([
+                { "language": "python", "status": "not_selected" },
+                { "language": "rust", "status": "complete_zero" }
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn status_without_a_view_keeps_the_unchanged_shape() -> Result<(), String> {
+        for session in [
+            WorkspaceSession::default(),
+            session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?,
+        ] {
+            let document = session.session_document(&SessionProfile::built_in());
+            assert!(
+                document.get("language_completeness").is_none(),
+                "{document}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_emitted_session_key_is_declared_by_the_status_schema() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        let schema = super::super::protocol::status_success_schema();
+        let declared = schema["properties"]["session"]["properties"]
+            .as_object()
+            .ok_or("session schema must declare properties")?;
+        let required = schema["properties"]["session"]["required"]
+            .as_array()
+            .ok_or("session schema must declare required")?;
+        for key in document
+            .as_object()
+            .ok_or("session must be an object")?
+            .keys()
+        {
+            assert!(declared.contains_key(key), "undeclared session key {key}");
+        }
+        // The addition is optional: absent from `required`, so a document
+        // without it (no snapshot) still satisfies the closed schema.
+        assert!(!required.contains(&json!("language_completeness")));
+        let item = &declared["language_completeness"]["items"];
+        for row in document["language_completeness"]
+            .as_array()
+            .ok_or("language_completeness must be an array")?
+        {
+            let status = row["status"].as_str().ok_or("status must be a string")?;
+            assert!(
+                item["properties"]["status"]["enum"]
+                    .as_array()
+                    .ok_or("status enum")?
+                    .iter()
+                    .any(|allowed| allowed == status),
+                "{status}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #6475: MCP carries no per-language state of its own. What it commits
+    /// and serves (the typed outcome and its limitations) must agree with
+    /// the aggregate-owned view on every shared mixed-language fixture.
+    /// Expectations are literal and independent of the view code.
+    #[test]
+    fn committed_snapshot_agrees_with_the_language_completeness_view() -> Result<(), String> {
+        use crate::analysis::language_outcome::{DiffCompleteness, LanguageCompletenessView};
+        use crate::output::language_view_agreement_tests as shared;
+        // (fixture, committed limitation kinds); `None` = refused as unsupported.
+        let expected: [(&str, Option<&[&str]>); 9] = [
+            ("complete", Some(&[])),
+            ("complete_zero", Some(&[])),
+            ("partial", Some(&["producer_failure"])),
+            ("unavailable", Some(&["language_adapter_unavailable"])),
+            ("invalid", Some(&["language_adapter_unavailable"])),
+            ("failed", Some(&["producer_failure"])),
+            ("unsupported", None),
+            (
+                "repo_partial_with_not_selected",
+                Some(&["language_adapter_unavailable"]),
+            ),
+            (
+                "configured_uncompiled_perl_dual_row",
+                Some(&["language_adapter_unavailable"]),
+            ),
+        ];
+        let fixtures = shared::fixtures()?;
+        assert_eq!(fixtures.len(), expected.len());
+        for (name, kinds) in expected {
+            let fixture = fixtures
+                .iter()
+                .find(|fixture| fixture.name == name)
+                .ok_or_else(|| format!("missing fixture {name}"))?;
+            let aggregate = shared::aggregate_for(fixture);
+            let view = LanguageCompletenessView::from_aggregate(&aggregate);
+            let produced = view.total_findings;
+            let findings = (0..produced)
+                .map(|_| shared::rust_finding())
+                .collect::<Result<Vec<_>, _>>()?;
+            let outcome = shared::analysis_outcome(fixture, produced as u64)?;
+            let output = shared::check_output(findings, view.public_runs.clone(), outcome);
+            let committed = Snapshot::from_output(&output, Some("root:sha256:test"));
+            match (kinds, committed) {
+                (None, Err(failure)) => {
+                    assert_eq!(failure.code, CODE_UNSUPPORTED_PROFILE, "{name}");
+                    assert!(
+                        failure.detail.contains("language_scope_unsupported"),
+                        "{name}: {}",
+                        failure.detail
+                    );
+                }
+                (Some(kinds), Ok(snapshot)) => {
+                    let served: Vec<String> = serde_json::to_value(&snapshot.outcome)
+                        .map_err(|error| format!("{name}: {error}"))?["limitations"]
+                        .as_array()
+                        .map(|limitations| {
+                            limitations
+                                .iter()
+                                .filter_map(|item| item["kind"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    assert_eq!(served, kinds, "{name}");
+                    // The view calls a run incomplete exactly when MCP serves
+                    // a non-complete outcome.
+                    assert_eq!(
+                        view.completeness == DiffCompleteness::Incomplete,
+                        !snapshot.outcome.kind.is_complete(),
+                        "{name}"
+                    );
+                }
+                (None, Ok(_)) => return Err(format!("{name}: unsupported input was committed")),
+                (Some(_), Err(failure)) => {
+                    return Err(format!("{name}: refused: {}", failure.detail));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -1786,6 +2071,7 @@ mod tests {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1865,6 +2151,7 @@ mod tests {
 
         let findings = vec![ready, exposed_python, unready, unlocalized];
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -2593,6 +2880,177 @@ mod tests {
             .map_err(|error| format!("small listing must ship: {error}"))?;
         if envelope.get("structuredContent").is_none() {
             return Err("a fitting listing must keep structuredContent".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9895: the refusal recovery names what the caller can change. A
+    /// shell that overflows only because of the echoed filter value names
+    /// the filter; a shell that overflows on its own keeps the snapshot
+    /// identity route.
+    #[test]
+    fn list_gaps_overflow_recovery_names_the_shrinkable_cause() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        // An empty page at a past-end offset with no filter echo IS the
+        // no-echo shell probe: its envelope sizes every later comparison.
+        let shell_probe = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 10,
+                    limit: None,
+                },
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let shell_envelope = crate::mcp::protocol::structured_envelope_bytes(&shell_probe)
+            .map_err(|error| error.to_string())?;
+        // A budget the no-echo shell fits with slack to spare: only the
+        // echoed filter can push the with-filter shell past it.
+        let filter_budget = shell_envelope + 64;
+        let huge_echo = GapListFilter {
+            file: Some("x".repeat(4_000)),
+            ..GapListFilter::default()
+        };
+        let filter_refusal: AttemptFailure = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &huge_echo,
+            filter_budget,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a 4000-character filter echo must overflow the {filter_budget}-byte budget: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if filter_refusal.code != CODE_RESULT_TOO_LARGE
+            || filter_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "filter-driven overflow must name the filter: {filter_refusal:?}"
+            ));
+        }
+        // No filter echo at all: a budget a few bytes below the same shell
+        // refuses with the identity route, because nothing caller-side can
+        // shrink the disclosure. (The probe's past-end offset renders one
+        // byte longer than the default window's, hence the margin.)
+        let identity_refusal = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &GapListFilter::default(),
+            shell_envelope.saturating_sub(4),
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a budget below the empty shell must refuse: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if identity_refusal.code != CODE_RESULT_TOO_LARGE
+            || identity_refusal.recovery != RECOVERY_GAP_LIST_IDENTITY_ROUTE
+        {
+            return Err(format!(
+                "shell-driven overflow must keep the identity route: {identity_refusal:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9895 review: the document-branch attribution charges the same
+    /// `reserve` margin the page budget charges. A shell that fits raw at
+    /// the zero offset but overflows once the echoed window gains a digit
+    /// (a past-end offset renders longer than the zero-page shell probe) is
+    /// still echo-driven and must name the filter, not the identity route.
+    /// The reserve-only negative control — shell plus reserve over the
+    /// ceiling, the final rendered document under it — must keep shipping.
+    #[test]
+    fn document_branch_attribution_charges_the_page_metadata_reserve() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        let window = |offset: usize| GapListWindow {
+            offset,
+            limit: None,
+        };
+        let echo = |len: usize| GapListFilter {
+            file: Some("x".repeat(len)),
+            ..GapListFilter::default()
+        };
+        let refuses_at_offset_zero = |len: usize| -> Result<bool, String> {
+            match session.list_gaps(None, window(0), &echo(len), crate::mcp::MAX_RESPONSE_BYTES) {
+                Ok(_) => Ok(false),
+                Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => Ok(true),
+                Err(failure) => Err(format!("unexpected refusal: {failure:?}")),
+            }
+        };
+        // Largest echo whose zero-offset page still ships: the document
+        // guard measures the raw document against MAX_TOOL_DOCUMENT_BYTES,
+        // and the envelope stays clear (the double envelope only exceeds the
+        // wire budget well above the document ceiling), so the search edge
+        // sits exactly at the document ceiling.
+        let (mut low, mut high) = (0usize, 70_000usize);
+        while low < high {
+            let mid = (low + high).div_ceil(2);
+            if refuses_at_offset_zero(mid)? {
+                high = mid - 1;
+            } else {
+                low = mid;
+            }
+        }
+        let edge_echo = low;
+        if session
+            .list_gaps(
+                None,
+                window(0),
+                &echo(edge_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err("the edge echo must still ship at offset zero".to_string());
+        }
+        // One more window digit (offset ten renders two digits) pushes the
+        // final document past the ceiling; without the echo the shell fits
+        // with reserve to spare, so the attribution must name the filter.
+        let metadata_refusal = match session.list_gaps(
+            None,
+            window(10),
+            &echo(edge_echo),
+            crate::mcp::MAX_RESPONSE_BYTES,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "the echoed window metadata must tip the edge echo over: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if metadata_refusal.code != CODE_RESULT_TOO_LARGE
+            || metadata_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "echo-driven document overflow must name the filter: {metadata_refusal:?}"
+            ));
+        }
+        // Reserve-only negative control: 255 fewer echo bytes leave the
+        // shell plus reserve under the ceiling even though the shell alone
+        // is within 256 bytes of it; the widest window echo (20 digits)
+        // must still ship.
+        let reserve_echo = edge_echo.saturating_sub(255);
+        if session
+            .list_gaps(
+                None,
+                window(usize::MAX),
+                &echo(reserve_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err(
+                "reserve exhaustion alone must not refuse: the rendered document fits".to_string(),
+            );
         }
         Ok(())
     }

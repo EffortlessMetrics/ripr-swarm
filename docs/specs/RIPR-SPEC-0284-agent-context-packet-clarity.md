@@ -127,7 +127,19 @@ When row grouping means another row of the same test printed its
 assertion, the bare fallback is suppressed entirely; that sibling row
 keeps its own verdict as the note on its `checked:` line.
 
+### Terminal framing (#9244)
+
+When `ripr context` is about to write the packet to an interactive terminal,
+it first prints one stderr line saying the JSON is a packet for a coding agent
+or script, how to keep it (`> context.json` or a pipe), and that `ripr explain`
+is the human reading. The line is silent when stdout is piped, redirected or
+captured, and under `--quiet`, so the stdout bytes are the unchanged machine
+contract on every path. The note makes no claim about the finding itself.
+
 ## Required Evidence
+
+- The terminal note appears only for an interactive stdout without `--quiet`;
+  piped stdout and `--quiet` stay silent.
 
 - The packet emits `classification`, `severity`, and `confidence` on
   version 1.1 for every finding class, and `severity` follows a user
@@ -145,6 +157,7 @@ keeps its own verdict as the note on its `checked:` line.
 - `crates/ripr/src/output/json/context_packet.rs::tests::context_packet_states_verdict_fields_for_packet_consumers`
 - `crates/ripr/src/output/json/context_packet.rs::tests::context_packet_severity_follows_caller_config_override`
 - `crates/ripr/src/domain/context_packet.rs::tests::context_packet_from_finding_carries_probe_and_ripr_shape`
+- `crates/ripr/src/cli/commands/context.rs::tests::terminal_stdout_note_frames_json_only_for_an_interactive_stdout`
 - `crates/ripr/src/lsp/tests.rs` copy-context packet equality (CLI/LSP
   wire parity under the session config)
 - `crates/ripr/tests/cli_smoke.rs` replay refusals and packet-emission

@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0027-ex3-dynamic-dispatch",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0027-ex3-dynamic-dispatch.diff",
+  "anchor": {
+    "file": "src/dispatch.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect",
+  "test_shape": "vitest_expect_toequal_call_log",
+  "hard_case": "the called action is picked by a computed key, so no call target is statically resolvable",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "actions[key](); actions[key]();",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/dispatch.test.ts > dispatch runs the named action once",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`dispatch` calls `actions[key]()` through a computed lookup. The test records which action ran and pins the call log `[\"save\"]`; running the action twice fails it. RIPR-SPEC-0027 example 3: the probe carries `static_limit_kind: dynamic_dispatch` and the finding stays conservative, so an abstention (`limited`) is as acceptable as credit.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0027#3"
+  ]
+}

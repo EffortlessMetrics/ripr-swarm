@@ -71,6 +71,42 @@ product-claim authority.
 | Language-aware generated CI grouping | `preview` | Generated GitHub workflow | [Language adapter preview workflow](../LANGUAGE_ADAPTER_PREVIEW.md), [RIPR-SPEC-0038](../specs/RIPR-SPEC-0038-generated-pr-ci-review-workflow.md), [Lane 4 tracker](../lanes/LANE_4_PR_CI_REVIEW.md), [Campaign 27 closeout](../handoffs/2026-05-13-campaign-27-closeout.md) | The generated summary groups TypeScript/Python advisory evidence only when the effective language set enables preview adapters (`[languages]`, or Python/TypeScript auto-enabled by project markers when no `ripr.toml` exists); Rust-default output and gate authority remain unchanged. |
 | Preview evidence policy promotion | `deferred` | Policy reports and future promotion packets | [Preview evidence policy boundary](../specs/RIPR-SPEC-0030-preview-evidence-policy-boundary.md), [preview promotion criteria](../policy/PREVIEW_PROMOTION_CRITERIA.md), [policy readiness closeout](../handoffs/2026-05-12-policy-readiness-closeout.md) | Preview evidence is visible and advisory by default; it is not gate, RIPR Zero, or baseline-check eligible without later explicit promotion and the required criteria. |
 
+## Capability Registry Projection
+
+The table below is generated from the machine capability registry
+(`domain::language_capability::CAPABILITY_CELLS`, also emitted by
+`ripr capabilities --json`). It states, per language, framework, mode and
+family, what the registry says ripr can establish statically; an absent cell is
+`not_proven`. A registry change without regenerating this block fails the
+`language_capability_drift` test in Rust-touching PRs (ripr lib tests via
+nextest `--workspace`) and locally via `cargo test -p ripr language_capability_drift`;
+the failure prints the exact replacement. It is not enforced for docs-only PRs,
+which do not run that test. It is a static-evidence statement, not a runtime mutation
+outcome or a sufficiency claim, and it promotes no tier.
+
+<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->
+
+| Cell (language/framework/mode/family) | Support state | Tier ceiling |
+| --- | --- | --- |
+| `rust/any/diff/static_facts` | `supported_with_required_fallback` | `usable_alpha` |
+| `rust/any/repo/static_facts` | `supported_with_required_fallback` | `usable_alpha` |
+| `rust/any/diff/repair_routing` | `supported_with_required_fallback` | `usable_alpha` |
+| `python/any/diff/static_facts` | `supported_with_required_fallback` | `preview` |
+| `python/any/repo/static_facts` | `supported_with_required_fallback` | `preview` |
+| `python/pytest/diff/repair_routing` | `supported_with_required_fallback` | `usable_alpha` |
+| `python/unittest/diff/repair_routing` | `supported_with_required_fallback` | `usable_alpha` |
+| `typescript/any/diff/static_facts` | `supported_with_required_fallback` | `preview` |
+| `typescript/any/repo/static_facts` | `supported_with_required_fallback` | `preview` |
+| `typescript/any/diff/repair_routing` | `supported_with_required_fallback` | `preview` |
+| `javascript/any/diff/static_facts` | `supported_with_required_fallback` | `preview` |
+| `javascript/any/repo/static_facts` | `supported_with_required_fallback` | `preview` |
+| `javascript/any/diff/repair_routing` | `supported_with_required_fallback` | `preview` |
+| `perl/any/diff/static_facts` | `not_proven` | `preview` |
+| `perl/any/repo/static_facts` | `not_proven` | `preview` |
+| `perl/any/diff/repair_routing` | `not_proven` | `preview` |
+
+<!-- capability-registry:end -->
+
 ## How To Read A Claim
 
 Use the tier with the surface:

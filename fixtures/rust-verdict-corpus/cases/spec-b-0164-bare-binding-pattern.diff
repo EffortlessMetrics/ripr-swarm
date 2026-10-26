@@ -1,0 +1,12 @@
+diff --git a/src/m_bare.rs b/src/m_bare.rs
+--- a/src/m_bare.rs
++++ b/src/m_bare.rs
+@@ -8,7 +8,7 @@
+ 
+ pub fn classify_bare(input: &str) -> &'static str {
+     let final_label = label_bare(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

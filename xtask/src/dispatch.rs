@@ -45,6 +45,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryRun(args) => super::windows_advisory_run::run(&args),
+        XtaskCommand::VerifyTestShards(args) => super::verify_test_shards::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
@@ -131,6 +133,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
+        XtaskCommand::ReleaseManifestProposal(args) => {
+            super::reports::release_manifest_proposal(&args)
+        }
         XtaskCommand::BumpVersion(args) => super::version::bump_version(&args),
         XtaskCommand::ReleaseControl(args) => super::reports::release_control(&args),
         XtaskCommand::ReleaseDenominator(args) => super::reports::release_denominator(&args),
@@ -217,6 +222,10 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
+        XtaskCommand::CheckCapabilityProducers(args) => {
+            super::policy::check_capability_producers(&args)
+        }
+        XtaskCommand::CapabilityDocs(args) => super::policy::capability_docs(&args),
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)
@@ -247,6 +256,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
+        XtaskCommand::SizeScaling(args) => super::size_scaling::run(&args),
         XtaskCommand::TerminationQualification(args) => {
             super::termination_qualification::run(&args)
         }

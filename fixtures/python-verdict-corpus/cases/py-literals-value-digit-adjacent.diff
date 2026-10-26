@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -7,7 +7,7 @@ def server_config():
+ 
+ def ports():
+     return {
+-        "http": 1,
++        "http": 80,
+         "admin": 8080,
+     }
+ 

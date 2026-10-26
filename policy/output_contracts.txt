@@ -94,6 +94,8 @@ related_test_miss|no_assertion|Related test has no assertion ripr recognizes.
 related_test_miss|no_call_path|Related test is linked by name or location only; no call to the changed code.
 related_test_miss|observation_unconfirmed|Related test's oracle text never names the changed expression.
 related_test_miss|weak_assertion|Related test's oracle is weak or smoke-only.
+related_test_role|contributing|Related test row belongs to the decision set gates and repair routing read (default).
+related_test_role|examined_only|Related test row is retained only to show an examined test whose assertions matched nothing; decision paths skip it.
 repair_card_budget_version|repair-card-budget-v1|Current repair card detail/budget version.
 repair_card_schema_version|repair_card.v1|Current repair card schema version.
 schema_version|0.2|Current check JSON schema version.
@@ -127,6 +129,7 @@ static_limit_kind|rust_call_fact_budget|Typed static limitation value.
 static_limit_kind|rust_framework_oracle_unresolved|Typed static limitation value.
 static_limit_kind|rust_pinned_shape_unresolved|Typed static limitation value.
 static_limit_kind|rust_implicit_call_unresolved|Typed static limitation value.
+static_limit_kind|rust_indirect_owner_call_unresolved|Typed static limitation value.
 static_limit_kind|rust_caller_loop_selector_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.

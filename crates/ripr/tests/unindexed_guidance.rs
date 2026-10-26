@@ -212,3 +212,57 @@ fn assertion_helper_retains_oracle_inspection_guidance() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn owner_named_test_that_never_calls_the_owner_prompts_inspection() -> Result<(), String> {
+    // #10053: a test linked only because its name contains the owner's name
+    // never runs the owner, so the weak-reach finding must not tell the
+    // reader to strengthen that test's assertion.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-owner-named-guidance-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let guard = Fixture(root.clone());
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    let write = |path: &str, text: &str| {
+        std::fs::write(root.join(path), text).map_err(|error| error.to_string())
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = \"owner_named\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write(
+        "src/lib.rs",
+        "pub fn compute(n: u32) -> u32 {\n    if n > 5 {\n        return n * 3;\n    }\n    n\n}\n\npub fn run2(n: u32) -> u32 {\n    compute(n)\n}\n\npub fn ready(flag: bool) -> bool {\n    flag\n}\n",
+    )?;
+    write(
+        "tests/other.rs",
+        "use owner_named::ready;\n\n#[test]\nfn compute_flags_are_independent() {\n    assert_eq!(ready(false), false);\n}\n",
+    )?;
+    write(
+        "change.diff",
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn compute(n: u32) -> u32 {\n     if n > 5 {\n-        return n * 2;\n+        return n * 3;\n     }\n     n\n }\n",
+    )?;
+    let output = check_workspace(guard.input())?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+        .ok_or("setup: expected a return-value finding")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(finding.ripr.reach.state.as_str(), "weak");
+    assert!(
+        !finding.related_tests.is_empty()
+            && finding.related_tests.iter().all(|test| {
+                test.name == "compute_flags_are_independent"
+                    && test.relation_reason == Some(ripr::domain::RelationReason::OwnerNamedTest)
+            }),
+        "setup: the only related test is the owner-named one: {finding:?}"
+    );
+    assert_eq!(finding.recommended_next_step.as_deref(), Some(INSPECT));
+    assert_ne!(finding.recommended_next_step.as_deref(), Some(EXACT));
+    Ok(())
+}

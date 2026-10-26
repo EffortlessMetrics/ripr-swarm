@@ -31,6 +31,8 @@
 mod macro_argument;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+#[cfg(test)]
+mod asserting_entry_tests;
 mod field_projection;
 #[cfg(test)]
 mod method_hop_tests;
@@ -158,6 +160,11 @@ pub(crate) struct HelperHop {
     /// forwards the callee's result, binds no argument rows, and has no
     /// `arguments`.
     pub(crate) through_macro: bool,
+    /// Some indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
+    /// something other than the standard macro (a `macro_rules!`, an
+    /// import, a glob or `#[macro_use]`), so no bare macro in the caller
+    /// is trusted to be transparent (#10351).
+    pub(crate) transparent_macros_rebound: bool,
 }
 
 /// The resolved chain for one helper. `stop_above` names the first
@@ -992,6 +999,7 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
+            transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1106,6 +1114,7 @@ fn chain_through_caller(
         arguments,
         receiver: None,
         through_macro: false,
+        transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1294,6 +1303,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         arguments,
         receiver: Some(receiver.to_string()),
         through_macro: false,
+        transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
     })
 }
 
@@ -1358,6 +1368,37 @@ pub(crate) fn test_reaches_through_chain(
     reached.then_some(chain)
 }
 
+/// Whether `body` opens a raw string (`r"`, `r#"`, `br"`, `cr##"`). The
+/// `r` must start the token: the `r` ending an identifier or an ordinary
+/// literal (`"other"`, `"user"`) is not an opener, and `r#parse` is a raw
+/// identifier, not a raw string. A literal that merely contains `r#"` still
+/// matches, which only refuses (missed credit), never credits.
+fn has_raw_string_opener(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    bytes.iter().enumerate().any(|(index, &byte)| {
+        if byte != b'r' {
+            return false;
+        }
+        // A `b` or `c` prefix belongs to the opener, not to an identifier.
+        let token_start = match index.checked_sub(1).map(|at| bytes[at]) {
+            Some(b'b' | b'c') => index - 1,
+            _ => index,
+        };
+        if token_start
+            .checked_sub(1)
+            .is_some_and(|at| is_ident(bytes[at]))
+        {
+            return false;
+        }
+        let mut next = index + 1;
+        while bytes.get(next) == Some(&b'#') {
+            next += 1;
+        }
+        bytes.get(next) == Some(&b'"')
+    })
+}
+
 /// Evaluate a helper's return value over bound exact inputs (#3296,
 /// the boolean/return predicate family). V1 supports a body whose
 /// final expression is a bare binding established by simple single-line
@@ -1409,6 +1450,39 @@ pub(crate) fn helper_return_value(
             continue;
         }
         let cleaned = trimmed.trim_end_matches(';').trim();
+        // Masking blanks a string literal, so a line that is one whole
+        // literal reads empty here; it is the tail, not a skipped line.
+        if cleaned.is_empty() && strict_literal(raw_line.trim().trim_end_matches(';')).is_some() {
+            // Masking also blanks the interior of a multi-line raw string,
+            // and an `async` body or an early `return` makes the last
+            // literal something other than the value the call yields.
+            let word = |name: &str| {
+                masked
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|token| token == name)
+            };
+            // A `;` makes it a discarded expression statement, not the
+            // value the helper yields; the binding tail below decides.
+            if raw_line.trim().ends_with(';') {
+                continue;
+            }
+            if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
+                || has_raw_string_opener(&helper.body)
+                // Masking blanks block-comment text exactly like a string,
+                // so a quoted line inside `/* ... */` would read as a tail.
+                || helper.body.contains("/*")
+                || word("async")
+                || word("return")
+                || tail.is_some()
+            {
+                return None;
+            }
+            if tail.is_some() {
+                return None;
+            }
+            tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
+            continue;
+        }
         if cleaned.is_empty()
             || cleaned.starts_with("//")
             || cleaned.starts_with('#')
@@ -1429,6 +1503,17 @@ pub(crate) fn helper_return_value(
         tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
     }
     let tail = tail?;
+    // A helper whose tail is one strict literal returns it whatever its
+    // inputs are (`fn pick(_kind: &str) -> &'static str { "alpha" }`).
+    // Only a whole-token literal counts, so no operation is evaluated.
+    if let Some(literal) =
+        strict_literal(&tail).filter(|text| super::match_transfer::is_single_literal(text))
+    {
+        return match super::value_transfer::evaluate_initializer(&literal, inputs) {
+            super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
+            _ => None,
+        };
+    }
     let is_identifier = !tail.is_empty()
         && tail
             .chars()
@@ -1663,7 +1748,7 @@ pub(crate) fn chain_entry_pin_admits(
     if !every_hop_is_a_method_site {
         return false;
     }
-    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests) {
+    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
         return false;
     }
     let Some(entry) = chain.hops.last() else {
@@ -2153,8 +2238,11 @@ pub(crate) fn chain_forwards_to_observed_hops(
         &crate::analysis::facts::TestSummary,
         crate::domain::RelationReason,
     )],
+    index: &RustIndex,
 ) -> bool {
-    hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+    let hops = observed_hops(chain, related_tests);
+    hops_forward_owner_result(owner_name, hops)
+        || asserting_method_entry(owner_name, hops, index).is_some()
 }
 
 /// The returned-ledger proof covers only the first caller. It may replace that
@@ -2281,6 +2369,130 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
     true
 }
 
+/// #9329: the asserting entry of a method-hop chain. The top hop is a
+/// `#[cfg(test)]` check helper that makes the method hop's receiver call
+/// (`fn check(expected, b: ByteSize, si) { assert_eq!(expected, b.to_string_as(si)) }`)
+/// and does nothing else, so the helper's assertion observes the result of
+/// that call directly. It answers the top hop when:
+///
+/// - every hop below it hands the owner's result straight to its caller's
+///   return ([`hops_forward_owner_result`]), so the method's result is the
+///   owner's result with no transformation;
+/// - the helper's body is exactly one `assert_eq!`/`assert_ne!` statement,
+///   so nothing rebinds, drops or reshapes the call's result first;
+/// - one compared operand is exactly the hop's call, `<receiver>.<method>(<args>)`
+///   with the hop's own arguments, and the other operand names neither the
+///   receiver, the method, nor a direct call of the owner (an expected
+///   value derived from the same call would make the comparison trivial).
+///
+/// Anything else, including a chain of one hop, answers `None` (fail closed).
+pub(crate) fn asserting_method_entry<'a>(
+    owner_name: &str,
+    hops: &'a [HelperHop],
+    index: &RustIndex,
+) -> Option<&'a HelperHop> {
+    use crate::analysis::facts::FunctionSourceRole;
+    let (top, below) = hops.split_last()?;
+    let method = below.last()?.caller.name.as_str();
+    let receiver = top.receiver.as_deref()?;
+    if top.through_macro
+        || top.caller.source_role != FunctionSourceRole::CfgTestModule
+        || !hops_forward_owner_result(owner_name, below)
+        || !hops_call_the_indexed_callees(owner_name, below, index)
+        || !top
+            .arguments
+            .iter()
+            .all(|argument| is_identifier(argument.trim()))
+    {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&top.caller.body);
+    if masked.len() != top.caller.body.len() {
+        return None;
+    }
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    let inner = top.caller.body.get(open + 1..close)?.trim();
+    let masked_inner = masked.get(open + 1..close)?.trim();
+    // Exactly one statement: the assertion macro, with at most a closing `;`.
+    let statement = masked_inner.strip_suffix(';').unwrap_or(masked_inner);
+    if !(statement.starts_with("assert_eq!(") || statement.starts_with("assert_ne!("))
+        || statement.contains(';')
+        || super::reveal::matching_parenthesis(statement, "assert_eq!".len())
+            .is_none_or(|end| end + 1 != statement.len())
+    {
+        return None;
+    }
+    let raw_statement = inner.strip_suffix(';').unwrap_or(inner);
+    let operands = super::reveal::assertion_comparison_operands(raw_statement)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    let call = squash(&format!(
+        "{receiver}.{method}({})",
+        top.arguments
+            .iter()
+            .map(|argument| argument.trim())
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+    let other = if squash(operands[0]).trim_start_matches('&') == call {
+        operands[1]
+    } else if squash(operands[1]).trim_start_matches('&') == call {
+        operands[0]
+    } else {
+        return None;
+    };
+    let other_masked = crate::analysis::language::mask_rust_comments_and_strings(other);
+    let names_word = |text: &str, word: &str| contains_word(text, word);
+    if names_word(&other_masked, receiver)
+        || names_word(&other_masked, method)
+        || is_direct_call_site(&other_masked, owner_name)
+    {
+        return None;
+    }
+    Some(top)
+}
+
+/// #9329: every hop below the asserting entry calls the workspace function the
+/// chain names, not another item that only shares its bare name. A hop's caller
+/// file that imports (or macro-defines) the callee name, or a caller body that
+/// rebinds it, makes the call unresolved, so the observed result may belong to
+/// `std::cmp::min` rather than the changed `min`. The callee must also be the
+/// one workspace function of that name. Anything unresolved refuses the hop.
+fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &RustIndex) -> bool {
+    let files = index.files();
+    hops.iter().enumerate().all(|(step, hop)| {
+        let callee = match step.checked_sub(1) {
+            None => owner_name,
+            Some(below) => match hops.get(below) {
+                Some(lower) => lower.caller.name.as_str(),
+                None => return false,
+            },
+        };
+        let Some(file) = files.get(&hop.caller.file) else {
+            return false;
+        };
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&hop.caller.body);
+        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        let rebinds = ["fn ", "let ", "let mut "].iter().any(|prefix| {
+            let pattern = format!("{prefix}{callee}");
+            masked.match_indices(&pattern).any(|(at, _)| {
+                !masked[..at].chars().next_back().is_some_and(is_word)
+                    && !masked[at + pattern.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        });
+        callee_is_unique(callee, index)
+            && !rebinds
+            && !super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                callee,
+                &index.package_names,
+            )
+    })
+}
+
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
     !hops.is_empty()
         && hops.iter().enumerate().all(|(step, hop)| {
@@ -2299,11 +2511,175 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                 },
             };
             caller_tail_forwards_call(&hop.caller, callee, &hop.call_text)
+                // #10284: a caller that binds its callee's name
+                // (`let is_bulk = |_| true;`) calls the binding, and a
+                // user macro may expand to an early `return` the textual
+                // return scan cannot see.
+                && !caller_rebinds_parameter(&hop.caller.body, callee)
+                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
                 })
         })
+}
+
+/// Standard macros whose expansion holds no `return` of its own: any
+/// `return` in their arguments is caller text the return scan already
+/// reads. Panicking ones (`assert!`, `panic!`) end the test, they do not
+/// change the forwarded value. Each is a parser-checked
+/// [`TRUSTED_MACRO_NAMES`](crate::analysis::syntax::TRUSTED_MACRO_NAMES)
+/// entry, so [`transparent_macro_name_rebound`] can establish its identity.
+const TRANSPARENT_STD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "dbg",
+    "format",
+    "format_args",
+    "write",
+    "writeln",
+    "vec",
+    "matches",
+    "concat",
+    "stringify",
+];
+
+/// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
+/// something other than the standard macro, by the parser-backed binding
+/// scan the trusted-assertion reading uses. An out-of-line module counts as
+/// unresolved, which only withholds forwarding credit. A caller with no
+/// `!` invokes no macro, so the index scan is skipped for it.
+fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
+    caller_body.contains('!')
+        && index.files().iter().any(|(path, file)| {
+            if file.macro_candidates.as_deref().is_some_and(|candidates| {
+                TRANSPARENT_STD_MACROS
+                    .iter()
+                    .all(|name| !candidates.may_bind(name))
+            }) {
+                return false;
+            }
+            !crate::analysis::syntax::trusted_macro_binding_sites(
+                &file.source,
+                index.macro_scope_crates(),
+                TRANSPARENT_STD_MACROS,
+                &|_, _| false,
+                &|krate| index.drop_in_manifests.verified_root(path, krate),
+            )
+            .is_empty()
+        })
+}
+
+/// Whether `body` invokes a macro whose expansion is not known to hold no
+/// `return` (#10284). Only a bare [`TRANSPARENT_STD_MACROS`] name, with no
+/// rebinding anywhere in the index, is transparent. A path-qualified macro
+/// is opaque even under `std::` or `tracing::`: a crate alias
+/// (`use crate as tracing;`) can route the path to an exported user macro,
+/// and ripr does not resolve path roots here (#10351).
+fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
+    // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
+    // any other path before `!` and a delimiter is a macro path, even with
+    // whitespace between (`bail ! (qty)` is valid Rust).
+    const PREFIX_KEYWORDS: &[&str] = &["if", "while", "match", "return", "in", "break", "yield"];
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    masked.match_indices('!').any(|(at, _)| {
+        let is_invocation = masked.get(at + 1..).is_some_and(|rest| {
+            rest.trim_start_matches(is_rust_whitespace)
+                .starts_with(['(', '[', '{'])
+        });
+        if !is_invocation {
+            return false;
+        }
+        let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        let [name] = segments.as_slice() else {
+            // No path is no macro; a qualified path (`dep :: r#println!`,
+            // `::m!`) may name any crate's macro, so it is opaque.
+            return !segments.is_empty();
+        };
+        if global {
+            return true;
+        }
+        if PREFIX_KEYWORDS.contains(name) {
+            return false;
+        }
+        transparent_macros_rebound
+            || !TRANSPARENT_STD_MACROS.contains(&name.trim_start_matches("r#"))
+    })
+}
+
+/// Rust's lexer whitespace (Pattern_White_Space). It includes U+200E and
+/// U+200F, which `str::trim` keeps; trimming with anything narrower lets
+/// `dep::\u{200E} println!` read as a bare `println!` or hides the `!` of
+/// `bail!\u{200E}(qty)` from the invocation check.
+fn is_rust_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\u{0B}'
+            | '\u{0C}'
+            | '\r'
+            | ' '
+            | '\u{85}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
+/// The macro path that ends `head`, read token by token from the end:
+/// identifier segments (a raw one keeps its `r#`) joined by `::`
+/// with any whitespace or masked comment between them. Returns the
+/// segments, root first, and whether the path starts with `::`.
+fn macro_path_before(head: &str) -> (Vec<&str>, bool) {
+    // Any non-ASCII character other than whitespace counts as identifier
+    // text, so `éprintln` stays one token instead of yielding `println`.
+    let is_ident =
+        |c: char| c.is_alphanumeric() || c == '_' || (!c.is_ascii() && !is_rust_whitespace(c));
+    let mut segments = Vec::new();
+    let mut rest = head.trim_end_matches(is_rust_whitespace);
+    loop {
+        let start = rest
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !is_ident(*c))
+            .map_or(0, |(index, c)| index + c.len_utf8());
+        if rest.get(start..).is_none_or(str::is_empty) {
+            break;
+        }
+        // Keep a raw marker on the segment: `r#if!` is a macro, not `if`.
+        let start = match rest.get(..start) {
+            Some(before) if before.ends_with("r#") => start - 2,
+            _ => start,
+        };
+        segments.push(rest.get(start..).unwrap_or_default());
+        rest = rest
+            .get(..start)
+            .unwrap_or_default()
+            .trim_end_matches(is_rust_whitespace);
+        match rest.strip_suffix("::") {
+            Some(before) => rest = before.trim_end_matches(is_rust_whitespace),
+            None => break,
+        }
+        if !rest.ends_with(is_ident) {
+            segments.reverse();
+            return (segments, true);
+        }
+    }
+    segments.reverse();
+    (segments, false)
 }
 
 /// Whether `receiver` is exactly one receiver expression: `self`, or a
@@ -3529,9 +3905,73 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         }
+    }
+
+    // #10284 review: keyword-prefixed negation is not a macro, while a
+    // user macro stays opaque with or without space before its `!`.
+    #[test]
+    fn opaque_macro_detection_separates_keywords_from_macro_paths() {
+        for body in [
+            "if !(a && b) { 1 } else { 0 }",
+            "return !(flag);",
+            "while !(done) {}",
+            "let same = a != b;",
+            "assert_eq!(a, b); write!(out, \"x\"); vec![1]",
+            "let s = \"bail!(x)\"; // bail!(x)",
+        ] {
+            assert!(!caller_invokes_opaque_macro(body, false), "{body}");
+        }
+        for body in [
+            "bail!(x);",
+            "bail ! (x);",
+            "bail !\n{ x };",
+            "crate::m::bail![x];",
+            // #10351 review: a bare logging name may be a crate's own
+            // early-returning macro, and a path root may be a crate alias
+            // (`use crate as tracing;`), so no path-qualified macro is
+            // trusted.
+            "info!(qty);",
+            "helpers::info!(qty);",
+            "tracing::info!(qty);",
+            "log::warn!(qty);",
+            "std::println!(\"x\");",
+            // #10351 review: spacing, comments and raw identifiers do not
+            // turn a qualified path into a bare trusted name.
+            "dep :: println!(qty);",
+            "dep::r#println!(qty);",
+            "dep /* c */ :: r#println ! (qty);",
+            "::println!(qty);",
+            // #10351 review: a non-ASCII identifier is one token, not its
+            // ASCII tail.
+            "éprintln!(qty);",
+            "r#éprintln!(qty);",
+            "dep::éprintln!(qty);",
+            // #10351 review: U+200E/U+200F are Rust whitespace, so they
+            // neither cut a qualified path nor hide an invocation.
+            "dep::\u{200E} println!(qty);",
+            "dep\u{200F}::println!(qty);",
+            "bail_at_ten!\u{200E}(qty);",
+            "bail_at_ten\u{200F}!(qty);",
+        ] {
+            assert!(caller_invokes_opaque_macro(body, false), "{body}");
+        }
+        // Once any file rebinds a standard name, no bare macro is trusted.
+        assert!(caller_invokes_opaque_macro("println!(\"x\");", true));
+        assert!(!caller_invokes_opaque_macro("let same = a != b;", true));
+        assert!(!caller_invokes_opaque_macro("r#println!(\"x\");", false));
+        assert_eq!(macro_path_before("x; éprintln"), (vec!["éprintln"], false));
+        assert_eq!(
+            macro_path_before("x; dep    :: r#m "),
+            (vec!["dep", "r#m"], false)
+        );
+        assert!(caller_invokes_opaque_macro("r#if!(x);", false));
+        assert_eq!(macro_path_before("x; :: m"), (vec!["m"], true));
+        assert_eq!(macro_path_before("let s = a"), (vec!["a"], false));
+        assert_eq!(macro_path_before("(a) "), (Vec::<&str>::new(), false));
     }
 
     // #6694 / #6672: an exact oracle on the wrapper's result stands for the
@@ -3543,6 +3983,10 @@ mod tests {
             "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
             "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
+            // #10284 controls: unshadowed bare standard macros expand to no
+            // `return` of their own, and a `!=` is not a macro.
+            "pub fn w(qty: u32) -> u32 {\n    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    debug_assert!(qty != 0);\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             // Controls for the value comparison: distinct values forward.
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 6 }\n}",
             "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"b\" } else { \"a\" }\n}",
@@ -3585,6 +4029,12 @@ mod tests {
             "pub fn w(qty: u32) -> Option<bool> {\n    let q = Some(qty)?;\n    Some(is_bulk(q))\n}",
             // method call with the same name is not the hop
             "pub fn w(qty: u32) -> bool {\n    self.is_bulk(qty)\n}",
+            // #10284: a local binding shadows the callee
+            "pub fn w(qty: u32) -> u32 {\n    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            // #10284: a user macro may hide an early `return`
+            "pub fn w(qty: u32) -> u32 {\n    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    crate::bail![qty];\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    bail_at_ten ! (qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
         ] {
             assert!(
                 !chain_forwards_owner_result("is_bulk", &one_hop_chain(body)),
@@ -3775,6 +4225,7 @@ mod tests {
             arguments: Vec::new(),
             receiver: None,
             through_macro: false,
+            transparent_macros_rebound: false,
         };
         let chain = HelperChain {
             hops: vec![hop(lower.clone()), hop(upper)],
@@ -3809,20 +4260,24 @@ mod tests {
         };
         let middle_test = calling("middle", "assert!(middle(10));");
         let entry_test = calling("entry", "assert_eq!(entry(10), 5);");
+        let empty = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
         assert!(chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test])
+            &related(&[&middle_test]),
+            &empty
         ));
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&entry_test])
+            &related(&[&entry_test]),
+            &empty
         ));
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test, &entry_test])
+            &related(&[&middle_test, &entry_test]),
+            &empty
         ));
         // A helper-owner-call test whose hop cannot be found checks the
         // whole chain.
@@ -3830,7 +4285,8 @@ mod tests {
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test, &unknown])
+            &related(&[&middle_test, &unknown]),
+            &empty
         ));
     }
 
@@ -3852,6 +4308,7 @@ mod tests {
                     arguments: Vec::new(),
                     receiver: None,
                     through_macro: false,
+                    transparent_macros_rebound: false,
                 }],
                 stop_above: None,
             }

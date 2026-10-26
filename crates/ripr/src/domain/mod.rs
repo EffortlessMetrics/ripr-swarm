@@ -18,6 +18,7 @@ mod language;
 pub(crate) mod language_capability;
 #[cfg(test)]
 mod language_capability_drift;
+mod limit_guidance;
 mod next_action;
 mod probe;
 mod repair_card;
@@ -110,8 +111,8 @@ pub(crate) use probe::{
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
     FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
-    RelatedTest, RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason,
-    ValueContext, ValueFact,
+    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
+    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,

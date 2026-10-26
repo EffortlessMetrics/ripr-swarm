@@ -662,7 +662,7 @@ fn the_candidate_manifest_reader_agrees_with_the_admitted_live_head_manifest() -
         std::path::Path::new("manifest.json"),
         &approved,
     )?;
-    let read = candidate_sha(&fixture.root.join("manifest.json"))?;
+    let read = candidate_sha(&fixture.root.join("manifest.json"), &approved)?;
     if read != admitted.candidate_sha()? {
         return Err(format!(
             "harness read {read}, admitted manifest names {}",
@@ -1562,4 +1562,133 @@ fn the_child_never_inherits_a_variable_that_redirects_git() {
             "{name} must be removed from every child"
         );
     }
+}
+
+#[test]
+fn the_termination_consumer_binds_runtime_produced_manifest_bytes() -> TestResult {
+    use crate::reports::release::candidate_harness::live_head::tests::Fixture;
+    let fixture = Fixture::new()?;
+    fixture.write()?;
+    let args = [
+        "release-manifest-proposal",
+        "--controller-root",
+        fixture.root.to_str().ok_or("non-UTF-8 fixture")?,
+        "--version",
+        "0.11.0",
+        "--input",
+        "manifest.json",
+        "--out",
+        "proposal",
+    ];
+    crate::dispatch::execute(crate::XtaskCommand::parse(
+        args.into_iter().map(String::from),
+    ))?;
+    let produced = fixture.root.join("proposal/manifest.json");
+    let accepted =
+        crate::blind_journey::sha256_hex(&std::fs::read(&produced).map_err(|e| e.to_string())?);
+    let path = produced.to_str().ok_or("non-UTF-8 proposal")?;
+    let sha = "a".repeat(40);
+    let with = |digest: &str, commit: Option<&str>| -> Vec<String> {
+        let mut args: Vec<String> = [
+            "--binary",
+            "unexecuted",
+            "--candidate-manifest",
+            path,
+            "--candidate-manifest-sha256",
+            digest,
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        if let Some(commit) = commit {
+            args.extend(["--expected-commit".to_string(), commit.to_string()]);
+        }
+        args
+    };
+
+    // The accepted digest alone binds the produced bytes and supplies the
+    // commit; no --expected-commit is needed.
+    let options = super::command::parse_args(&with(&accepted, None))?;
+    assert_eq!(options.expected_commit.as_deref(), Some(sha.as_str()));
+    let options = super::command::parse_args(&with(&accepted.to_ascii_uppercase(), Some(&sha)))?;
+    assert_eq!(options.expected_commit.as_deref(), Some(sha.as_str()));
+    match super::command::parse_args(&with(&accepted, Some(&"f".repeat(40)))) {
+        Err(error) if error.contains("disagrees with the candidate manifest") => {}
+        other => {
+            return Err(format!(
+                "explicit commit disagreement must refuse: {:?}",
+                other.err()
+            ));
+        }
+    }
+
+    // Edited bytes are refused even when they still parse and name a commit,
+    // and even without --expected-commit to catch them (#10251).
+    let original = std::fs::read_to_string(&produced).map_err(|e| e.to_string())?;
+    let edited = original.replacen(&sha, &"b".repeat(40), 1);
+    if edited == original {
+        return Err("fixture must name the candidate sha to edit".to_string());
+    }
+    std::fs::write(&produced, edited).map_err(|e| e.to_string())?;
+    match super::command::parse_args(&with(&accepted, None)) {
+        Err(error) if error.contains("not the accepted --candidate-manifest-sha256") => {}
+        other => {
+            return Err(format!(
+                "edited manifest bytes must be refused: {:?}",
+                other.err()
+            ));
+        }
+    }
+    // This proves runtime producer/consumer wiring only. The synthetic owner
+    // packets grant no final-main, protected-ref or native #1609 acceptance.
+    Ok(())
+}
+
+#[test]
+fn the_candidate_manifest_and_its_accepted_digest_travel_together() -> TestResult {
+    let to_args = |items: &[&str]| -> Vec<String> {
+        let mut args = vec!["--binary".to_string(), "unexecuted".to_string()];
+        args.extend(items.iter().map(|item| item.to_string()));
+        args
+    };
+    match super::command::parse_args(&to_args(&["--candidate-manifest", "manifest.json"])) {
+        Err(error) if error.contains("requires --candidate-manifest-sha256") => {}
+        other => {
+            return Err(format!(
+                "a manifest without a digest must refuse: {:?}",
+                other.err()
+            ));
+        }
+    }
+    let digest = "a".repeat(64);
+    match super::command::parse_args(&to_args(&["--candidate-manifest-sha256", &digest])) {
+        Err(error) if error.starts_with("--candidate-manifest-sha256 requires") => {}
+        other => {
+            return Err(format!(
+                "a digest without a manifest must refuse: {:?}",
+                other.err()
+            ));
+        }
+    }
+    match super::command::parse_args(&to_args(&[
+        "--candidate-manifest",
+        "manifest.json",
+        "--candidate-manifest-sha256",
+        "abc",
+    ])) {
+        Err(error) if error.contains("is not a 64-character SHA-256") => {}
+        other => return Err(format!("a short digest must refuse: {:?}", other.err())),
+    }
+    for flag in ["--candidate-manifest", "--candidate-manifest-sha256"] {
+        let value = if flag == "--candidate-manifest" {
+            "manifest.json"
+        } else {
+            digest.as_str()
+        };
+        match super::command::parse_args(&to_args(&[flag, value, flag, value])) {
+            Err(error) if error == format!("{flag} was given twice") => {}
+            other => return Err(format!("a repeated {flag} must refuse: {:?}", other.err())),
+        }
+    }
+    Ok(())
 }

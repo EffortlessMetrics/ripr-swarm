@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- A verdict-corpus ledger takes a new spec's scope as `spec-scopes/<RIPR-SPEC-NNNN>.toml` (in scope, out of scope with a reason, waived examples, or `unmeasured = true`) instead of a `[[spec]]` or `[[unmeasured]]` entry appended to `spec-coverage.toml`, which every spec PR edited at the same tail in all four corpora. The directory is optional only when absent, the file stem must equal the id, and a spec named both ways fails. The newest two entries in each ledger moved to files. (#9859)

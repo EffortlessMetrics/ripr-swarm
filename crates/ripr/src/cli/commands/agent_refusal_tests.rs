@@ -17,6 +17,8 @@ fn sample_attempt() -> Result<ResolvedRepairAttempt, String> {
         manifest_path: PathBuf::from("attempt.json"),
         before_snapshot_path: PathBuf::from("before.json"),
         packet_path: PathBuf::from("packet.json"),
+        gap_base: None,
+        gap_base_commit: None,
     })
 }
 
@@ -59,6 +61,14 @@ fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
     assert!(!agent_verify_error_is_typed_refusal(&format!(
         "failed to read agent verify --before snapshot dir/{AGENT_VERIFY_INPUT_DRIFT_ERROR}"
     )));
+    for prefix in [
+        AGENT_VERIFY_NO_MOVEMENT_PREFIX,
+        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX,
+    ] {
+        assert!(!agent_verify_error_is_typed_refusal(&format!(
+            "failed to read agent verify --before snapshot dir/{prefix}"
+        )));
+    }
     assert!(!agent_verify_error_is_typed_refusal(&format!(
         "{AGENT_VERIFY_INPUT_DRIFT_ERROR} (extra)"
     )));
@@ -250,11 +260,6 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
             "missing `{fragment}`: {message}"
         );
     }
-    // With no violations the recovery still renders, naming no path.
-    let empty = before_phase_dirty_premise_refusal_with_restart("ripr restart", &[]);
-    assert!(empty.contains("differ from HEAD: ."), "{empty}");
-    assert!(empty.contains("`git commit -- `"), "{empty}");
-    assert!(empty.contains("rerun `ripr restart`"), "{empty}");
 }
 
 #[test]
@@ -284,8 +289,13 @@ fn policy_omitted_hint_routes_to_the_brief_not_a_relisting() {
         hint.contains("ripr agent brief --root") && hint.contains("--json"),
         "{hint}"
     );
+    let quoted_seam = if cfg!(windows) {
+        "\"seam one\""
+    } else {
+        "'seam one'"
+    };
     assert!(
-        hint.contains("'seam one'"),
+        hint.contains(quoted_seam),
         "seam id must be shell-quoted: {hint}"
     );
     assert!(

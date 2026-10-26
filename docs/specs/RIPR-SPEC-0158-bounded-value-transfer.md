@@ -40,13 +40,33 @@ exercised boundary from a missing one.
   `&str`/`String`/integer owner parameters, same-file constants and
   literals resolves the same way, but only for ordering predicates
   (`<`, `<=`, `>`, `>=`): an `==` or `!=` guard never credits, because one
-  on-boundary row cannot discriminate its neighbours. Integer owner
+  on-boundary row cannot discriminate its neighbours. The one exception is
+  an emptiness guard (#9619): the whole changed condition is the single
+  comparison `text.len() == 0` or `text.len() != 0` over a `&str` or
+  `String` parameter. It credits only when the related calls give the
+  operand both an empty and a non-empty value, every related test that
+  calls the owner holds only strong assertions (a conservative proxy: a
+  weakly asserted call is not read as pinning the guard), and each row is
+  readable; one unreadable row keeps the unknown reading. The credit covers
+  the guard's negation, `== 1` and constant `true`/`false` mutants; it does
+  not claim neighbours such as `len() < 2`, which need a one-character row. Rows may come from direct calls or from the cells of a constant
+  `for` table, where a whole string literal cell is an exact input
+  for this guard alone; any other string-valued column stays unread.
+  Rows on one side only, a literal other than `0`, a compound condition and
+  a loop that can leave a row early keep the unknown reading. Integer owner
   parameters must be 32 bits or wider (`u32`, `i32`, `u64`, `i64`,
   `u128`, `i128`, `usize`, `isize`); `u8`/`i8`/`u16`/`i16` stay unknown.
   A computed or call-result argument, a generic or slice receiver and a
   rebound parameter stay unknown, and a local initializer that reads a
   parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
-  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  `while let`/`match`/closure earlier (`let x = x + 10;`) is unresolved.
+  The rebinding scan is token-level and fail-closed (#9774): the name as a
+  whole token in the pattern of any earlier `let` (plain, destructuring
+  `let (n, _)`/`let Foo { n, .. }`/`let &n`, `let Some(n) = .. else {..}`,
+  `if let`, `while let`, or on the declaration's own line), in a `for`
+  pattern, in any closure parameter list (`|(n, m)|`, `|&n|`), or in a
+  `match` arm pattern region (even when the `=>` is on another line), or in a
+  nested block's `let`, counts as a rebinding. Over-declining is accepted. A direct
   closed-form operand is known only when every related call row
   evaluates it; a computed local keeps its existing any-row semantics
   (#3295), where one evaluable row suffices. The difference is
@@ -71,6 +91,48 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Literal byte-length boundary (#9637): diff analysis also reads one closed
+  owner shape, `fn f(text: &str, width: usize) -> bool { let end =
+  text.as_bytes().len(); end <= width }`, with immutable parameters and local,
+  no other statement, attributes or generic parameters, and established
+  primitive type names. Parameter and local names are read from the AST.
+  Every admitted direct call has two whole literals: a Rust string decoded
+  by the parser and a plain decimal `usize` input. At most 64 call rows and
+  512 source bytes per string literal are read. Other expressions, aliases,
+  explicit hidden references and unresolved owner or primitive bindings keep the ordinary
+  unknown reading. The existing owner-reference counter must account for
+  exactly the declaration and admitted literal call sites in the owner file
+  and every indexed file the native free-function reach scan marks as
+  explicitly naming the owner. Function references, aliases and owner-naming
+  macros in any indexed source cannot hide another explicit input. External
+  or macro-derived documentation refuses the witness globally, and primitive
+  shadow checks still cover every indexed file. The counter's closed source
+  grammar permits only `use super::*` imports in owner-referencing files, so
+  even a direct `std::primitive::usize` import there is unsupported. This
+  inherits the native free-function reach limits around generated identifiers
+  and calls; it does not establish universal macro-expansion completeness.
+  This is a diff-only refinement; the general evaluator,
+  repo-seam/test-grip path and persistent fact/classification generations are
+  unchanged.
+  Each typed row retains its test identity, owner identity and exact source
+  call range. An equality between that row's UTF-8 byte length and its width
+  establishes infection. Credit also requires the existing admitted
+  owner-return pin on that same source call; another row, same-line call,
+  assertion message or foreign owner cannot supply it. A row is admitted only
+  when its call is a direct statement of a test body that has no branch, loop,
+  closure, `?` or early exit, so an assertion under `if false` supplies none.
+  A call to the right of `||` or `&&` in its own statement is short-circuited
+  and supplies none (`assert!(true || !f(..))`).
+  The edit's old initializer must be the plain `text.len()`, the known no-op
+  rewrite; any other old spelling is not assumed equivalent and gets no row.
+  The owner AST
+  establishes the comparison as the returned value, supplied to the existing
+  propagation authority as an owner-bound return sink. Derived local values
+  are rendered as assignment facts; rendered `==` text grants no authority.
+  No new missing-input gap is inferred from distant or unsupported inputs.
+  The changed-binding causal relation remains visible. Its syntax-only
+  unresolved-value disclosure is omitted after the actual infection stage
+  establishes the operand from input evidence; unknown operands retain it.
 - Flag-selected locals (#9276): `if flag { A } else { B }` and
   `if !flag { A } else { B }` evaluate to the arm an exact boolean input
   selects, and the other arm is never read. A local's initializer may
@@ -103,6 +165,38 @@ exercised boundary from a missing one.
   only mentions of the name are receiver calls (`expected.to_string()`)
   is not counted as a caller: a method call never resolves to a free
   function.
+- Multi-caller owner (#9329): an owner with several direct callers binds per
+  caller. Each caller is resolved on its own, and the chain is the one
+  caller a related test reaches (a test calls the caller or a hop above it
+  by name). A caller no test reaches contributes nothing. The chain
+  declines, naming the multi-caller edge, when no caller is reached, when
+  two are reached (the tests' own call path to the owner is ambiguous, even
+  through different tests), when a test calls the owner itself, or when the
+  owner has more than eight callers; a reached caller whose hop does not
+  bind carries its own stop. The binding is per chain, not per test, so a
+  second reached caller is a deliberate limit.
+- Asserting entry (#9329): a method hop does not forward the owner's result
+  by the tail rule, but its top hop may be a `#[cfg(test)]` helper whose
+  whole body is one `assert_eq!`/`assert_ne!` with one operand exactly the
+  receiver call (`b.to_string_as(si)`, the hop's own arguments) and an
+  other operand that names neither the receiver, the method nor a direct
+  call of the owner, over hops below it that each tail-forward the call
+  and each call the indexed workspace function they name: the callee is
+  the one workspace function of that name, and the hop's file neither
+  imports nor macro-defines another item of the name and its body does not
+  rebind it (a method calling an imported `std::cmp::min` is not a caller
+  of a changed local `min`)
+  (`helper_transfer::asserting_method_entry`). Propagation then counts the
+  chain as forwarding, and the same-test pairing
+  (`boundary_pairing::entry_loan_pairs_boundary_call`) pairs the helper's
+  discriminating assertion with the transferred `==` row on the line of an
+  eager call to the helper, recomputed from that test alone, when that
+  call is the helper's only call on the line apart from calls inside its
+  own arguments. A dropped, let-bound, transformed or shadowed result, a
+  second statement, or a transforming method declines and keeps the
+  abstention. A free-function owner's name on a receiver call
+  (`expected.to_string()`) is not a call of the owner when judging whether
+  the expected side is computed through it.
 - Receiver values (#9329): the entry hop's receiver parameter gets one
   extra row cell, the canonical string `Type(<v0>,<v1>..)`, built only from
   `Type(<integer literals>)` for a tuple struct declared exactly once in
@@ -120,9 +214,23 @@ exercised boundary from a missing one.
   `self`, readable only as `self.<index>` for an index in range; the cell
   is never an owner parameter value, never copied through a plain
   argument, and never compared against a boundary.
+- A `mut` parameter is the compared operand like any other parameter (#10306)
+  only while the caller's value is what the comparison reads: it is never
+  written, or every write (`n = ..`, `n op= ..`, `&mut n`, a method that may
+  mutate it, a macro that names it) comes after the comparison's `if`
+  condition or sits in the `then` block of an earlier arm of the same
+  `if` / `else if` chain, with no loop, closure or second binding of the name
+  in the function. Any other shape keeps the boundary operand unresolved
+  (`infection_unknown`).
 
 ## Required Evidence
 
+- The complete retained `authored-tokens` subject's six Rust sources,
+  `tokens-fits-binding-predicate` row and public
+  `literal_length_boundary` integration target cover the byte-length leaf,
+  UTF-8/escape decoding, boundary distance, crossed rows, same-line and
+  assertion-message calls, unsupported expressions/bodies, foreign owners,
+  weak oracles and primitive-name shadowing.
 - The #3215 reproduction flip (`observed end values: unknown` →
   `infection yes: Detected related test input at the changed boundary`,
   `end == start` observed) and the removal experiment: without the
@@ -222,11 +330,11 @@ exercised boundary from a missing one.
     test calling `check("1 big", Size::kib(1), true)` with `pub const fn
     kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
     = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
-    The helper's assertion observes the method's result and a method hop never
-    forwards, so the verdict abstains at `propagation_unknown`
-    (`method-hop-field-read-hit`, and `method-hop-field-read-name-collision`
-    where the owner is named `to_string` and the helper also calls
-    `expected.to_string()`).
+    The helper's one assertion compares the method's result, which returns
+    the owner's result unchanged, so the exact pin pairs with the boundary
+    row and the verdict is `exposed` (`method-hop-field-read-hit`, and
+    `method-hop-field-read-name-collision` where the owner is named
+    `to_string` and the helper also calls `expected.to_string()`).
 14. Reject: the same chain with rows that never equal the selected unit
     (`method-hop-field-read-trap`): no boundary input is credited.
 15. Reject: a receiver rebound before the call
@@ -243,6 +351,13 @@ exercised boundary from a missing one.
     twice, a named-field struct, and `self.1` for a one-field struct: each
     keeps the earlier stop or withdraws the rows. These keep
     `infection_unknown`.
+19. Accept: the same shape with a second caller of the owner that no test
+    reaches (`method-hop-multi-caller-hit`, a `Display::fmt`).
+20. Reject: one helper call reaching two callers of the owner
+    (`method-hop-multi-caller-both-reached`, `infection_unknown`); a method
+    that transforms the result (`method-hop-transformed-result`) and a
+    helper that drops it (`method-hop-unobserved-result`), both
+    `propagation_unknown`.
 
 ## Test Mapping
 
@@ -256,6 +371,8 @@ exercised boundary from a missing one.
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
 `local-boundary-flag-alias`;
 `analysis/classify/helper_transfer/method_hop_tests.rs`,
+`analysis/classify/helper_transfer/asserting_entry_tests.rs` (including the
+wrong-owner import and rebinding negatives),
 `analysis/classify/helper_transfer/multi_caller_tests.rs` (the multi-caller
 rule: a chain whose callee has several direct callers binds through the one
 caller a test reaches, and declines when no caller is reached, when two are

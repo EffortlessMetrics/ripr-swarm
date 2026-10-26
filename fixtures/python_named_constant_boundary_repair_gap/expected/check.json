@@ -101,7 +101,9 @@
           "line": 8,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert discounted_total(20_000) == 18_000"
+          "oracle": "assert discounted_total(20_000) == 18_000",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
         },
         {
           "name": "test_no_discount_below_threshold",
@@ -109,7 +111,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert discounted_total(5_000) == 5_000"
+          "oracle": "assert discounted_total(5_000) == 5_000",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
         }
       ],
       "repair_placement": {

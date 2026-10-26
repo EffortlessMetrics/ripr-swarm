@@ -75,7 +75,7 @@ fn validate_repo_scope_diff_inputs(
     } else {
         Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
-            input.root.display()
+            crate::output::path::human_path(&input.root)
         )))
     }
 }
@@ -2118,33 +2118,8 @@ pub(super) fn gap_check_findings_snapshot(
     root: &Path,
     base: &str,
 ) -> Result<GapCheckSnapshot, String> {
-    let mut input = CheckInput {
-        root: root.to_path_buf(),
-        base: Some(base.to_string()),
-        git_timeout: Some(app::default_cli_git_timeout()),
-        ..CheckInput::default()
-    };
-    let config =
-        load_for_root(&input.root).map_err(|error| config_load_refusal(&input.root, error))?;
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
-    let worktree_run = app::diff_source::select_live_diff_source(
-        &input.root,
-        app::diff_source::DiffSourceRequest::Default,
-        input.git_timeout,
-    )
-    .is_working_tree();
-    let scope = if worktree_run {
-        app::AnalysisProgressScope::Worktree
-    } else {
-        app::AnalysisProgressScope::Diff
-    };
-    let mut output = app::check_with_progress_core(input, &config, scope, None)
-        .map_err(|error| error.to_string())?;
-    // The same disclosure normalization `ripr check` applies: a working-tree
-    // read analyzed the live files, so the committed-history flag is off.
-    if worktree_run {
-        output.unanalyzed_working_tree = false;
-    }
+    let config = load_for_root(root).map_err(|error| config_load_refusal(root, error))?;
+    let output = app::gap_bound_repair::default_check_output(root, Some(base), &config)?;
     let rendered = output::render::render_check_with_config_and_progress(
         &output,
         &OutputFormat::CheckFindingsJson,

@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "common/printed_words.rs"]
+mod printed_words;
+
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static NEXT_BASE: AtomicU64 = AtomicU64::new(0);
@@ -250,9 +253,15 @@ fn option_shaped_base_is_rejected_without_side_effects() -> Result<(), String> {
 fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
     let scratch = Scratch::new("meta")?;
     let marker = "PWNED";
-    let root = scratch
-        .path
-        .join("d$(touch PWNED)`touch PWNED`;touch PWNED&|");
+    // Windows forbids `|` in a file name, so its root swaps it for the cmd.exe
+    // metacharacters `^`, `%` and `!` and uses `mkdir`, which cmd.exe and
+    // PowerShell both run if the name ever reaches a shell (#9272).
+    let name = if cfg!(windows) {
+        "d$(mkdir PWNED)`mkdir PWNED`;mkdir PWNED&mkdir PWNED^ %CD% !CD!"
+    } else {
+        "d$(touch PWNED)`touch PWNED`;touch PWNED&|"
+    };
+    let root = scratch.path.join(name);
     repo(&root, change_lib)?;
     assert_found_change(&ripr(&root, &["check"], &[])?, "metacharacter root")?;
     let ran = ripr(&root, &["pilot", "--root", ".", "--quiet"], &[])?;
@@ -261,6 +270,56 @@ fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
         if dir.join(marker).exists() {
             return Err(format!("{} was created by command injection", marker));
         }
+    }
+    Ok(())
+}
+
+/// A summary alone cannot detect a printed command selecting an encoded
+/// sibling: both repositories deliberately contain the same one-probe change.
+#[test]
+fn printed_drill_in_round_trips_a_percent_root_from_another_cwd() -> Result<(), String> {
+    let scratch = Scratch::new("percent-root")?;
+    let root = plain(&scratch, "repo 100% %25")?;
+    let encoded_sibling = plain(&scratch, "repo 100%25 %2525")?;
+    let canonical = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+    assert_ne!(
+        canonical,
+        fs::canonicalize(&encoded_sibling).map_err(|e| e.to_string())?
+    );
+    // On Windows canonicalize supplies the verbatim prefix; the printed
+    // command must fold it while preserving the literal percent characters.
+    let root_arg = canonical.to_str().ok_or("root is not UTF-8")?;
+    let report = ripr(&scratch.path, &["check", "--root", root_arg], &[])?;
+    assert_found_change(&report, "percent root from another cwd")?;
+    let command = report
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr explain "))
+        .ok_or_else(|| format!("no drill-in command in\n{}", report.stdout))?;
+    let words = printed_words::printed_words(command)?;
+    let printed_root = words
+        .windows(2)
+        .find(|pair| pair[0] == "--root")
+        .map(|pair| pair[1].as_str())
+        .ok_or_else(|| format!("no --root operand in {command}"))?;
+    assert_eq!(
+        fs::canonicalize(printed_root).map_err(|e| e.to_string())?,
+        canonical,
+        "the printed root must select the literal directory, not its encoded sibling"
+    );
+    if cfg!(windows) {
+        assert!(!printed_root.contains('\\'), "{command}");
+        assert!(!printed_root.starts_with("//?/"), "{command}");
+    }
+    let replay_args: Vec<&str> = words.iter().skip(1).map(String::as_str).collect();
+    let replay = ripr(&scratch.path, &replay_args, &[])?;
+    assert_sane(&replay, "replayed percent-root drill-in")?;
+    if replay.code != Some(0) || !replay.stdout.contains("probe:") {
+        return Err(format!(
+            "drill-in replay failed: {:?}\n{}\n{}",
+            replay.code, replay.stdout, replay.stderr
+        ));
     }
     Ok(())
 }
