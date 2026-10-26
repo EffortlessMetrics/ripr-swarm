@@ -45,6 +45,7 @@ pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod helper_arguments;
+pub(super) mod returned_closure;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -163,6 +164,112 @@ const ADMITTED_ASSERTION_MACROS: [&str; 6] = [
     "debug_assert",
 ];
 
+/// Whether the masked assertion text holds a token that can leave the test
+/// before the comparison runs (`return`, `break`, `continue`, `yield`, `?`).
+fn operand_holds_exit_token(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.contains('?')
+        || ["return", "break", "continue", "yield"]
+            .iter()
+            .any(|word| !whole_word_offsets(&masked, word).is_empty())
+}
+
+/// Pure comparison macros that may nest in a boolean assertion's operand,
+/// each with the crate that exports it. Their expansions compare two values
+/// and never leave the enclosing function.
+const KNOWN_COMPARISON_MACROS: [(&str, &str); 4] = [
+    ("approx_eq", "float_cmp"),
+    ("relative_eq", "approx"),
+    ("abs_diff_eq", "approx"),
+    ("ulps_eq", "approx"),
+];
+
+/// The [`KNOWN_COMPARISON_MACROS`] names `source` imports by name from their
+/// crate (no glob, no `as` alias).
+fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
+    let imports = mask_comments_and_strings(source);
+    // Every `use` statement that names a macro, as its `use` tree and whether
+    // an attribute (`#[cfg(..)]`) precedes it.
+    let trees: Vec<(&str, bool)> = imports
+        .split(';')
+        .filter_map(|statement| {
+            let (before, tree) = statement.trim().rsplit_once("use ")?;
+            // Only an attribute attached to this `use` gates it, not one on
+            // an enclosing `mod` or an earlier item.
+            let attached = before
+                .rfind(['{', '}'])
+                .map_or(before, |at| &before[at + 1..]);
+            Some((tree, attached.contains("#[")))
+        })
+        .collect();
+    KNOWN_COMPARISON_MACROS
+        .iter()
+        .filter(|(name, krate)| {
+            // A `use` of the same name from anywhere else, or a gated one,
+            // could be the binding the assertion resolves to.
+            let mut from_crate = false;
+            for (tree, gated) in &trees {
+                if whole_word_offsets(tree, name).is_empty() {
+                    continue;
+                }
+                // The name must be a direct item of the crate's path: `krate::name`
+                // or one entry of `krate::{.., name, ..}`.
+                let direct = tree
+                    .trim()
+                    .strip_prefix(&format!("{krate}::"))
+                    .is_some_and(|rest| {
+                        let rest = rest.trim();
+                        // A nested group (`{inner::{x, name}}`) is not a direct
+                        // item list, so it is refused rather than split.
+                        rest.strip_prefix('{')
+                            .and_then(|group| group.strip_suffix('}'))
+                            .map_or(vec![rest], |group| {
+                                if group.contains(['{', '}']) {
+                                    Vec::new()
+                                } else {
+                                    group.split(',').collect()
+                                }
+                            })
+                            .iter()
+                            .any(|item| item.trim() == *name)
+                    });
+                let clean = !gated && direct && !tree.contains('*') && !tree.contains(" as ");
+                if !clean {
+                    return false;
+                }
+                from_crate = true;
+            }
+            from_crate
+        })
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// Every name some `macro_rules!` in the index defines.
+fn macro_rules_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for file in index.files().values() {
+        let masked = mask_comments_and_strings(&file.source);
+        for at in whole_word_offsets(&masked, "macro_rules") {
+            let Some(rest) = masked[at + "macro_rules".len()..]
+                .trim_start()
+                .strip_prefix('!')
+            else {
+                continue;
+            };
+            let name: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+    }
+    names
+}
+
 /// The rooted spellings of every admitted assertion macro: each needs the
 /// same root proof.
 const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
@@ -249,6 +356,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// made the entry depend on which probe reached the file first, which
     /// with workers is scheduling (#8797).
     by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// #10389: per test file, the known comparison macros it imports by name.
+    comparison_imports: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<&'static str>>>>,
+    /// #10389: every name a `macro_rules!` in the index defines, scanned once.
+    macro_rules_names: SyncMemo<Option<BTreeSet<String>>>,
     /// Per module-parent file, read with the plain trusted-macro list.
     module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
@@ -694,7 +805,10 @@ impl OwnerPinSyntax {
             ),
             Some("assert" | "debug_assert") => matches!(
                 family,
-                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ProbeFamily::ReturnValue
+                    | ProbeFamily::MatchArm
+                    | ProbeFamily::SideEffect
+                    | ProbeFamily::CallDeletion
             ),
             _ => false,
         };
@@ -708,6 +822,30 @@ impl OwnerPinSyntax {
             // keeps its credit. The return family keeps refusing (#8927).
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
                 matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
+            }
+            // #10389: a boolean `assert!` whose operand only nests a known
+            // pure comparison macro (`assert!(approx_eq!(f64, ..))`) is not
+            // shown dead, only unresolved: ripr does not expand third-party
+            // macros. The return family keeps the credit it had before this
+            // gate, because `rust_assertion_context_unestablished` would
+            // demote live rows of the verdict corpus. Any other nested
+            // macro (it may hide a `return`), an operand with an exit token,
+            // a test with any attribute besides `#[test]` (the function-level
+            // macro scan reports first and would hide `TestAttribute`), and
+            // every other refusal still withhold it.
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroOperandExit(_))) => {
+                family == ProbeFamily::ReturnValue
+                    && matches!(outer.as_deref(), Some("assert" | "debug_assert"))
+                    && test.attrs.iter().all(|attr| {
+                        attr.chars()
+                            .filter(|ch| !ch.is_whitespace())
+                            .eq("#[test]".chars())
+                    })
+                    && !operand_holds_exit_token(&assertion.text)
+                    && self.nested_macros_are_known_comparisons(&assertion.text, &test.file, index)
+                    && self
+                        .refusal_trusting_comparison_macros(test, assertion, index)
+                        .is_none()
             }
             Some(_) => false,
         }
@@ -1299,6 +1437,91 @@ impl OwnerPinSyntax {
         };
         let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
+    }
+
+    /// Whether every macro nested in the boolean assertion `text` is one of
+    /// [`KNOWN_COMPARISON_MACROS`], imported by name from its crate in the
+    /// test file and not defined by a `macro_rules!` anywhere in the index. A
+    /// nested path-qualified, glob-imported or locally defined macro may hide
+    /// an exit. The import and definition scans run once per file and index.
+    fn nested_macros_are_known_comparisons(
+        &self,
+        text: &str,
+        test_file: &Path,
+        index: &RustIndex,
+    ) -> bool {
+        let masked = mask_comments_and_strings(text);
+        let mut names = Vec::new();
+        for (at, _) in masked.match_indices('!') {
+            let after = masked[at + 1..].trim_start();
+            if !after.starts_with(['(', '[', '{']) {
+                continue;
+            }
+            let before = masked[..at].trim_end();
+            let start = before
+                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .map_or(0, |last| last + 1);
+            let name = &before[start..];
+            // A `!` with no identifier before it negates a parenthesized
+            // expression; it is not a macro invocation.
+            if name.is_empty() {
+                continue;
+            }
+            if before[..start].ends_with("::") {
+                return false;
+            }
+            names.push(name);
+        }
+        // The outer assertion is the first invocation; the rest are nested.
+        let Some((_, nested)) = names.split_first() else {
+            return false;
+        };
+        let Some(file) = index.files().get(test_file) else {
+            return false;
+        };
+        let imported = self
+            .comparison_imports
+            .get_or_build(&test_file.to_path_buf(), || {
+                imported_comparison_macros(&file.source)
+            });
+        let mut defined = self.macro_rules_names.borrow_mut();
+        let defined = defined.get_or_insert_with(|| macro_rules_names(index));
+        nested
+            .iter()
+            .all(|name| imported.contains(name) && !defined.contains(*name))
+    }
+
+    /// The file-text verdict for `assertion` with the known nested comparison
+    /// macros read as plain, so the function-level `MacroOperandExit` does not
+    /// hide a dead context (`return`, `loop {}`, an uncalled `fn`, `if
+    /// cfg!(any())`) the per-assertion gates would refuse (#10389). Anything
+    /// not read from the file's own text (doc examples, generated tests)
+    /// refuses.
+    fn refusal_trusting_comparison_macros(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionContextRefusal> {
+        if index.doctest_source(test).is_some() {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        };
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index) else {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        };
+        self.by_file
+            .get_or_build(&test.file, || {
+                owner_pin_assertions(&facts.source, &assertion_context_macros())
+            })
+            .refusal_trusting_comparison_macros(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (assertion.line, &assertion.text),
+                &ambiguous,
+            )
     }
 
     fn refusal(
@@ -2617,6 +2840,15 @@ enum ReturnPathGate {
     /// pinned value to be an `Ok(..)` that every element reached
     /// (`requires_ok`, #9490).
     Adaptor { position: usize, requires_ok: bool },
+    /// RIPR-SPEC-0265 rule 5: the changed tail is the owner's whole body and
+    /// one closure over its own parameters. The pinned operand must apply
+    /// the returned closure to `arity` distinct nonzero numeric literals, so
+    /// the closure runs once and the bounded typed body discriminates the
+    /// supported arithmetic replacements, including through literal captures.
+    ReturnedClosure {
+        arity: usize,
+        arithmetic: returned_closure::ArithmeticPin,
+    },
     /// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) a
     /// zero-initialized local that the owner returns, once per element of the
     /// slice-like parameter at `position`. The pinned call must pass that
@@ -2885,6 +3117,17 @@ fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExp
     }
 }
 
+/// A changed whole returned closure can confirm observation only through
+/// its admitted application pin, even when the arithmetic model is unknown.
+pub(in crate::analysis) fn returned_closure_pin_required(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && returned_closure::owner_returned_closure_tail(owner)
+            .is_some_and(|tail| tail.tail_is(&probe.expression))
+}
+
 impl OwnerReturnPin {
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
@@ -2962,6 +3205,20 @@ impl OwnerReturnPin {
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
                         requires_ok: tail.collects_result(),
+                    })
+                    // RIPR-SPEC-0265 rule 5: a returned closure applied in the
+                    // pinned expression.
+                    .or_else(|| {
+                        returned_closure::owner_returned_closure_tail(owner)
+                            .filter(|tail| tail.tail_is(&probe.expression))
+                            .and_then(|tail| {
+                                Some(ReturnPathGate::ReturnedClosure {
+                                    arity: tail.arity,
+                                    arithmetic: returned_closure::ArithmeticPin::establish(
+                                        owner, index,
+                                    )?,
+                                })
+                            })
                     })?
             }
             None => return None,
@@ -3446,6 +3703,14 @@ impl OwnerReturnPin {
     /// not hold, so that stays refused.
     fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         let operand = operand.trim();
+        // RIPR-SPEC-0265 rule 5: the pinned value is the returned closure
+        // applied to its arguments; the call shape is the owner call inside.
+        let operand = match &self.path {
+            ReturnPathGate::ReturnedClosure { arity, .. } => {
+                returned_closure::strip_applied(operand, *arity)?
+            }
+            _ => operand,
+        };
         // An async owner's bare call is its future, not its return value.
         match (self.awaited, operand.strip_suffix(".await")) {
             (true, Some(call)) => owner_call_shape(call.trim_end(), name),
@@ -4038,6 +4303,16 @@ impl OwnerReturnPin {
                             &self.name,
                             *position,
                         )
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0265 rule 5: the application must tell the
+                // closure's operators apart.
+                if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
+                    && !call_text.is_some_and(|text| {
+                        returned_closure::applied_inputs_are_distinct_literals(text, *arity)
+                            && arithmetic.discriminates(text)
                     })
                 {
                     return false;
@@ -5043,7 +5318,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::ShortCircuit(_) => true,
+            Self::Any | Self::ReturnedClosure { .. } | Self::ShortCircuit(_) => true,
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
@@ -5730,7 +6005,20 @@ fn return_path_gate_from(
     // with the changed text (`Ok("a")` is not `Ok("b")`).
     let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        let tail = collapse_whitespace(&inner_text[start..]);
+        // A comment after the tail (`1 + x // assert_eq!(..)`) is masked to
+        // blanks, so the code ends where the masked tail does; reading the
+        // unmasked rest would compare the comment with the changed text.
+        // Masking also blanks string and char literals, so the code ends at
+        // the masked end only when a real comment starts there.
+        let masked_end = start + inner[start..].trim_end().len();
+        let rest = inner_text[masked_end..].trim_start();
+        let comment_follows = rest.starts_with("//") || rest.starts_with("/*");
+        let code_end = if comment_follows {
+            masked_end
+        } else {
+            inner_text.len()
+        };
+        let tail = collapse_whitespace(&inner_text[start..code_end]);
         (tail == changed
             || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())

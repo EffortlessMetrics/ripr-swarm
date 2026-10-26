@@ -2273,14 +2273,28 @@ mod tests {
         assert_eq!(binding_names(" { a = fn, b: c, d } = o"), ["a", "c", "d"]);
         assert_eq!(binding_names(" [a = fn, b] = o"), ["a", "b"]);
         assert_eq!(binding_names(" r: ReturnType<typeof fn> = x"), ["r"]);
+        // Compare depth N against 2N on the same machine instead of a
+        // wall-clock bound: a linear reduction roughly doubles, a quadratic
+        // one quadruples, and a slow or loaded runner scales both depths alike
+        // (#10483). The best of three runs keeps a scheduling stall out of it.
+        let best_of_three = |unit: &str, closer: &str, depth: usize| {
+            let nested = format!("{}svc as any{}", unit.repeat(depth), closer.repeat(depth));
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    let _ = without_receiver_casts(&nested);
+                    started.elapsed()
+                })
+                .min()
+                .unwrap_or_default()
+        };
         for unit in ["(", "(a, (", "(<T>", "!)(", "(x, "] {
             let closer = if unit == "!)(" { "!)" } else { "))" };
-            let nested = format!("{}svc as any{}", unit.repeat(20_000), closer.repeat(20_000));
-            let started = std::time::Instant::now();
-            let _ = without_receiver_casts(&nested);
+            let half = best_of_three(unit, closer, 10_000);
+            let full = best_of_three(unit, closer, 20_000);
             assert!(
-                started.elapsed().as_secs() < 2,
-                "{unit:?} reduction is not bounded"
+                full < half * 3 + std::time::Duration::from_millis(50),
+                "{unit:?} reduction is not bounded: {half:?} at 10k, {full:?} at 20k"
             );
         }
         let deep = format!("{}new Svc(){}", "(".repeat(5000), ")".repeat(5000));

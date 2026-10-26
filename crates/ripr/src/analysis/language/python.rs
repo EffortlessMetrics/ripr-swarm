@@ -157,6 +157,7 @@ use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod forwarding_decorator;
 mod helper_assertions;
 mod literal_patch;
 mod module_callees;

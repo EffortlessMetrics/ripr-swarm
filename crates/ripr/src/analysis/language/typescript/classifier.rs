@@ -5054,6 +5054,17 @@ impl Folder<'_> {
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
 
+/// True when every oracle-eligible related test is registered under an
+/// unevaluable `if` condition (#10438).
+fn only_conditionally_registered_tests(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+    let mut eligible = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .peekable();
+    eligible.peek().is_some()
+        && eligible.all(|candidate| candidate.test.conditional_registration.is_some())
+}
+
 /// True when every oracle-eligible related test holds assertion-like code the
 /// extractor could not resolve, so the absence of a discriminator is unproven.
 fn unresolved_assertions_only(
@@ -6430,6 +6441,22 @@ pub(crate) fn classify_resolved_owner(
             StageState::Weak,
             vec![format!(
                 "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
+                owner.name
+            )],
+        )
+    } else if only_conditionally_registered_tests(related_candidates) {
+        // #10438: every oracle-eligible related test is registered under a
+        // condition static analysis cannot evaluate, so whether any of them
+        // runs, and whether its oracle discriminates, is not established.
+        // Unknown, not an actionable gap: a guarded test that does run may
+        // pin the change (the `ts-trap-platform-matched` control).
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Yes,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "Related tests reach `{}` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they assert, is not established either way.",
                 owner.name
             )],
         )

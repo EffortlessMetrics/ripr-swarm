@@ -176,3 +176,54 @@ fn an_unrecorded_write_withholds_the_binding_for_every_test() {
         );
     }
 }
+
+#[test]
+fn tests_of_one_scope_share_their_file_wide_lists() {
+    use super::tests_extract::extract_tests;
+    use std::path::Path;
+
+    // Every test used to carry its own copy of each file-wide list, so a file
+    // with n tests and n rewritten names held n^2 entries (#10017). Tests with
+    // no parameters of their own see the same scope and now hold one list.
+    let count = 600;
+    let mut text = String::from("import { Cart } from '../src/cart';\n");
+    for index in 0..count {
+        text.push_str(&format!(
+            "let v{index} = new Cart(); v{index} = new Cart();\ntest('t{index}', () => {{ expect(v{index}.total()).toBe({index}); }});\n"
+        ));
+    }
+    // A test with a parameter shadows an enclosing name, so it cannot share.
+    text.push_str("test.each([[1]])('row', (v0) => { expect(v0).toBe(1); });\n");
+    let tests = extract_tests(Path::new("shared.test.ts"), &text);
+    assert_eq!(tests.len(), count + 1);
+    let (plain, row) = tests.split_at(count);
+    let distinct = |identity: &dyn Fn(&super::types::TypeScriptTest) -> usize| {
+        plain
+            .iter()
+            .map(identity)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    };
+    assert_eq!(distinct(&|t| t.scope_bindings.identity() as usize), 1);
+    assert_eq!(
+        distinct(&|t| t.written_locals_in_file.identity() as usize),
+        1
+    );
+    assert_eq!(distinct(&|t| t.imports_in_file.identity() as usize), 1);
+    // The shared list is still complete and correct for every test.
+    assert_eq!(plain[0].scope_bindings.len(), count);
+    assert_eq!(plain[count - 1].written_locals_in_file.len(), count);
+    // Control: the parameterized test is not served the shared list.
+    assert_ne!(
+        row[0].scope_bindings.identity(),
+        plain[0].scope_bindings.identity()
+    );
+    let shadowed = row[0]
+        .scope_bindings
+        .iter()
+        .find(|binding| binding.name == "v0");
+    assert!(
+        shadowed.is_some_and(|binding| binding.constructed_by.is_none()),
+        "a row parameter must shadow the enclosing binding"
+    );
+}
