@@ -11,7 +11,7 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "9e658115f50b7a8b6804e38b03aa7c360e10c1591c02c2f3597a74ea094f1f68"
+      "sha256": "f711551768bf643cbeb96559b01d4027a7adbac4e90d7ef5e018e1cd4c861e95"
     },
     {
       "path": "benches/common/mod.rs",

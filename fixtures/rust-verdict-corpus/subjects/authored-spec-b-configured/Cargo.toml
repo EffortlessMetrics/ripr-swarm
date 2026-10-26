@@ -21,3 +21,5 @@ harness = true
 [[bench]]
 name = "exposure"
 test = true
+
+[workspace]
