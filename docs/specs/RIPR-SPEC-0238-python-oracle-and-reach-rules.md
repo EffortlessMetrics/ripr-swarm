@@ -408,7 +408,29 @@ This order is the existing behavior and is normative:
   `example` decorator and no strong assertion;
 - L8: `unresolved_pytest_fixture`: every eligible candidate is a
   non-parametrized pytest test that calls the owner and uses a
-  non-auxiliary fixture in its body;
+  non-auxiliary fixture in its body. A fixture is resolved, and does not
+  count, when it hands a module-level test a fresh literal-built instance
+  of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
+  is a single argument-free fixture decorator (`@pytest.fixture`,
+  `@fixture`, an imported alias or `@pytest_asyncio.fixture`: function
+  scope, no `params=`, no `autouse=`) on a synchronous def with no
+  parameters whose body is an optional docstring and
+  `return C(<literals>)`. `C` is the owner's class imported under its own
+  name from the owner's module, and the fixture's file binds neither the
+  fixture name nor `C` a second time. The test takes the fixture as a
+  parameter without a default, does not rebind it, and carries no
+  decorator other than a pytest mark. In its scope (the test's module and
+  every `conftest.py` up its chain): every chain conftest that exists was
+  read and parsed; no other fixture, renamed `name=` fixture (decorators
+  included) or top-level compound statement spells the fixture name; no
+  file but the fixture's own binds the name by import or assignment;
+  every `from` import comes from the owner's module or pytest; and no file
+  star-imports, declares `pytest_plugins` or `pytestmark`, defines a
+  `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
+  `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
+  The fixture parameter then counts as a receiver bound to the owner class.
+  Any other shape keeps the limit; a third-party plugin fixture outside
+  the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
@@ -928,6 +950,42 @@ mutant calibrates the rule; ripr reports only the static shape.
     loop identity scored as gaps, and a chain, a literal expected value and
     a name bound outside the loop credited).
 
+26. **A doctest example is a test only when pytest collects it and running it
+    notices the edit.** With `--doctest-modules` in the `addopts` of the
+    pytest configuration (`pyproject.toml`, `pytest.ini`, `tox.ini` or
+    `setup.cfg`, first configuration wins), a `>>>` example in a changed
+    module's function docstring is read as the assertion it states.
+    Collection is refused when the configuration holds any flag that
+    reshapes it (`--ignore*`, `--deselect`, `-k`, `-m`, `-o`, `-c`, `-p`,
+    `--doctest-glob`, `--import-mode`, cache selectors such as `--lf`, and
+    their attached short forms), a positional collection target, any option
+    this reader does not model (`norecursedirs` among them), a
+    `.pytest.ini`, `pytest.toml` or `.pytest.toml` file, a native
+    `[tool.pytest]` table, a `testpaths` that leaves the module out, or a
+    `conftest.py` on the module's path that mentions `doctest`,
+    `collect_ignore`, a `pytest_` hook, `autouse` or `pytest_plugins`, or
+    one directly under a root subdirectory that defines a `pytest_` hook or
+    `pytest_plugins` (its fixtures and ignore lists stay in its own tree). A bare `pytest` invocation is
+    assumed; the command line CI uses is unknown. A docstring is read only
+    when it belongs to an undecorated top-level `def` defined once, every
+    example is one `>>>` call of a bare name with literal arguments, the
+    expected line is one `repr` of a string, integer or boolean, and no
+    `# doctest:` directive, backslash (in the decoded docstring or its
+    source), `...` or `<BLANKLINE>` appears; a module-level `__test__`, a
+    star import or a binding of `len` disables the read. The example must exist
+    unchanged in the old source, so a diff does not write its own oracle.
+    An exact-value oracle alone does not say the edit is noticed
+    (`truncate("abc", 5)` is `'abc'` before and after an off-by-one cut),
+    so a closed evaluator runs the example on the old and the new function
+    and keeps it only when the old result equals the expected value and the
+    new one differs; a function it cannot run (anything beyond a single
+    `return` over integer, boolean and printable-ASCII string operations)
+    drops the example; strings are capped at 4 KiB and expressions at 48
+    levels so a reviewed diff cannot exhaust the analyzer. A credited
+    example advertises no verification command, because pytest has no node
+    for the synthetic test (`py-idioms-doctest-separator` credited,
+    `py-idioms-doctest-short-input` stays a gap, #9619).
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1343,8 +1401,50 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `exposed` (unchanged; the input does not resolve). With `ship` changed
     to `return s // 100`: `exposed` (unchanged; not a guarded return).
 
+41. Class `Account` with `def deposit(self, amount): self.balance += amount`,
+    changed to `self.balance = self.balance + amount`; conftest
+    `@pytest.fixture` / `def account(): return Account(100)` with
+    `from shop import Account`; test `def test_d(account):` /
+    `account.deposit(50)` / `assert account.balance == 150`: the same
+    verdict as `account = Account(100)` inlined in the test body (today
+    `static_unknown`, `unresolved_pytest_fixture`; L8,
+    `py-fixtures-deposit`). A `yield`, an extra statement, a fixture
+    parameter, decorator arguments, a second decorator, an `async def`, a
+    non-literal or starred argument, another class, a class from another
+    module, a renamed import, a second binding of the class or the
+    fixture name, a star import, `pytest_plugins`, another fixture or hook
+    (here or up the chain) that names `account`, a nearer conftest that
+    imports or assigns `account` or overrides it with `name="account"`,
+    `pytestmark`, a `pytest_*` hook, a fixture that walks
+    `request.fixturenames`, an imported fixture name, a defaulted
+    parameter, a test decorator, a test that rebinds it, a test module
+    that binds it and a class-level test all keep `static_unknown`,
+    `unresolved_pytest_fixture` (unchanged).
+
 ## Test Mapping
 
+- Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`
+  `an_example_the_edit_breaks_is_a_test`,
+  `an_example_both_functions_satisfy_is_not_a_test`,
+  `doctests_not_collected_yield_nothing`,
+  `an_example_added_by_the_diff_is_not_its_own_oracle`,
+  `a_doctest_directive_or_continuation_drops_the_docstring`,
+  `a_function_the_evaluator_cannot_run_is_not_read`,
+  `a_decorated_function_is_not_read`, `a_rebound_name_is_not_read`,
+  `a_test_dictionary_replaces_the_docstring_examples`,
+  `a_conftest_that_ignores_collection_stops_the_read`,
+  `conftest_hooks_and_namespaces_outside_the_file_path_stop_the_read`,
+  `newer_pytest_config_files_leave_collection_unknown`,
+  `attached_short_flags_and_cache_selectors_stop_the_read`,
+  `a_positional_collection_target_in_addopts_stops_the_read`,
+  `a_module_that_binds_len_is_not_read`,
+  `an_escape_in_the_docstring_source_drops_it`.
+- Existing: `crates/ripr/src/analysis/language/python/doctest_eval.rs`
+  `floor_division_and_modulo_follow_the_divisor_sign`,
+  `slices_normalize_indexes_like_python`,
+  `integer_overflow_and_bool_int_confusion_decide_nothing`,
+  `an_exponential_replace_chain_is_refused_not_built`,
+  `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
@@ -1449,8 +1549,16 @@ and the test is `tests/test_subject.py`, which imports each owner from
   that only ends in `classmethod`, a same-named method of another class
   and a class name the test rebinds (#7634).
 
+- L8's literal owner-instance fixture (#9619):
+  `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
+  pins the inlined control, the conftest and same-module fixture, and
+  every negative shape and interference route of example 41.
+
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
+  `doctest_eval.rs`: rule 26, collection detection, example reading and the
+  evaluator gate.
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
   rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
   and 13).

@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0238-ex39-boundary-change-given",
+  "subject_id": "authored-py-hypothesis-stats",
+  "diff": "cases/py-spec0238-ex39-boundary-change-given.diff",
+  "anchor": {
+    "file": "stats/__init__.py",
+    "line": 21
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "hypothesis_given_with_boundary_examples",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return score > 50",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_stats.py::test_passing_threshold",
+        "equivalence_review": "not equivalent: 50 no longer passes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 39: `score >= 50` changed to `score > 50` on is_passing, tested by @given(integers(0, 100)) with @example(49) and @example(50) asserting `is_passing(score) == (score >= 50)`. The edit itself is the mutant: 50 no longer passes, so the @given test fails. Unlike py-hypothesis-passing-threshold, the edit changes behavior, so truth is the edit and not a separate mutant.",
+  "labeling_observation": {
+    "ripr_commit": "c8f08a0cd2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#39"
+  ]
+}
