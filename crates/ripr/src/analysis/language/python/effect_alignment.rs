@@ -445,7 +445,7 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
 /// its own name, an import alias, or a module-qualified spelling. A method is
 /// called only on a local bound to its class (rule 9), so a same-named method
 /// of another class does not count.
-pub(super) fn owner_calls<'a>(test: &PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+pub(super) fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
     let names = owner_call_names(test, owner);
     let mut calls: Vec<(usize, &str)> = names
         .iter()
