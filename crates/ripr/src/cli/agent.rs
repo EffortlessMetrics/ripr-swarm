@@ -359,6 +359,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--seam-id" => {
                 i += 1;
+                refuse_repeat(&seam_id, "agent repair", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
                     return Err("agent repair --seam-id requires a non-empty ID".to_string());
@@ -367,6 +368,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--gap-id" => {
                 i += 1;
+                refuse_repeat(&gap_id, "agent repair", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
                     return Err("agent repair --gap-id requires a non-empty ID".to_string());
@@ -375,6 +377,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--base" => {
                 i += 1;
+                refuse_repeat(&base, "agent repair", "--base")?;
                 let value = expect_value(args, i, "--base")?;
                 if value.trim().is_empty() {
                     return Err("agent repair --base requires a non-empty ref".to_string());
@@ -383,6 +386,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--attempt" => {
                 i += 1;
+                refuse_repeat(&attempt_id, "agent repair", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
                     return Err("agent repair --attempt requires a non-empty ID".to_string());
@@ -452,6 +456,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--phase" => {
                 i += 1;
+                refuse_repeat(&phase, "agent repair", "--phase")?;
                 let value = expect_value(args, i, "--phase")?;
                 phase = Some(match value {
                     "before" => AgentRepairPhase::Before,
@@ -705,6 +710,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
             }
             "--seam-id" => {
                 i += 1;
+                refuse_repeat(&seam_id, "agent start", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
                     return Err("agent start --seam-id requires a non-empty ID".to_string());
@@ -828,6 +834,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
             }
             "--seam-id" => {
                 i += 1;
+                refuse_repeat(&seam_id, "agent packet", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
                     return Err("agent packet --seam-id requires a non-empty ID".to_string());
@@ -836,6 +843,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
             }
             "--gap-ledger" => {
                 i += 1;
+                refuse_repeat(&gap_ledger, "agent packet", "--gap-ledger")?;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
                     return Err("agent packet --gap-ledger requires a non-empty path".to_string());
@@ -844,6 +852,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
             }
             "--gap-id" => {
                 i += 1;
+                refuse_repeat(&gap_id, "agent packet", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
                     return Err("agent packet --gap-id requires a non-empty ID".to_string());
@@ -910,6 +919,7 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
             }
             "--seam-id" => {
                 i += 1;
+                refuse_repeat(&seam_id, "agent card", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
                     return Err("agent card --seam-id requires a non-empty ID".to_string());
@@ -958,9 +968,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
             }
             "--kind" => {
                 i += 1;
-                if kind.is_some() {
-                    return Err("agent stub takes --kind once".to_string());
-                }
+                refuse_repeat(&kind, "agent stub", "--kind")?;
                 kind = Some(expect_value(args, i, "--kind")?.to_string());
             }
             "--seam-id" | "--at" => {
@@ -1021,15 +1029,22 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
             }
             "--before" => {
                 i += 1;
+                refuse_repeat(&before, "agent verify", "--before")?;
                 before = Some(PathBuf::from(expect_value(args, i, "--before")?));
             }
             "--after" => {
                 i += 1;
+                refuse_repeat(&after, "agent verify", "--after")?;
                 after = Some(PathBuf::from(expect_value(args, i, "--after")?));
             }
             "--gap-id" => {
                 i += 1;
-                gap_id = Some(expect_value(args, i, "--gap-id")?.to_string());
+                refuse_repeat(&gap_id, "agent verify", "--gap-id")?;
+                let value = expect_value(args, i, "--gap-id")?;
+                if value.trim().is_empty() {
+                    return Err("agent verify --gap-id requires a non-empty ID".to_string());
+                }
+                gap_id = Some(value.to_string());
             }
             "--json" => json = true,
             other => return Err(unknown_argument("agent verify", other)),
@@ -1085,8 +1100,8 @@ pub(super) fn parse_agent_verify_execute_options(
             "--cancel-after-ms" => {
                 i += 1;
                 let value = expect_value(args, i, "--cancel-after-ms")?;
-                let parsed = value.parse::<u64>().map_err(|error| {
-                    format!("invalid --cancel-after-ms: expected a positive integer: {error}")
+                let parsed = value.parse::<u64>().map_err(|_| {
+                    "invalid --cancel-after-ms: expected a positive integer".to_string()
                 })?;
                 if parsed == 0 {
                     return Err(
@@ -1144,10 +1159,12 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
             }
             "--verify-json" => {
                 i += 1;
+                refuse_repeat(&verify_json, "agent receipt", "--verify-json")?;
                 verify_json = Some(PathBuf::from(expect_value(args, i, "--verify-json")?));
             }
             "--seam-id" => {
                 i += 1;
+                refuse_repeat(&seam_id, "agent receipt", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
                     return Err("agent receipt --seam-id requires a non-empty ID".to_string());
@@ -1156,6 +1173,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
             }
             "--attempt" => {
                 i += 1;
+                refuse_repeat(&attempt_id, "agent receipt", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
                     return Err("agent receipt --attempt requires a non-empty ID".to_string());
@@ -1181,6 +1199,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
             "--json" => json = true,
             "--out" => {
                 i += 1;
+                refuse_repeat(&out, "agent receipt", "--out")?;
                 out = Some(PathBuf::from(expect_value(args, i, "--out")?));
             }
             other => return Err(unknown_argument("agent receipt", other)),
@@ -1292,6 +1311,15 @@ pub(super) fn parse_agent_review_summary_options(
     })
 }
 
+/// One shared refusal for a value flag given twice, so a repeat is never a
+/// silent last-wins: `<command> takes <flag> once`.
+fn refuse_repeat<T>(slot: &Option<T>, command: &str, flag: &str) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("{command} takes {flag} once"));
+    }
+    Ok(())
+}
+
 fn set_working_set(
     current: &mut Option<WorkingSetCandidate>,
     next: WorkingSetCandidate,
@@ -1320,7 +1348,7 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
 fn parse_max_seams(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|err| format!("invalid --max-seams: expected a positive integer: {err}"))?;
+        .map_err(|_| "invalid --max-seams: expected a positive integer".to_string())?;
     if parsed == 0 {
         return Err("invalid --max-seams: expected a positive integer".to_string());
     }
@@ -1461,6 +1489,107 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn value_flags_refuse_repeats_like_stub_and_brief() {
+        let cases: Vec<(Vec<&str>, &str)> = vec![
+            (
+                vec!["verify", "--before", "a", "--before", "b"],
+                "agent verify takes --before once",
+            ),
+            (
+                vec!["verify", "--after", "a", "--after", "b"],
+                "agent verify takes --after once",
+            ),
+            (
+                vec!["verify", "--gap-id", "g", "--gap-id", "h"],
+                "agent verify takes --gap-id once",
+            ),
+            (
+                vec!["card", "--seam-id", "a", "--seam-id", "b"],
+                "agent card takes --seam-id once",
+            ),
+            (
+                vec!["start", "--seam-id", "a", "--seam-id", "b"],
+                "agent start takes --seam-id once",
+            ),
+            (
+                vec!["receipt", "--seam-id", "a", "--seam-id", "b"],
+                "agent receipt takes --seam-id once",
+            ),
+            (
+                vec!["repair", "--seam-id", "a", "--seam-id", "b"],
+                "agent repair takes --seam-id once",
+            ),
+            (
+                vec!["repair", "--phase", "before", "--phase", "after"],
+                "agent repair takes --phase once",
+            ),
+            (
+                vec!["packet", "--gap-id", "a", "--gap-id", "b"],
+                "agent packet takes --gap-id once",
+            ),
+            (
+                vec!["stub", "--kind", "a", "--kind", "b"],
+                "agent stub takes --kind once",
+            ),
+        ];
+        for (argv, expected) in cases {
+            assert_eq!(
+                parse_agent_args(&args(&argv)),
+                Err(expected.to_string()),
+                "{argv:?}"
+            );
+        }
+        // A single use of the same flags is still accepted.
+        assert!(
+            parse_agent_args(&args(&["card", "--seam-id", "a"])).is_ok(),
+            "single --seam-id must stay accepted"
+        );
+        assert!(
+            parse_agent_args(&args(&[
+                "verify", "--before", "a", "--after", "b", "--gap-id", "g", "--json"
+            ]))
+            .is_ok(),
+            "single verify flags must stay accepted"
+        );
+    }
+
+    #[test]
+    fn agent_verify_gap_id_rejects_empty_like_repair_and_packet() {
+        for value in ["", "   "] {
+            assert_eq!(
+                parse_agent_verify_options(&args(&[
+                    "--before", "a", "--after", "b", "--gap-id", value, "--json",
+                ])),
+                Err("agent verify --gap-id requires a non-empty ID".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_flag_errors_name_the_flag_without_std_parse_text() {
+        let cancel = parse_agent_verify_execute_options(&args(&[
+            "--packet",
+            "p",
+            "--result-json",
+            "r",
+            "--cancel-after-ms",
+            "soon",
+            "--json",
+        ]))
+        .err()
+        .unwrap_or_default();
+        let max_seams = parse_agent_brief_options(&args(&["--diff", "d", "--max-seams", "many"]))
+            .err()
+            .unwrap_or_default();
+        assert!(cancel.starts_with("invalid --cancel-after-ms: expected a positive integer"));
+        assert!(max_seams.starts_with("invalid --max-seams: expected a positive integer"));
+        for message in [cancel, max_seams] {
+            assert!(!message.contains("invalid digit"), "{message}");
+            assert!(!message.contains("ParseIntError"), "{message}");
+        }
     }
 
     #[test]
@@ -2223,10 +2352,7 @@ mod tests {
                 "--max-seams",
                 "many",
             ])),
-            Err(
-                "invalid --max-seams: expected a positive integer: invalid digit found in string"
-                    .to_string()
-            )
+            Err("invalid --max-seams: expected a positive integer".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[

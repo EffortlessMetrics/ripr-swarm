@@ -67,9 +67,9 @@ impl TestStubSelector {
         let (file, line) = value
             .rsplit_once(':')
             .ok_or_else(|| format!("--at expects FILE:LINE, got {value:?}"))?;
-        let line = line.parse::<usize>().map_err(|error| {
-            format!("--at expects FILE:LINE with a line number, got {value:?}: {error}")
-        })?;
+        let line = line
+            .parse::<usize>()
+            .map_err(|_| format!("--at expects FILE:LINE with a line number, got {value:?}"))?;
         if file.trim().is_empty() || line == 0 {
             return Err(format!("--at expects FILE:LINE, got {value:?}"));
         }
@@ -1528,6 +1528,17 @@ mod tests {
                 "{junk}"
             );
         }
+    }
+
+    #[test]
+    fn at_selector_line_error_names_the_value_without_std_parse_text() {
+        let message = TestStubSelector::parse_at("src/lib.rs:x")
+            .err()
+            .unwrap_or_default();
+        assert!(message.contains("--at expects FILE:LINE with a line number"));
+        assert!(message.contains("src/lib.rs:x"));
+        assert!(!message.contains("invalid digit"), "{message}");
+        assert!(!message.contains("ParseIntError"), "{message}");
     }
 
     #[test]

@@ -1077,6 +1077,30 @@ fn resolve_agent_receipt_out_path(root: &Path, out: &Path) -> Result<PathBuf, St
     Ok(base.join(out))
 }
 
+/// Purely lexical path normalization (no filesystem access): drops `.`
+/// components and resolves `name/..` pairs, so `./target/ripr/workflow/` and
+/// `target/ripr/x/../workflow` compare equal to the default directory. A
+/// `..` that would escape a relative prefix is kept, so an escaping spelling
+/// such as `../target/ripr/workflow` still differs and is refused.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.last() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => out.push(component),
+            },
+            other => out.push(other),
+        }
+    }
+    out.iter().map(|component| component.as_os_str()).collect()
+}
+
 /// Shared with the task-first `ripr status` façade (#6305): both spellings
 /// build and render the same status services.
 pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
@@ -1092,7 +1116,7 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
     if let Some(dir) = &options.out_dir {
         let requested = resolve_agent_start_out_dir(&options.root, dir);
         let default_dir = options.root.join("target/ripr/workflow");
-        if requested != default_dir {
+        if lexically_normalized(&requested) != lexically_normalized(&default_dir) {
             return Err(format!(
                 "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
                 dir.display(),
@@ -3516,6 +3540,36 @@ mod tests {
     use super::*;
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
+
+    #[test]
+    fn lexical_normalization_accepts_spellings_of_the_default_and_keeps_escapes() {
+        let default = lexically_normalized(Path::new("./target/ripr/workflow"));
+        for spelling in [
+            "target/ripr/workflow",
+            "./target/ripr/workflow",
+            "target/ripr/workflow/",
+            "target/./ripr/workflow",
+            "target/ripr/other/../workflow",
+        ] {
+            assert_eq!(
+                lexically_normalized(Path::new(spelling)),
+                default,
+                "{spelling}"
+            );
+        }
+        for rejected in [
+            "../target/ripr/workflow",
+            "target/ripr/workflow/..",
+            "target/ripr/workflow2",
+            "other/target/ripr/workflow",
+        ] {
+            assert_ne!(
+                lexically_normalized(Path::new(rejected)),
+                default,
+                "{rejected}"
+            );
+        }
+    }
 
     /// #8222: an ended-attempt refusal already carries its own
     /// `ripr agent status` next step; the retained-evidence wrapper must not
