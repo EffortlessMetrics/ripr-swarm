@@ -84,5 +84,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"models.py","digest":"sha256:3697cc8b2d9cf0a276dc5ec7bdca4ad4665b4fec637d28a6a3b5c869ee2d29da"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"models.py","digest":"sha256:362868dcc927e38cfddbfd23ad261c951aa0eb16ccc812302270ed065b390eaa"}]}
 }

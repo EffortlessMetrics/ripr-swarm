@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 
 def tweak(fn):
-    return None
+    return fn
 
 
 @dataclass
