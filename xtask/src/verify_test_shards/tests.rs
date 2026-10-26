@@ -168,13 +168,16 @@ fn expected_inputs_are_committed_blobs_not_dirty_files_or_consensus() -> Result<
         old,
         "replacement refs are not immutable inputs"
     );
-    assert!(expected_input_blobs(&root, "abc123").is_err());
-    assert!(expected_input_blobs(&root, &"f".repeat(40)).is_err());
     let tree = git(&root, &["rev-parse", &format!("{second}^{{tree}}")])?;
-    assert!(expected_input_blobs(&root, &tree).is_err());
     fs::remove_file(root.join(INPUT_PATHS[3])).map_err(|err| err.to_string())?;
     let missing = commit("missing workflow")?;
-    assert!(expected_input_blobs(&root, &missing).is_err());
+    for invalid in ["abc123".to_string(), "f".repeat(40), tree, missing] {
+        if let Ok(blobs) = expected_input_blobs(&root, &invalid) {
+            return Err(format!(
+                "resolved invalid checkout `{invalid}` to {blobs:?}"
+            ));
+        }
+    }
     fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
     Ok(())
 }
