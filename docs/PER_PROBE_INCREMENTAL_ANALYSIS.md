@@ -53,8 +53,11 @@ those origins and differs from a cold one.
 
 A read is one of:
 
-- `File(path)`: the content hash of one indexed file. The result of a keyed
-  `files().get(path)`.
+- `File(path)`: the content hash of one indexed file, or the distinguished
+  value `Absent` when the keyed `files().get(path)` returns `None`. A missed
+  lookup is recorded as `Absent`, never omitted, so creating a file at that
+  path later changes the digest and invalidates the entry. A `Names` answer
+  that is empty is likewise the digest of the empty set, not a missing read.
 - `Names(kind, name)`: a digest of the sorted answer to a name-keyed question,
   for example the functions named `N`, the tests that call `N`, or the macro
   binding sites that bind `N`. A change elsewhere in the workspace that does
