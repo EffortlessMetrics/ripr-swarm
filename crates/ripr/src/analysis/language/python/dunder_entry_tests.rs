@@ -285,6 +285,21 @@ fn removed_type_guard_is_credited_to_a_foreign_literal_comparison() -> Check {
     Ok(())
 }
 
+/// A builtin base answers `!=` itself, so a mixed test whose `==` assertion
+/// reaches the edited method must not lend its relation to the `!=` one.
+#[test]
+fn removed_type_guard_ignores_a_ne_assertion_on_a_builtin_subclass() -> Check {
+    for (base, literal) in [("int", "2"), ("str", "'x'"), ("float", "2.5")] {
+        let source =
+            money_without_guard().replace("class Money:", &format!("class Money({base}):"));
+        let test = money_test("    assert Money(1) == Money(1)\n    assert Money(1) != LITERAL")
+            .replace("LITERAL", literal);
+        let finding = classify_guard_removal(&source, NEW_GUARD_LINE, &test)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{base}");
+    }
+    Ok(())
+}
+
 #[test]
 fn removed_type_guard_stays_an_abstention_without_the_exact_shape() -> Check {
     let unguarded = money_without_guard();
@@ -338,6 +353,23 @@ fn removed_type_guard_stays_an_abstention_without_the_exact_shape() -> Check {
                 .replace("other.cents", "other.upper"),
             "        return self.cents == other.upper",
             money_test("    assert Money(1) != 'x'"),
+        ),
+        (
+            "an int subclass, whose inherited __ne__ skips the edited __eq__",
+            &unguarded.replace("class Money:", "class Money(int):"),
+            NEW_GUARD_LINE,
+            foreign.clone(),
+        ),
+        (
+            "a builtin attribute added in a newer Python",
+            &unguarded
+                .replace(
+                    "self.cents = cents",
+                    "self.cents = cents\n        self.from_number = cents",
+                )
+                .replace("other.cents", "other.from_number"),
+            "        return self.cents == other.from_number",
+            money_test("    assert Money(1) != 1.5"),
         ),
         (
             "a short-circuited read",

@@ -723,12 +723,15 @@ read-out: the boolean the classifier uses is derived from the surfaced
   edit that deletes the leading `isinstance(other, <own class>) and` from the
   method's only `return`, when the remaining expression reads `other.<attr>`
   for names no builtin literal has (and uses `other` nowhere else), the class
-  defines neither `__ne__` nor `__getattr__`, and a protocol-entry test asserts
+  defines neither `__ne__` nor `__getattr__`, names no base class (a builtin
+  base answers `!=` itself), and a protocol-entry test asserts
   `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
   Calling the edited method with such a literal raises `AttributeError`, so the
   assertion fails after the edit. A literal on the left, a list or custom
   operand, an early exit before the `return` or an `==` read that expects a
-  match keep the `dynamic_dispatch` abstention (#9619, #9421).
+  match keep the `dynamic_dispatch` abstention. The builtin-attribute list is
+  a finite catalogue of the Python 3.14 literal types, not a general claim
+  about Python semantics (#9619, #9421).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
