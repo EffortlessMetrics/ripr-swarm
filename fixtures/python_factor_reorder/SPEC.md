@@ -4,7 +4,8 @@ Spec: RIPR-SPEC-0238
 
 ## Given
 
-A generic product function and an exact table oracle using only integer inputs.
+Generic product functions and exact table oracles using integer and finite
+float inputs, including products inside tuples and beside a quoted hash.
 
 ## When
 

@@ -101,6 +101,30 @@ class FactorReorderControls(unittest.TestCase):
         self.assertEqual(reordered_product(a, b), ("b", 3))
         self.assertNotEqual(old_product(a, b), reordered_product(a, b))
 
+    def test_equal_values_can_hide_operator_effects(self):
+        events = []
+        class EqualProduct:
+            def __mul__(self, other):
+                events.append("mul")
+                return 21
+            def __rmul__(self, other):
+                events.append("rmul")
+                return 21
+        value = EqualProduct()
+        self.assertEqual(old_product(value, 3), reordered_product(value, 3))
+        self.assertEqual(events, ["mul", "rmul"])
+
+    def test_float_reassociation_can_change_the_result(self):
+        a, b, c = 1e308, 1e-308, 1e-308
+        self.assertNotEqual((a * b) * c, a * (b * c))
+
+    def test_quoted_hash_and_nested_products_preserve_the_swap(self):
+        namespace = {}
+        exec("def before(a,b):\n    return a * b, '#'\ndef after(a,b):\n    return b * a, '#'\n", namespace)
+        self.assertEqual(namespace["before"](3, 7), namespace["after"](3, 7))
+        a, b = OrderedProduct("a"), OrderedProduct("b")
+        self.assertNotEqual(namespace["before"](a, b), namespace["after"](a, b))
+
 
 if __name__ == "__main__":
     unittest.main()

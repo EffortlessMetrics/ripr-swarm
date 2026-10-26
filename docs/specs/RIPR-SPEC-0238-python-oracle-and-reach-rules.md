@@ -1454,7 +1454,16 @@ runtime operand types: custom `__mul__`/`__rmul__` methods can make the swap a
 behavior change. Numeric test rows alone cannot establish global commutativity.
 Order-sensitive repair guidance requests operands that distinguish multiplication
 order; varying numeric rows alone cannot do so. Literal-only products have no
-named table operand and keep their ordinary exact-oracle reading. This rule does not infer local or module runtime types.
+named table operand and keep their ordinary exact-oracle reading. This rule does
+not infer local or module runtime types.
+
+Guidance follows the changed product inside a container, and quoted `#` text
+does not hide the expression. Exact binary swaps also read primitive finite
+float rows. Integer literals are bounded to i128; mixed integer/float rows
+require the integer to fit i32 before conversion, and the product must remain
+finite. Calls, booleans, strings and nonfinite values are not numeric evidence.
+This reading never flattens multiplication trees or assumes floating-point
+associativity; unsupported rows retain the ordinary reading.
 
 ## Implementation Mapping
 

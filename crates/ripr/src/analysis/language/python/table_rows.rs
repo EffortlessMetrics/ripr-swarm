@@ -137,7 +137,15 @@ fn unvaried_arithmetic_operand(
     // annotations do not establish Python runtime operand types, and a name
     // can hold a noncommutative __mul__/__rmul__ object. Literal-only products
     // already fall through below because they have no named operand.
-    let operand = arithmetic_operand_name(&old_arith)?;
+    let factor_swap = swaps_factors(&old_arith, &new_arith);
+    let operand = if factor_swap {
+        let Expr::BinOp(product) = &old_arith else {
+            return None;
+        };
+        expr_plain_name(&product.left).or_else(|| expr_plain_name(&product.right))?
+    } else {
+        arithmetic_operand_name(&old_arith)?
+    };
     let mut saw_table = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
@@ -171,7 +179,7 @@ fn unvaried_arithmetic_operand(
         saw_table = true;
     }
     saw_table.then(|| {
-        if swaps_factors(old_line, line_text) {
+        if factor_swap {
             UnvariedTableOperand {
                 reason: "numeric table rows agree under factor reordering".to_string(),
                 discriminator: "a table row whose operands distinguish multiplication order"
@@ -191,10 +199,8 @@ fn unvaried_arithmetic_operand(
 
 /// Syntactic factor swapping selects order-sensitive guidance. It never grants
 /// equivalence or exposure: names can hold overloaded multiplication operands.
-fn swaps_factors(old_line: &str, new_line: &str) -> bool {
-    let whole = |line: &str| line_value_expr(line).and_then(|text| parse_expr(&text));
-    let (Some(Expr::BinOp(old)), Some(Expr::BinOp(new))) = (whole(old_line), whole(new_line))
-    else {
+fn swaps_factors(old: &Expr, new: &Expr) -> bool {
+    let (Expr::BinOp(old), Expr::BinOp(new)) = (old, new) else {
         return false;
     };
     if !matches!(old.op, ast::Operator::Mult) || !matches!(new.op, ast::Operator::Mult) {
@@ -208,16 +214,75 @@ fn swaps_factors(old_line: &str, new_line: &str) -> bool {
     ) else {
         return false;
     };
-    old_left == new_right && old_right == new_left
+    old_left != old_right && old_left == new_right && old_right == new_left
 }
 
 fn factor_spelling(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Name(name) => Some(format!("name:{}", name.id)),
-        Expr::Constant(constant) => {
-            constant_i128(&constant.value).map(|value| format!("int:{value}"))
+        _ => match numeric_factor_literal(expr)? {
+            NumericFactor::Integer(value) => Some(format!("int:{value}")),
+            NumericFactor::Float(value) => Some(format!("float:{}", value.to_bits())),
+        },
+    }
+}
+
+/// Bounded primitive values only. This is a row discriminator, not a type
+/// inference for the production function or a floating-point algebra engine.
+#[derive(Clone, Copy)]
+enum NumericFactor {
+    Integer(i128),
+    Float(f64),
+}
+
+fn numeric_factor_literal(expr: &Expr) -> Option<NumericFactor> {
+    match expr {
+        Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Float(value) if value.is_finite() => Some(NumericFactor::Float(*value)),
+            value => constant_i128(value).map(NumericFactor::Integer),
+        },
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::UAdd) => {
+            numeric_factor_literal(&unary.operand)
+        }
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub) => {
+            // The positive magnitude of i128::MIN is outside i128. Apply the
+            // source sign before range checking, matching the integer reader.
+            if let Expr::Constant(constant) = unary.operand.as_ref()
+                && let ast::Constant::Int(value) = &constant.value
+            {
+                return parse_decimal_i128(&format!("-{}", value.to_str_radix(10)))
+                    .map(NumericFactor::Integer);
+            }
+            match numeric_factor_literal(&unary.operand)? {
+                NumericFactor::Integer(value) => value.checked_neg().map(NumericFactor::Integer),
+                NumericFactor::Float(value) => Some(NumericFactor::Float(-value)),
+            }
         }
         _ => None,
+    }
+}
+
+fn bounded_float(value: NumericFactor) -> Option<f64> {
+    match value {
+        // Check in the integer domain before conversion. This deliberately
+        // narrows mixed rows; no rounding can admit an out-of-bound integer.
+        NumericFactor::Integer(value) => i32::try_from(value).ok().map(f64::from),
+        NumericFactor::Float(value) => Some(value),
+    }
+}
+
+fn primitive_product_is_finite(left: NumericFactor, right: NumericFactor) -> bool {
+    if matches!(
+        (left, right),
+        (NumericFactor::Integer(_), NumericFactor::Integer(_))
+    ) {
+        // Python integer multiplication has arbitrary precision. The bounded
+        // input literals are genuine integers, never user objects or booleans.
+        return true;
+    }
+    match (bounded_float(left), bounded_float(right)) {
+        (Some(left), Some(right)) => (left * right).is_finite(),
+        _ => false,
     }
 }
 
@@ -333,6 +398,9 @@ fn arithmetic_rows_agree(
         return false;
     };
     table.cases.iter().all(|row| {
+        if swaps_factors(old_arith, new_arith) {
+            return numeric_swap_row_agrees(old_arith, owner_call, owner, row, &columns);
+        }
         let Some(env) = row_integer_env(owner_call, owner, row, &columns) else {
             return false;
         };
@@ -344,6 +412,37 @@ fn arithmetic_rows_agree(
             _ => false,
         }
     })
+}
+
+fn numeric_swap_row_agrees(
+    product: &Expr,
+    owner_call: &Expr,
+    owner: &PythonOwner,
+    row: &BTreeMap<String, String>,
+    columns: &BTreeSet<String>,
+) -> bool {
+    let Expr::BinOp(product) = product else {
+        return false;
+    };
+    let Some(env) = row_argument_env(owner_call, owner, |argument| Some(argument.clone())) else {
+        return false;
+    };
+    let factor = |expr: &Expr| match expr {
+        Expr::Name(name) => {
+            let argument = env.get(name.id.as_str())?;
+            match argument {
+                Expr::Name(column) if columns.contains(column.id.as_str()) => {
+                    numeric_factor_literal(&parse_expr(row.get(column.id.as_str())?)?)
+                }
+                literal => numeric_factor_literal(literal),
+            }
+        }
+        expr => numeric_factor_literal(expr),
+    };
+    match (factor(&product.left), factor(&product.right)) {
+        (Some(left), Some(right)) => primitive_product_is_finite(left, right),
+        _ => false,
+    }
 }
 
 fn changed_simple_arithmetic(old_line: &str, new_line: &str) -> Option<(Expr, Expr)> {
@@ -358,15 +457,16 @@ fn changed_simple_arithmetic(old_line: &str, new_line: &str) -> Option<(Expr, Ex
 fn line_value_expr(line: &str) -> Option<String> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let expr = if let Some(rest) = trimmed.strip_prefix("return ") {
-        rest.split('#').next().unwrap_or(rest).trim()
+        rest.trim()
     } else if let Some(value) = dict_field_value(trimmed) {
         value
     } else if let Some(value) = assignment_rhs(trimmed) {
         value
     } else {
-        trimmed.split('#').next().unwrap_or(trimmed).trim()
+        trimmed
     };
-    let expr = expr.split('#').next().unwrap_or(expr).trim();
+    // Let Python's parser distinguish comments from quoted hashes. Splitting
+    // source text at '#' can erase an actual changed arithmetic expression.
     (!expr.is_empty()).then(|| expr.to_string())
 }
 
@@ -396,7 +496,7 @@ fn assignment_rhs(line: &str) -> Option<&str> {
     }
     let (lhs, rhs) = trimmed.split_once('=')?;
     is_simple_python_identifier(lhs.trim())
-        .then(|| rhs.split('#').next().unwrap_or(rhs).trim())
+        .then(|| rhs.trim())
         .filter(|value| !value.is_empty())
 }
 
@@ -467,6 +567,7 @@ fn differing_simple_arithmetic<'a>(old: &'a Expr, new: &'a Expr) -> Option<(&'a 
                 });
             unique_differing_pair(arg_diff.chain(kw_diff))
         }
+        _ if swaps_factors(old, new) => Some((old, new)),
         _ if is_simple_arithmetic(old)
             && is_simple_arithmetic(new)
             && contains_binop(old)
@@ -618,6 +719,16 @@ fn row_integer_env(
     row: &BTreeMap<String, String>,
     columns: &BTreeSet<String>,
 ) -> Option<BTreeMap<String, i128>> {
+    row_argument_env(owner_call, owner, |argument| {
+        integer_from_table_arg(argument, row, columns)
+    })
+}
+
+fn row_argument_env<T>(
+    owner_call: &Expr,
+    owner: &PythonOwner,
+    read_argument: impl Fn(&Expr) -> Option<T>,
+) -> Option<BTreeMap<String, T>> {
     let Expr::Call(call) = owner_call else {
         return None;
     };
@@ -635,7 +746,7 @@ fn row_integer_env(
         let Some(name) = keyword.arg.as_ref() else {
             continue;
         };
-        let value = integer_from_table_arg(&keyword.value, row, columns)?;
+        let value = read_argument(&keyword.value)?;
         env.insert(name.to_string(), value);
     }
     let positional: Vec<&str> = owner
@@ -646,7 +757,7 @@ fn row_integer_env(
         .map(|parameter| parameter.name.as_str())
         .collect();
     for (parameter, argument) in positional.iter().zip(call.args.iter()) {
-        let value = integer_from_table_arg(argument, row, columns)?;
+        let value = read_argument(argument)?;
         env.insert((*parameter).to_string(), value);
     }
     (!env.is_empty()).then_some(env)
@@ -1139,6 +1250,38 @@ fn row_cells(row: &Expr, arity: usize, bare_single: bool) -> Option<Vec<&Expr>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn factor_swap_numeric_reader_preserves_primitive_boundaries() -> Result<(), String> {
+        for source in ["True", "'3'", "float('nan')", "1e999", "int(3)", "custom"] {
+            let expr = parse_expr(source).ok_or_else(|| format!("parse {source}"))?;
+            assert!(numeric_factor_literal(&expr).is_none(), "{source}");
+        }
+        let minimum =
+            parse_expr("-170141183460469231731687303715884105728").ok_or("signed minimum")?;
+        assert!(matches!(
+            numeric_factor_literal(&minimum),
+            Some(NumericFactor::Integer(i128::MIN))
+        ));
+        assert!(!primitive_product_is_finite(
+            NumericFactor::Float(1e308),
+            NumericFactor::Float(1e308)
+        ));
+        assert!(!primitive_product_is_finite(
+            NumericFactor::Integer(i128::from(i32::MAX) + 1),
+            NumericFactor::Float(1.0)
+        ));
+        for (old, new) in [
+            ("a * -0.0", "0.0 * a"),
+            ("a * 3", "3.0 * a"),
+            ("(a * b) * c", "a * (b * c)"),
+        ] {
+            let old = parse_expr(old).ok_or("old expression")?;
+            let new = parse_expr(new).ok_or("new expression")?;
+            assert!(!swaps_factors(&old, &new));
+        }
+        Ok(())
+    }
 
     fn cases(source: &str) -> Option<Vec<BTreeMap<String, String>>> {
         loop_table_cases(source).map(|table| table.cases)

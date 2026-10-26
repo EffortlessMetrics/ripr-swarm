@@ -2177,6 +2177,50 @@ fn quoted_hash_does_not_mask_a_factor_reorder() -> Result<(), String> {
 }
 
 #[test]
+fn factor_reorder_preserves_literal_and_grouping_boundaries() -> Result<(), String> {
+    for row in [
+        "[(3, 2.0, 6.0)]",
+        "[(-170141183460469231731687303715884105728, 0, 0)]",
+    ] {
+        let table = AREA_TABLE.replace("[(3, 7, 21)]", row);
+        assert_eq!(
+            classify(AREA, 2, "    return a * b", &table)?,
+            ExposureClass::WeaklyExposed,
+            "{row}"
+        );
+    }
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(2, 7, 3.0)]");
+    let finding = classify_finding(
+        "def area(a,b):\n    return 1.5 * a # a real comment\n",
+        2,
+        "    return a * 1.5 # a real comment",
+        &table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(finding.activation.missing_discriminators.iter().any(|fact| fact.value == "a table row whose operands distinguish multiplication order"));
+    assert_eq!(
+        classify(
+            "def area(a,b):\n    return 2.0 * 1.5\n",
+            2,
+            "    return 1.5 * 2.0",
+            &table
+        )?,
+        ExposureClass::Exposed
+    );
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(1e308,1e-308,1e-308,1e-308)])\ndef test_area(a,b,c,want):\n    assert area(a,b,c) == want\n";
+    assert_eq!(
+        classify(
+            "def area(a,b,c):\n    return a * (b * c)\n",
+            2,
+            "    return (a * b) * c",
+            table
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
 fn a_changed_factor_still_reads_an_unvaried_table_operand() -> Result<(), String> {
     // Row (3, 7): `a * b` and `b * 3` agree only because a is 3, so the table
     // does not vary the changed operand and must not credit.
