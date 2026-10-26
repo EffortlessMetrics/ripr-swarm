@@ -2211,6 +2211,19 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
             oxc_ast_visit::walk::walk_unary_expression(self, unary);
         }
 
+        // `lib.install()` / `lib.__defineGetter__(...)` run with `this = lib`
+        // and can replace the exports, so a call through a namespace member
+        // is not a passive read (#10464 review).
+        fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+            if matches!(
+                call.callee.get_inner_expression(),
+                Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+            ) {
+                self.mutated.extend(root(&call.callee));
+            }
+            oxc_ast_visit::walk::walk_call_expression(self, call);
+        }
+
         fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
             *self.refs.entry(id.name.to_string()).or_default() += 1;
         }
