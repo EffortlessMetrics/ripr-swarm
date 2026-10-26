@@ -87,6 +87,7 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_producer_sweep;
 mod verification_contracts;
+mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_run;
@@ -6336,7 +6337,7 @@ fn finish_spec_numbering_report(violations: &[String]) -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Run `cargo xtask specs next` before creating a new docs/specs/RIPR-SPEC-NNNN file.",
-                "Add every spec file to docs/specs/README.md.",
+                "Add every spec file to the index: one row in docs/spec-index.d/RIPR-SPEC-NNNN.md (or docs/specs/README.md).",
                 "Use only existing RIPR-SPEC-NNNN IDs in traceability and capability surfaces.",
             ],
             rerun_command: "cargo xtask check-spec-numbering",
@@ -6380,6 +6381,7 @@ fn spec_numbering_violations(root: &Path) -> Result<Vec<String>, String> {
     }
 
     validate_specs_readme_index(root, &specs, &ids, &mut violations)?;
+    validate_spec_index_fragments(root, &mut violations)?;
     validate_spec_references(root, &ids, &mut violations)?;
 
     violations.sort();
@@ -6427,6 +6429,106 @@ fn collect_spec_files_for_root(root: &Path) -> Result<Vec<SpecFile>, String> {
     Ok(specs)
 }
 
+/// Directory of one-row spec index fragments (`docs/spec-index.d/*.md`). A new
+/// spec adds its row here instead of appending to the README table, so two PRs
+/// that each add a spec no longer conflict on the README tail (#10455).
+const SPEC_INDEX_FRAGMENT_DIR: &str = "docs/spec-index.d";
+
+/// The README index plus every row fragment, in file-name order. A fragment
+/// lives one directory away from the specs, so its links read
+/// `../specs/<file>`; they are normalised to the README's bare file names so one
+/// index-link match serves both places.
+fn specs_index_text(root: &Path, readme: &Path) -> Result<String, String> {
+    let mut text = read_text_lossy(readme)?;
+    for (name, fragment) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md") else {
+            continue;
+        };
+        if let Some(row) = spec_index_fragment_row(stem, &fragment) {
+            text.push('\n');
+            text.push_str(&row.replace("](../specs/", "]("));
+        }
+    }
+    Ok(text)
+}
+
+/// The one index row of a fragment, or `None` when the fragment is not exactly
+/// that: a single non-blank line, a table row whose only link is the canonical
+/// `[stem](../specs/<file>)`. Anything else (fenced examples, comments, a second
+/// row, an equivalent-but-different link spelling) earns no credit.
+fn spec_index_fragment_row<'a>(stem: &str, text: &'a str) -> Option<&'a str> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let row = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let prefix = format!("| [{stem}](../specs/");
+    (row.starts_with(&prefix) && row.ends_with('|') && row.matches("](").count() == 1)
+        .then_some(row)
+}
+
+/// Every `docs/spec-index.d/*.md` as (file name, text), in file-name order.
+fn spec_index_fragments(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let directory = root.join(SPEC_INDEX_FRAGMENT_DIR);
+    let mut fragments = Vec::new();
+    if !directory.is_dir() {
+        return Ok(fragments);
+    }
+    for path in collect_files(&directory)? {
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if name == "README.md" {
+            continue;
+        }
+        fragments.push((name, read_text_lossy(&path)?));
+    }
+    Ok(fragments)
+}
+
+/// A fragment registers exactly the spec its file name states: `RIPR-SPEC-NNNN.md`
+/// holds spec rows for `RIPR-SPEC-NNNN` only, so a misnamed fragment cannot
+/// satisfy another spec's index entry.
+fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
+    let readme = root.join("docs/specs/README.md");
+    let readme_text = if readme.exists() {
+        read_text_lossy(&readme)?
+    } else {
+        String::new()
+    };
+    for (name, text) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md").filter(|stem| is_spec_id(stem)) else {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must be named RIPR-SPEC-NNNN.md"
+            ));
+            continue;
+        };
+        for id in spec_ids_in_text(&text) {
+            if id != stem {
+                violations.push(format!(
+                    "{SPEC_INDEX_FRAGMENT_DIR}/{name} names `{id}` but only `{stem}` may appear in it"
+                ));
+            }
+        }
+        if spec_index_fragment_row(stem, &text).is_none() {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must hold exactly one table row `| [{stem}](../specs/<file>) | status | topic |` and nothing else"
+            ));
+        }
+        if readme_text.contains(&format!("[{stem}](")) {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} duplicates the README row for `{stem}`; keep one"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_specs_readme_index(
     root: &Path,
     specs: &[SpecFile],
@@ -6438,7 +6540,7 @@ fn validate_specs_readme_index(
         violations.push("docs/specs/README.md is missing".to_string());
         return Ok(());
     }
-    let text = read_text_lossy(&readme)?;
+    let text = specs_index_text(root, &readme)?;
     for spec in specs {
         let link = format!("[{}]({})", spec.id, spec.file_name);
         if !text.contains(&link) {
@@ -6654,7 +6756,7 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
     &[
         "Add or update the matching [[behavior]] entry in .ripr/traceability.toml.",
         "Run `cargo xtask specs next` to get the next free RIPR-SPEC-NNNN number.",
-        "Known spec IDs are listed in docs/specs/README.md.",
+        "Known spec IDs are listed in docs/specs/README.md and docs/spec-index.d/.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
         "List only paths that exist, or leave planned fields empty until the artifact exists.",
@@ -14985,8 +15087,9 @@ fn check_doc_index() -> Result<(), String> {
         &["README.md"],
         &mut violations,
     )?;
-    require_index_mentions_files(
-        Path::new("docs/specs/README.md"),
+    require_index_mentions_files_in(
+        "docs/specs/README.md",
+        &specs_index_text(Path::new("."), Path::new("docs/specs/README.md"))?,
         Path::new("docs/specs"),
         &["README.md"],
         &mut violations,
@@ -15057,7 +15160,7 @@ fn check_doc_index() -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update docs/adr/README.md when adding or removing ADRs.",
-                "Update docs/specs/README.md when adding or removing specs.",
+                "Update docs/spec-index.d/ (or docs/specs/README.md) when adding or removing specs.",
                 "Keep README.md and docs/DOCUMENTATION.md linked to the active planning, automation, metrics, ADR, and spec docs.",
                 "Keep docs/README.md indexing the user-facing top-level reference pages (exit codes, static limits, repair recovery, blocking readiness, install channels, server provisioning).",
             ],
@@ -17225,6 +17328,22 @@ fn require_index_mentions_files(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
     let index = read_text_lossy(index_path)?;
+    require_index_mentions_files_in(
+        &normalize_path(index_path),
+        &index,
+        directory,
+        excluded_names,
+        violations,
+    )
+}
+
+fn require_index_mentions_files_in(
+    index_label: &str,
+    index: &str,
+    directory: &Path,
+    excluded_names: &[&str],
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     for path in collect_files(directory)? {
         if path.extension().and_then(|value| value.to_str()) != Some("md") {
             continue;
@@ -17237,8 +17356,7 @@ fn require_index_mentions_files(
         }
         if !index.contains(name) {
             violations.push(format!(
-                "{} does not index {}",
-                normalize_path(index_path),
+                "{index_label} does not index {}",
                 normalize_path(&path)
             ));
         }
@@ -23827,6 +23945,9 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+mod release_website_tests;
 
 #[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]

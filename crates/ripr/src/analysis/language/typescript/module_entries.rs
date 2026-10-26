@@ -55,6 +55,9 @@ pub(crate) struct TypeScriptModuleEntry {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TypeScriptDecoratedMethod {
     pub(crate) class_name: String,
+    /// The class is its module's `export default class`, so a test names it
+    /// through a default import under any local name.
+    pub(crate) default_export: bool,
     pub(crate) return_start_line: usize,
     pub(crate) return_end_line: usize,
 }

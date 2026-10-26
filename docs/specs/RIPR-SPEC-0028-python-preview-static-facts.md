@@ -742,12 +742,35 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
+  edit that deletes the leading `isinstance(other, <own class>) and` from the
+  method's only `return`, when the remaining expression is exactly
+  `self.<a> == other.<b>` (no call, boolean operator or conditional that could
+  skip the read) and `<b>` is an attribute the class stores itself
+  (`self.<b> = ..`) that no builtin literal has, the class defines neither
+  `__ne__` nor `__getattr__` and, read from the parsed class, names no base and
+  is plain (a builtin base answers `!=` itself), and a protocol-entry test with
+  no `try`, `with` or `raises` that could catch the error asserts
+  `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
+  Calling the edited method with such a literal raises `AttributeError`, so the
+  assertion fails after the edit. A literal on the left, a list or custom
+  operand, an early exit before the `return` or an `==` read that expects a
+  match keep the `dynamic_dispatch` abstention. The builtin-attribute list is
+  a finite catalogue of the Python 3.14 literal types, not a general claim
+  about Python semantics (#9619, #9421).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
   reaches: captured output, the file read back, a mock call pinned with
   arguments, or the field read through a bound receiver (RIPR-SPEC-0238
   rule 17).
+
+Effect-channel observations use native assertion and compared-operand spans.
+The owner call must finish before the operand is read, including statements at
+different columns on one line. Failure messages and weaker, discarded conjuncts
+cannot supply a later read for an earlier comparison. Resolved assertion helpers
+retain their call-site identity and require the owner to complete before their
+arguments are evaluated.
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
