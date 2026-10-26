@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0169-cfg-test-include-helper",
+  "subject_id": "authored-spec-b-layout",
+  "diff": "cases/spec-b-0169-cfg-test-include-helper.diff",
+  "anchor": {
+    "file": "src/l_include_fragment.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "cfg_test_include_helper_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "5",
+        "mutated_line": "5",
+        "outcome": "tests_failed",
+        "failing_test": "l_include::the_include_shift_is_five_l_include",
+        "equivalence_review": "not equivalent: l_include::the_include_shift_is_five_l_include fails on it"
+      },
+      {
+        "replacement": "7",
+        "mutated_line": "7",
+        "outcome": "tests_failed",
+        "failing_test": "l_include::the_include_shift_is_five_l_include",
+        "equivalence_review": "not equivalent: l_include::the_include_shift_is_five_l_include fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edited line is a helper in a fragment pulled in by a cfg(test) include!, so it carries a test-only role through the include edge. The helper feeds an assert_eq! against 11, so either neighbor fails the test. Spec cells: RIPR-SPEC-0169#2.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0169#2"
+  ]
+}

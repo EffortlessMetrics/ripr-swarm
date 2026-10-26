@@ -128,6 +128,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
+    /// Test-local helpers that poll one future to completion and return its
+    /// output, so `helper(owner(..))` reads as `owner(..).await` (RIPR-SPEC-0197
+    /// rule 1). Empty unless the owner is `async`.
+    poll_helpers: BTreeSet<String>,
     /// Every record type the owner's return expression constructs has at
     /// most a plain (empty) `Drop` impl in the workspace, so dropping the
     /// receiver while unwinding from a failed assertion cannot exit the
@@ -3579,6 +3583,11 @@ impl OwnerReturnPin {
                 &probe.expression,
             ),
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3707,6 +3716,11 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3811,6 +3825,11 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3907,6 +3926,11 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3961,14 +3985,14 @@ impl OwnerReturnPin {
     ) -> Option<(CallShape<'a>, String, Option<&'a str>)> {
         [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
             let expected = helper_arguments::expected_literal(&operands[other], index)?;
-            if let Some(call) = self.awaited_call_shape(&operands[at], &self.name) {
+            if let Some(call) = self.awaited_call_shape(None, &operands[at], &self.name) {
                 return Some((call, expected, Some(operands[at].as_str())));
             }
             let rendered = self
                 .returns_scalar
                 .then(|| helper_arguments::rendered_template_call(&operands[at], &expected))
                 .flatten()?;
-            self.awaited_call_shape(rendered, &self.name)
+            self.awaited_call_shape(None, rendered, &self.name)
                 .map(|call| (call, expected, None))
         })
     }
@@ -3979,7 +4003,12 @@ impl OwnerReturnPin {
     /// trailing `.await` (`total(&[1, 2]).await`). A sync owner's `.await`
     /// awaits a future it returns, whose output its return expression does
     /// not hold, so that stays refused.
-    fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
+    fn awaited_call_shape<'a>(
+        &self,
+        poll_context: Option<(&TestSummary, &RustIndex, &OwnerPinSyntax)>,
+        operand: &'a str,
+        name: &str,
+    ) -> Option<CallShape<'a>> {
         let operand = operand.trim();
         // RIPR-SPEC-0265 rule 5: the pinned value is the returned closure
         // applied to its arguments; the call shape is the owner call inside.
@@ -3992,7 +4021,14 @@ impl OwnerReturnPin {
         // An async owner's bare call is its future, not its return value.
         match (self.awaited, operand.strip_suffix(".await")) {
             (true, Some(call)) => owner_call_shape(call.trim_end(), name),
-            (true, None) => None,
+            (true, None) => {
+                let future = super::poll_helper::strip_helper_call(operand, &self.poll_helpers)?;
+                let (test, index, syntax) = poll_context?;
+                let helper = operand[..operand.find('(')?].trim();
+                super::poll_helper::binding_is_verified(test, helper, index, syntax)
+                    .then(|| owner_call_shape(future, name))
+                    .flatten()
+            }
             (false, _) => owner_call_shape(operand, name),
         }
     }
@@ -4070,6 +4106,11 @@ impl OwnerReturnPin {
         probe: &HelperCallProbe,
     ) -> bool {
         let spelling = probe.spelling;
+        // A borrowed assertion runs in its helper's scope, which this
+        // polling rule does not resolve. Direct .await keeps its own gates.
+        let poll_context = (test.start_line..=test.end_line)
+            .contains(&assertion.line)
+            .then_some((test, index, syntax));
         // A `#[should_panic]` test passes when the values differ.
         if test
             .attrs
@@ -4120,9 +4161,29 @@ impl OwnerReturnPin {
         // #7063: beside an early error-variant gate the test may compare
         // `owner(..).unwrap_err()` (or `.expect_err("..")`) with the bare
         // variant; that reads as comparing the call with `Err(..)` of it.
+        // Beside a changed `Ok(..)`/`Some(..)` constructor whose other exits
+        // build only `Err`/`None`, `owner(..).unwrap()` equals the literal only
+        // when the call is `Ok(literal)`/`Some(literal)`: any other exit panics
+        // the unwrap. The exits are read by spelling, so an owner file that
+        // binds the wrapper or its opposite as a value (`const Ok`, `fn Err`)
+        // refuses.
         let unwrap_wrapper = match &self.path {
             ReturnPathGate::WholeValueField(gate) => gate.wrapper,
             ReturnPathGate::ErrVariant { .. } => Some("Err"),
+            ReturnPathGate::Head(head @ ("Ok" | "Some"))
+            | ReturnPathGate::EarlyHead(head @ ("Ok" | "Some")) => {
+                // The opposite exit is read by spelling too: an imported
+                // `Err` that returns `Ok(3)` would pass the unwrap without
+                // reaching the changed tail.
+                let opposite = if *head == "Ok" { "Err" } else { "None" };
+                let owner_binds_exit_names =
+                    index.files().get(&self.owner_file).is_none_or(|facts| {
+                        [*head, opposite]
+                            .into_iter()
+                            .any(|name| source_binds_value_name(&facts.source, name))
+                    });
+                (!owner_binds_exit_names).then_some(*head)
+            }
             _ => None,
         };
         let unwrap_read: fn(&str) -> Option<&str> =
@@ -4177,7 +4238,10 @@ impl OwnerReturnPin {
                 && (test.start_line..=test.end_line).contains(&assertion.line))
             .then(|| {
                 [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
-                    if self.awaited_call_shape(operands[at], &self.name).is_some() {
+                    if self
+                        .awaited_call_shape(poll_context, operands[at], &self.name)
+                        .is_some()
+                    {
                         return None;
                     }
                     helper_arguments::expected_literal(operands[other], index)?;
@@ -4187,7 +4251,7 @@ impl OwnerReturnPin {
                         &assertion.text,
                         assertion.line.checked_sub(test.start_line)?,
                     )?;
-                    self.awaited_call_shape(&call, &self.name)?;
+                    self.awaited_call_shape(poll_context, &call, &self.name)?;
                     self.pointer_mask_gate.admits(&call).then_some(())?;
                     if self
                         .pointer_return_change
@@ -4211,7 +4275,9 @@ impl OwnerReturnPin {
                 .then(|| {
                     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                         helper_arguments::rendered_template_call(operands[at], operands[other])
-                            .and_then(|call| self.awaited_call_shape(call, &self.name))
+                            .and_then(|call| {
+                                self.awaited_call_shape(poll_context, call, &self.name)
+                            })
                             .map(|call| (call, operands[other], None))
                     })
                 })
@@ -4225,7 +4291,9 @@ impl OwnerReturnPin {
                             [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                                 exact_integer_projection(operands[at], operands[other])
                                     .filter(|_| !ord_method_rebindable(operands[at], test, index))
-                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .and_then(|call| {
+                                        self.awaited_call_shape(poll_context, call, &self.name)
+                                    })
                                     .map(|call| (call, operands[other], None))
                             })
                         })
@@ -4238,7 +4306,9 @@ impl OwnerReturnPin {
                         .then(|| {
                             [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                                 single_element_index(operands[at])
-                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .and_then(|call| {
+                                        self.awaited_call_shape(poll_context, call, &self.name)
+                                    })
                                     .map(|call| (call, operands[other], None))
                             })
                         })
@@ -4247,7 +4317,7 @@ impl OwnerReturnPin {
             let unwrapped_direct = unwrap_wrapper.and_then(|_| {
                 let shape = |at: usize| {
                     unwrap_read(operands[at])
-                        .and_then(|call| self.awaited_call_shape(call, &self.name))
+                        .and_then(|call| self.awaited_call_shape(poll_context, call, &self.name))
                 };
                 match (shape(0), shape(1)) {
                     (Some(call), None) => Some((call, operands[1], None)),
@@ -4256,8 +4326,8 @@ impl OwnerReturnPin {
                 }
             });
             match (
-                self.awaited_call_shape(operands[0], &self.name),
-                self.awaited_call_shape(operands[1], &self.name),
+                self.awaited_call_shape(poll_context, operands[0], &self.name),
+                self.awaited_call_shape(poll_context, operands[1], &self.name),
                 rendered,
             ) {
                 (_, _, Some(pin)) if renders || indexes => pin,
@@ -4293,7 +4363,7 @@ impl OwnerReturnPin {
                             false,
                         )
                         .and_then(|text| {
-                            self.awaited_call_shape(text, &self.name)
+                            self.awaited_call_shape(poll_context, text, &self.name)
                                 .map(|call| (call, text))
                         })
                     };
@@ -4307,18 +4377,26 @@ impl OwnerReturnPin {
                                 self.path,
                                 ReturnPathGate::WholeValueField(_)
                                     | ReturnPathGate::ErrVariant { .. }
-                            ) =>
+                            ) || (unwrap_wrapper.is_some()
+                                && matches!(
+                                    self.path,
+                                    ReturnPathGate::Head(_) | ReturnPathGate::EarlyHead(_)
+                                )) =>
                         {
                             let bound_whole = |at: usize| {
                                 let initializer =
                                     bound_owner_initializer(test, operands[at], &self.name)?;
-                                self.awaited_call_shape(initializer, &self.name)
+                                self.awaited_call_shape(poll_context, initializer, &self.name)
                                     .map(|call| (call, false))
                                     .or_else(|| {
                                         unwrap_wrapper
                                             .and(unwrap_read(initializer))
                                             .and_then(|call| {
-                                                self.awaited_call_shape(call, &self.name)
+                                                self.awaited_call_shape(
+                                                    poll_context,
+                                                    call,
+                                                    &self.name,
+                                                )
                                             })
                                             .map(|call| (call, true))
                                     })
@@ -4342,8 +4420,8 @@ impl OwnerReturnPin {
             }
         } else if let Some([left, right]) = &equality {
             match (
-                self.awaited_call_shape(left, &self.name),
-                self.awaited_call_shape(right, &self.name),
+                self.awaited_call_shape(poll_context, left, &self.name),
+                self.awaited_call_shape(poll_context, right, &self.name),
             ) {
                 (Some(call), None) => (call, right.as_str(), Some(left.as_str())),
                 (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
@@ -4399,7 +4477,8 @@ impl OwnerReturnPin {
             {
                 return false;
             }
-            let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
+            let Some(call) = self.awaited_call_shape(poll_context, &expect_operands[0], &self.name)
+            else {
                 return false;
             };
             (
@@ -4420,7 +4499,7 @@ impl OwnerReturnPin {
                 Some(negated) => (negated.trim_start(), "false"),
                 None => (operand, "true"),
             };
-            if let Some(call) = self.awaited_call_shape(operand, &self.name) {
+            if let Some(call) = self.awaited_call_shape(poll_context, operand, &self.name) {
                 (call, expected, Some(operand))
             } else if (test.start_line..=test.end_line).contains(&assertion.line)
                 && owner_named_outside(test, &assertion.text, &self.name)
@@ -4436,7 +4515,7 @@ impl OwnerReturnPin {
                     self.returns_scalar,
                     true,
                 )
-                && let Some(call) = self.awaited_call_shape(text, &self.name)
+                && let Some(call) = self.awaited_call_shape(poll_context, text, &self.name)
             {
                 (call, expected, Some(text))
             } else {
@@ -5167,7 +5246,8 @@ impl FreeOwnerBinding<'_> {
         if let Some(known) = syntax.bare_call_memo.borrow().get(&key) {
             return *known;
         }
-        let verdict = self.bare_call_reaches_owner_uncached(test, test_source, index, syntax);
+        let verdict =
+            self.bare_call_reaches_owner_uncached(test, test_source, index, syntax, false);
         syntax.bare_call_memo.borrow_mut().insert(key, verdict);
         verdict
     }
@@ -5178,6 +5258,7 @@ impl FreeOwnerBinding<'_> {
         test_source: &str,
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
+        local_helper: bool,
     ) -> bool {
         let Some(owner_inline) = syntax
             .item_nesting(index, self.owner_file, self.name, self.owner_start_line)
@@ -5235,6 +5316,12 @@ impl FreeOwnerBinding<'_> {
             return false;
         }
         let (bindings, globs) = partition_name_uses(&scope.uses, self.name);
+        // A verified test-local function beside the test wins module globs.
+        // Body bindings above and explicit module imports/twins still refuse.
+        // This helper-only route is uncached: production identity is unchanged.
+        if local_helper && test.file == *self.owner_file && scope.stack == owner_inline {
+            return bindings.is_empty();
+        }
         if !bindings.is_empty() {
             let context = ScopeContext {
                 file: &test.file,
@@ -9231,6 +9318,29 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
+    free_call_reaches_definition(test, owner, prefix, index, syntax, false)
+}
+
+/// A polling helper is available in the test build, unlike the production
+/// owner admitted by the targeted-call API. Its closed source reader checks
+/// supported_targeted_item_context; all binding/competition gates are shared.
+pub(super) fn polling_helper_call_reaches_definition(
+    test: &TestSummary,
+    helper: &FunctionSummary,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    free_call_reaches_definition(test, helper, None, index, syntax, true)
+}
+
+fn free_call_reaches_definition(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    prefix: Option<&str>,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    test_build_helper: bool,
+) -> bool {
     if !owner.item.has_body
         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
         || other_definition_competes(owner, index, CallKind::Bare, None)
@@ -9257,15 +9367,20 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
         return binding.path_reaches_owner(prefix, test, &facts.source, index, syntax);
     }
     let masked_body = mask_comments_and_strings(&test.body);
-    !syntax
-        .item_nesting(index, &owner.file, &owner.name, owner.start_line)
-        .is_none_or(|owner| owner.cfg_gated)
-        && !syntax.file_cfg_gated(index, &owner.file)
+    (test_build_helper
+        || (!syntax
+            .item_nesting(index, &owner.file, &owner.name, owner.start_line)
+            .is_none_or(|owner| owner.cfg_gated)
+            && !syntax.file_cfg_gated(index, &owner.file)))
         && !test_body_shadows_owner(test, &owner.name)
         && !binds_outside_let(&masked_body, &owner.name)
         && !bound_by_macro(&masked_body, &owner.name)
         && !file_renames_to(&facts.source, &owner.name)
-        && binding.bare_call_reaches_owner(test, &facts.source, index, syntax)
+        && if test_build_helper {
+            binding.bare_call_reaches_owner_uncached(test, &facts.source, index, syntax, true)
+        } else {
+            binding.bare_call_reaches_owner(test, &facts.source, index, syntax)
+        }
 }
 
 /// Executable helper admission shares lexical call identity and item refusal,

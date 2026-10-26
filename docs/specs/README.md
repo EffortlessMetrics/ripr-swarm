@@ -15,6 +15,10 @@ explicitly corrected, rejected, superseded, or deprecated.
 
 ## Index
 
+New specs add their row as [`docs/spec-index.d/RIPR-SPEC-NNNN.md`](../spec-index.d/README.md) (one
+table row, same columns, links as `../specs/<file>`) instead of editing this table; `cargo xtask check-spec-numbering`
+and `check-doc-index` read both places. Rows below predate that convention.
+
 | Spec | Status | Topic |
 | --- | --- | --- |
 | [RIPR-SPEC-0001](RIPR-SPEC-0001-static-exposure-loop.md) | accepted | Static exposure loop |

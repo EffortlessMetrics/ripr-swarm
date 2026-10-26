@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0247-ex09-empty-inline-snapshot",
+  "subject_id": "authored-ts-spec0247-9snap",
+  "origin": "authored",
+  "anchor": "src/summary.ts:2",
+  "behavior_family": "return_value",
+  "test_shape": "jest_empty_inline_snapshot",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

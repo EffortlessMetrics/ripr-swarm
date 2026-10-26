@@ -36,7 +36,6 @@ Evidence
   - related test src/lib.rs:85 other_parser_condition misses: asserts, but not on the changed value; checked `assert!(parse_note("ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.").is_some())`
   - source assertion argument value "rust_module_unresolved_target" at line 66
   - source assertion argument value "src/a.rs:12" at line 66
-  - source function argument value line = "src/a.rs:12" at line 67
   - source assertion argument value "{context}" at line 79
   - source function argument value line = "ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed." at line 86
   - source function argument value line = "ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed." at line 87

@@ -30,6 +30,7 @@ use std::path::Path;
 
 mod equality_dispatch;
 mod operator_dispatch;
+pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
