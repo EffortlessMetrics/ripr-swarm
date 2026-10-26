@@ -106,7 +106,10 @@ impl StableNames {
                 .collect(),
             globals,
             // `alias.NAME = ...` can rebind the name through a self-import.
-            attributes: assigned_attributes(source)?,
+            // `statements` is the successful parse of `source`, so this reads
+            // the same attributes `assigned_attributes(source)` would without
+            // parsing the module again (#10441).
+            attributes: assigned_attribute_names(statements),
             walrus: walrus_target_names(source)
                 .into_iter()
                 .map(str::to_string)
