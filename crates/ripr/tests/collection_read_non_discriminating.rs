@@ -36,6 +36,21 @@ fn non_discriminating_collection_reads_never_credit_exposed() -> Result<(), Stri
             true,
         ),
         (
+            "readonly_use_does_not_make_twins_independent",
+            "let mut c = Bag::new();\nc.add(20);\nlet mut d = Bag::new();\nd.add(20);\nlet _ = c.items.len();\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
+            "identically_seeded_twins",
+            "let mut c = Bag::new();\nc.items.push(1);\nc.add(20);\nlet mut d = Bag::new();\nd.items.push(1);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
+            "twin_rewritten_after_owner_keeps_credit",
+            "let mut c = Bag::new();\nc.add(20);\nlet mut d = Bag::new();\nd.add(20);\nd.items.clear();\nd.items.push(20);\nassert_eq!(c.items, d.items);",
+            true,
+        ),
+        (
             "owner_on_rhs_of_or",
             "let mut c = Bag::new();\nlet _ = true || { c.add(20); true };\nassert_eq!(c.items, vec![]);",
             false,
@@ -68,11 +83,54 @@ fn non_discriminating_collection_reads_never_credit_exposed() -> Result<(), Stri
             .findings
             .iter()
             .any(|f| f.class.as_str() == "exposed");
-        if any_exposed != credited {
+        if report.findings.is_empty() || any_exposed != credited {
             wrong.push(format!("{name}: {classes:?}"));
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// Two owner-fed bindings driven with different arguments diverge when the
+/// owner changes, so the comparison keeps its credit (#7135).
+#[test]
+fn argument_sensitive_twin_comparison_keeps_credit() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("collection_read_nd_args");
+    let production = "pub struct Bag { pub items: Vec<u32> }\nimpl Bag {\n    pub fn new() -> Self { Bag { items: Vec::new() } }\n    pub fn add(&mut self, x: u32) {\n        self.items.push(x % 2);\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,3 +4,3 @@ impl Bag {\n     pub fn add(&mut self, x: u32) {\n-        self.items.push(x % 3);\n+        self.items.push(x % 2);\n     }\n";
+    let body = "let mut c = Bag::new();\nc.add(2);\nlet mut d = Bag::new();\nd.add(4);\nassert_eq!(c.items, d.items);";
+    let source = format!(
+        "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\n#[test]\nfn bag_observed() {{\n{body}\n}}\n}}\n"
+    );
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"bag_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    assert!(!report.findings.is_empty());
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.class.as_str() == "exposed"),
+        "{:?}",
+        report
+            .findings
+            .iter()
+            .map(|f| format!("{}={}", f.probe.family.as_str(), f.class.as_str()))
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 

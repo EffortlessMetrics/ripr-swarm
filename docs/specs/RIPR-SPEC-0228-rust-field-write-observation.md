@@ -162,7 +162,14 @@ In this section `f` is the full projection path (`r.child.count`, never
 A field-collection comparison whose two sides read the same field path from
 two bindings that each ran the owner before the read
 (`c.add(20); d.add(20); assert_eq!(c.items, d.items)`) confirms nothing: a wrong
-owner moves both sides together (#7135). A twin that never ran the owner (built
+owner moves both sides together (#7135). The refusal needs equivalent
+histories: each binding has the same constructor and the same ordered
+statements using it (arguments included, binding name abstracted; read-only
+uses of the collection are not history). A different argument
+(`c.add(2); d.add(4)`), call count or seeding (`d.items.push(20)`) leaves the
+credit alone, because the sides diverge when the owner changes. A constructor
+that cannot be found or that names the other binding (`let d = c.clone()`)
+counts as equivalent. A twin that never ran the owner (built
 or seeded independently) leaves the other side's credit alone. The owner
 call is found as a `binding.owner(..)` statement by method name only: a twin
 built through a helper or builder, chained after the call, or fed by a

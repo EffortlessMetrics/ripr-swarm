@@ -583,10 +583,10 @@ fn field_collection_observer_confirms(
     // `d.add(..)` compares two values the owner wrote, so a wrong owner
     // moves both sides together. Two bindings that each ran the owner
     // before the read observe nothing independent.
-    // Only equivalent histories are refused: the same number of owner calls
-    // and no setup touching the collection beforehand. A differing call
-    // count or a seeded side (`d.items.push(20); d.add(20)`) makes the
-    // sides diverge when the owner changes, so the comparison can notice.
+    // Only equivalent histories are refused (same construction and same
+    // driving statements, arguments included). Differing arguments, call
+    // counts or seeding make the sides diverge when the owner changes, so
+    // the comparison can notice.
     let mut owner_fed: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for read in &reads {
         if owner_call_reaches_read_unrewritten(
@@ -604,9 +604,7 @@ fn field_collection_observer_confirms(
             owner_fed.insert(read.binding.as_str());
         }
     }
-    if owner_fed.len() > 1
-        && equivalent_owner_histories(test, &owner_fed, owner.name(), path, assertion.line)
-    {
+    if owner_fed.len() > 1 && equivalent_owner_histories(test, &owner_fed, path, assertion.line) {
         return false;
     }
     reads.into_iter().any(|read| {
@@ -635,33 +633,108 @@ fn field_collection_observer_confirms(
     })
 }
 
-/// #7135: whether every binding in `bindings` ran the owner the same number
-/// of times before the read at `read_line` and none had its collection
-/// touched (`binding.path...`) before the read line. Such sides move
-/// together under a wrong owner.
+/// #7135: whether every binding in `bindings` was built and driven the same
+/// way before the read at `read_line`, so a wrong owner moves every compared
+/// side together. The history of a binding is its constructor and, in order,
+/// each statement that uses it other than as a read of the collection under
+/// test (`let _ = c.items.len()` is not setup), with the binding's own name
+/// abstracted. Different arguments, call counts, seeding or constructors make
+/// the histories differ. A constructor that cannot be found, or that names
+/// another compared binding (`let d = c.clone()`), is treated as equivalent:
+/// no independence is established.
 fn equivalent_owner_histories(
     test: &TestSummary,
     bindings: &std::collections::BTreeSet<&str>,
-    method: &str,
     path: &str,
     read_line: usize,
 ) -> bool {
     let masked = mask_comments_and_strings(&test.body);
-    let before: String = masked
-        .lines()
-        .take(read_line.saturating_sub(test.start_line))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut counts = bindings.iter().map(|binding| {
-        let seeded = before.contains(&format!("{binding}.{path}"));
-        let calls =
-            owner_calls_before_read(&test.body, test.start_line, binding, method, read_line).len();
-        (seeded, calls)
-    });
-    let Some(first) = counts.next() else {
-        return false;
+    let skipped = read_line.saturating_sub(test.start_line);
+    let offset: usize = masked
+        .split_inclusive('\n')
+        .take(skipped)
+        .map(str::len)
+        .sum();
+    let (Some(before_masked), Some(before)) = (masked.get(..offset), test.body.get(..offset))
+    else {
+        return true;
     };
-    !first.0 && counts.all(|other| !other.0 && other.1 == first.1)
+    let mut statements = Vec::new();
+    let mut start = 0;
+    for (at, ch) in before_masked.char_indices() {
+        if matches!(ch, ';' | '{' | '}') {
+            statements.push((start, at));
+            start = at + 1;
+        }
+    }
+    statements.push((start, before_masked.len()));
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mentions = |text: &str, name: &str| {
+        text.match_indices(name).any(|(at, found)| {
+            !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+                && !text[at + found.len()..].starts_with(ident)
+        })
+    };
+    let abstracted = |text: &str, name: &str| {
+        let mut out = String::new();
+        let mut last = 0;
+        for (at, found) in text.match_indices(name) {
+            let end = at + found.len();
+            if !text[..at].chars().next_back().is_some_and(ident) && !text[end..].starts_with(ident)
+            {
+                out.push_str(&text[last..at]);
+                out.push('$');
+                last = end;
+            }
+        }
+        out.push_str(&text[last..]);
+        out.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let mut histories: Vec<Vec<String>> = Vec::new();
+    for binding in bindings {
+        let mut history = Vec::new();
+        let mut constructed = false;
+        for &(from, to) in &statements {
+            let (Some(code), Some(text)) = (before_masked.get(from..to), before.get(from..to))
+            else {
+                return true;
+            };
+            let trimmed = code.trim_start();
+            let declared = trimmed
+                .strip_prefix("let ")
+                .map(|rest| rest.trim_start())
+                .map(|rest| rest.strip_prefix("mut ").map_or(rest, str::trim_start))
+                .is_some_and(|rest| {
+                    rest.strip_prefix(binding)
+                        .is_some_and(|after| !after.starts_with(ident))
+                });
+            if declared {
+                let Some((_, rhs)) = text.split_once('=') else {
+                    return true;
+                };
+                if bindings
+                    .iter()
+                    .any(|other| other != binding && mentions(rhs, other))
+                {
+                    return true;
+                }
+                constructed = true;
+                history.push(format!("let {}", abstracted(rhs, binding)));
+            } else if mentions(code, binding)
+                && !only_field_reads_between(code, 0, code.len(), binding, None, path)
+            {
+                history.push(abstracted(text, binding));
+            }
+        }
+        if !constructed {
+            return true;
+        }
+        histories.push(history);
+    }
+    histories.windows(2).all(|pair| pair[0] == pair[1])
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an
