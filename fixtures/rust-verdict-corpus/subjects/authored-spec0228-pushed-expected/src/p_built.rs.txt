@@ -1,0 +1,30 @@
+#[derive(Debug, Clone, PartialEq)]
+pub struct Line {
+    pub sku: String,
+    pub qty: u32,
+}
+
+#[derive(Default)]
+pub struct Order {
+    pub lines: Vec<Line>,
+}
+
+impl Order {
+    pub fn add(&mut self, sku: &str, qty: u32) {
+        self.lines.push(Line { sku: sku.to_uppercase(), qty });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line_p_built() {
+        let mut order = Order::default();
+        let mut expected = Order::default();
+        expected.lines.push(Line { sku: "BOLT".to_string(), qty: 2 });
+        order.add("bolt", 2);
+        assert_eq!(order.lines, expected.lines);
+    }
+}

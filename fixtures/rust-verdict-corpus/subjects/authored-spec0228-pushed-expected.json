@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-spec0228-pushed-expected",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26 for a pushed field compared whole against an independently built expected collection (RIPR-SPEC-0228, #7697)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a62282daa4697ee171d18949b15cc5f41a2b613b9fb17b63feda9a21cd3e0507"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "85eed8bbb189ac1dcb95ec88c5108f158bc0733e4efaa39eece02756f09f06fc"
+    },
+    {
+      "path": "src/p_built.rs",
+      "sha256": "5f7e53f8ac1c4d4a82f9f8c509f8e7f322b93ca7f4332ed917fe970dfbb9e42a"
+    },
+    {
+      "path": "src/p_owner.rs",
+      "sha256": "79535373f8ecd254a640e042b3b1bfdf021e538eaab97d0800441e24cf2eab5f"
+    }
+  ]
+}
