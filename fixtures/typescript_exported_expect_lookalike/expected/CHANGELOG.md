@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compact output matches the candidate renderer
+
+Reason:
+RIPR-SPEC-0243 rule 3: retain the unknown oracle and four related tests while
+refreshing compact wrapping, glossary and no-canonical-gap guidance already
+present on the pinned basis. JSON and full human output are unchanged.
+
+Producer:
+`cargo xtask fixtures typescript_exported_expect_lookalike`
+
+Updated:
+- `expected/human.txt`
