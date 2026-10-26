@@ -26727,6 +26727,34 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
     ]);
     assert_success(&default);
 
+    // #10542: lexically equivalent spellings of the default are accepted,
+    // including `..` pairs that `Path` equality alone does not fold.
+    for spelling in [
+        "./target/ripr/workflow",
+        "target/ripr/workflow/",
+        "target/ripr/other/../workflow",
+        "target/../target/ripr/workflow",
+    ] {
+        let accepted = run_ripr(&[
+            "agent", "status", "--root", &root_str, "--out", spelling, "--json",
+        ]);
+        if !accepted.status.success() {
+            return Err(format!(
+                "agent status --out {spelling} must be accepted; got:\n{}",
+                String::from_utf8_lossy(&accepted.stderr)
+            ));
+        }
+    }
+    // Escaping spellings stay refused.
+    for escaping in ["../target/ripr/workflow", "target/ripr/workflow/.."] {
+        let refused = run_ripr(&[
+            "agent", "status", "--root", &root_str, "--out", escaping, "--json",
+        ]);
+        if refused.status.success() {
+            return Err(format!("agent status --out {escaping} must stay refused"));
+        }
+    }
+
     ignore_remove_dir_all(&root);
     Ok(())
 }
