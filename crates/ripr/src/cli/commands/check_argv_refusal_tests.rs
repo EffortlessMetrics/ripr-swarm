@@ -408,7 +408,7 @@ fn repo_scope_base_must_resolve_to_a_commit() -> Result<(), String> {
     };
     let want = format!(
         "check: base revision \"no-such-ref\" does not resolve to a commit in {}",
-        root.0.display()
+        crate::output::path::human_path(&root.0)
     );
     if error.to_string() != want {
         return Err(format!("expected `{want}`, got `{error}`"));
