@@ -4004,6 +4004,35 @@ fn line_uses_imported_symbol_matches_attribute_access_on_imported_alias() {
     assert!(!line_uses_imported_symbol("    unrelated", &imports));
 }
 
+/// RIPR-SPEC-0238 rule 8: an imported name is read as a token. `pos.x` and
+/// `repos(` merely end in `os`; a real use, a use after an operator or
+/// bracket, and an f-string field still count.
+#[test]
+fn an_import_alias_is_matched_as_a_whole_name() {
+    let os = vec![PythonImport {
+        imported: "os".to_string(),
+        alias: "os".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    return pos.x + 2",
+        "    return repos(x)",
+        "    return other.os.getcwd()",
+        "    return cosmos.get(x)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &os), "{line}");
+    }
+    for line in [
+        "    return os.getcwd()",
+        "    return x + os.cpu_count()",
+        "    return (os.getcwd())",
+        "    return f\"{os.getcwd()}\"",
+        "    return os(x)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &os), "{line}");
+    }
+}
+
 /// `file=sys.stderr` on a `print` names a standard stream; any other `sys`
 /// attribute use is still an imported symbol the adapter does not resolve.
 #[test]
