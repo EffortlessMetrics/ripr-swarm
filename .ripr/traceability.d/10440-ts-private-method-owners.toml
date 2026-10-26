@@ -11,3 +11,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_replacement_and_removed_body_keep_unknown_reach",
   "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_nested_runtime_path_and_auto_accessor_stay_partial",
 ]
+fixtures = [
+  "fixtures/typescript_private_method_unknown",
+  "fixtures/typescript_nested_private_method_partial",
+]
