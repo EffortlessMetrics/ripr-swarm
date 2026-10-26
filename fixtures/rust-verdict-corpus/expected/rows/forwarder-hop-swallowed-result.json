@@ -1,0 +1,22 @@
+{
+  "case_id": "forwarder-hop-swallowed-result",
+  "subject_id": "authored-forwarder-hop",
+  "origin": "authored",
+  "anchor": "src/lib.rs:40",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "false_credit_trap",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

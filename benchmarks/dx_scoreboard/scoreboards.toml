@@ -120,6 +120,17 @@ language = "python"
 note = "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test"
 heavy = true
 
+# A large Python workspace under the file cap (#10750). Before #10735 and
+# #10750 this two-file edit took about 290 s on 4 cores, because every changed
+# line re-scanned all ~23k tests; it now completes in about 15 s.
+[[corpus]]
+id = "pandas-python"
+url = "https://github.com/pandas-dev/pandas"
+sha = "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc"
+language = "python"
+note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
+heavy = true
+
 # TypeScript diffs. `defu` and `ky` complete under `--mode draft` for their
 # pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
 # file is provably unrelated to the diff; uncertain reachability and other typed

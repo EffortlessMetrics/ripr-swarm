@@ -885,7 +885,9 @@ impl ClassifiedProbeEvidence {
                                         )
                                         .activation
                                     });
-                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
+                                wrapper_return_boundary_pinned(
+                                    owner, assertion, chain, activation, test,
+                                )
                             })
                 },
                 assertion_admitted: &assertion_admitted,
@@ -1225,8 +1227,7 @@ impl ClassifiedProbeEvidence {
             && let Some(owner) = context.owner_fn
             && let Some(pin) = operand_only_pin(
                 &context.probe.expression,
-                &owner.name,
-                owner.body.as_str(),
+                owner,
                 outer_imports.as_ref(),
                 &context.related_tests,
                 context.index,
