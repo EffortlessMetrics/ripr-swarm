@@ -119,6 +119,10 @@ const REFLECTIVE_SPELLINGS: [&str; 15] = [
     "__closure__",
 ];
 
+/// Function attributes whose assignment replaces what a reader returns without
+/// rebinding its name (`price.__code__ = other.__code__`).
+const CODE_SLOTS: [&str; 4] = ["__code__", "__defaults__", "__kwdefaults__", "__closure__"];
+
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
 /// tokenized once so a diff that changes many Python files does not repeat
 /// the whole-workspace work per file (#10125).
@@ -339,6 +343,15 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
+    /// Whether some workspace file assigns a function's code slots, which can
+    /// replace any reader without rebinding its name (#10626). Checked where a
+    /// reader is evaluated, not for plain names such as `version_info`.
+    pub(super) fn may_replace_reader_code(&self) -> bool {
+        self.attributes
+            .iter()
+            .any(|attribute| CODE_SLOTS.contains(&attribute.as_str()))
+    }
+
     /// Whether another file may change the contents of the dict-literal
     /// constant `name` of the module at `module_file` in place, or alias it.
     pub(super) fn may_mutate_table(&self, name: &str, module_file: &Path) -> bool {
@@ -606,6 +619,7 @@ fn credits<'a>(
         if !new_facts.bound_once(&owner.name)
             || !old_facts.bound_once(&owner.name)
             || module_owner.foreign_writes.may_rebind(&owner.name, file)
+            || module_owner.foreign_writes.may_replace_reader_code()
         {
             continue;
         }

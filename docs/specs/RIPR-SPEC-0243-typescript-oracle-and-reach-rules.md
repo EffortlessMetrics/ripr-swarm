@@ -593,6 +593,21 @@ strong:
   no repeated wildcard (`.`, a character class, an escaped class such as
   `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
   whose top-level `message` is a string literal.
+- AVA `t.throws` or `t.throwsAsync` (the test callback's first parameter of
+  a test registered through AVA's own `test` import, `import test from "ava"`
+  or `import { test } from "ava"`; tape and uvu give `t.throws` a different
+  expectation contract) whose second argument is an object holding exactly
+  one property, a plain `message` with a string literal value (a duplicate
+  key keeps the last value in JavaScript, so a second `message` is refused).
+  AVA compares `message` by equality, as `node:assert` does. The first
+  argument must be a plain function for `t.throws` and an async function for
+  `t.throwsAsync`, a `t.throwsAsync` credits only when awaited or returned to
+  the runner (a bare call can outlive the test), and every mention of the receiver in the test body must be
+  a `t.method(...)` call, so a shadowed receiver or a replaced matcher never
+  credits. Any other field (`instanceOf`, `is`, `name`, `code`), a spread, a
+  computed, shorthand or method `message`, a regex or non-literal `message`,
+  a missing expectation, a promise argument and `t.notThrows` /
+  `t.notThrowsAsync` stay `broad_error` / weak. (Amended 2026-10-26, #10400.)
 
 Rule 4's message-only guard applies to all of them: on a message-only
 change, a chai string (also the message of a chai class and message

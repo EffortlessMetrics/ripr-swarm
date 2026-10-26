@@ -2185,6 +2185,7 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
         "price.__code__ = frozen.__code__",
         "price.__defaults__ = (1,)",
         "price.__kwdefaults__ = {}",
+        "price.__closure__ = ()",
     ] {
         let test = format!(
             "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
@@ -2199,4 +2200,53 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
         TABLE_NEW,
     )?);
     Ok(())
+}
+
+#[test]
+fn replacing_a_scalar_readers_code_withholds_credit() -> Check {
+    let source = "RATES = 6\n\n\ndef price(tier):\n    return RATES\n";
+    for replacement in [
+        "price.__code__ = frozen.__code__",
+        "price.__defaults__ = (1,)",
+        "price.__kwdefaults__ = {}",
+        "price.__closure__ = ()",
+    ] {
+        let test = format!(
+            "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
+        );
+        assert_not_credited(&classify_table_edit(
+            source,
+            &[],
+            &test,
+            "RATES = 5",
+            "RATES = 6",
+        )?);
+    }
+    // Control: the same test without the replacement keeps the credit.
+    assert_credited(&classify_table_edit(
+        source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        "RATES = 5",
+        "RATES = 6",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_code_slot_assignment_replaces_readers_but_does_not_rebind_plain_names() {
+    let own = Path::new("hostile/settings.py");
+    let other = Path::new("tests/test_helper.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        [
+            (own, "LIMIT = 1\n"),
+            (other, "def f():\n    pass\n\nf.__code__ = f.__code__\n"),
+        ]
+        .into_iter(),
+        false,
+    );
+    assert!(foreign.may_replace_reader_code());
+    assert!(!foreign.may_rebind("version_info", Path::new("sys.py")));
+    assert!(!foreign.may_rebind("LIMIT", own));
 }
