@@ -253,8 +253,8 @@ A generator that is a table, itoa's `test! { name(value, expected) ... }`
 (#6925), is the one repetition shape: the whole matcher is
 `$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
 or `block` variables, literal `,`, `;`, `:` or `=>` tokens, and delimited groups of
-comma-separated metavariables (an `expr` outside a group needs a `,`, `;`, `:` or
-`=>` after it, or the row separator); the transcriber is exactly one
+comma-separated metavariables (an `expr` outside a group needs a `,`, `;` or
+`=>` after it, as rustc requires, or the row separator); the transcriber is exactly one
 separator-free `$( body )*` over those variables. The invocation must split
 into rows with nothing left over, and every fragment must fit as for a plain
 arm. Each row becomes one expansion of the body, so a table of ten rows
@@ -262,7 +262,8 @@ indexes ten tests, up to 512 rows and 128 KiB of expansion text per
 invocation; a larger table indexes nothing. A token tree keeps `=>` as two
 puncts, so it matches only an `=` immediately followed by `>` and not the tail
 of a longer punct (`==>`, `..=>`), while a punct directly followed by another
-is never bound as one `tt` row element (`::` is one token to rustc). Any other
+is never bound as one `tt` row element, and a literal `:` that begins a `::` is
+not a `:` separator (`::` is one token to rustc). Any other
 row layout (`=>` as the repetition separator, nested repetition, a trailing
 separator, a leftover token, a group of the wrong arity) indexes nothing. A
 matcher that ends in a literal `,`, or an invocation that ends in one the

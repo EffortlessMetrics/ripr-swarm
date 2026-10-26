@@ -35,7 +35,7 @@
 //! The table form is a whole-matcher repetition `$( row ) sep? *` (or `+`)
 //! whose row is `$name:ident`, `literal`, `tt` or `block` variables,
 //! literal `,`, `;`, `:` or `=>` tokens, and delimited groups of comma-separated
-//! metavariables (an `expr` outside a group needs a row separator after it),
+//! metavariables (an `expr` outside a group needs a `,`, `;` or `=>` after it),
 //! paired with a transcriber that is exactly one separator-free
 //! `$( body )*`. The invocation must split into rows with nothing left
 //! over; the body is emitted once per row. This is itoa's
@@ -723,6 +723,17 @@ fn punct_fused_to_next(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>], positi
         && first.text_range().end() == second.text_range().start()
 }
 
+/// Whether the `:` at `position` is directly followed by another `:`.
+fn colon_joined_to_next(
+    elements: &[NodeOrToken<SyntaxNode, SyntaxToken>],
+    position: usize,
+) -> bool {
+    punct_fused_to_next(elements, position)
+        && elements
+            .get(position + 1)
+            .is_some_and(|next| next.kind() == SyntaxKind::COLON)
+}
+
 /// `$( row ) sep? *` or `+` as a whole matcher, the shape of a test table.
 struct RepetitionMatcher {
     row: Vec<RowItem>,
@@ -847,6 +858,11 @@ fn match_rows(
                     if elements.get(position)?.kind() != *kind {
                         return None;
                     }
+                    // A `:` joined to the next `:` is rustc's one `::`
+                    // token, which is not this separator.
+                    if *kind == SyntaxKind::COLON && colon_joined_to_next(&elements, position) {
+                        return None;
+                    }
                     position += 1;
                 }
                 RowItem::Separator(RowSeparator::FatArrow) => {
@@ -883,6 +899,11 @@ fn match_rows(
                                 None => RowSeparator::Token(matcher.separator?),
                                 Some(_) => return None,
                             };
+                            // rustc rejects a macro whose `expr` is followed
+                            // by anything but `=>`, `,` or `;`.
+                            if end == RowSeparator::Token(SyntaxKind::COLON) {
+                                return None;
+                            }
                             (position..elements.len())
                                 .find(|&at| match end {
                                     RowSeparator::Token(kind) => elements[at].kind() == kind,
@@ -1372,6 +1393,40 @@ mod tests {
             spaced.len(),
             1,
             "two separate puncts bind one tt each: {spaced:?}"
+        );
+
+        // A literal `:` is not the first half of rustc's one `::` token, and
+        // an `expr` may not be followed by `:` at all.
+        for (label, matcher, invocation) in [
+            (
+                "a separator colon fused to the next",
+                "$($name:ident : $v:tt , $w:expr);*",
+                "a:: , false",
+            ),
+            (
+                "a separator colon fused into an expr",
+                "$($name:ident : $v:expr , $w:expr);*",
+                "a:::MAXX, false",
+            ),
+            (
+                "an expr followed by a colon",
+                "$($name:ident : $v:expr : $w:expr);*",
+                "a : 9 : false",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+        let colon = expand_local_test_macros(&table(
+            "$($name:ident : $v:tt , $w:expr);*",
+            "a : 1 , false",
+        ));
+        assert_eq!(
+            colon.len(),
+            1,
+            "premise: a plain colon separator expands: {colon:?}"
         );
 
         // `=>` is the whole token or nothing: every near miss registers no
