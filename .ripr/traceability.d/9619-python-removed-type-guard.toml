@@ -6,6 +6,6 @@ tests = [
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::removed_type_guard_is_credited_to_a_foreign_literal_comparison",
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::removed_type_guard_stays_an_abstention_without_the_exact_shape",
   "crates/ripr/src/analysis/language/python/type_guard.rs::tests::guard_removal_needs_the_exact_one_line_shape",
-  "crates/ripr/src/analysis/language/python/type_guard.rs::tests::only_custom_attribute_reads_of_other_count",
+  "crates/ripr/src/analysis/language/python/type_guard.rs::tests::only_a_plain_stored_attribute_comparison_counts",
   "crates/ripr/src/analysis/language/python/type_guard.rs::tests::foreign_literal_comparisons_are_recognized_in_both_orders",
 ]
