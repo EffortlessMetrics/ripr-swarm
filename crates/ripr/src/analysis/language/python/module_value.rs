@@ -64,6 +64,8 @@ pub(super) struct ForeignWrites {
     dynamic_words: Vec<String>,
     /// Dict-literal module constants some other file may mutate or alias.
     table_unsafe: Vec<String>,
+    /// Every word of the files that can reach a module's objects reflectively.
+    reflective_words: Vec<String>,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -87,6 +89,21 @@ const DYNAMIC_LOADERS: [&str; 13] = [
     "builtins",
     "__builtins__",
     "__dict__",
+];
+
+/// Spellings that reach a module's objects without writing their names.
+const REFLECTIVE_SPELLINGS: [&str; 11] = [
+    "getattr",
+    "dir",
+    "getmembers",
+    "locals",
+    "__globals__",
+    "attrgetter",
+    "__getattribute__",
+    "eval",
+    "compile",
+    "inspect",
+    "gc",
 ];
 
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
@@ -118,6 +135,8 @@ struct IndexedSource<'a> {
     /// Dict-literal constants (of any workspace module) this file mentions
     /// other than as an import or a pure read (#9619).
     table_unsafe: Vec<String>,
+    /// Holds a reflective spelling: every word is a possible table access.
+    reflective_words: Option<Vec<&'a str>>,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -162,24 +181,27 @@ impl<'a> ForeignIndex<'a> {
                     .iter()
                     .any(|writer| mentions_identifier(source, writer))
                 || source.contains("sys.modules");
-            let table_unsafe = if tables.is_empty() {
-                Vec::new()
-            } else if mentions_identifier(source, "getattr") {
-                // `getattr(module, "NAME")` hands out the mutable table.
-                source_words(source)
-                    .filter(|word| tables.contains(*word))
-                    .map(str::to_string)
-                    .collect()
-            } else {
-                unsafe_table_uses(source, &|word| tables.contains(word), None)
-                    .into_iter()
-                    .collect()
-            };
+            let table_unsafe =
+                if tables.is_empty() || !source_words(source).any(|word| tables.contains(word)) {
+                    Vec::new()
+                } else {
+                    unsafe_table_uses(source, &|word| tables.contains(word), None)
+                        .into_iter()
+                        .collect()
+                };
+            // Reflection reaches a module's dict without naming it, or with a
+            // name built at runtime (`getattr(module, n)`, `dir(module)`,
+            // `inspect.getmembers`, `locals()`, `fn.__globals__`).
+            let reflective = !tables.is_empty()
+                && REFLECTIVE_SPELLINGS
+                    .iter()
+                    .any(|spelling| mentions_identifier(source, spelling));
             files.push(IndexedSource {
                 file,
                 assigned,
                 dynamic_words: dynamic.then(|| source_words(source).collect()),
                 table_unsafe,
+                reflective_words: reflective.then(|| source_words(source).collect()),
             });
         }
         Self {
@@ -202,9 +224,13 @@ impl<'a> ForeignIndex<'a> {
         let mut attributes = std::collections::BTreeSet::new();
         let mut words = std::collections::BTreeSet::new();
         let mut table_unsafe = std::collections::BTreeSet::new();
+        let mut reflective_words = std::collections::BTreeSet::new();
         let mut unparsed = Vec::new();
         for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
             table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+            if let Some(reflective) = &indexed.reflective_words {
+                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+            }
             match &indexed.assigned {
                 Some(assigned) => attributes.extend(assigned.iter().cloned()),
                 None => unparsed.push(indexed.file),
@@ -236,6 +262,7 @@ impl<'a> ForeignIndex<'a> {
             attributes: attributes.into_iter().collect(),
             dynamic_words: words.into_iter().collect(),
             table_unsafe: table_unsafe.into_iter().collect(),
+            reflective_words: reflective_words.into_iter().collect(),
             unknown,
         }
     }
@@ -277,11 +304,19 @@ impl ForeignWrites {
     /// Whether another file may change the contents of the dict-literal
     /// constant `name` of the module at `module_file` in place, or alias it.
     pub(super) fn may_mutate_table(&self, name: &str, module_file: &Path) -> bool {
+        let stem = module_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
         self.may_rebind(name, module_file)
             || self
                 .table_unsafe
                 .iter()
                 .any(|unsafe_use| unsafe_use == name)
+            || self
+                .reflective_words
+                .iter()
+                .any(|word| word == name || (!stem.is_empty() && word == stem))
     }
 }
 
@@ -441,6 +476,15 @@ fn credits<'a>(
     // that writes the attribute or patches the module can rebind it for every
     // test.
     if module_owner.foreign_writes.may_rebind(&name, file) {
+        return None;
+    }
+    // The owner reaching its own table reflectively (`getattr(self_module,
+    // "RATES")`) is invisible to the token scan, which skips string contents.
+    if table
+        && REFLECTIVE_SPELLINGS
+            .iter()
+            .any(|spelling| mentions_identifier(new_source, spelling))
+    {
         return None;
     }
     if table

@@ -1188,6 +1188,8 @@ fn a_dict_mutated_in_the_module_is_not_credited() -> Check {
         "\n\ndef tune():\n    alias = RATES\n    alias[\"silver\"] = 5\n",
         "\n\ndef tune(extra):\n    RATES |= extra\n",
         "\n\nRATES[\"silver\"] = 5\n",
+        "\n\nimport sys\n\ngetattr(sys.modules[__name__], \"RATES\")[\"silver\"] = 5\n",
+        "\n\nfrom hostile import settings as self_module\n\ngetattr(self_module, \"RATES\")[\"silver\"] = 5\n",
         "\n\nRATES = {\"silver\": 5}\n",
     ] {
         assert_not_credited(&classify_table(
@@ -1207,6 +1209,15 @@ fn a_dict_mutated_or_aliased_elsewhere_is_not_credited() -> Check {
     for other in [
         "from hostile.settings import RATES\n\nRATES[\"silver\"] = 5\n",
         "from hostile.settings import RATES\n\nRATES.update(silver=5)\n",
+        "from hostile.settings import RATES; RATES[\"silver\"] = 5\n",
+        "from hostile.settings import RATES\nx = f\"\"\"\n{RATES.clear()}\n\"\"\"\n",
+        "from hostile import settings\n\nfor n in dir(settings):\n    v = getattr(settings, n)\n    isinstance(v, dict) and v.clear()\n",
+        "import inspect\nfrom hostile import settings\n\nfor _, v in inspect.getmembers(settings):\n    getattr(v, \"clear\", print)()\n",
+        "from hostile.settings import *\n\nfor v in list(locals().values()):\n    getattr(v, \"clear\", print)()\n",
+        "import operator\nfrom hostile import settings\n\noperator.attrgetter(\"RA\" + \"TES\")(settings).clear()\n",
+        "from hostile import settings\n\nsettings.price.__globals__[\"RATES\"].clear()\n",
+        // Definitions before the mutation must not hide it from the scan.
+        "from hostile.settings import RATES\n\n\ndef f():\n    return 1\n\n\nclass Box:\n    pass\n\n\nRATES[\"silver\"] = 5\n",
         "from hostile.settings import RATES as table\n",
         "import hostile.settings as settings\n\nsettings.RATES[\"silver\"] = 5\n",
         "import hostile.settings as settings\n\nalias = settings.RATES\n",

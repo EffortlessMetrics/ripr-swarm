@@ -486,7 +486,9 @@ place, so credit also requires that no source mention `NAME` other than as an
 import or export, a `.get` read or a subscript read on a line that binds
 nothing (the owning module's defining statement aside): a store through a
 subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
-f-string mention, a file using `getattr`, or a lexing error withholds credit.
+f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`) that
+mentions the table or its module withholds credit.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 

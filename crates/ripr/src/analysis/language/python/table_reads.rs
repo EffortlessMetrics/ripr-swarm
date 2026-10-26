@@ -32,7 +32,11 @@ pub(super) fn unsafe_table_uses(
     let mut tokens = Vec::new();
     for token in lex(source, Mode::Module) {
         match token {
-            Ok((tok, range)) => tokens.push((tok, usize::from(range.start()))),
+            // Indentation tokens lead a dedented line; they are not part of it.
+            Ok((Tok::Indent | Tok::Dedent, _)) => {}
+            Ok((tok, range)) => {
+                tokens.push((tok, usize::from(range.start()), usize::from(range.end())));
+            }
             Err(_) => return all_mentioned(source, watched),
         }
     }
@@ -41,7 +45,7 @@ pub(super) fn unsafe_table_uses(
     while start < tokens.len() {
         let end = tokens[start..]
             .iter()
-            .position(|(tok, _)| matches!(tok, Tok::Newline))
+            .position(|(tok, _, _)| matches!(tok, Tok::Newline | Tok::Semi))
             .map_or(tokens.len(), |offset| start + offset);
         scan_line(
             source,
@@ -65,12 +69,12 @@ fn all_mentioned(source: &str, watched: &dyn Fn(&str) -> bool) -> BTreeSet<Strin
 
 fn scan_line(
     source: &str,
-    line: &[(Tok, usize)],
+    line: &[(Tok, usize, usize)],
     watched: &dyn Fn(&str) -> bool,
     defining_line: Option<usize>,
     unsafe_names: &mut BTreeSet<String>,
 ) {
-    let imports = matches!(line.first(), Some((Tok::From | Tok::Import, _)));
+    let imports = matches!(line.first(), Some((Tok::From | Tok::Import, _, _)));
     let assigns = line_binds(line);
     // Counted only for the rare watched name that opens a line, so a large
     // file is not rescanned from its start for every logical line.
@@ -81,15 +85,13 @@ fn scan_line(
             .count()
             + 1
     };
-    for (index, (tok, _)) in line.iter().enumerate() {
+    for (index, (tok, start, end)) in line.iter().enumerate() {
         if let Tok::String { kind, .. } = tok
             && kind.is_any_fstring()
         {
-            // A formatted expression hides inside the string token.
-            let (_, offset) = &line[index];
-            let text = &source[*offset..];
-            let text = text.lines().next().unwrap_or(text);
-            for word in all_mentioned(text, watched) {
+            // A formatted expression hides inside the string token, which
+            // can span lines.
+            for word in all_mentioned(&source[*start..*end], watched) {
                 unsafe_names.insert(word);
             }
             continue;
@@ -98,18 +100,18 @@ fn scan_line(
         if !watched(name) {
             continue;
         }
-        let next = line.get(index + 1).map(|(tok, _)| tok);
+        let next = line.get(index + 1).map(|(tok, _, _)| tok);
         let safe = if imports {
             !matches!(next, Some(Tok::As))
         } else if index == 0
-            && defining_line == Some(line_number(line[0].1))
+            && defining_line.is_some_and(|defining| defining == line_number(line[0].1))
             && matches!(next, Some(Tok::Equal | Tok::Colon))
         {
             true
         } else if matches!(next, Some(Tok::Dot)) {
             matches!(
                 (line.get(index + 2), line.get(index + 3)),
-                (Some((Tok::Name { name: method }, _)), Some((Tok::Lpar, _))) if method.as_str() == "get"
+                (Some((Tok::Name { name: method }, _, _)), Some((Tok::Lpar, _, _))) if method.as_str() == "get"
             )
         } else if matches!(next, Some(Tok::Lsqb)) {
             !assigns
@@ -126,9 +128,9 @@ fn scan_line(
 /// assignment at the top level, an augmented assignment, a walrus, `del`, a
 /// loop or comprehension, or a `with` target. Keyword arguments sit inside
 /// brackets and do not count.
-fn line_binds(line: &[(Tok, usize)]) -> bool {
+fn line_binds(line: &[(Tok, usize, usize)]) -> bool {
     let mut depth = 0usize;
-    for (tok, _) in line {
+    for (tok, _, _) in line {
         match tok {
             Tok::Lpar | Tok::Lsqb | Tok::Lbrace => depth += 1,
             Tok::Rpar | Tok::Rsqb | Tok::Rbrace => depth = depth.saturating_sub(1),
@@ -167,8 +169,15 @@ pub(super) fn dict_literal_names(source: &str) -> BTreeSet<String> {
     for token in lex(source, Mode::Module) {
         let Ok((tok, _)) = token else { break };
         match &tok {
-            Tok::Indent => depth += 1,
-            Tok::Dedent => depth = depth.saturating_sub(1),
+            // Indentation tokens lead a line and are not its first token.
+            Tok::Indent => {
+                depth += 1;
+                continue;
+            }
+            Tok::Dedent => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
             Tok::Newline => {
                 line_start = true;
                 candidate = None;
