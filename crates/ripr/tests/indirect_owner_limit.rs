@@ -431,10 +431,13 @@ fn a_helper_with_an_extra_statement_is_a_limit_not_a_gap() -> Result<(), String>
 
 #[test]
 fn a_helper_that_rewrites_the_output_is_a_limit_not_a_gap() -> Result<(), String> {
-    let lib = ASYNC_OWNER.replace("return v;", "return v * 2;").replace(
-        "assert_eq!(block_on(add_tax(100)), 110);",
-        "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
-    );
+    let lib = ASYNC_OWNER
+        .replace("<F: Future>", "<F: Future<Output = u32>>")
+        .replace("return v;", "return v * 2;")
+        .replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+        );
     withheld(
         &lib,
         TAX_BEFORE,
@@ -654,4 +657,177 @@ mod tests {
         "    1 + x // assert_eq!(inc(1), 3);",
         "trailing comment",
     )
+}
+
+#[test]
+fn a_shadowed_polling_helper_cannot_credit_the_owner() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let block_on = |_| 110u32;\n        let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(&lib, TAX_BEFORE, TAX_AFTER, "shadowed polling helper")
+}
+
+#[test]
+fn counterfeit_polling_primitives_cannot_credit_the_owner() -> Result<(), String> {
+    let lib =
+        include_str!("../../../fixtures/rust_polling_helper_primitive_shadow/input/src/lib.rs");
+    let lib = lib.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(
+        &lib,
+        TAX_AFTER,
+        TAX_BEFORE,
+        "counterfeit Future and pin macro",
+    )
+}
+
+#[test]
+fn an_unrelated_helper_binding_does_not_withdraw_direct_await_credit() -> Result<(), String> {
+    let lib = ASYNC_OWNER
+        .replace(
+            "    #[test]\n    fn tax_is_added()",
+            "    #[tokio::test]\n    async fn tax_is_added()",
+        )
+        .replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let block_on = 0;\n        assert_eq!(add_tax(100).await, 110);",
+        );
+    credited(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "direct await beside unrelated binding",
+    )
+}
+
+#[test]
+fn a_polling_assertion_borrowed_from_a_helper_is_unresolved() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace(
+        "    #[test]\n    fn tax_is_added() {\n        assert_eq!(block_on(add_tax(100)), 110);\n    }",
+        "    fn check_tax() {\n        let block_on = |_| 110u32;\n        let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);\n    }\n    #[test]\n    fn tax_is_added() { check_tax(); }",
+    );
+    let findings = edited(&lib, TAX_BEFORE, TAX_AFTER)?;
+    assert!(
+        findings.iter().all(|f| f.class != ExposureClass::Exposed),
+        "borrowed helper: {:?}",
+        summary(&findings)
+    );
+    Ok(())
+}
+
+#[test]
+fn standard_path_and_match_polling_helpers_keep_credit() -> Result<(), String> {
+    let qualified = ASYNC_OWNER
+        .replace("F: Future", "F: core::future::Future")
+        .replace("= pin!", "= core::pin::pin!")
+        .replace("Context::", "core::task::Context::")
+        .replace("Waker::", "core::task::Waker::")
+        .replace("Poll::", "core::task::Poll::");
+    credited(&qualified, TAX_BEFORE, TAX_AFTER, "canonical core paths")?;
+    let matched = ASYNC_OWNER.replace(
+        "if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {\n                return v;\n            }",
+        "match fut.as_mut().poll(&mut cx) { Poll::Ready(v) => return v, Poll::Pending => {} }",
+    );
+    credited(&matched, TAX_BEFORE, TAX_AFTER, "match helper")
+}
+
+#[test]
+fn raw_named_pin_macro_cannot_lend_standard_primitive_identity() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace("    fn block_on", "    macro_rules! r#pin { ($f:expr) => { ::std::pin::pin!({ ::std::process::exit(0); $f }) } }\n    fn block_on").replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(&lib, TAX_BEFORE, TAX_AFTER, "raw-named pin macro")
+}
+
+#[test]
+fn raw_named_standard_root_cannot_lend_primitive_identity() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace("    use super::*;", "    use super::*;\n    mod r#std { pub use ::std::{future, pin}; pub mod task { pub use ::std::task::{Context, Poll}; pub struct Waker; impl Waker { pub fn noop() -> &'static ::std::task::Waker { ::std::process::exit(0) } } } }").replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(&lib, TAX_BEFORE, TAX_AFTER, "raw-named standard root")
+}
+
+#[test]
+fn a_parent_module_primitive_import_does_not_bind_the_child_helper() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace("    use std::task::{Context, Poll, Waker};", "    use std::task::{Context, Poll};\n    struct r#Waker; impl r#Waker { fn noop() -> &'static std::task::Waker { std::process::exit(0) } }").replace("#[cfg(test)]", "use std::task::Waker;\n#[cfg(test)]").replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "parent import beside a child counterfeit",
+    )
+}
+
+#[test]
+fn an_imported_alias_cannot_borrow_another_helpers_verification() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace("    #[test]", "    fn constant<F>(_: F) -> u32 { 110 }\n    #[test]").replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "use self::constant as block_on; let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    withheld(&lib, TAX_BEFORE, TAX_AFTER, "imported helper alias")
+}
+
+#[test]
+fn a_trait_cannot_intercept_the_polling_helpers_pin_method() -> Result<(), String> {
+    let lib = include_str!("../../../fixtures/rust_polling_helper_method_shadow/input/src/lib.rs")
+        .replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+        );
+    withheld(&lib, TAX_AFTER, TAX_BEFORE, "trait-intercepted as_mut")
+}
+
+#[test]
+fn a_same_file_parent_glob_delivers_a_standard_future_import() -> Result<(), String> {
+    let lib = format!(
+        "use std::future::Future;\n{}",
+        ASYNC_OWNER.replace("    use std::future::Future;\n", "")
+    );
+    credited(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "Future supplied by verified parent glob",
+    )
+}
+
+#[test]
+fn an_anonymous_foreign_trait_import_keeps_method_dispatch_unresolved() -> Result<(), String> {
+    let lib = ASYNC_OWNER
+        .replace(
+            "    use super::*;",
+            "    use super::*;\n    use external::Hijack as _;",
+        )
+        .replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+        );
+    withheld(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "anonymous foreign trait import",
+    )
+}
+
+#[test]
+fn a_sibling_attribute_expansion_cannot_lend_method_authority() -> Result<(), String> {
+    let lib = ASYNC_OWNER
+        .replace(
+            "    use super::*;",
+            "    use super::*;\n    #[external::emit_methods] struct Marker;",
+        )
+        .replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+        );
+    withheld(&lib, TAX_BEFORE, TAX_AFTER, "opaque sibling attribute")
 }

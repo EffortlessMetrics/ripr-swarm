@@ -242,6 +242,21 @@ wrong credits.
    `poll` once `Ready` (an `if let` or a `match`, with `std::`/`core::` path
    spellings). Every function of that name must be such a helper, and the
    operand must be exactly `block_on(<owner call>)` with the owner `async`.
+   The call's binding must resolve to that free function through the existing
+   free-call identity gate, with no local, pattern, import or macro shadow.
+   Primitive names (`Future`, `pin!`, `Context`, `Poll`, `Waker`) must be
+   canonical `std`/`core` paths or explicit imports in the helper's own
+   enclosing scopes, with unbound standard roots. Counterfeit primitives,
+   unsupported globs/aliases and item expansions refuse. An exact same-file
+   `super::*` may deliver a verified parent primitive import. Competing
+   `as_mut`/`poll` definitions, nonstandard/opaque imports (including anonymous
+   trait imports), or opaque attribute expansion in the helper's source
+   ancestry leave method dispatch unresolved and refuse. These are conservative
+   source-wide refusals; unrelated declarations can withhold credit.
+   An assertion
+   borrowed from another check helper does not supply this polling pin;
+   its wrapper's scope is unresolved. Existing direct `.await` gates are
+   unchanged, including when an unrelated binding shares a helper's name.
    Any other statement, a second argument, a changed output, an attribute, a
    method on the result or a different executor (`futures::executor::block_on`,
    a runtime's `block_on`) is not the helper, and the call keeps the

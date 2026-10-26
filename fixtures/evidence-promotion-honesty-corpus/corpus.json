@@ -13704,6 +13704,102 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_polling_helper_direct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_direct",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_shadowed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_shadowed",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_primitive_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_primitive_shadow",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_method_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_method_shadow",
+      "vector": "extension_trait_intercepts_pin_as_mut_before_owner_poll",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
     }
   ]
 }
