@@ -226,7 +226,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     resolve_agent_command_root(&mut command)?;
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        // An unknown `--seam-id` is a typed refusal (exit 3), like `agent
+        // card`, `agent stub` and `agent packet`; other failures stay exit 2.
+        AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
         AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
@@ -277,13 +279,19 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
-fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
-    let written = write_agent_start(options)?;
+    let written = write_agent_start(options).map_err(|error| {
+        if error.check_failure_kind() == Some(crate::core_error::CheckFailureKind::SeamIdUnknown) {
+            CommandError::Decision(String::from(error))
+        } else {
+            CommandError::Failure(String::from(error))
+        }
+    })?;
     if json {
         // Machine-readable mode: one JSON document with the same information
         // the prose lines carry. The prose output remains the default.
-        let rendered = render_agent_start_json(&written)?;
+        let rendered = render_agent_start_json(&written).map_err(CommandError::Failure)?;
         print!("{rendered}");
         return Ok(());
     }
@@ -348,7 +356,7 @@ struct AgentStartWritten {
     next_command: Option<String>,
 }
 
-fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
+fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, CoreError> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
@@ -365,7 +373,7 @@ fn write_agent_start_with_report(
     input: &app::CheckInput,
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
-) -> Result<AgentStartWritten, String> {
+) -> Result<AgentStartWritten, CoreError> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let mut selection = select_agent_brief_seams(
         &report.classified,
@@ -374,11 +382,11 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        return Err(format!(
+        return Err(CoreError::seam_id_unknown(format!(
             "agent start seam_id {} was not found or is hidden by config. {}",
             options.seam_id,
             unknown_seam_id_hint(&options.root, &options.seam_id)
-        ));
+        )));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -1766,7 +1774,8 @@ fn run_agent_repair_phase(
                 &before_input,
                 &before_config,
                 &before_report,
-            )?;
+            )
+            .map_err(String::from)?;
             for path in &started.paths {
                 eprintln!(
                     "{}",

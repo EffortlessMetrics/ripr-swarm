@@ -7852,6 +7852,74 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// #10537: an unknown `--seam-id` on `agent start` is a typed refusal (exit
+/// 3), like `agent card`, `agent stub` and `agent packet`. The controls pin
+/// that the mapping is cause-specific: the known seam still succeeds and an
+/// unusable root still exits 2.
+#[test]
+fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
+-> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = unique_temp_workspace("agent-start-unknown-seam");
+    let out = out_dir
+        .to_str()
+        .ok_or("workflow output path should be utf-8")?;
+
+    let unknown = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "no-such-seam",
+        "--out",
+        out,
+    ])?;
+    assert_eq!(
+        unknown.status.code(),
+        Some(3),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+    assert!(unknown.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("agent start seam_id no-such-seam was not found"),
+        "{stderr}"
+    );
+    assert!(!out_dir.join("workflow.json").exists());
+
+    // Control: the known seam still succeeds on the same root.
+    let known = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_success(&known);
+
+    // Control: an operational failure (missing root) stays exit 2.
+    let missing_root = out_dir.join("does-not-exist");
+    let missing_root = missing_root.to_str().ok_or("path should be utf-8")?;
+    let failed = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        missing_root,
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_eq!(failed.status.code(), Some(2));
+
+    std::fs::remove_dir_all(out_dir)?;
+    Ok(())
+}
+
 #[test]
 fn agent_start_packet_discloses_the_command_shell_assumption()
 -> Result<(), Box<dyn std::error::Error>> {
