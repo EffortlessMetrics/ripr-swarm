@@ -33,6 +33,7 @@ property the rest of this note enforces.
 | manifest-derived index fields | `package_names`, `root_library_name`, `macro_owned_crates`, `workspace_crates`, `workspace_member_dirs`, `drop_in_manifests`, `member_crates` | scalar, one digest each |
 | module and include structure | `execution_module_parents`, `include_parents`, `include_limitations`, `include_targets`, `non_utf8_sources` | one digest each |
 | harness and workspace authority | `harness_subjects`, `harness_limitations`, `workspace_authority`, `doctest_sources` | one digest each |
+| files read from disk | not through the index: `member_trait_names` (`classify/reach.rs`) walks the `.rs` files under the workspace member directories, indexed or not, and `fallible_check_receipt` (`classify/owner_pin/fallible_check.rs`) canonicalizes the workspace root and consults disk | `Disk(path)` |
 | `dependency_edges` | path-dependency adjacency and manifest-prefix inventory | one digest |
 | `candidate_index` memos | file `use` scan, owner-pin syntax and workspace macro-binding scan, implicit expansion, unseen-reach names, test value facts, owner-caller names, diff-touched tests, unmounted-build-script test | memo reads (below) |
 | `transitive_reach` | bounded caller walk over the index | memo read |
@@ -65,6 +66,11 @@ A read is one of:
 - `Universe(kind)`: a digest of an entire fact set, taken by any scan that is
   not name-keyed. Any edit that changes that set invalidates every probe that
   holds this read.
+- `Disk(path)`: the content hash of a file read directly from disk, or
+  `Absent`, and for a directory walk the digest of the sorted
+  `(path, content hash)` listing it saw. These reads bypass the index, so the
+  index accessors cannot see them. Each one is wrapped in a recording read
+  helper, and until it is, it calls `unrecorded()`. Phase A reports them.
 - `Scalar(name)`: a digest of one manifest, config or module-structure field.
 
 `Universe` is the fail-closed floor. A scan whose result depends on which
@@ -140,7 +146,10 @@ for the aggregate key. Mtime or stat data is not trusted for validity.
   fails the run on any byte difference in the finding or the origins delta.
   The check is run over the verdict corpus and this repository's own diffs.
   This is acceptance item 2 stated as a gate: a warm run is byte-identical to a
-  cold run.
+  cold run. The classifier is not the last writer of the report: the Rust
+  adapter adds reach limits, source currentness and gap identities after it.
+  The gate therefore also compares the final cold and warm reports byte for
+  byte, not only the classifier findings.
 - **One negative experiment per read kind.** Each experiment changes exactly
   one fact class and asserts the probe is reclassified: add a same-name
   function in another file; add a macro site that binds a name the probe calls;
