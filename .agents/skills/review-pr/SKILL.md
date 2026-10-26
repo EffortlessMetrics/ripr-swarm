@@ -41,7 +41,7 @@ The procedure may run twice on the same candidate lifecycle:
 
 1. **Candidate review before publication.** Bind the committed branch head and
    inspect source, proof, and repository contracts. Hosted checks, artifacts,
-   and external review that do not yet exist remain missing evidence, so the
+   and required review evidence that do not yet exist remain missing evidence, so the
    normal result is `REVIEW_INCOMPLETE`, not `REVIEW_READY`.
 2. **Merge review after publication.** Bind the exact published PR head, inspect
    current remote checks, artifacts, comments, and integration evidence, and
@@ -103,7 +103,11 @@ Use this procedure when a coherent candidate exists and one of these is true:
 - automated comments or CI results need an accountable synthesis;
 - a prior review was anchored to another head or an incomplete diff.
 
-A differently named reviewer is optional. Use another agent only when it changes the evidence, oracle, context, tools, threat model, platform reach, or failure perspective. The accountable root verifies the review and owns the disposition.
+A differently named reviewer is optional. Use another agent when it changes the evidence, oracle, context, tools, threat model, platform reach, or failure perspective. When independent agent review is called for, spawn the reviewer as a sub-agent inside the working session. Independence does not require a separate executor, source capsule or source-transfer workflow. This does not prohibit legitimate source-author/publisher or capacity transfers needed for other reasons. The accountable root verifies the review and owns the disposition.
+
+Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested review dimensions; reviewer location alone does not require retroactive replay. A warm context can support selective challenge without replacing independent review when it is required.
+
+Advisory providers such as `ub-review` or ClawSweeper are supplemental capacity, not assumed prerequisites. Unavailable advisory output remains missing evidence for that provider, never a pass; use an adequate permitted substantive review path. Actual required checks, approvals and substantive review requirements remain binding.
 
 # Procedure
 

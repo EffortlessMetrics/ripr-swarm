@@ -171,14 +171,16 @@ pre-merge CI. Do not run full qualification on every alternative. Independent
 objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
-Use the actual installed request interface. The intended #4984/#4985/#4986 flow is
-explicit late qualification, normally at most 20 minutes of complete CI execution,
-then a separate current-repository/product/integration judgment and protected
-expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
-`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
-`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
-caller/skills integration. Preserve live required enforcement until its qualified
-cutover; this root update does not change triggers, settings or result producers.
+Use the actual installed request interface described in
+[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
+qualification of the actual merge composition. Workflow support does not establish
+live queue activation: until verified migration, the installed `merge-ready` label
+requests late PR qualification, followed by current product/integration judgment
+and protected expected-head squash. Ready alone requests nothing. Do not arm
+generic auto-merge as a substitute for that legacy final judgment. After verified
+activation, follow the native-queue procedure and its conditional landing
+authorization. Preserve actual required checks and approvals; this guidance does
+not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -460,7 +462,8 @@ not merely the intended resolution order.
 
 ## Review and protected merge
 
-Default delivery:
+Installed legacy label-route delivery (see [merge flow](docs/MERGE_FLOW.md) for
+the accepted queue destination and procedure after verified activation):
 
 ```text
 build/improve -> focused proof and source review -> select candidate to land
@@ -475,7 +478,8 @@ Source review and focused proof may be complete while final-merge review remains
 block the selected candidate's CI request. A ready merge requires the final current
 published-head `REVIEW_READY`, actual required checks, addressed material findings,
 scope agreement and applicable repository policy. The same authorized lead makes
-that judgment and performs the merge; do not arm auto-merge or a merge queue.
+that judgment and uses the applicable route in `docs/MERGE_FLOW.md`; queue
+activation must be verified before using its native-queue procedure.
 
 Read `.factory/skills/review-guidelines/SKILL.md`, `.factory/rules/rust.md`,
 `.factory/rules/github-actions.md`, `.factory/rules/security.md`, and
@@ -485,7 +489,10 @@ and oracle challenge, rendered behavior, runtime/schema/docs/output parity,
 platform branches, actual check steps, denominators and artifact identity.
 
 A differently named agent is not inherently independent. Add a reviewer when
-it changes source/oracle/context/tools/platform/failure perspective. Self-review
+it changes source/oracle/context/tools/platform/failure perspective. When independent
+agent review is called for, spawn a sub-agent inside the working session under
+`review-pr`; reviewer independence does not require another executor or source
+transfer. Self-review
 on the author's PR uses `COMMENT` with an explicit disposition. Reviewer quota,
 unavailability or skipped output is missing review for that provider, not clean
 review and not an indefinite stop when an adequate allowed alternative exists.
