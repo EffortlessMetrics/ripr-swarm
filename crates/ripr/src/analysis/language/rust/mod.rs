@@ -4289,8 +4289,14 @@ mod tests {
                 "binary must be withheld: {main:?}"
             );
             assert_eq!(named.class, full.class, "shared={shared}");
-            assert_eq!(named.ripr.observe.state, full.ripr.observe.state);
-            assert_eq!(named.ripr.discriminate.state, full.ripr.discriminate.state);
+            assert_eq!(
+                named.ripr.reveal.observe.state,
+                full.ripr.reveal.observe.state
+            );
+            assert_eq!(
+                named.ripr.reveal.discriminate.state,
+                full.ripr.reveal.discriminate.state
+            );
             assert_eq!(named.related_tests.len(), 1);
             assert_eq!(
                 named.related_tests[0].oracle_strength,
