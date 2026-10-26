@@ -1063,6 +1063,12 @@ pub(super) fn inherent_entry_type_identity(
         return None;
     };
     let source = &index.files().get(&owner.file)?.source;
+    let owner_snapshot = index.source_syntax.get(index, &owner.file)?;
+    if source_may_splice_items(source, true)
+        || !entry_attributes_preserve_items(owner_snapshot.tree()?.syntax())
+    {
+        return None;
+    }
     let signature =
         crate::analysis::syntax::fn_signature::owner_signature_at_line(source, owner.start_line)?;
     if signature.name != owner.name
@@ -1110,6 +1116,7 @@ pub(super) fn inherent_entry_type_identity(
                 || node
                     .children()
                     .any(|child| ast::GenericParamList::can_cast(child.kind()))
+                || !entry_data_declaration_is_unambiguous(&node)
                 || node
                     .ancestors()
                     .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
@@ -1142,6 +1149,71 @@ pub(super) fn inherent_entry_type_identity(
     })
 }
 
+fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    source
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .all(|attr| {
+            let text = attr.syntax().text().to_string();
+            text.chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>()
+                == "#[test]"
+                || crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
+        })
+}
+
+/// A syntactic data declaration cannot establish an import's kind if a cfg,
+/// rewriting attribute or another declaration/import can select a trait there.
+fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    if !crate::analysis::syntax::supported_targeted_item_context(node) {
+        return false;
+    }
+    let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
+        return false;
+    };
+    let Some(scope) = node.parent() else {
+        return false;
+    };
+    let spelling = name.text();
+    let spelling = spelling.trim_start_matches("r#");
+    if scope
+        .children()
+        .filter_map(ast::AnyHasName::cast)
+        .filter_map(|item| item.name())
+        .filter(|name| name.text().trim_start_matches("r#") == spelling)
+        .count()
+        != 1
+    {
+        return false;
+    }
+    scope.children().all(|item| {
+        if ast::ExternCrate::can_cast(item.kind()) {
+            return false;
+        }
+        let Some(item) = ast::Use::cast(item) else {
+            return true;
+        };
+        let Some(tree) = item.use_tree() else {
+            return false;
+        };
+        let imports = super::reveal::flattened_use_paths(&format!("use {};", tree.syntax().text()));
+        !imports.is_empty()
+            && imports.iter().all(|import| {
+                let last = import.path.rsplit("::").next().unwrap_or("");
+                last != "*"
+                    && import
+                        .alias
+                        .as_deref()
+                        .unwrap_or(last)
+                        .trim_start_matches("r#")
+                        != spelling
+            })
+    })
+}
+
 impl OwnerCallIdentity {
     pub(super) fn binds_inherent_entry_type(&self, test: &TestSummary, index: &RustIndex) -> bool {
         use ra_ap_syntax::{AstNode, ast, ast::HasName};
@@ -1166,10 +1238,12 @@ impl OwnerCallIdentity {
         // in NameScopes but still put a trait in scope. Keep this new route
         // to explicit, unrenamed imports of directly declared data types in
         // the owner's module; unresolved trait/import dispatch grants no reach.
-        if tree.syntax().descendants().any(|node| {
-            ast::Trait::can_cast(node.kind())
-                || ast::UseTree::cast(node).is_some_and(|item| item.rename().is_some())
-        }) {
+        if !entry_attributes_preserve_items(tree.syntax())
+            || tree.syntax().descendants().any(|node| {
+                ast::Trait::can_cast(node.kind())
+                    || ast::UseTree::cast(node).is_some_and(|item| item.rename().is_some())
+            })
+        {
             return false;
         }
         let Some(owner_snapshot) = index.source_syntax.get(index, &self.owner_file) else {
@@ -1193,9 +1267,10 @@ impl OwnerCallIdentity {
                     || ast::Union::can_cast(node.kind())
             })
             .filter_map(|node| {
-                if node
-                    .ancestors()
-                    .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
+                if !entry_data_declaration_is_unambiguous(&node)
+                    || node
+                        .ancestors()
+                        .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
                 {
                     return None;
                 }

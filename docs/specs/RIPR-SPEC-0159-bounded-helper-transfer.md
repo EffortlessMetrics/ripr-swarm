@@ -491,7 +491,10 @@ Method sites must use a plain ASCII receiver name bound by a distinct top-level
 `let` with a direct record literal or a whole bare type annotation, taking the
 value rather than a reference pattern. The inherent method must take `&self`;
 the shared owner-pin prelude-method veto also applies. Visible imports must name
-directly declared data types in the owner's module; foreign, renamed (including
+unique unconditional data declarations in the owner's module, without competing
+declarations or imports. Source attributes must satisfy the shared source-item
+preservation rule (with the built-in `#[test]` admitted); unsupported attributes,
+including derives, remain outside this narrow route. Foreign, renamed (including
 `as _`), glob and unresolved imports, and local trait declarations, decline.
 Local item bindings, field/path suffixes, inline/parenthesized receivers, non-ASCII identifiers, nested,
 closure, destructuring and later shadow bindings remain unestablished. The receiver route permits only unrebound bare standard assertion and `vec!`

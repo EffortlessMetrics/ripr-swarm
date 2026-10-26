@@ -631,3 +631,24 @@ fn a_reference_annotation_is_outside_the_bounded_entry_shape() -> Result<(), Str
     );
     assert_unrelated(&TempRepo::create(LIB, &tests)?)
 }
+
+#[test]
+fn an_inactive_data_declaration_does_not_hide_a_trait_reexport() -> Result<(), String> {
+    let lib =
+        format!("{LIB}\n#[cfg(any())]\npub struct Extra;\npub use external::Matches as Extra;\n");
+    let tests = format!("use verreq::Extra;\n{}", api_tests(LITERAL_RECEIVER));
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn an_attribute_cannot_change_an_imported_data_declaration_into_a_trait() -> Result<(), String> {
+    let lib = format!("{LIB}\n#[external::rewrite]\npub struct Extra;\n");
+    let tests = format!("use verreq::Extra;\n{}", api_tests(LITERAL_RECEIVER));
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn an_attribute_cannot_replace_the_test_receiver_bindings() -> Result<(), String> {
+    let tests = api_tests(&LITERAL_RECEIVER.replace("#[test]", "#[test]\n#[external::rewrite]"));
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
