@@ -85,7 +85,7 @@ fn machine_formats_and_a_run_without_a_legend_do_not_consume_the_first_run() -> 
 }
 
 #[test]
-fn a_forced_first_legend_counts_and_a_run_without_a_digest_does_not() -> TestResult {
+fn a_forced_legend_is_not_a_first_run_and_a_run_without_a_digest_does_not_count() -> TestResult {
     let project = workspace("legend-forced")?;
     let marker = project.join("target/ripr/legend-seen");
 
@@ -98,9 +98,12 @@ fn a_forced_first_legend_counts_and_a_run_without_a_digest_does_not() -> TestRes
     );
     assert!(!marker.exists(), "no digest must not record the legend");
 
-    // `--legend` on the first real digest prints it and records it.
+    // `--legend` is a lookup: it prints the definitions but is not the first run.
     let forced = check(&project, &["--legend"])?;
     assert!(forced.contains(LEGEND), "{forced}");
+    assert!(!marker.exists(), "a forced legend must not write state");
+    let first = check(&project, &[])?;
+    assert!(first.contains(LEGEND), "{first}");
     assert!(marker.is_file());
     let next = check(&project, &[])?;
     assert!(next.contains(POINTER) && !next.contains(LEGEND), "{next}");

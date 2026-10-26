@@ -1989,7 +1989,10 @@ fn check_inner(
     })?;
     // Record only a legend that was actually printed: a root whose name echoes
     // a legend line must not count, so match the renderer's whole block.
+    // An explicit `--legend` is a lookup, not a first run: it must not write
+    // state, which also keeps pinned fixture workspaces free of `target/`.
     if !legend_seen
+        && !legend_requested
         && rendered.contains(crate::output::human::HUMAN_EVIDENCE_LEGEND)
         && let Some(marker) = legend_marker.as_ref()
     {
