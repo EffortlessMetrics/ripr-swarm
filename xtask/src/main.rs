@@ -1820,13 +1820,7 @@ fn verify_packaged_vsix_version(vsix_path: &Path) -> Result<(), String> {
     })?;
     let manifest_version = package.get("version").and_then(Value::as_str).unwrap_or("");
     let vsixmanifest = read_vsix_text_member(&mut archive, "extension.vsixmanifest", vsix_path)?;
-    let identity_version = vsixmanifest
-        .split("<Identity")
-        .nth(1)
-        .and_then(|tag| tag.split('>').next())
-        .and_then(|tag| tag.split("Version=\"").nth(1))
-        .and_then(|rest| rest.split('"').next())
-        .unwrap_or("");
+    let identity_version = vsixmanifest_identity_version(&vsixmanifest);
     if manifest_version != expected || identity_version != expected {
         return Err(format!(
             "packaged VSIX {} is named for version {expected} but carries extension/package.json version {manifest_version:?} and extension.vsixmanifest Identity Version {identity_version:?}",
@@ -1834,6 +1828,47 @@ fn verify_packaged_vsix_version(vsix_path: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Version of the `<Identity>` element inside `<Metadata>`, read after removing
+/// XML comments and CDATA so Identity-like text there cannot be mistaken for
+/// the real element (no XML dependency exists in the workspace).
+fn vsixmanifest_identity_version(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>")] {
+        while let Some(start) = cleaned.find(open) {
+            let end = cleaned[start..]
+                .find(close)
+                .map_or(cleaned.len(), |offset| start + offset + close.len());
+            cleaned.replace_range(start..end, "");
+        }
+    }
+    let Some(metadata) = cleaned.find("<Metadata") else {
+        return String::new();
+    };
+    let rest = &cleaned[metadata..];
+    let mut search = 0;
+    while let Some(found) = rest[search..].find("<Identity") {
+        let tag_start = search + found + "<Identity".len();
+        search = tag_start;
+        if !rest[tag_start..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>') {
+            continue;
+        }
+        let tag = rest[tag_start..].split('>').next().unwrap_or("");
+        for quote in ['"', '\''] {
+            let needle = format!("Version={quote}");
+            let mut from = 0;
+            while let Some(at) = tag[from..].find(&needle) {
+                let abs = from + at;
+                from = abs + needle.len();
+                if tag[..abs].ends_with(|c: char| c.is_whitespace()) {
+                    return tag[from..].split(quote).next().unwrap_or("").to_string();
+                }
+            }
+        }
+        return String::new();
+    }
+    String::new()
 }
 
 fn read_vsix_text_member(

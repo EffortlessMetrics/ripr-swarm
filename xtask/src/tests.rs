@@ -51409,6 +51409,28 @@ fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String
             "{error}"
         );
 
+        // A matching Identity inside a comment or CDATA must not mask the real, stale one.
+        let masked = root.join("ripr-0.11.2.vsix");
+        let masked_manifest = "<PackageManifest><!-- <Identity Version=\"0.11.2\" /> --><Metadata><![CDATA[<Identity Version=\"0.11.2\" />]]><Identity Language=\"en-US\" Id=\"ripr\" Version=\"0.8.0\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>";
+        write_packaging_test_vsix(
+            &masked,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", "{\"version\":\"0.11.2\"}"),
+                ("extension.vsixmanifest", masked_manifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[masked.to_string_lossy().into_owned()]) else {
+            return Err("an Identity-like comment must not mask a stale Identity".to_string());
+        };
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+        assert_eq!(
+            super::vsixmanifest_identity_version(
+                "<PackageManifest><Metadata><Identity Id='ripr' Version='0.11.2'/></Metadata></PackageManifest>"
+            ),
+            "0.11.2"
+        );
+
         let pointer = root.join("ripr-0.11.1.vsix");
         write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
         let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
