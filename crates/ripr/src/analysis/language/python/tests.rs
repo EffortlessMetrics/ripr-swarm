@@ -8289,6 +8289,7 @@ fn classify_price_boundary_with_test_body_and_origins(
         PythonNoBehaviorContext::default(),
         None,
         &mut origins,
+        None,
     )
     .ok_or_else(|| "changed predicate should classify".to_string())?;
     Ok((finding, origins))
@@ -8328,6 +8329,7 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
             PythonNoBehaviorContext::default(),
             None,
             &mut origins,
+            None,
         )
         .ok_or_else(|| "changed predicate should classify".to_string())?;
         let files = origins
