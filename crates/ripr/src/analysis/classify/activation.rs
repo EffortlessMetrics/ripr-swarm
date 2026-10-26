@@ -4657,6 +4657,7 @@ fn every_owner_call_reads_a_row(
                             owner,
                             candidate_test,
                             &call.text,
+                            call.line,
                         )
                 },
                 &ReceiverParameters::reading_text_cells(true),
