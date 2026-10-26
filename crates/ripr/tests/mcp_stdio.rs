@@ -1462,6 +1462,7 @@ fn malformed_tool_argument_objects_are_rejected_before_dispatch_and_recover() ->
             {
                 if rejected.get("id") != Some(id)
                     || rejected.pointer("/error/code") != Some(&json!(-32602))
+                    || rejected.pointer("/error/data/method") != Some(&json!("tools/call"))
                     || rejected.get("result").is_some()
                 {
                     return Err(format!(
@@ -1488,6 +1489,148 @@ fn malformed_tool_argument_objects_are_rejected_before_dispatch_and_recover() ->
                 }
             }
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_tool_argument_objects_preserve_protocol_validation_and_recover() -> Result<(), String>
+{
+    let mut session = SequentialStdio::spawn(&workspace_root()?)?;
+    let timeout = Duration::from_secs(30);
+    let mut unsupported = current_meta();
+    unsupported["io.modelcontextprotocol/protocolVersion"] = json!("2099-01-01");
+    let mut malformed_required = current_meta();
+    malformed_required["io.modelcontextprotocol/clientCapabilities"] = Value::Null;
+    let mut unsupported_missing = unsupported.clone();
+    unsupported_missing["io.modelcontextprotocol/clientCapabilities"] = Value::Null;
+    let metadata_cases = [
+        ("absent", None, -32602, -32602),
+        ("empty", Some(json!({})), -32602, -32602),
+        ("unsupported", Some(unsupported), -32022, -32022),
+        ("required", Some(malformed_required), -32602, -32602),
+        (
+            "unsupported-missing",
+            Some(unsupported_missing),
+            -32602,
+            -32022,
+        ),
+        ("scalar", Some(json!("bad")), -32600, -32600),
+        ("null", Some(Value::Null), -32602, -32602),
+    ];
+    // Pin SDK refusals on both sides of inline lifecycle selection. The
+    // SDK deliberately changes version/required-field ordering at that edge.
+    for established in [false, true] {
+        for (label, meta, before_code, after_code) in &metadata_cases {
+            let id = format!("baseline-{established}-{label}");
+            let mut params = json!({"name": "ripr_workspace_status", "arguments": {}});
+            if let Some(meta) = meta {
+                params["_meta"] = meta.clone();
+            }
+            let baseline = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+                }))?,
+                timeout,
+            )?;
+            let code = if established { after_code } else { before_code };
+            if baseline.get("id") != Some(&json!(id))
+                || baseline.pointer("/error/code") != Some(&json!(code))
+                || baseline.get("result").is_some()
+            {
+                return Err(format!("SDK metadata baseline changed: {baseline}"));
+            }
+            for (index, arguments) in [
+                Value::Null,
+                json!(false),
+                json!(7),
+                json!("oops"),
+                json!([]),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = format!("bad-{established}-{label}-{index}");
+                params["arguments"] = arguments;
+                let reply = session.raw_exchange(
+                    &line(json!({
+                        "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+                    }))?,
+                    timeout,
+                )?;
+                if reply.get("id") != Some(&json!(id))
+                    || reply.get("error") != baseline.get("error")
+                    || reply.get("result").is_some()
+                {
+                    return Err(format!(
+                        "argument validation displaced the SDK metadata refusal: {reply}"
+                    ));
+                }
+            }
+        }
+        if !established {
+            // An invalid argument object can itself select the inline
+            // lifecycle, while refusing the call before application dispatch.
+            let first = session.call_tool(
+                "first-inline",
+                "ripr_workspace_status",
+                Value::Null,
+                timeout,
+            )?;
+            if first.pointer("/error/code") != Some(&json!(-32602))
+                || first.pointer("/error/data/method") != Some(&json!("tools/call"))
+            {
+                return Err(format!("first inline argument refusal changed: {first}"));
+            }
+        }
+    }
+    for (id, expected_id) in [
+        (Value::Null, Value::Null),
+        (json!(false), Value::Null),
+        (json!(1.25), Value::Null),
+        (json!([]), Value::Null),
+        (json!({}), Value::Null),
+        (json!("o".repeat(16 * 1024)), Value::Null),
+        (json!(u64::MAX), json!(u64::MAX)),
+    ] {
+        let reply = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"_meta": current_meta(), "name": "ripr_refresh", "arguments": null}
+            }))?,
+            timeout,
+        )?;
+        if reply.get("id") != Some(&expected_id)
+            || reply.pointer("/error/code") != Some(&json!(-32600))
+            || reply.get("result").is_some()
+            || reply.to_string().len() > 512
+        {
+            return Err(format!(
+                "tool arguments bypassed the bounded ID refusal: {reply}"
+            ));
+        }
+    }
+    // A malformed notification must not acquire a reply or trigger refresh.
+    // raw_exchange observes the next reply without filtering mismatched IDs.
+    session.send_raw(&line(json!({
+        "jsonrpc": "2.0", "method": "tools/call",
+        "params": {"_meta": current_meta(), "name": "ripr_refresh", "arguments": null}
+    }))?)?;
+    let recovered = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "recovered", "method": "tools/call",
+            "params": {"_meta": current_meta(), "name": "ripr_workspace_status"}
+        }))?,
+        timeout,
+    )?;
+    if recovered.get("id") != Some(&json!("recovered"))
+        || recovered.pointer("/result/isError") != Some(&json!(false))
+        || recovered.pointer("/result/structuredContent/session/attempt_state")
+            != Some(&json!("no_snapshot"))
+    {
+        return Err(format!(
+            "protocol refusals lost clean status recovery: {recovered}"
+        ));
     }
     Ok(())
 }
