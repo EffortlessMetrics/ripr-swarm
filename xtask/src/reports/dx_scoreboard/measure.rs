@@ -203,7 +203,13 @@ fn measure_corpus_entry(
             for metric in corpus_metrics {
                 samples.push(sample(metric, outcome.clone(), reason.clone()));
             }
-            return json!({"id": entry.id, "sha": entry.sha, "status": status, "reason": reason});
+            return json!({
+                "id": entry.id,
+                "sha": entry.sha,
+                "language": entry.language(),
+                "status": status,
+                "reason": reason,
+            });
         }
     };
 
@@ -217,6 +223,7 @@ fn measure_corpus_entry(
             "id": entry.id,
             "sha": entry.sha,
             "url": entry.url,
+            "language": entry.language(),
             "status": "failed",
             "reason": reason,
         });
@@ -393,7 +400,13 @@ fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
-    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+    json!({
+        "id": entry.id,
+        "sha": entry.sha,
+        "url": entry.url,
+        "language": entry.language(),
+        "status": "measured",
+    })
 }
 
 /// Measured `ripr check` argv for a warm-check sample. `--mode draft` is

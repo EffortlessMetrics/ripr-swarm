@@ -184,18 +184,45 @@ fn loop_variable_shadows_an_enclosing_receiver() -> Result<(), String> {
 }
 
 #[test]
-fn loops_not_known_to_run_are_not_walked() {
+fn loops_not_known_to_run_are_indexed_without_credit_or_not_walked() {
     // Each iterable may be empty at runtime: an empty `const`, a `let` that
     // may be reassigned, an import, a describe parameter, a `const` shadowed
     // by a loop variable, and a counted loop with a non-literal bound. A test
-    // registered inside would be credited without existing.
+    // registered inside must never be credited without existing. A loop over
+    // data (#10501) is indexed for reach under its loop head with its
+    // assertions withheld; a counted loop with a non-literal bound is still
+    // not walked and stays disclosed.
     let file = Path::new("test/url.test.ts");
     let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nimport { imported } from './cases';\nconst empty = [];\nlet mutable = [{ input: 'a' }];\nconst outer = [{ input: 'a' }];\nfor (const c of empty) {\n  it('empty const', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nfor (const c of mutable) {\n  it('let binding', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nimported.forEach((c) => it('imported', () => {\n  expect(withBase(c.input, '/')).toBe('/a');\n}));\ndescribe.each([[[]]])('param %s', (param) => {\n  for (const c of param) {\n    it('parameter', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n});\nfor (const outer of [[]]) {\n  for (const c of outer) {\n    it('shadowed const', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n}\nfor (let i = 0; i < n; i++) {\n  it('counted', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\nfor (let i = 0; false; i++) {\n  it('never', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\nfor (let i = 3; i < 1; i++) {\n  it('inverted', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\n";
     let tests = extract_tests(file, source);
-    assert!(tests.is_empty(), "got {tests:?}");
+    let names = tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        [
+            "empty const",
+            "let binding",
+            "imported",
+            "param %s parameter"
+        ]
+        .iter()
+        .all(|name| names.contains(name)),
+        "data loops are indexed: {names:?}"
+    );
+    assert!(
+        !names.contains(&"counted") && !names.contains(&"never") && !names.contains(&"inverted"),
+        "counted loops are not walked: {names:?}"
+    );
+    assert!(
+        tests
+            .iter()
+            .all(|test| test.conditional_registration.is_some() && test.assertions.is_empty()),
+        "no credit for a registration that may not run: {tests:?}"
+    );
     assert!(
         detect_partial_test_extraction(file, source, &tests).is_some(),
-        "the skipped registrations stay disclosed"
+        "the counted loops stay disclosed"
     );
 }
 

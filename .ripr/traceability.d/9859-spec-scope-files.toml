@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0219"
+tests = [
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::spec_scope_files_add_in_scope_out_of_scope_and_unmeasured_specs",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::spec_scope_files_fail_closed_on_a_wrong_name_a_missing_field_or_a_non_toml_entry",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::a_spec_named_inline_and_in_a_scope_file_is_reported_twice",
+]

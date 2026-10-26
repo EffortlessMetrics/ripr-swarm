@@ -29,6 +29,7 @@ case "$all" in
   *"/pulls?state=open"*) serve "$FAKE_DIR/pulls.json" '[]' ;;
   *"/pulls/"*)
     n="${all#*/pulls/}"; n="${n%% *}"
+    if [ -f "$FAKE_DIR/pull.$n.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     # A `.later.json` fixture answers every read after the first (lazy mergeability).
     if [ -f "$FAKE_DIR/pull.$n.later.json" ] && [ -f "$FAKE_DIR/pull.$n.seen" ]; then
       serve "$FAKE_DIR/pull.$n.later.json" '{}'
@@ -36,8 +37,18 @@ case "$all" in
       touch "$FAKE_DIR/pull.$n.seen"; serve "$FAKE_DIR/pull.$n.json" '{}'
     fi ;;
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
-  *"/workflows/routed-rust.yml/runs"*) serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}' ;;
-  *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
+  *"/workflows/routed-rust.yml/runs"*)
+    # A `.later.json` fixture answers every look after the first (delayed run visibility).
+    if [ -f "$FAKE_DIR/runs.later.fail" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
+      echo "HTTP 502" >&2; exit 1
+    elif [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
+      serve "$FAKE_DIR/runs.later.json" '{"workflow_runs":[]}'
+    else
+      touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}'
+    fi ;;
+  *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
+    if [ -f "$FAKE_DIR/statuses.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
   *"/comments?"*) serve "$FAKE_DIR/comments.json" '[]' ;;
 esac
 "#;
@@ -52,6 +63,16 @@ struct Pr {
     marker_comment: bool,
     moved: bool,
     later_state: Option<&'static str>,
+    covered: bool,
+    in_flight: bool,
+    completed_run: bool,
+    fresh: bool,
+    late_run: Option<&'static str>,
+    late_fail: bool,
+    renewed: bool,
+    head_of: Option<u32>,
+    status_fail: bool,
+    pull_fail: bool,
 }
 
 impl Pr {
@@ -66,10 +87,20 @@ impl Pr {
             marker_comment: false,
             moved: false,
             later_state: None,
+            covered: false,
+            in_flight: false,
+            completed_run: false,
+            fresh: false,
+            late_run: None,
+            late_fail: false,
+            renewed: false,
+            head_of: None,
+            status_fail: false,
+            pull_fail: false,
         }
     }
     fn sha(&self) -> String {
-        format!("{:040x}", self.number)
+        format!("{:040x}", self.head_of.unwrap_or(self.number))
     }
 }
 
@@ -111,23 +142,37 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 "[]"
             };
             format!(
-                r#"{{"number":{},"head":{{"sha":"{}","ref":"b{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{labels}}}"#,
+                r#"{{"number":{},"head":{{"sha":"{}","ref":"b{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{labels},"updated_at":"{}"}}"#,
                 pr.number,
                 pr.sha(),
                 pr.number,
                 pr.repo,
-                pr.draft
+                pr.draft,
+                // A far-future stamp stands in for "touched within the grace window".
+                if pr.fresh {
+                    "2999-01-01T00:00:00Z"
+                } else {
+                    "2026-01-01T00:00:00Z"
+                }
             )
         })
         .collect();
     fs::write(dir.join("pulls.json"), format!("[{}]", list.join(",")))
         .map_err(|e| e.to_string())?;
     for pr in prs {
+        if pr.status_fail {
+            fs::write(dir.join(format!("statuses.{}.fail", pr.sha())), "")
+                .map_err(|e| e.to_string())?;
+        }
+        if pr.pull_fail {
+            fs::write(dir.join(format!("pull.{}.fail", pr.number)), "")
+                .map_err(|e| e.to_string())?;
+        }
         fs::write(
             dir.join(format!("pull.{}.json", pr.number)),
             // `moved` models a push between the list call and the live read.
             format!(
-                r#"{{"mergeable_state":{},"head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
+                r#"{{"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
                 if pr.state == "null" {
                     "null".to_string()
                 } else {
@@ -137,6 +182,14 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                     format!("{:040x}", pr.number + 1000)
                 } else {
                     pr.sha()
+                },
+                pr.repo,
+                // `renewed` models the label or ready state coming back after the list call.
+                pr.draft && !pr.renewed,
+                if pr.labeled || pr.renewed {
+                    r#"[{"name":"merge-ready"}]"#
+                } else {
+                    "[]"
                 }
             ),
         )
@@ -146,6 +199,39 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             pr.prior_statuses,
         )
         .map_err(|e| e.to_string())?;
+        if pr.covered {
+            fs::write(
+                dir.join(format!("checks.{}.json", pr.sha())),
+                r#"{"check_runs":[{"name":"Ripr Rust Small Result"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if pr.in_flight {
+            fs::write(
+                dir.join("runs.json"),
+                r#"{"workflow_runs":[{"status":"in_progress","display_title":"Merge-ready request abc"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if pr.completed_run {
+            fs::write(
+                dir.join("runs.json"),
+                r#"{"workflow_runs":[{"status":"completed","display_title":"Merge-ready request abc"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if pr.late_fail {
+            fs::write(dir.join("runs.later.fail"), "").map_err(|e| e.to_string())?;
+        }
+        if let Some(status) = pr.late_run {
+            fs::write(
+                dir.join("runs.later.json"),
+                format!(
+                    r#"{{"workflow_runs":[{{"status":"{status}","display_title":"Merge-ready request abc"}}]}}"#
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+        }
         if let Some(later) = pr.later_state {
             fs::write(
                 dir.join(format!("pull.{}.later.json", pr.number)),
@@ -160,7 +246,8 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join("comments.json"),
                 format!(
-                    r#"[{{"body":"unrelated"}},{{"body":"<!-- merge-ready-conflict:{}:main -->\nbody"}}]"#,
+                    r#"[{{"body":"unrelated"}},{{"body":"<!-- merge-ready-conflict:{}:main -->\nbody"}},{{"body":"<!-- merge-ready-dark:{} -->\nbody"}}]"#,
+                    pr.sha(),
                     pr.sha()
                 ),
             )
@@ -334,10 +421,12 @@ fn drafts_unlabeled_forks_and_clean_heads_are_left_alone() -> Result<(), String>
         },
         Pr {
             state: "clean",
+            covered: true,
             ..Pr::dirty(10)
         },
         Pr {
             state: "blocked",
+            covered: true,
             ..Pr::dirty(11)
         },
     ];
@@ -427,5 +516,316 @@ fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(
         "{}",
         outcome.summary
     );
+    Ok(())
+}
+
+#[test]
+fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(), String> {
+    let pushed = Pr {
+        state: "clean",
+        ..Pr::dirty(17)
+    };
+    let outcome = run(&[pushed], "dark-push")?;
+    let sha = Pr::dirty(17).sha();
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (1, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .log
+            .contains(&format!("<!-- merge-ready-dark:{sha} -->")),
+        "{}",
+        outcome.log
+    );
+    assert!(outcome.summary.contains("re-apply notice posted"));
+
+    // Already told for this head: stay quiet.
+    let told = Pr {
+        state: "clean",
+        marker_comment: true,
+        ..Pr::dirty(18)
+    };
+    let outcome = run(&[told], "dark-told")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    assert!(
+        outcome.summary.contains("re-apply notice already posted")
+            && outcome.summary.contains("re-apply notices: 0"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_covered_in_flight_or_uncomputed_head_gets_no_re_apply_notice() -> Result<(), String> {
+    let covered = Pr {
+        state: "clean",
+        covered: true,
+        ..Pr::dirty(19)
+    };
+    let in_flight = Pr {
+        state: "clean",
+        in_flight: true,
+        ..Pr::dirty(20)
+    };
+    let outcome = run(&[covered], "dark-covered")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    let outcome = run(&[in_flight], "dark-in-flight")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    // Mergeability never computed: it may be a conflict, so do not blame a push.
+    // (Separate run: the in-flight fixture is shared by every PR in a run.)
+    let uncomputed = Pr {
+        state: "unknown",
+        ..Pr::dirty(21)
+    };
+    let outcome = run(&[uncomputed], "dark-uncomputed")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_alone()
+-> Result<(), String> {
+    let ran = Pr {
+        state: "clean",
+        completed_run: true,
+        ..Pr::dirty(27)
+    };
+    let outcome = run(&[ran], "dark-ran")?;
+    assert_eq!(outcome.comments, 1, "{}", outcome.summary);
+    assert!(
+        outcome.log.contains("finished without the required check"),
+        "{}",
+        outcome.log
+    );
+
+    // Touched within the grace window: a label applied moments ago has not run yet.
+    let fresh = Pr {
+        state: "clean",
+        fresh: true,
+        ..Pr::dirty(28)
+    };
+    let outcome = run(&[fresh], "dark-fresh")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+
+    // Pushed between the list call and the live read: the next sweep reads the new head.
+    let moved = Pr {
+        state: "clean",
+        moved: true,
+        ..Pr::dirty(29)
+    };
+    let outcome = run(&[moved], "dark-moved")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    Ok(())
+}
+
+#[test]
+fn a_run_that_becomes_visible_before_the_notice_is_left_alone() -> Result<(), String> {
+    // The sweep's first look finds no run; by the time the notice is composed an active
+    // request is visible. Re-applying the label would cancel it, so say nothing.
+    for status in ["in_progress", "queued"] {
+        let delayed = Pr {
+            state: "clean",
+            late_run: Some(status),
+            ..Pr::dirty(30)
+        };
+        let outcome = run(&[delayed], &format!("late-{status}"))?;
+        assert_eq!(outcome.comments, 0, "{status}: {}", outcome.summary);
+        // The audit row must not advise a re-apply that would cancel the live run.
+        assert!(
+            outcome
+                .summary
+                .contains("in flight (a merge-ready run became visible"),
+            "{status}: {}",
+            outcome.summary
+        );
+        assert!(
+            !outcome.summary.contains("needs merge-ready re-applied")
+                && !outcome.summary.contains("re-apply notice posted")
+                && outcome.summary.contains("re-apply notices: 0"),
+            "{status}: {}",
+            outcome.summary
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failed_lookup_before_the_notice_posts_nothing_and_is_reported() -> Result<(), String> {
+    // The second run lookup errors: an unknown run state must not read as "no run", or a
+    // request that just started would be told to restart.
+    let failing = Pr {
+        state: "clean",
+        late_fail: true,
+        ..Pr::dirty(31)
+    };
+    let outcome = run(&[failing], "late-fail")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    assert!(
+        outcome.summary.contains("re-apply notice failed")
+            && outcome.summary.contains("re-apply notices: 0"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_failing_status_is_retired_when_the_label_is_removed_or_the_pr_is_a_draft() -> Result<(), String>
+{
+    let unlabeled = Pr {
+        labeled: false,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(22)
+    };
+    let draft = Pr {
+        draft: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(23)
+    };
+    let outcome = run(&[unlabeled, draft], "retire")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures, outcome.comments),
+        (2, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    for number in [22, 23] {
+        let sha = Pr::dirty(number).sha();
+        assert!(
+            outcome.log.contains(&format!(
+                "repos/o/r/statuses/{sha} -f state=success -f context=merge-ready conflict"
+            )),
+            "{}",
+            outcome.log
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_the_actions_bots_failure_on_a_same_repo_pr_is_retired() -> Result<(), String> {
+    let foreign = Pr {
+        labeled: false,
+        prior_statuses: r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"someone"}}]"#,
+        ..Pr::dirty(24)
+    };
+    let fork = Pr {
+        labeled: false,
+        repo: "fork/r",
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(25)
+    };
+    let already_clear = Pr {
+        labeled: false,
+        prior_statuses: r#"[{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#,
+        ..Pr::dirty(26)
+    };
+    let outcome = run(&[foreign, fork, already_clear], "retire-quiet")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures, outcome.comments),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_request_renewed_since_the_list_call_keeps_its_conflict_failure() -> Result<(), String> {
+    let relabeled = Pr {
+        labeled: false,
+        renewed: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(27)
+    };
+    let readied = Pr {
+        draft: true,
+        renewed: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(28)
+    };
+    let moved = Pr {
+        labeled: false,
+        moved: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(29)
+    };
+    let outcome = run(&[relabeled, readied, moved], "retire-renewed")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures, outcome.comments),
+        (0, 0, 0),
+        "{}",
+        outcome.log
+    );
+    Ok(())
+}
+
+#[test]
+fn a_failed_lookup_while_retiring_is_reported_and_writes_nothing() -> Result<(), String> {
+    let status_down = Pr {
+        labeled: false,
+        status_fail: true,
+        ..Pr::dirty(32)
+    };
+    let pull_down = Pr {
+        labeled: false,
+        pull_fail: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(33)
+    };
+    for (case, pr) in [
+        ("retire-status-down", status_down),
+        ("retire-pull-down", pull_down),
+    ] {
+        let outcome = run(&[pr], case)?;
+        assert_eq!(outcome.successes, 0, "{case}: {}", outcome.log);
+        assert!(
+            outcome.summary.contains("retire failed"),
+            "{case}: {}",
+            outcome.summary
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failure_on_a_head_shared_with_a_merge_ready_pr_is_kept_in_either_scan_order()
+-> Result<(), String> {
+    // Commit statuses belong to the SHA: the unlabeled PR must not clear the failure the
+    // labeled, conflicting PR on the same head still needs.
+    let pair = || {
+        (
+            Pr {
+                prior_statuses: OURS_FAILURE,
+                ..Pr::dirty(34)
+            },
+            Pr {
+                labeled: false,
+                head_of: Some(34),
+                prior_statuses: OURS_FAILURE,
+                ..Pr::dirty(35)
+            },
+        )
+    };
+    let (requested, withdrawn) = pair();
+    let outcome = run(&[requested, withdrawn], "shared-requested-first")?;
+    assert_eq!(outcome.successes, 0, "{}", outcome.log);
+    let (requested, withdrawn) = pair();
+    let outcome = run(&[withdrawn, requested], "shared-withdrawn-first")?;
+    assert_eq!(outcome.successes, 0, "{}", outcome.log);
     Ok(())
 }
