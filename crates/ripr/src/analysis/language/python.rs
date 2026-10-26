@@ -69,6 +69,7 @@ mod boundary;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
+mod dataclass_default;
 mod deleted_lines;
 mod guard_activation;
 mod guard_credit;

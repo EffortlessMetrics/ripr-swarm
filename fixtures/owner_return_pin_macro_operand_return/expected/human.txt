@@ -37,7 +37,7 @@ Start here:
       candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 7 more detail line(s) in --format human-full
+    - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_macro_operand_return/input --diff <cwd>/fixtures/owner_return_pin_macro_operand_return/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb

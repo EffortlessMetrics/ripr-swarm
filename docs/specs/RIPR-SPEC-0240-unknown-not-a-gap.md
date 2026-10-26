@@ -717,8 +717,27 @@ differs between "an assertion matched but cannot confirm" and "no assertion
 matched", and both leave the credit unconfirmed): it stays `static_unknown`
 under `rust_implicit_call_unresolved`. A finding whose infection or propagation
 is not read, such as a changed line behind a branch the test never takes,
-keeps its class. A path-form call (`Money::add(a, b)`) is not `.name(` and
-reads as syntax-only. A confirmed
+keeps its class. A call that names the owner decides reach itself and is
+judged by its own evidence: `.name(`, `<Money as Trait>::name(` where the
+qualifier is exactly the impl type and `Trait` is the owner's trait, spelled bare
+or under `std::ops`/`core::ops` and implemented once for the type (`Add<f64>`
+beside `Add<Money>` is ambiguous), or
+`Money::name(` when the type has no other method of that name (an inherent
+`name` wins the path, and a second trait's `name` makes it ambiguous). Another
+type's `name`, another trait's, a type that only ends in the impl type, a
+longer method name, text inside `stringify!` (never evaluated), and a
+module-qualified path (`crate::Money::name(`, which may name another module's
+`Money`) do not count and leave the test syntax-only, as does a test body that
+brings its own `Money` in by `use` or declares one (`type`, `struct`, `enum`,
+`trait`, `union`). A `Money` or trait imported or aliased outside the test body (file or
+enclosing module scope) is not resolved and still matches; the test must also reach this impl directly to be
+judged this way. The related rows are capped for display; a finding whose
+rows were cut stays withheld, because a naming test may be among the cut rows
+and which rows survive depends on test names. The cap counts rows, so one
+test with more than eight assertion rows also stays withheld. The call only lifts the withholding: the finding is then
+classified from its own stages, and an assertion-free path call leaves it an
+unconfirmed `weakly_exposed` rather than borrowing evidence.
+A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
