@@ -534,7 +534,7 @@ no lifecycle state at all.
 - `crates/ripr/src/app/running_binary.rs` — the shared executing-image reader
   used by binding records and verification receipts. The Linux regression in
   `crates/ripr/src/app/python_repair_binding/tests/driver_image.rs` drives the
-  binding-record producer after removing or replacing an owned executable copy
+  binding-record producer after removing or replacing an owned executable link
   and requires the original image's digest.
 - `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/cli/mod.rs`,
   `crates/ripr/src/cli/commands/agent.rs` — the driver CLI surface (trust and

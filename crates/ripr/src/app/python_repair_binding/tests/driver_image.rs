@@ -1,11 +1,12 @@
 //! Linux executable replacement reaches the real binding-record producer.
 
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CHILD_MODE: &str = "RIPR_BINDING_IMAGE_TEST_CHILD";
 const TEST: &str = "app::python_repair_binding::tests::driver_image::binding_retains_original_image_when_its_path_is_replaced";
-const COPY_NAME: &str = "copied-driver-test";
+const IMAGE_NAME: &str = "linked-driver-test";
 const CHECKED_RECORD: &str = "checked-binding.json";
 
 struct Scratch(PathBuf);
@@ -19,11 +20,9 @@ impl Drop for Scratch {
 fn child_record(mode: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    if exe != cwd.join(COPY_NAME) || !matches!(mode, "unlink" | "replace") {
-        return Err("image test child is not the owned executable copy".to_string());
+    if exe != cwd.join(IMAGE_NAME) || !matches!(mode, "unlink" | "replace") {
+        return Err("image test child is not the owned executable link".to_string());
     }
-    let original = std::fs::read(&exe).map_err(|error| error.to_string())?;
-    let expected = super::sha256_hex(&original);
     std::fs::remove_file(&exe).map_err(|error| error.to_string())?;
     if mode == "replace" {
         // A fallback that strips `(deleted)` would hash these unrelated bytes.
@@ -35,15 +34,6 @@ fn child_record(mode: &str) -> Result<(), String> {
         return Err("replacement did not remove the running image's pathname".to_string());
     }
     let record = super::sample_record()?;
-    if record
-        .pointer("/driver/binary_sha256")
-        .and_then(serde_json::Value::as_str)
-        != Some(expected.as_str())
-    {
-        return Err(format!(
-            "{mode}: binding did not retain the original executing image digest"
-        ));
-    }
     let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
     std::fs::write(cwd.join(CHECKED_RECORD), bytes).map_err(|error| error.to_string())
 }
@@ -53,8 +43,11 @@ fn binding_retains_original_image_when_its_path_is_replaced() -> Result<(), Stri
     if let Ok(mode) = std::env::var(CHILD_MODE) {
         return child_record(&mode);
     }
-    let parent = std::env::temp_dir();
-    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    let source = std::env::current_exe().map_err(|error| error.to_string())?;
+    let parent = source.parent().ok_or("running test image has no parent")?;
+    // Establish the oracle once, independently in the still-running parent.
+    let expected =
+        super::sha256_hex(&std::fs::read("/proc/self/exe").map_err(|error| error.to_string())?);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -66,9 +59,18 @@ fn binding_retains_original_image_when_its_path_is_replaced() -> Result<(), Stri
         ));
         std::fs::create_dir(&root).map_err(|error| error.to_string())?;
         let scratch = Scratch(root);
-        let copy = scratch.0.join(COPY_NAME);
-        std::fs::copy("/proc/self/exe", &copy).map_err(|error| error.to_string())?;
-        let mut command = std::process::Command::new(&copy);
+        let image = scratch.0.join(IMAGE_NAME);
+        // This temporary link is protected by the parent's executing inode;
+        // it is not a retained proof artifact. A copied executable can keep a
+        // writable descriptor in a parallel fork and fail its first exec
+        // (#10168 / #10211). Stay beside the image so linking uses one filesystem.
+        std::fs::hard_link(&source, &image).map_err(|error| error.to_string())?;
+        let running = std::fs::metadata("/proc/self/exe").map_err(|error| error.to_string())?;
+        let linked = std::fs::metadata(&image).map_err(|error| error.to_string())?;
+        if (running.dev(), running.ino()) != (linked.dev(), linked.ino()) {
+            return Err("private link does not name the parent's executing image".to_string());
+        }
+        let mut command = std::process::Command::new(&image);
         command
             .args(["--exact", TEST, "--nocapture"])
             .current_dir(&scratch.0)
@@ -101,6 +103,15 @@ fn binding_retains_original_image_when_its_path_is_replaced() -> Result<(), Stri
         .map_err(|error| error.to_string())?;
         if record["kind"] != super::BINDING_KIND {
             return Err(format!("{mode}: child did not produce a binding record"));
+        }
+        if record
+            .pointer("/driver/binary_sha256")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected.as_str())
+        {
+            return Err(format!(
+                "{mode}: binding did not retain the original executing image digest"
+            ));
         }
     }
     Ok(())
