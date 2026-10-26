@@ -136,9 +136,10 @@ fn native_backslash_does_not_alias_directory() -> Result<(), Box<dyn std::error:
     assert_ne!(literal_fingerprint, nested_fingerprint);
     assert_eq!(literal_fingerprint.rsplit('|').next(), Some(r"src/a\b.rs"));
     // Drive-looking text remains a native Unix name, not a Windows path.
-    let (uri, fingerprint) = artifact(&mut output, Path::new(r"C:\path\to\a%b.rs"))?;
+    let drive_looking = r"C:\path\to\a%b.rs";
+    let (uri, fingerprint) = artifact(&mut output, Path::new(drive_looking))?;
     assert_eq!(uri, "C%3A%5Cpath%5Cto%5Ca%25b.rs");
-    assert_eq!(fingerprint.rsplit('|').next(), Some(r"C:\path\to\a%b.rs"));
+    assert_eq!(fingerprint.rsplit('|').next(), Some(drive_looking));
     Ok(())
 }
 
