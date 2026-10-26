@@ -1004,7 +1004,16 @@ mod tests {
         let mut owned = successful_group_command()?;
         // Deliberate wrong ordering, but the production signal boundary must
         // refuse it before killpg. No PID reuse or unrelated process is needed.
-        let status = owned.child.wait().map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = owned.child.try_wait().map_err(|error| error.to_string())? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                return Err("owned fixture did not exit before deliberate reap".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
         assert_eq!(status.code(), Some(7));
         assert!(owned.request_kill().is_err());
         assert_eq!(owned.test_group_kills, 0);
@@ -1028,7 +1037,22 @@ mod tests {
         let pid = checked_child_pid(&owned.child).map_err(|error| error.to_string())?;
         // An OS reap deliberately bypasses std Child's cached exit status.
         // This is a disposable child; no PID reuse is attempted or required.
-        waitid(WaitId::Pid(pid), WaitIdOptions::EXITED).map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG,
+            )
+            .map_err(|error| error.to_string())?
+            .is_some()
+            {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("owned fixture did not exit before external reap".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let direct = owned.test_direct_kills.clone();
         assert!(owned.terminate_tree().is_err());
         assert!(owned.kill().is_err());
