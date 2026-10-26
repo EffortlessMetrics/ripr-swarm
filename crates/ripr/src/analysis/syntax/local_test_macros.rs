@@ -980,7 +980,10 @@ const SCOPE_WORDS: &[&str] = &[
     "match",
 ];
 
-/// Standard macros that expand to an expression and bind no name.
+/// Standard assertion macros, the only macro calls an arrow row may make. Any
+/// other `name!` could be defined in another module or file and expand to a
+/// `fn` or `let` that never appears in the row text. Macro name resolution is
+/// not modeled, so a crate that redefines one of these names is out of scope.
 const NON_BINDING_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -988,37 +991,41 @@ const NON_BINDING_MACROS: &[&str] = &[
     "debug_assert",
     "debug_assert_eq",
     "debug_assert_ne",
-    "matches",
-    "vec",
-    "format",
-    "stringify",
-    "concat",
-    "panic",
-    "unreachable",
-    "todo",
-    "unimplemented",
-    "dbg",
 ];
 
-/// Whether the text invokes a macro that is not a known non-binding standard
-/// one. A macro defined in another module or file can expand to a `fn` or
-/// `let` that never appears in the row text, so any other `name!` is refused.
+/// Whether the text invokes a macro that is not a standard assertion macro.
+/// Comments between the name and the `!` are skipped, as rustc does.
 fn text_invokes_unknown_macro(text: &str) -> bool {
     let bytes = text.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let mut index = 0;
     while index < bytes.len() {
-        if !(bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_') {
+        if !is_ident(bytes[index]) {
             index += 1;
             continue;
         }
         let start = index;
-        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-        {
+        while index < bytes.len() && is_ident(bytes[index]) {
             index += 1;
         }
         let mut after = index;
-        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
-            after += 1;
+        loop {
+            match bytes.get(after) {
+                Some(byte) if byte.is_ascii_whitespace() => after += 1,
+                Some(b'/') if bytes.get(after + 1) == Some(&b'*') => {
+                    match text[after + 2..].find("*/") {
+                        Some(end) => after += end + 4,
+                        None => return true,
+                    }
+                }
+                Some(b'/') if bytes.get(after + 1) == Some(&b'/') => {
+                    match text[after..].find('\n') {
+                        Some(end) => after += end + 1,
+                        None => return true,
+                    }
+                }
+                _ => break,
+            }
         }
         let bang = bytes.get(after) == Some(&b'!') && bytes.get(after + 1) != Some(&b'=');
         if bang && !NON_BINDING_MACROS.contains(&&text[start..index]) {
@@ -1533,6 +1540,14 @@ mod tests {
                 "#[test] fn $name() { match 0 { gate => assert_eq!(gate($v), $w) } }",
             ),
             (
+                "a block comment between a macro name and its bang",
+                "shadow /* c */ !(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a vec! call that a foreign macro could shadow",
+                "vec![]; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
                 "a macro from another module in the body",
                 "shadow!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
             ),
@@ -1594,7 +1609,7 @@ mod tests {
         );
         assert_eq!(
             expand_local_test_macros(&supplied(
-                "#[test] fn $name() { assert!(!stringify!($k).is_empty()); assert_eq!(gate($v), $w); }",
+                "#[test] fn $name() { assert!($k == $k); assert_eq!(gate($v), $w); }",
                 "x a => (1, 2)"
             ))
             .len(),

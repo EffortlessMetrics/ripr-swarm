@@ -265,7 +265,7 @@ of a longer punct (`==>`, `..=>`), while a punct directly followed by another
 is never bound as one `tt` row element, and a literal `:` is never matched against half of a `::`, in the matcher or in
 the invocation (`::` is one token to rustc, so `:` and `: :` do not match it,
 and a matcher `::` is refused whole). A transcriber for an arrow-row table that
-declares a `mod`, `use`, `let`, `static`, `const`, item keyword, `for`, `match`, a closure `|`, a macro invocation other than the standard assertion and formatting macros, or a second `fn` is refused, whether written in the transcriber or supplied by a bound `tt` (each substituted row is read), because the registered test keeps
+declares a `mod`, `use`, `let`, `static`, `const`, item keyword, `for`, `match`, a closure `|`, a macro invocation other than `assert!`, `assert_eq!`, `assert_ne!` and their `debug_` forms (macro name resolution is not modeled, so a crate that redefines those names is out of scope), or a second `fn` is refused, whether written in the transcriber or supplied by a bound `tt` (each substituted row is read), because the registered test keeps
 no lexical scope and could call a different function of the same name (#9967). Any other
 row layout (`=>` as the repetition separator, nested repetition, a trailing
 separator, a leftover token, a group of the wrong arity) indexes nothing. A
