@@ -4124,7 +4124,16 @@ impl OwnerReturnPin {
                                                 source_imported_claims_macros(&facts.source)
                                                     .contains(&name)
                                             });
-                                        (unwrap_wrapper.is_some() && imported)
+                                        // The macro panics on the other variant and yields
+                                        // the payload, so only a pin on that same payload
+                                        // reads: an `Err` pin (`ErrVariant`, or a field
+                                        // gate wrapped in `Err`) is the opposite direction.
+                                        let direction = matches!(
+                                            (name, unwrap_wrapper),
+                                            ("assert_ok", Some("Ok"))
+                                                | ("assert_some", Some("Some"))
+                                        );
+                                        (direction && imported)
                                             .then(|| {
                                                 self.awaited_call_shape(
                                                     poll_context,
