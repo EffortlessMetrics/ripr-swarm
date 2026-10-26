@@ -901,7 +901,7 @@ impl ClassifiedProbeEvidence {
                     let owner = context.owner_fn?;
                     // A destructor runs at scope end, which the shared-sink
                     // authority below has no reading for; never confirm it.
-                    if is_drop_destructor(owner) {
+                    if is_drop_destructor(owner, context.index) {
                         return Some(false);
                     }
                     let reach =

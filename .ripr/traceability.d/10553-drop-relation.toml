@@ -10,5 +10,7 @@ tests = [
   "crates/ripr/tests/drop_call_credit.rs::syntax_that_may_never_run_in_the_test_relates_nothing",
   "crates/ripr/tests/drop_call_credit.rs::a_by_value_method_may_move_the_value_out_of_the_block",
   "crates/ripr/tests/drop_call_credit.rs::a_drop_the_test_cannot_be_shown_to_run_relates_nothing",
+  "crates/ripr/tests/drop_call_credit.rs::a_drop_the_test_may_rebind_or_not_run_relates_nothing",
+  "crates/ripr/tests/drop_call_credit.rs::a_destructor_is_never_exposed_whatever_the_changed_line",
   "crates/ripr/tests/sibling_effect_oracle.rs::a_shared_cell_assertion_never_credits_a_destructor",
 ]

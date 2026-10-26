@@ -161,10 +161,41 @@ fn standard_drop_may_be_shadowed(source: &str, file: &std::path::Path, index: &R
     declared > impl_methods
         || contains_word(&masked, "mod mem")
         || masked.contains("as drop")
+        || binds_name(&masked, "drop")
+        || binds_name(&masked, "mem")
         || masked
             .lines()
             .filter(|line| line.trim_start().starts_with("use "))
-            .any(|line| line.contains("drop") && !line.contains("mem::drop"))
+            .any(|line| {
+                (line.contains("drop") && !line.contains("mem::drop"))
+                    // `use crate::util::mem;` makes `mem::drop` another module's.
+                    || (contains_word(line, "mem")
+                        && !line.contains("std::mem")
+                        && !line.contains("core::mem"))
+            })
+}
+
+/// Whether `name` is bound as a local, a closure parameter or a typed
+/// parameter anywhere in `masked` (`let drop = ..`, `let mut drop`, `|drop|`,
+/// `drop: F`), so a later `drop(..)` may call that value, not the function.
+fn binds_name(masked: &str, name: &str) -> bool {
+    let bytes = masked.as_bytes();
+    masked.match_indices(name).any(|(at, _)| {
+        let end = at + name.len();
+        let whole = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes.get(end).is_none_or(|&byte| !is_ident_byte(byte));
+        if !whole {
+            return false;
+        }
+        let before = masked[..at].trim_end();
+        let after = masked[end..].trim_start();
+        let introduced = ["let", "let mut", "mut", "ref"]
+            .iter()
+            .any(|keyword| before.ends_with(keyword))
+            || before.ends_with('|');
+        let typed_parameter = after.starts_with(':') && !after.starts_with("::");
+        introduced || typed_parameter
+    })
 }
 
 /// Whether any workspace file that names the type also spells a leak. A by-value
@@ -371,6 +402,21 @@ fn scope_binds_owned_value(
     let bytes = body.as_bytes();
     body.match_indices("let ").any(|(at, _)| {
         if at > 0 && is_ident_byte(bytes[at - 1]) {
+            return false;
+        }
+        // A binding inside an `if`, a loop, a closure or a nested `fn` of the
+        // block may never run, so only the block's own statements count.
+        let depth = body[..at].bytes().fold(0isize, |depth, byte| match byte {
+            b'{' => depth + 1,
+            b'}' => depth - 1,
+            _ => depth,
+        });
+        if depth != 0
+            || body[..at]
+                .rsplit([';', '{', '}'])
+                .next()
+                .is_some_and(|head| head.contains('|'))
+        {
             return false;
         }
         let rest = body[at + "let ".len()..].trim_start();

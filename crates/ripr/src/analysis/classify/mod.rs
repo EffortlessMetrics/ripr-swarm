@@ -93,7 +93,9 @@ pub(in crate::analysis) use helper_transfer::{
     helper_only_reach, hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
-pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
+pub(in crate::analysis) use implicit_call::{
+    withhold_destructor_credit, withhold_implicit_call_gap,
+};
 pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,

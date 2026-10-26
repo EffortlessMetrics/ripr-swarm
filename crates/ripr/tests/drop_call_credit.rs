@@ -20,6 +20,8 @@ struct Case {
     label: &'static str,
     /// Extra items placed after the impl (inherent methods, another type).
     extra_items: &'static str,
+    /// The changed line of `drop` before and after.
+    drop_lines: (&'static str, &'static str),
     /// Source of `src/macros.rs`, a second workspace file.
     sibling: &'static str,
     test_body: &'static str,
@@ -37,7 +39,7 @@ pub struct Guard(pub Rc<Cell<u32>>);
 
 impl Drop for Guard {{
     fn drop(&mut self) {{
-{DROP_NEW}
+{drop_new}
     }}
 }}
 
@@ -57,6 +59,7 @@ mod tests {{
     }}
 }}
 ",
+        drop_new = case.drop_lines.1,
         extra = case.extra_items,
         body = case.test_body,
     )
@@ -95,7 +98,7 @@ fn run(case: &Case, root: &Path) -> Result<Vec<Finding>, String> {
     )
     .map_err(|e| format!("write Cargo.toml: {e}"))?;
     let lib = source(case);
-    let (old_line, new_line) = (DROP_OLD, DROP_NEW);
+    let (old_line, new_line) = case.drop_lines;
     let line = lib
         .lines()
         .position(|line| line == new_line)
@@ -142,6 +145,7 @@ index 1111111..2222222 100644
 
 const DROP: Case = Case {
     label: "drop",
+    drop_lines: (DROP_OLD, DROP_NEW),
     extra_items: "",
     sibling: "",
     test_body: "let counter = Rc::new(Cell::new(0));\n        {\n            let _g = Guard(counter.clone());\n        }\n        assert_eq!(counter.get(), 1);",
@@ -431,4 +435,81 @@ fn a_drop_the_test_cannot_be_shown_to_run_relates_nothing() -> Result<(), String
         ),
     ];
     check_all(&cases, &[])
+}
+
+#[test]
+fn a_drop_the_test_may_rebind_or_not_run_relates_nothing() -> Result<(), String> {
+    let cases = [
+        // A local closure named `drop` can hold the guard past the assertion.
+        with_body(
+            DROP,
+            "closure_named_drop",
+            "let counter = Rc::new(Cell::new(0));\n        let mut held = Vec::new();\n        let mut drop = |g: Guard| held.push(g);\n        let g = Guard(counter.clone());\n        drop(g);\n        assert_eq!(counter.get(), 0);",
+        ),
+        // The binding sits in a branch that never runs.
+        with_body(
+            DROP,
+            "guard_bound_in_a_dead_branch",
+            "let counter = Rc::new(Cell::new(0));\n        {\n            if counter.get() == 99 {\n                let _g = Guard(counter.clone());\n            }\n        }\n        assert_eq!(counter.get(), 0);",
+        ),
+        with_body(
+            DROP,
+            "guard_bound_in_a_closure_of_the_block",
+            "let counter = Rc::new(Cell::new(0));\n        {\n            let _f = || {\n                let _g = Guard(counter.clone());\n            };\n        }\n        assert_eq!(counter.get(), 0);",
+        ),
+        // `mem` is another file's module.
+        Case {
+            label: "mem_module_from_another_file",
+            extra_items: "\nuse crate::macros::mem;\n",
+            sibling: "pub mod mem {\n    pub fn drop<T>(_: T) {}\n}\n",
+            test_body: "let counter = Rc::new(Cell::new(0));\n        let g = Guard(counter.clone());\n        mem::drop(g);\n        assert_eq!(counter.get(), 0);",
+            ..DROP
+        },
+        with_body(
+            DROP,
+            "cfg_disabled_drop_after_binding",
+            "let counter = Rc::new(Cell::new(0));\n        let g = Guard(counter.clone());\n        #[cfg(any())]\n        drop(g);\n        assert_eq!(counter.get(), 0);",
+        ),
+    ];
+    check_all(&cases, &[])
+}
+
+#[test]
+fn a_destructor_is_never_exposed_whatever_the_changed_line() -> Result<(), String> {
+    // A predicate on the guard's own state: the assertion's literal matches the
+    // boundary, but nothing ties the assertion to the cell `drop` reads or to
+    // the end of the scope, so the credit is withheld however the test is built.
+    let predicate = Case {
+        label: "predicate",
+        drop_lines: (DROP_OLD, "        if self.0.get() > 5 { self.0.set(6); }"),
+        ..DROP
+    };
+    let bodies = [
+        (
+            "unrelated_cell",
+            "let c = Rc::new(Cell::new(6));\n        let d = Rc::new(Cell::new(6));\n        {\n            let _g = Guard(c.clone());\n        }\n        assert_eq!(d.get(), 6);",
+        ),
+        (
+            "assertion_before_the_drop",
+            "let c = Rc::new(Cell::new(6));\n        let g = Guard(c.clone());\n        assert_eq!(c.get(), 6);\n        drop(g);\n        assert!(true);",
+        ),
+        (
+            "shared_cell",
+            "let c = Rc::new(Cell::new(6));\n        {\n            let _g = Guard(c.clone());\n        }\n        assert_eq!(c.get(), 6);",
+        ),
+        (
+            // `drop` of a type with no `Drop` impl matches the owner by name.
+            "free_drop_of_another_type",
+            "struct Widget;\n        let c = Rc::new(Cell::new(6));\n        drop(Widget);\n        assert_eq!(c.get(), 6);",
+        ),
+    ];
+    for (label, body) in bodies {
+        let case = with_body(predicate, label, body);
+        for finding in findings_of(&case)? {
+            if finding.class == ExposureClass::Exposed {
+                return Err(format!("{label}: a destructor was credited as exposed"));
+            }
+        }
+    }
+    Ok(())
 }

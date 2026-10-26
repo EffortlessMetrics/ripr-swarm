@@ -779,10 +779,10 @@ relation refuses a value that is moved, leaked (`mem::forget`, `ManuallyDrop`,
 `Box::leak`, anywhere a file naming the type spells it), or reached through a
 by-value method of the type or any std method the index cannot see; a `drop` or
 `mem` the test file may rebind (a local `fn drop`, `mod mem`, a renamed or
-foreign `use`); a reference operand; an assertion that came before the drop; a
+foreign `use`, a `mem` imported from another file, a local binding named `drop`); a reference operand; an assertion that came before the drop; a
 value that lives to the end of the test (it is dropped after every assertion);
 and the sites an iterator relation refuses (closures, branches, `#[cfg]`-disabled
-statements).
+statements), including a guard bound inside a branch or closure of the block.
 
 Unlike `next`, a destructor is never credited by the sibling-effect read. A
 guard's counter shares no token with the changed line, and relating a scope end
@@ -791,8 +791,11 @@ different cell, a fresh guard cell, a cell the test re-created or wrote itself,
 or an assertion that ran before the scope (#9567). No assertion-local authority
 ties an assertion to the end of a scope, so a related destructor with an exact
 assertion stays `static_unknown` (`rust_implicit_call_unresolved`), and an
-assertion-free test stays a real `weakly_exposed` gap. A positive credit needs
-such a carrier check and is not claimed.
+assertion-free test stays a real `weakly_exposed` gap. The same holds for every probe family: an `exposed` verdict on a standard
+`Drop::drop` (a predicate on the changed line, a name match on the free `drop`)
+is rewritten to `static_unknown`. A local trait named `Drop` is an ordinary
+trait and is not gated. A positive credit needs such a carrier check and is not
+claimed.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
