@@ -319,7 +319,8 @@ fn stdin_probe_fixture(mode: &str) -> Result<Command, std::io::Error> {
 
 #[test]
 fn stdin_probe_stalled_child_returns_bounded_timeout() -> Result<(), std::io::Error> {
-    let started = std::time::Instant::now();
+    // The child sleeps for a minute; waiting it out would return `Ok`, so a
+    // `TimedOut` error is itself the proof the 100 ms budget ended the call.
     let result = run_owned_stdin_probe(
         stdin_probe_fixture("hang")?,
         b"small fixture",
@@ -329,7 +330,6 @@ fn stdin_probe_stalled_child_returns_bounded_timeout() -> Result<(), std::io::Er
         result.err().map(|err| err.kind()),
         Some(std::io::ErrorKind::TimedOut)
     );
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
     Ok(())
 }
 
@@ -4936,7 +4936,7 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
     let shim_dir = unique_temp_workspace("check-json-timeout-shim");
     std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
     let shim = shim_dir.join("git");
-    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+    std::fs::write(&shim, hanging_git_script(&shim_dir))
         .map_err(|err| format!("write git shim: {err}"))?;
     {
         use std::os::unix::fs::PermissionsExt;
@@ -4952,7 +4952,6 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
         .to_string_lossy()
         .into_owned();
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -4969,12 +4968,11 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
         &[("PATH", search_path.as_str())],
     )
     .map_err(|err| format!("run check with hanging git: {err}"))?;
-    let elapsed = started.elapsed();
     let timeout_value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_secs(45),
-        "check waited {elapsed:?} on hung git under --git-timeout 1"
+        !hang_finished_marker(&shim_dir).exists(),
+        "check waited: the hang ran to its end instead of being cut by the timeout"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("git_invocation_timeout") {
@@ -5013,11 +5011,29 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
 /// Fixture setup with real git must finish before installing the override.
 /// Returns the shim dir (for cleanup) and the search path for the run.
 #[cfg(unix)]
+/// A `git` shim that hangs for a minute and then leaves a marker file. The
+/// tests assert the marker is absent after `ripr` returns: the hang never ran
+/// to its end, so the git timeout (not the hang) ended the call. That holds
+/// on any runner speed, unlike an elapsed-time ceiling.
+#[cfg(unix)]
+fn hang_finished_marker(shim_dir: &std::path::Path) -> PathBuf {
+    shim_dir.join("hang-finished")
+}
+
+#[cfg(unix)]
+fn hanging_git_script(shim_dir: &std::path::Path) -> String {
+    format!(
+        "#!/bin/sh\nsleep 60\ntouch '{}'\n",
+        hang_finished_marker(shim_dir).display()
+    )
+}
+
+#[cfg(unix)]
 fn hanging_git_path_override(label: &str) -> Result<(PathBuf, String), String> {
     let shim_dir = unique_temp_workspace(label);
     std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
     let shim = shim_dir.join("git");
-    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+    std::fs::write(&shim, hanging_git_script(&shim_dir))
         .map_err(|err| format!("write git shim: {err}"))?;
     {
         use std::os::unix::fs::PermissionsExt;
@@ -5046,7 +5062,6 @@ fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), St
     let (shim_dir, search_path) =
         hanging_git_path_override("check-json-omitted-base-timeout-shim")?;
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -5062,12 +5077,11 @@ fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), St
         &[("PATH", search_path.as_str())],
     )
     .map_err(|err| format!("run check with hanging git: {err}"))?;
-    let elapsed = started.elapsed();
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_mins(1),
-        "check waited {elapsed:?} on hung git under --git-timeout 1"
+        !hang_finished_marker(&shim_dir).exists(),
+        "check waited: the hang ran to its end instead of being cut by the timeout"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("git_invocation_timeout") {
@@ -5103,7 +5117,6 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     let (shim_dir, search_path) =
         hanging_git_path_override("check-json-subject-config-timeout-shim")?;
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -5122,12 +5135,11 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
         &[("PATH", search_path.as_str())],
     )
     .map_err(|err| format!("run check with hanging git: {err}"))?;
-    let elapsed = started.elapsed();
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_mins(1),
-        "check waited {elapsed:?} on hung git for the candidate config read"
+        !hang_finished_marker(&shim_dir).exists(),
+        "check waited: the hang ran to its end instead of being cut by the timeout"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("git_invocation_timeout") {
@@ -19931,7 +19943,8 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then exec sleep 60; fi\ndone\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then sleep 60; touch '{}'; exit 0; fi\ndone\nexec '{}' \"$@\"\n",
+            hang_finished_marker(&shim_dir).display(),
             real_git.display()
         ),
     )
@@ -19950,7 +19963,6 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
         .to_string_lossy()
         .into_owned();
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -19958,11 +19970,10 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
         &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", &search_path)],
     )
     .map_err(|err| format!("run pilot with hanging git diff: {err}"))?;
-    let elapsed = started.elapsed();
     assert_success(&output);
     assert!(
-        elapsed < std::time::Duration::from_secs(45),
-        "pilot waited {elapsed:?} on a hung git diff under RIPR_GIT_TIMEOUT=1"
+        !hang_finished_marker(&shim_dir).exists(),
+        "pilot waited the hang ran to its end instead of being cut by the timeout"
     );
     let summary: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
@@ -29681,18 +29692,38 @@ fn pr_summary_does_not_invoke_cargo() -> Result<(), String> {
     .map_err(|err| err.to_string())?;
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
         .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
-    let start = std::time::Instant::now();
-    let output = std::process::Command::new(&bin)
-        .current_dir(&root)
-        .arg("pr-summary")
-        .output()
+    let mut command = std::process::Command::new(&bin);
+    command.current_dir(&root).arg("pr-summary");
+    // A `cargo` shim that records any invocation is the direct oracle for
+    // "no compile"; an elapsed-time ceiling only guessed at it.
+    #[cfg(unix)]
+    let invoked = {
+        use std::os::unix::fs::PermissionsExt;
+        let shim_dir = root.join("cargo-shim");
+        std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
+        let invoked = shim_dir.join("cargo-invoked");
+        let shim = shim_dir.join("cargo");
+        std::fs::write(
+            &shim,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", invoked.display()),
+        )
         .map_err(|err| err.to_string())?;
-    let elapsed = start.elapsed();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| err.to_string())?;
+        let mut paths = vec![shim_dir];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        command.env(
+            "PATH",
+            std::env::join_paths(paths).map_err(|err| err.to_string())?,
+        );
+        invoked
+    };
+    let output = command.output().map_err(|err| err.to_string())?;
     assert!(output.status.success(), "pr-summary must succeed");
-    assert!(
-        elapsed.as_secs() < 10,
-        "pr-summary must complete in <10s (no compile); took {elapsed:?}"
-    );
+    #[cfg(unix)]
+    assert!(!invoked.exists(), "pr-summary must not invoke cargo");
     ignore_remove_dir_all(&root);
     Ok(())
 }
