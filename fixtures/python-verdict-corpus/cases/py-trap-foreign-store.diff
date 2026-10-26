@@ -1,0 +1,10 @@
+diff --git a/tablekit/rates_paren.py b/tablekit/rates_paren.py
+--- a/tablekit/rates_paren.py
++++ b/tablekit/rates_paren.py
+@@ -1,5 +1,5 @@
+-PAREN_RATES = ({"gold": 10, "silver": 5})
++PAREN_RATES = ({"gold": 10, "silver": 6})
+ 
+ 
+ def price(tier):
+     return PAREN_RATES.get(tier, 0)
