@@ -1164,8 +1164,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
 13. `assert other == 3` then `assert parse('1') == 2`: `exposed`,
     `direct` (unchanged).
 14. Error owner, `with pytest.raises(KeyError, match='empty'): perr('')`:
-    `exact_error_variant` / strong, `exposed`, `changed_sink_token`
-    (unchanged).
+    `exact_error_variant` / strong, `exposed`, `direct` through the owner
+    identity token `perr` (the first credit branch; the class is unchanged,
+    and `changed_sink_token` applies only when the oracle does not name
+    the owner).
 15. Error owner, `with pytest.raises(KeyError): perr('')`: `broad_error` /
     weak, `weakly_exposed` (unchanged).
 16. Error owner, `assert perr('1') == 1` only: `weakly_exposed`
