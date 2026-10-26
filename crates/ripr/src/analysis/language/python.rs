@@ -78,6 +78,8 @@ use classify::{
 };
 mod discriminators;
 mod effect_alignment;
+#[cfg(test)]
+mod effect_order_tests;
 mod hypothesis;
 mod module_constants;
 mod no_behavior;
