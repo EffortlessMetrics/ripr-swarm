@@ -424,6 +424,7 @@ reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150
 case = "spec-b-0150-string-only-family"
 reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
+[[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
 reason = "RIPR-SPEC-0154 example 3 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
 
