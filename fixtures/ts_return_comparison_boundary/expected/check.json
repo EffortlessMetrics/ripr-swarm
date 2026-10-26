@@ -69,8 +69,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `total == 100`"
         }
       ],
       "typescript_preview_card": {

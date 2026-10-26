@@ -2,32 +2,23 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/match_arm_controls/input
 
-Summary: 4 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 4 unknown); 4 of 4 findings unsuppressed
+Summary: 4 probes (0 exposed, 3 weak, 0 unrevealed, 0 no path, 1 unknown); 4 of 4 findings unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s)
 
 Start here:
-  State: limited by static analysis
-  Safe next action: inspect the named static limitation before treating this as repair-ready
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:14
-  Static exposure: unknown (severity: warning, confidence 0.66)
-  Why unknown: the change reaches a sink but infection could not be determined statically
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
   Canonical gap: gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit62657461
   Changed behavior: if final_label == "beta" {
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand
-    `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it
-    cannot tell which side of the boundary a test reaches; activation/infection is unknown; a
-    related test that passes literal inputs on each side of the boundary would let ripr decide
-  Related test: tests/classify.rs:4 computed_label_is_word
-  Next step: Open the related test and trace its input through the local or computed operand
-    (including default and empty cases) to see which side of the changed condition it exercises,
-    then name an input that would exercise the other side. ripr.toml does not support
-    fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
-    Compare the original and changed implementations with a focused run using the project's
-    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
-    unknown
-  Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+  Missing discriminator: final_label == "beta"
+  Related test: tests/classify.rs:4 computed_label_is_word (no test input reaches `final_label == "beta"`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -35,19 +26,22 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach classify_computed: computed_label_is_word
-    - infection unknown: Changed boundary input is unresolved: boundary operand `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot…
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_controls/input --diff <cwd>/fixtures/match_arm_controls/diff.patch --mode fast probe:src_lib.rs:predicate:659cd128
   ripr context --root <cwd>/fixtures/match_arm_controls/input --diff <cwd>/fixtures/match_arm_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:659cd128
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:659cd128 --root <cwd>/fixtures/match_arm_controls/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:30 (unknown); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
+    - ./src/lib.rs:30 (weak); kind: predicate; reason: Missing discriminator value: final_label == "beta"
     - ./src/lib.rs:46 (unknown); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
-    - ./src/lib.rs:62 (unknown); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
+    - ./src/lib.rs:62 (weak); kind: predicate; reason: Missing discriminator value: final_label == "beta"
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

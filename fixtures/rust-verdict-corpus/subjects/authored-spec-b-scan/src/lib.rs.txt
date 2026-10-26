@@ -1,0 +1,11 @@
+//! Scanner state transitions (RIPR-SPEC-0163) cells: a helper folds a state
+//! machine over its input and a caller compares the final state.
+
+pub mod s_bare;
+pub mod s_body;
+pub mod s_bound;
+pub mod s_iter;
+pub mod s_next;
+pub mod s_path;
+pub mod s_string;
+pub mod s_trim;

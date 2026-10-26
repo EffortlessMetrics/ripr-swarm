@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/source-of-truth.yml'
       - '.ripr/traceability.toml'
+      - '.ripr/traceability.d/**'
       - '.allow/spec-system/**'
       - 'docs/specs/**'
       - 'docs/status/SUPPORT_TIERS.md'
@@ -15,6 +16,7 @@ on:
     paths:
       - '.github/workflows/source-of-truth.yml'
       - '.ripr/traceability.toml'
+      - '.ripr/traceability.d/**'
       - '.allow/spec-system/**'
       - 'docs/specs/**'
       - 'docs/status/SUPPORT_TIERS.md'

@@ -1,0 +1,22 @@
+//! A loop accumulator whose table rows are all empty or sum to zero.
+
+pub fn zero_tally(parts: &[u32]) -> u32 {
+    let mut total = 0;
+    for p in parts {
+        total = total + p;
+    }
+    total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zeros_tally_to_zero() {
+        let cases: [(&[u32], u32); 2] = [(&[], 0), (&[0, 0], 0)];
+        for (parts, want) in cases {
+            assert_eq!(zero_tally(parts), want);
+        }
+    }
+}

@@ -30,6 +30,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent,…
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 13 more detail line(s) in --format human-full
@@ -37,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_alias_not_a_pin/diff.patch --mode fast probe:src_lib.rs:return_value:c70c15c1
   ripr context --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_alias_not_a_pin/diff.patch --mode fast --at probe:src_lib.rs:return_value:c70c15c1
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:c70c15c1 --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --at src/lib.rs:2 --kind return_value
 

@@ -286,6 +286,9 @@ pub(crate) fn render_finding_digest_with_config(
             "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
             "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
             "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
+            "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
+            "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
+            "      candidate line = changed line ripr considers for probes\n",
         ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.

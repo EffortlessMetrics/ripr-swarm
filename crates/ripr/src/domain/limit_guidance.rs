@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 29] = [
+    pub(crate) const ALL: [StaticLimitKind; 30] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -46,6 +46,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustFrameworkOracleUnresolved,
         StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
+        StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
     ];
 
@@ -169,6 +170,11 @@ impl StaticLimitKind {
                 "Call the changed method explicitly by its fully qualified path in the test, \
                  instead of relying on an operator, `Drop`, `Deref` or other implicit trait \
                  call, and assert on its result."
+            }
+            StaticLimitKind::RustIndirectOwnerCallUnresolved => {
+                "Call the changed owner directly by name in the test, not as a function value, \
+                 through a generating macro or as the argument of an executor helper, and \
+                 assert on its result."
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "Add a test that drives the iterator with one concrete input and asserts the \
@@ -322,10 +328,11 @@ mod tests {
                 StaticLimitKind::RustFrameworkOracleUnresolved => 25,
                 StaticLimitKind::RustPinnedShapeUnresolved => 26,
                 StaticLimitKind::RustImplicitCallUnresolved => 27,
-                StaticLimitKind::RustCallerLoopSelectorUnresolved => 28,
+                StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
+                StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
             }
         }
-        const COUNT: usize = 29;
+        const COUNT: usize = 30;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

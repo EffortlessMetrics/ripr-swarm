@@ -26,6 +26,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach add: records_into_the_bag
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 8 more detail line(s) in --format human-full
@@ -33,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/collection_argument_alias/input --diff <cwd>/fixtures/collection_argument_alias/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_alias/input --diff <cwd>/fixtures/collection_argument_alias/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
-  no repair start offered: repair route not ready (missing evidence: observable sink localization); run `ripr repair probe:src_lib.rs:call_deletion:1f64eda5 --root <cwd>/fixtures/collection_argument_alias/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: observable sink localization; follow the Next step above, then rerun `ripr check`
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:

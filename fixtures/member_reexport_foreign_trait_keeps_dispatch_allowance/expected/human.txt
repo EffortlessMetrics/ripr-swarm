@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach weak: No test is seen calling fmt; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
     - infection weak: Related tests contain the changed boundary literal [4] only outside the changed owner's inputs (for example as an expected value); no test input at the changed…
     - 6 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --diff <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/diff.patch --mode fast probe:util_src_stream_take.rs:predicate:b1141696
   ripr context --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --diff <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/diff.patch --mode fast --at probe:util_src_stream_take.rs:predicate:b1141696
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file); run `ripr repair probe:util_src_stream_take.rs:predicate:b1141696 --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --at util/src/stream/take.rs:9 --kind predicate
 

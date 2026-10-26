@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No static test path found for the changed owner
     - infection unknown: No statically reachable test path was found, so activation/infection cannot be estimated
     - 4 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_positive/input --diff <cwd>/fixtures/rust_transitive_reach_positive/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root <cwd>/fixtures/rust_transitive_reach_positive/input --diff <cwd>/fixtures/rust_transitive_reach_positive/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_internal.rs:predicate:114f2322 --root <cwd>/fixtures/rust_transitive_reach_positive/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

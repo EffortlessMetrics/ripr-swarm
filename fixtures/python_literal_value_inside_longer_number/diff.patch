@@ -1,0 +1,9 @@
+--- a/ports.py
++++ b/ports.py
+@@ -1,5 +1,5 @@
+ def ranges():
+     return {
+-        "lo": 1,
++        "lo": 80,
+         "hi": 8080,
+     }

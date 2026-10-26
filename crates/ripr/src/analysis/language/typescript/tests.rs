@@ -130,15 +130,16 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         reach_body_text: None,
         body_text: format!("const result = {owner_name}(50, 100);\nexpect(result).toBeTruthy();"),
         assertions: vec![smoke_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -146,7 +147,8 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     }
 }
 
@@ -199,15 +201,16 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -215,7 +218,8 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     }
 }
 
@@ -254,15 +258,16 @@ fn direct_test_with_assertion(
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -270,7 +275,8 @@ fn direct_test_with_assertion(
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     }
 }
 
@@ -303,18 +309,19 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }
 }
 
@@ -1663,6 +1670,42 @@ fn normalized_path_strips_dot_prefix_and_normalizes_separators() {
 }
 
 #[test]
+fn normalized_path_eq_matches_plain_paths() {
+    // gemini-code-assist review on #10283: assert the allocating and
+    // alloc-free forms on the SAME corpus so the two cannot drift apart
+    // (normalized_path_eq must be exactly normalized_path(path) == n).
+    for (path, expected) in [
+        ("src/a/b.ts", "src/a/b.ts"),
+        ("./src/a.ts", "src/a.ts"),
+        ("././x.ts", "x.ts"),
+    ] {
+        assert!(normalized_path_eq(Path::new(path), expected), "{path:?}");
+        assert_eq!(normalized_path(Path::new(path)), expected, "{path:?}");
+    }
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "src/b.ts"));
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "other/a.ts"));
+}
+
+#[test]
+fn normalized_path_eq_agrees_with_normalized_path_on_backslash_spellings() {
+    // #10024: a literal backslash-spelled path collides with the
+    // forward-slash spelling under normalized_path; the eq helper must keep
+    // recognizing it through the allocating slow path.
+    for (path, expected) in [
+        (r"src\a\b.ts", "src/a/b.ts"),
+        (r".\src\b.ts", "src/b.ts"),
+        (r"src/a\b.ts", "src/a/b.ts"),
+    ] {
+        assert!(
+            normalized_path_eq(Path::new(path), expected),
+            "{path:?} must equal {expected:?}"
+        );
+        assert_eq!(normalized_path(Path::new(path)), expected);
+    }
+    assert!(!normalized_path_eq(Path::new(r"src\a\b.ts"), "src/a/c.ts"));
+}
+
+#[test]
 fn extract_owners_recognizes_function_declaration() {
     let owners = extract_owners(
         Path::new("src/lib.ts"),
@@ -1832,18 +1875,19 @@ fn find_related_tests_matches_by_call_name() {
             body_text: r#"test("alpha", () => { expect(applyDiscount(50, 100)).toBe(50); });"#
                 .to_string(),
             assertions: Vec::new(),
-            mocks_in_file: Vec::new(),
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: Default::default(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
-            imports_in_file: Vec::new(),
+            imports_in_file: Default::default(),
         },
         TypeScriptTest {
             name: "unrelated".to_string(),
@@ -1855,18 +1899,19 @@ fn find_related_tests_matches_by_call_name() {
             body_text: r#"test("unrelated", () => { expect(otherHelper()).toBe(true); });"#
                 .to_string(),
             assertions: Vec::new(),
-            mocks_in_file: Vec::new(),
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: Default::default(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
-            imports_in_file: Vec::new(),
+            imports_in_file: Default::default(),
         },
     ];
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
@@ -1905,18 +1950,19 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         reach_body_text: None,
         body_text: "expect(order.applyDiscount(50)).toBe(40);".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
 
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
@@ -3654,18 +3700,19 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         reach_body_text: None,
         body_text: r#"expect("applyDiscount(").toContain("applyDiscount(");"#.to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
 
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
@@ -3705,18 +3752,19 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             reach_body_text: None,
             body_text: "// applyDiscount(\nexpect(total).toBe(40);".to_string(),
             assertions: Vec::new(),
-            mocks_in_file: Vec::new(),
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: Default::default(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
-            imports_in_file: Vec::new(),
+            imports_in_file: Default::default(),
         },
         TypeScriptTest {
             name: "block comment mention".to_string(),
@@ -3727,18 +3775,19 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             reach_body_text: None,
             body_text: "/* applyDiscount(\n */\nexpect(total).toBe(40);".to_string(),
             assertions: Vec::new(),
-            mocks_in_file: Vec::new(),
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: Default::default(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
-            imports_in_file: Vec::new(),
+            imports_in_file: Default::default(),
         },
     ];
 
@@ -3970,18 +4019,19 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4321,18 +4371,19 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
 
     let finding = classify_change(
@@ -4406,18 +4457,19 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             reach_body_text: None,
             body_text: "expect(alphaScore(12)).toBe(13);".to_string(),
             assertions: Vec::new(),
-            mocks_in_file: Vec::new(),
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: Default::default(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
-            imports_in_file: Vec::new(),
+            imports_in_file: Default::default(),
         },
         TypeScriptTest {
             name: "beta keeps its threshold".to_string(),
@@ -4428,18 +4480,19 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             reach_body_text: None,
             body_text: "expect(betaScore(12)).toBe(13);".to_string(),
             assertions: Vec::new(),
-            mocks_in_file: Vec::new(),
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: Default::default(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
-            imports_in_file: Vec::new(),
+            imports_in_file: Default::default(),
         },
     ];
 
@@ -5260,15 +5313,16 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -5276,7 +5330,8 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -5355,15 +5410,16 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -5371,7 +5427,8 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -6662,6 +6719,57 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
 }
 
 #[test]
+fn boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement() {
+    // `if (cond) return x;` is the same boundary as the braced form; the
+    // statement after the closing paren must not leak into the right operand.
+    for (line, boundary) in [
+        ("  if (total > 100) return total - 10;", "total == 100"),
+        ("  if (total >= 100) return total - 10;", "total == 100"),
+        ("  } else if (count <= 3) return 0;", "count == 3"),
+        ("  while (retries < 5) retries += 1;", "retries == 5"),
+        ("  if (total > 100) { return 1; }", "total == 100"),
+    ] {
+        assert_eq!(
+            typescript_boundary_discriminator(line).as_deref(),
+            Some(boundary),
+            "{line}"
+        );
+    }
+    // A call in the condition stays fail-closed, and a quoted paren stays an
+    // unsimple operand rather than ending the group early.
+    for line in [
+        "  if (limit(total) > 100) return 1;",
+        "  if (kind === \"a)\") return 1;",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A compound or arithmetic condition is not one comparison, so the inline
+    // form stays unparsed: a test at the threshold may skip the branch.
+    for line in [
+        "  if (enabled && total >= 100) return 1;",
+        "  if (total >= 100 || force) return 1;",
+        "  if (total + 1 > 100) return 1;",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A statement-only edit leaves the guard's condition unchanged.
+    assert_eq!(
+        inline_guard_condition("  if (total > 100) return total - 20;"),
+        inline_guard_condition("  if (total  > 100)  return total - 10;"),
+    );
+    assert_ne!(
+        inline_guard_condition("  if (total > 100) return total - 10;"),
+        inline_guard_condition("  if (total >= 100) return total - 10;"),
+    );
+    assert_eq!(inline_guard_condition("  if (total > 100) {"), None);
+    // The braced and wrapped forms keep their existing answer.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total > 100) {").as_deref(),
+        Some("total == 100")
+    );
+}
+
+#[test]
 fn classify_probe_shape_reads_a_declared_arrow_and_paren_ternary_as_its_condition_boundary() {
     // A concise arrow body and a parenthesized ternary are the same
     // conditional as `return cond ? a : b`: only `total == 100` flips them.
@@ -7286,15 +7394,16 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             reach_body_text: None,
             body_text: "applyDiscount(1, 2)".to_string(),
             assertions: Vec::new(),
-            mocks_in_file: vec!["./api".to_string()],
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: vec!["./api".to_string()].into(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: vec![TypeScriptImport {
@@ -7302,7 +7411,8 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
                 imported: Some("applyDiscount".to_string()),
                 local: "applyDiscount".to_string(),
                 namespace: false,
-            }],
+            }]
+            .into(),
         },
         TypeScriptTest {
             name: "beta".to_string(),
@@ -7313,15 +7423,16 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             reach_body_text: None,
             body_text: "applyDiscount(3, 4)".to_string(),
             assertions: Vec::new(),
-            mocks_in_file: vec!["./api".to_string()],
-            unstable_member_roots_in_file: Vec::new(),
-            scope_bindings: Vec::new(),
-            identity_helpers_in_file: Vec::new(),
-            default_member_only_locals_in_file: Vec::new(),
-            written_locals_in_file: Vec::new(),
-            mock_factories_in_file: Vec::new(),
-            mock_spread_sources_in_file: Vec::new(),
+            mocks_in_file: vec!["./api".to_string()].into(),
+            unstable_member_roots_in_file: Default::default(),
+            scope_bindings: Default::default(),
+            identity_helpers_in_file: Default::default(),
+            default_member_only_locals_in_file: Default::default(),
+            written_locals_in_file: Default::default(),
+            mock_factories_in_file: Default::default(),
+            mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+            conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
             imports_in_file: vec![TypeScriptImport {
@@ -7329,7 +7440,8 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
                 imported: Some("applyDiscount".to_string()),
                 local: "applyDiscount".to_string(),
                 namespace: false,
-            }],
+            }]
+            .into(),
         },
     ];
     let paths = collect_related_mock_paths(
@@ -7374,18 +7486,19 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         reach_body_text: None,
         body_text: "otherHelper()".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: vec!["./api".to_string()],
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: vec!["./api".to_string()].into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
     let paths = collect_related_mock_paths(
         &owner,
@@ -7429,18 +7542,19 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         reach_body_text: None,
         body_text: "expect(order.applyDiscount(50)).toBe(40);".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: vec!["./api".to_string()],
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: vec!["./api".to_string()].into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
     let paths = collect_related_mock_paths(
         &owner,
@@ -7485,18 +7599,19 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: vec!["./api".to_string()],
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: vec!["./api".to_string()].into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -7582,18 +7697,19 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         reach_body_text: None,
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: vec!["./work".to_string()],
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: vec!["./work".to_string()].into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
 
     // Live pipeline (workspace_root supplied): the cross-package test is
@@ -7726,18 +7842,19 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: vec!["./api".to_string()],
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: vec!["./api".to_string()].into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -7835,18 +7952,19 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     }];
     let finding = classify_change(
         Path::new("src/label.jsx"),
@@ -8098,18 +8216,19 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
     let finding = classify_change(
         Path::new("src/signals.ts"),
@@ -8607,15 +8726,16 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -8623,7 +8743,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             imported: Some("clamp".to_string()),
             local: "clamp".to_string(),
             namespace: false,
-        }],
+        }].into(),
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -8689,15 +8809,16 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -8705,7 +8826,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             imported: Some("clamp".to_string()),
             local: "clamp".to_string(),
             namespace: false,
-        }],
+        }].into(),
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -8773,18 +8894,19 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -8961,15 +9083,16 @@ fn package_local_filter_selects_same_package_test() {
         reach_body_text: None,
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -8977,7 +9100,8 @@ fn package_local_filter_selects_same_package_test() {
             imported: Some("doWork".to_string()),
             local: "doWork".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
 
     let tests_slice = [test.clone()];
@@ -9055,18 +9179,19 @@ fn package_local_filter_rejects_cross_package_test() {
         reach_body_text: None,
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
 
     let tests_slice = [test.clone()];
@@ -9106,15 +9231,16 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         reach_body_text: None,
         body_text: "expect(toArray(1)).toEqual([1])".into(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9122,7 +9248,8 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
             imported: Some("toArray".into()),
             local: "toArray".into(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
 
     let candidates = related_test_candidates(
@@ -9177,15 +9304,16 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         reach_body_text: None,
         body_text: "expect(new Cart(1).total).toBe(1)".into(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9193,7 +9321,8 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
             imported: Some("Cart".into()),
             local: "Cart".into(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let candidates = related_test_candidates(
         &owner,
@@ -9383,18 +9512,19 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
     // Same-package test that correctly imports
     let same_pkg_test = TypeScriptTest {
@@ -9406,15 +9536,16 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         reach_body_text: None,
         body_text: "applyDiscount(100, 20);".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9422,7 +9553,8 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
 
     let all_owners = vec![owner.clone()];
@@ -9486,18 +9618,19 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         reach_body_text: None,
         body_text: "renamed();".into(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: vec![import],
+        imports_in_file: vec![import].into(),
     };
 
     let admitted = related_test_candidates(
@@ -9547,7 +9680,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
     );
 
     let mut bare_call = test.clone();
-    bare_call.imports_in_file.clear();
+    bare_call.imports_in_file = Default::default();
     bare_call.body_text = "cart();".into();
     let bare_admitted = related_test_candidates(
         &owner,
@@ -9626,18 +9759,19 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         reach_body_text: None,
         body_text: "applyDiscount(100, 20);".to_string(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: Default::default(),
     };
     // No workspace_root → no package-local filter → no typescript_target_unresolved
     let finding = classify_change(
@@ -9739,15 +9873,16 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
             compares_reference_identity: false,
             },
         ],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9755,7 +9890,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }].into(),
     };
     // Changed line: SideEffect (console.log call) — the `amount` and `audit`
     // tokens are not in any assertion's observed_expression.
@@ -9850,15 +9985,16 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9866,7 +10002,8 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -9953,15 +10090,16 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -9969,7 +10107,8 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -10056,15 +10195,16 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10072,7 +10212,8 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -10157,15 +10298,16 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10173,7 +10315,8 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -10258,15 +10401,16 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10274,7 +10418,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }].into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -10381,15 +10525,16 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
             compares_reference_identity: false,
             },
         ],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10397,7 +10542,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }].into(),
     };
     // Changed line: SideEffect (console.log call)
     let finding = classify_change(
@@ -10477,15 +10622,16 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10493,7 +10639,8 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             imported: Some("buildConfig".to_string()),
             local: "buildConfig".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     // Changed line: a field value assignment (FieldConstruction)
     let finding = classify_change(
@@ -10579,15 +10726,16 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10595,7 +10743,8 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             imported: Some("buildConfig".to_string()),
             local: "buildConfig".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     // Changed line: a field value assignment (FieldConstruction).
     let finding = classify_change(
@@ -10751,15 +10900,16 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10767,7 +10917,8 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -10854,15 +11005,16 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -10870,7 +11022,8 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             imported: Some("trackLogin".to_string()),
             local: "trackLogin".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     // Changed line: SideEffect member call — the effect never escapes.
     let finding = classify_change(
@@ -10988,15 +11141,16 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         reach_body_text: None,
         body_text: "const result = applyDiscount(100, 10);\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11004,7 +11158,8 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11075,15 +11230,16 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         reach_body_text: None,
         body_text: "const result = applyDiscount(100, 10);\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11091,7 +11247,8 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11164,15 +11321,16 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         reach_body_text: None,
         body_text: body.to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11180,7 +11338,8 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
             imported: Some(imported.to_string()),
             local: imported.to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let classify = |tests: &[TypeScriptTest]| {
@@ -11324,15 +11483,16 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11340,7 +11500,8 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11407,15 +11568,16 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         reach_body_text: None,
         body_text: "const _ = cloneDeep({});\nexpect(_.x).toBe(1);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11423,7 +11585,8 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
             imported: Some("cloneDeep".to_string()),
             local: "cloneDeep".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11483,15 +11646,16 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         reach_body_text: None,
         body_text: "const view = renderApp();\nexpect(view).toBeTruthy();".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11499,7 +11663,8 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
             imported: Some("default".to_string()),
             local: "React".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11556,15 +11721,16 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         reach_body_text: None,
         body_text: "const result = applyDiscount(100);\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11572,7 +11738,8 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
             imported: Some("default".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11630,15 +11797,16 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11646,7 +11814,8 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11720,15 +11889,16 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11736,7 +11906,8 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11811,15 +11982,16 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11827,7 +11999,8 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -11911,15 +12084,16 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -11927,7 +12101,8 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let all_owners = [owner];
     let all_tests = [test];
@@ -12016,15 +12191,16 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12032,7 +12208,8 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     // Test B: return-value observer — toBeGreaterThan(0) — Weak, RelationalCheck.
     // This test DOES match the ReturnValue seam family, but only weakly.
@@ -12062,15 +12239,16 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12078,7 +12256,8 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     // Changed line: the gold-tier return value (ReturnValue seam).
     let finding = classify_change(
@@ -12166,15 +12345,16 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12182,7 +12362,8 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -12265,15 +12446,16 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12281,7 +12463,8 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -12397,15 +12580,16 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
                 compares_reference_identity: false,
             },
         ],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -12413,7 +12597,8 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     // Changed line: the gold-tier return value (ReturnValue seam).
     let finding = classify_change(
@@ -13291,15 +13476,16 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -13307,7 +13493,8 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             imported: Some("parseLimit".to_string()),
             local: "parseLimit".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     (owner, test)
 }
@@ -13404,15 +13591,16 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
             expected_object_const: None,
             compares_reference_identity: false,
         }],
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -13420,7 +13608,8 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
     }
 }
 
@@ -13561,7 +13750,8 @@ fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<()
         imported: None,
         local: "other".to_string(),
         namespace: true,
-    }];
+    }]
+    .into();
     let tests = [exact_value_test("total", "total(60)", "120"), foreign];
     let finding = classify_boundary_line("total", "  if (total >= 50) {", &tests)?;
     assert_eq!(
@@ -13617,7 +13807,8 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         imported: None,
         local: "pricing".to_string(),
         namespace: true,
-    }];
+    }]
+    .into();
     let finding = classify_change(
         Path::new("src/pricing.ts"),
         2,
@@ -13832,7 +14023,8 @@ fn priced_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTe
         imported: Some(owner_name.to_string()),
         local: owner_name.to_string(),
         namespace: false,
-    }];
+    }]
+    .into();
     test
 }
 
@@ -14025,7 +14217,7 @@ fn overcredit_4103_unanchored_bare_call_is_not_a_direct_owner_call() -> Result<(
     let owner = priced_owner();
     let mut unanchored = priced_test("applyDiscount", "applyDiscount(100)", "90");
     unanchored.file = PathBuf::from("tests/helper.test.ts");
-    unanchored.imports_in_file = Vec::new();
+    unanchored.imports_in_file = Default::default();
     let finding = classify_pricing_line(&owner, "  return 0;", &[unanchored])?;
     assert_eq!(
         finding.class,
@@ -14130,7 +14322,7 @@ fn overcredit_4103_body_local_owner_destructure_anchors_direct_owner_call() -> R
     commonjs.body_text = "const { applyDiscount } = require(\"../src/pricing\");\n\
                           expect(applyDiscount(100)).toBe(90);"
         .to_string();
-    commonjs.imports_in_file = Vec::new();
+    commonjs.imports_in_file = Default::default();
     assert_eq!(
         owner_call_relation(&commonjs, &owner, &ReExportIndex::empty(), None, None),
         Some(TypeScriptRelationKind::DirectOwnerCall),
@@ -14147,7 +14339,7 @@ fn overcredit_4103_body_local_owner_destructure_anchors_direct_owner_call() -> R
     foreign.body_text = "const { applyDiscount } = require(\"../src/factory\");\n\
                          expect(applyDiscount(100)).toBe(90);"
         .to_string();
-    foreign.imports_in_file = Vec::new();
+    foreign.imports_in_file = Default::default();
     let finding = classify_pricing_line(&owner, "  return 0;", &[foreign])?;
     assert_eq!(
         finding.class,
@@ -14484,7 +14676,8 @@ fn spec_0027_namespace_receiver_owner_call_stays_exposed() -> Result<(), String>
         imported: None,
         local: "pricing".to_string(),
         namespace: true,
-    }];
+    }]
+    .into();
     let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
     assert_eq!(
         finding.class,
@@ -16304,7 +16497,7 @@ fn analyze_diff_discloses_changed_test_file_parse_error() -> Result<(), String> 
 }
 
 /// (b) A recognized test file that parses but registers a test with a
-/// template-literal title in a body the extractor does not walk (an `if`
+/// template-literal title in a body the extractor does not walk (a `while`
 /// block) must emit `typescript_test_extraction_partial`.
 #[test]
 fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Result<(), String> {
@@ -16315,7 +16508,7 @@ fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Re
     )?;
     ts_write_file(
         &root.join("tests/calc.test.ts"),
-        "import { add } from '../src/calc';\nif (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
+        "import { add } from '../src/calc';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
     )?;
 
     let adapter = TypeScriptAdapter;
@@ -16351,7 +16544,7 @@ fn analyze_diff_collapses_test_extraction_partial_into_one_summary() -> Result<(
     for index in 1..=5 {
         ts_write_file(
             &root.join(format!("tests/calc{index}.test.ts")),
-            "import { add } from '../src/calc';\nif (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
+            "import { add } from '../src/calc';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
         )?;
     }
 
@@ -16494,6 +16687,90 @@ fn analyze_diff_withholds_extraction_partial_when_no_typescript_owner_changed() 
         ))?,
         "an import-only TS change classifies nothing against the index"
     );
+    Ok(())
+}
+
+/// #10436: a dropped registration in a test file that cannot reach the changed
+/// code does not make the analysis partial; one that can (directly, through a
+/// helper, or through a barrel) still does, and so does any file whose loading
+/// the import scan cannot follow.
+#[test]
+fn analyze_diff_scopes_extraction_partial_to_test_files_that_reach_the_diff() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("extract-reach")?;
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function tier(amount: number): string {\n  if (amount >= 150) {\n    return 'premium';\n  }\n  return 'standard';\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("src/other.ts"),
+        "export function other(): number {\n  return 1;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("src/index.ts"),
+        "export * from './pricing';\nexport * from './other';\n",
+    )?;
+    let dropped =
+        "if (process.env.CI) {\n  it(`adds ${1}`, () => {\n    expect(1).toBe(1);\n  });\n}\n";
+    // Reaches only `other.ts`.
+    ts_write_file(
+        &root.join("tests/unrelated.test.ts"),
+        &format!("import {{ other }} from '../src/other';\n{dropped}"),
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let diff = [changed_with_lines(
+        "src/pricing.ts",
+        &[(2, "  if (amount >= 150) {")],
+    )];
+    let partial_files = |root: &Path| -> Result<Option<_>, String> {
+        let result = adapter.analyze_diff(
+            &ts_analysis_options(root.to_path_buf()),
+            &OraclePolicy::default(),
+            &diff,
+        )?;
+        Ok(result
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+            })
+            .and_then(|limitation| limitation.affected_items))
+    };
+    let _ = &options;
+    assert_eq!(
+        partial_files(&root)?,
+        None,
+        "a gap file that cannot reach the changed file must not mark the analysis partial"
+    );
+    // Reaches the changed file through a barrel and a helper.
+    ts_write_file(
+        &root.join("tests/helper.ts"),
+        "export { tier } from '../src';\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/related.test.ts"),
+        &format!("import {{ tier }} from './helper';\n{dropped}"),
+    )?;
+    assert_eq!(
+        partial_files(&root)?,
+        Some(1),
+        "only the gap file that reaches the diff is disclosed"
+    );
+    // A computed import cannot be followed, so it keeps the disclosure.
+    ts_write_file(
+        &root.join("tests/related.test.ts"),
+        "import { x } from './other-helper';\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/computed.test.ts"),
+        &format!("const m = await import(process.env.MOD);\n{dropped}"),
+    )?;
+    assert_eq!(partial_files(&root)?, Some(1));
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
 
@@ -18162,6 +18439,7 @@ mod commonjs_default_function_tests;
 mod commonjs_export_tests;
 mod comparison_edit_tests;
 mod custom_matcher_tests;
+mod decorated_reach_tests;
 mod default_object_member_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
@@ -18190,6 +18468,7 @@ mod out_dir_specifier_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
+mod require_member_import_tests;
 mod rethrow_catch_tests;
 mod returned_dataflow_tests;
 mod returned_expression_tests;
@@ -18230,15 +18509,16 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         reach_body_text: None,
         body_text: "expect(build()).toBe(1)".into(),
         assertions: Vec::new(),
-        mocks_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
         imports_in_file: vec![TypeScriptImport {
@@ -18246,7 +18526,8 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
             imported: Some("build".into()),
             local: "build".into(),
             namespace: false,
-        }],
+        }]
+        .into(),
     };
     let Some(gap) = super::static_limit::alias_gap_for_unresolved_import(
         &owner,
@@ -18410,5 +18691,327 @@ fn file_owner_plan_uses_the_index_for_monotonic_groups() -> Result<(), String> {
         plan.owner_for_line(11).map(|owner| owner.name.as_str()),
         Some("short_first")
     );
+    Ok(())
+}
+
+/// The per-owner context memo is keyed by plan index. The added-lines pass
+/// gets that index from `owner_index_and_ref_for_line`; the removed-lines
+/// pass resolves owners by scanning the extraction-order workspace vec and
+/// maps back through `owner_index_by_span`. Both must produce the SAME
+/// index for the same owner, or the two passes would not share one
+/// memoized context. Monotonic group: the binary-search path.
+#[test]
+fn owner_index_by_span_agrees_with_line_resolution_on_indexed_plans() {
+    let owner_at = |name: &str, start: usize, end: usize| {
+        let mut owner = test_owner(name, "src/lib.ts");
+        owner.start_line = start;
+        owner.end_line = end;
+        owner
+    };
+    let plan = FileOwnerPlan::build(vec![
+        owner_at("short_first", 10, 12),
+        owner_at("outer", 10, 100),
+        owner_at("inner", 50, 60),
+    ]);
+    // Extraction order survives the stable sort on a monotonic group, so
+    // indices match the build input.
+    assert_eq!(plan.owner_index_by_span("short_first", 10, 12), Some(0));
+    assert_eq!(plan.owner_index_by_span("outer", 10, 100), Some(1));
+    assert_eq!(plan.owner_index_by_span("inner", 50, 60), Some(2));
+    // Same index from line resolution as from the span identity.
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(11).map(|(idx, _)| idx),
+        plan.owner_index_by_span("short_first", 10, 12)
+    );
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(55).map(|(idx, _)| idx),
+        plan.owner_index_by_span("outer", 10, 100)
+    );
+    // Unknown identities resolve to nothing.
+    assert_eq!(plan.owner_index_by_span("outer", 10, 101), None);
+    assert_eq!(plan.owner_index_by_span("nope", 10, 100), None);
+}
+
+/// Non-monotonic group (the #10024 path-collision shape): the plan keeps
+/// extraction order and the span lookup must resolve each owner to its
+/// index in that order — still the same index line resolution returns.
+#[test]
+fn owner_index_by_span_agrees_with_line_resolution_on_linear_plans() {
+    let mut slash = test_owner("slash", "src/a/b.ts");
+    slash.start_line = 10;
+    slash.end_line = 12;
+    let mut backslash = test_owner("backslash", "src/a\\b.ts");
+    backslash.start_line = 1;
+    backslash.end_line = 12;
+    let plan = FileOwnerPlan::build(vec![slash, backslash]);
+    assert_eq!(plan.owner_index_by_span("slash", 10, 12), Some(0));
+    assert_eq!(plan.owner_index_by_span("backslash", 1, 12), Some(1));
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(11).map(|(idx, _)| idx),
+        plan.owner_index_by_span("slash", 10, 12)
+    );
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(5).map(|(idx, _)| idx),
+        plan.owner_index_by_span("backslash", 1, 12)
+    );
+    // A span the plan contains but with the wrong name: not an identity.
+    assert_eq!(plan.owner_index_by_span("slash", 1, 12), None);
+}
+
+/// #8838 mirror: `if (x > 39113) {` and `if (x > 60939) {` share the
+/// eight-hex fingerprint `21e51c17` at one owner. Which of them takes the
+/// `.2` suffix must not depend on the order the diff lists them in; the
+/// full payload digest ranks `60939` (`21e51c1782f4…`) before `39113`
+/// (`21e51c17e5ef…`).
+#[test]
+fn analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-collision-order")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function classify(x: number): number {\n  if (x > 39113) {\n    return 1;\n  }\n  if (x > 60939) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let low = crate::analysis::diff::ChangedLine {
+        line: 2,
+        new_side_line: 2,
+        text: "  if (x > 39113) {".to_string(),
+    };
+    let high = crate::analysis::diff::ChangedLine {
+        line: 5,
+        new_side_line: 5,
+        text: "  if (x > 60939) {".to_string(),
+    };
+    let ids_in_order = |added_lines: Vec<crate::analysis::diff::ChangedLine>| {
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines,
+            removed_lines: Vec::new(),
+        }];
+        let result = TypeScriptAdapter.analyze_diff(&options, &policy, &changed_files)?;
+        let mut ids = result
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.probe.expression.trim().to_string(),
+                    finding.id.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok::<_, String>(ids)
+    };
+    let low_first = ids_in_order(vec![low.clone(), high.clone()]);
+    let high_first = ids_in_order(vec![high, low]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (low_first, high_first) = (low_first?, high_first?);
+
+    let base = "probe:src_lib.ts:typescript_preview:21e51c17";
+    assert_eq!(
+        low_first,
+        vec![
+            ("if (x > 39113) {".to_string(), format!("{base}.2")),
+            ("if (x > 60939) {".to_string(), base.to_string()),
+        ],
+        "fixture must be an actual fp8 collision ranked by payload digest"
+    );
+    assert_eq!(
+        low_first, high_first,
+        "expression-to-id association must not follow diff order"
+    );
+    Ok(())
+}
+
+/// #10349: identical enum-member lines in two enums mint over an
+/// `Enum::Member` identity the finding's probe does not carry. `High = 1,`
+/// in `Enum20990` and `Enum62211` share the eight-hex fingerprint `1a061247`;
+/// ranking must use the minted identity, so the full payload digest puts
+/// `Enum62211` (`1a06124726cd…`) before `Enum20990` (`1a0612476682…`) in
+/// either diff order.
+#[test]
+fn analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder() -> Result<(), String> {
+    let root = ts_unique_tempdir("enum-collision-order")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export enum Enum20990 {\n  High = 1,\n}\nexport enum Enum62211 {\n  High = 1,\n}\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let member = |line: usize| crate::analysis::diff::ChangedLine {
+        line,
+        new_side_line: line,
+        text: "  High = 1,".to_string(),
+    };
+    let ids_by_line = |added_lines: Vec<crate::analysis::diff::ChangedLine>| {
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines,
+            removed_lines: Vec::new(),
+        }];
+        let result = TypeScriptAdapter.analyze_diff(&options, &policy, &changed_files)?;
+        let mut ids = result
+            .findings
+            .iter()
+            .map(|finding| (finding.probe.location.line, finding.id.clone()))
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok::<_, String>(ids)
+    };
+    let first_enum_first = ids_by_line(vec![member(2), member(5)]);
+    let second_enum_first = ids_by_line(vec![member(5), member(2)]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (first_enum_first, second_enum_first) = (first_enum_first?, second_enum_first?);
+
+    let base = "probe:src_lib.ts:typescript_preview_enum_member:1a061247";
+    assert_eq!(
+        first_enum_first,
+        vec![(2, format!("{base}.2")), (5, base.to_string())],
+        "fixture must be an actual fp8 collision ranked by payload digest"
+    );
+    assert_eq!(
+        first_enum_first, second_enum_first,
+        "line-to-id association must not follow diff order"
+    );
+    Ok(())
+}
+
+/// #10438: a test registered under an `if` whose condition static analysis
+/// cannot evaluate is indexed for reach, but names the guard and earns no
+/// assertion credit.
+#[test]
+fn if_guarded_registration_is_indexed_with_guard_and_no_assertion_credit() {
+    let source = "if (isWindows) {\n  test('a', () => {\n    expect(f(1)).toBe(2);\n  });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("isWindows")
+    );
+    assert!(tests[0].assertions.is_empty(), "{:?}", tests[0].assertions);
+}
+
+#[test]
+fn else_branch_registration_names_the_negated_guard() {
+    let source = "if (isWindows) {\n  test('a', () => { expect(f(1)).toBe(2); });\n} else {\n  test('b', () => { expect(f(1)).toBe(2); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    let guards = tests
+        .iter()
+        .map(|test| test.conditional_registration.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(guards, vec![Some("isWindows"), Some("!(isWindows)")]);
+}
+
+#[test]
+fn describe_nested_under_an_if_guards_its_tests() {
+    let source = "if (isLinux) {\n  describe('s', () => {\n    test('a', () => { expect(f(1)).toBe(2); });\n  });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("isLinux")
+    );
+}
+
+#[test]
+fn unguarded_registration_keeps_assertion_credit() {
+    let source = "test('a', () => {\n  expect(f(1)).toBe(2);\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].conditional_registration, None);
+    assert!(!tests[0].assertions.is_empty());
+}
+
+/// Review on #10456: a guarded test the finding never relates to must not
+/// mark the analysis partial just because it shares a file with the related,
+/// unguarded test.
+#[test]
+fn unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("guard-unrelated")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function f(a: number): number {\n  return a + 1;\n}\nexport function g(a: number): number {\n  return a * 2;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/mixed.test.ts"),
+        "import { f, g } from '../src/calc';\nif (isWindows) {\n  test('g doubles', () => {\n    expect(g(2)).toBe(4);\n  });\n}\ntest('f increments', () => {\n  expect(f(1)).toBe(2);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/calc.ts", &[(2, "  return a + 1;")])],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_conditional_registration"))),
+        "{:?}",
+        result.limitations
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn finding_resting_only_on_a_guarded_test_reads_static_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("guard-unknown")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function f(a: number): number {\n  return a + 1;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/f.test.ts"),
+        "import { f } from '../src/calc';\nif (isWindows) {\n  test('f increments', () => {\n    expect(f(1)).toBe(2);\n  });\n}\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/calc.ts", &[(2, "  return a + 1;")])],
+    )?;
+    assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+    assert!(
+        matches!(result.findings[0].class, ExposureClass::StaticUnknown),
+        "{:?}",
+        result.findings[0].class
+    );
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }

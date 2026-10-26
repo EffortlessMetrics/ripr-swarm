@@ -1,0 +1,22 @@
+{
+  "case_id": "default-flow-unpinned",
+  "subject_id": "authored-default-flow",
+  "origin": "authored",
+  "anchor": "src/lib.rs:6",
+  "behavior_family": "return_value",
+  "test_shape": "default_branch_never_pinned",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

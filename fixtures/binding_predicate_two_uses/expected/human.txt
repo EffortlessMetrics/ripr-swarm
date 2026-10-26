@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No static test path found for the changed owner
     - infection unknown: No tests were found, so activation/infection cannot be estimated
     - 4 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_predicate_two_uses/input --diff <cwd>/fixtures/binding_predicate_two_uses/diff.patch --mode fast probe:src_lib.rs:predicate:dda2cb0b
   ripr context --root <cwd>/fixtures/binding_predicate_two_uses/input --diff <cwd>/fixtures/binding_predicate_two_uses/diff.patch --mode fast --at probe:src_lib.rs:predicate:dda2cb0b
-  no repair start offered: repair route not ready (missing evidence: safe test target; new test proposal blocked: package has no established tests/ layout); run `ripr repair probe:src_lib.rs:predicate:dda2cb0b --root <cwd>/fixtures/binding_predicate_two_uses/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: safe test target; new test proposal blocked: package has no established tests/ layout; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/binding_predicate_two_uses/input --at src/lib.rs:3 --kind predicate
 
