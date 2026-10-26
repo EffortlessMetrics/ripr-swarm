@@ -4,13 +4,12 @@ use super::*;
 
 /// Runs the adapter over a unified diff of `src_path` in a package holding
 /// `files` and returns the finding on `line`.
-fn finding_for(
+fn findings_for(
     label: &str,
     runner: &str,
     files: &[(&str, &str)],
     diff: &str,
-    line: usize,
-) -> Result<Finding, String> {
+) -> Result<Vec<Finding>, String> {
     let root = super::tests::ts_unique_tempdir(label)?;
     let write =
         |path: &str, contents: &str| super::tests::ts_write_file(&root.join(path), contents);
@@ -36,8 +35,17 @@ fn finding_for(
         open_rust_index_paths: Default::default(),
     };
     let result = TypeScriptAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
-    result?
-        .findings
+    result.map(|analysis| analysis.findings)
+}
+
+fn finding_for(
+    label: &str,
+    runner: &str,
+    files: &[(&str, &str)],
+    diff: &str,
+    line: usize,
+) -> Result<Finding, String> {
+    findings_for(label, runner, files, diff)?
         .into_iter()
         .find(|finding| finding.probe.location.line == line)
         .ok_or_else(|| format!("no finding on line {line}"))
@@ -473,5 +481,48 @@ fn counted_removal_pins_removed_arguments_before_the_statement() -> Result<(), S
         true,
         "sink.write(line);",
     )?;
+    Ok(())
+}
+
+#[test]
+fn counted_removal_refuses_multiple_old_calls() -> Result<(), String> {
+    let test = format!(
+        "import {{ mock, test }} from 'node:test';\nimport assert from 'node:assert/strict';\n{PARAM_IMPORT}\ntest('writes once', () => {{ const sink = {OBJECT}; {SPY} emit(sink, 'a'); {PIN} }});\n"
+    );
+    for (label, source, hunk, count) in [
+        (
+            "two-calls-two-discards",
+            PARAM.replace("  void event;", "  void event;\n  void sink;"),
+            "@@ -2,2 +2,2 @@\n-  sink.write(event);\n-  sink.write(event);\n+  void event;\n+  void sink;\n",
+            2,
+        ),
+        (
+            "two-calls-one-discard",
+            PARAM.to_string(),
+            "@@ -2,2 +2,1 @@\n-  sink.write(event);\n-  sink.write(event);\n+  void event;\n",
+            1,
+        ),
+    ] {
+        let diff = format!(
+            "diff --git a/src/audit.ts b/src/audit.ts\n--- a/src/audit.ts\n+++ b/src/audit.ts\n{hunk}"
+        );
+        let findings = findings_for(
+            label,
+            NODE_TEST,
+            &[("src/audit.ts", &source), ("test/audit.test.ts", &test)],
+            &diff,
+        )?;
+        let current: Vec<_> = findings
+            .iter()
+            .filter(|finding| !finding.source_currentness.is_base_side())
+            .collect();
+        assert_eq!(current.len(), count, "{label}: {findings:?}");
+        assert!(
+            current
+                .iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{label}: {findings:?}"
+        );
+    }
     Ok(())
 }

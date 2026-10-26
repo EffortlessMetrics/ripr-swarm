@@ -1685,6 +1685,10 @@ keys); do not take the next number.
 
 This bounded successor to #9667's removed-call rule 19 adds call-deletion
 credit for a whole `receiver.method(...)` statement replaced by `void local;`.
+The complete file diff must contain exactly one removed line and one added line
+at the same replacement coordinate. Multi-edit files and unavailable full diff
+facts withhold this bounded credit, so multiple old invocations cannot borrow
+a count-of-one witness from a replacement owner with no calls.
 A direct imported owner must run on a straight-line path after a `node:test`
 spy registration and before an exact positive count of one. The receiver is
 either a parsed const object passed in the receiver parameter position, or
