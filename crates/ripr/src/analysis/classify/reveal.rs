@@ -2270,7 +2270,11 @@ fn analyze_related_assertions(
             // #7697: a pushed field literal is confirmed by the same
             // whole-collection comparison activation accepts, even when the
             // other operand is a collection the test built by hand.
+            // Fail closed when the owner may leave before the push (#8051,
+            // #8205): a test that expects the collection empty, or restates
+            // what it seeded, then took the exit and never ran the literal.
             let pushed_literal_read = matches!(probe.family, ProbeFamily::FieldConstruction)
+                && !return_admission.owner_may_exit_before_probe
                 && (return_admission.pushed_literal_observed)(test, assertion);
             let field_collection_read = field_collection_read || keyed_read || pushed_literal_read;
             let collection_argument_read =
