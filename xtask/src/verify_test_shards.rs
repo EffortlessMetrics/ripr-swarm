@@ -8,6 +8,7 @@
 //!
 //! - every shard retained a status of `0`, a run context naming this repository,
 //!   checkout, run, attempt, profile, partition and command with `nextest_exit=0`,
+//!   with input blobs resolved independently from that expected checkout commit,
 //!   and a JUnit report that is complete, reports no failure or error, and whose
 //!   declared test count equals its testcase elements;
 //! - every shard's JUnit testcase identities (`classname name`, the binary id and
@@ -50,7 +51,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             Err(err) => return Err(format!("cannot clear {}: {err}", path.display())),
         }
     }
-    let outcome = verify(&options);
+    let expected_blobs = expected_input_blobs(Path::new("."), &options.sha);
+    let outcome = verify(&options, expected_blobs);
     write(&options.out.join("shards-summary.txt"), &outcome.summary)?;
     println!("{}", outcome.summary);
     if outcome.problems.is_empty() {
@@ -122,8 +124,15 @@ struct Outcome {
     context: String,
 }
 
-fn verify(options: &Options) -> Outcome {
+fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Outcome {
     let mut problems = Vec::new();
+    let expected_blobs = match expected_blobs {
+        Ok(blobs) => Some(blobs),
+        Err(why) => {
+            problems.push(format!("expected checkout input blobs: {why}"));
+            None
+        }
+    };
     let mut summary = String::from("### Shard cover\n");
     let mut suites = String::new();
     let mut union: Vec<String> = Vec::new();
@@ -156,7 +165,7 @@ fn verify(options: &Options) -> Outcome {
         if let Some(context) = read_named(&dir, "run-context.txt", &tag, &mut problems) {
             check_context(&context, options, shard, &tag, &mut problems);
             let environment = environment_of(&context);
-            check_environment(&environment, &tag, &mut problems);
+            check_environment(&environment, expected_blobs.as_deref(), &tag, &mut problems);
             if shard == 1 {
                 first_context = context;
                 first_environment = environment;
@@ -346,9 +355,83 @@ fn environment_of(context: &str) -> String {
         .collect()
 }
 
-/// A run context without tool versions and the four input blobs would not say
-/// what produced the results, so it is not a receipt.
-fn check_environment(environment: &str, tag: &str, problems: &mut Vec<String>) {
+const INPUT_PATHS: [&str; 4] = [
+    "Cargo.lock",
+    ".config/nextest.toml",
+    ".github/workflows/rust-gates.yml",
+    ".github/workflows/rust-test-shards.yml",
+];
+const INPUT_HEADER: &str =
+    "input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):";
+
+fn is_blob_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Resolve the immutable expected inputs independently of the shard receipts.
+/// The workflow supplies its checkout SHA; dirty files, the index and receipt
+/// consensus cannot replace the four ordinary files at that commit.
+fn expected_input_blobs(root: &Path, sha: &str) -> Result<Vec<String>, String> {
+    if !is_blob_id(sha) {
+        return Err("--sha must name a full 40-hex checkout commit".to_string());
+    }
+    let git = |args: Vec<String>| crate::run::run_output_owned_in("git", &args, root);
+    let commit = git(vec![
+        "--no-replace-objects".to_string(),
+        "rev-parse".to_string(),
+        "--verify".to_string(),
+        format!("{sha}^{{commit}}"),
+    ])?;
+    if commit.trim() != sha {
+        return Err("--sha does not name the expected checkout commit".to_string());
+    }
+    let mut args = vec![
+        "--no-replace-objects".to_string(),
+        "ls-tree".to_string(),
+        "--full-tree".to_string(),
+        "-r".to_string(),
+        sha.to_string(),
+        "--".to_string(),
+    ];
+    args.extend(INPUT_PATHS.map(str::to_string));
+    let tree = git(args)?;
+    parse_input_tree(&tree)
+}
+
+fn parse_input_tree(tree: &str) -> Result<Vec<String>, String> {
+    let mut blobs = BTreeMap::new();
+    for row in tree.lines() {
+        let (metadata, path) = row.split_once('\t').ok_or("malformed input tree row")?;
+        let fields: Vec<&str> = metadata.split_whitespace().collect();
+        if fields.len() != 3
+            || !matches!(fields[0], "100644" | "100755")
+            || fields[1] != "blob"
+            || !is_blob_id(fields[2])
+            || !INPUT_PATHS.contains(&path)
+            || blobs.insert(path, fields[2]).is_some()
+        {
+            return Err(format!("expected an ordinary input blob at `{path}`"));
+        }
+    }
+    INPUT_PATHS
+        .iter()
+        .map(|path| {
+            blobs
+                .get(path)
+                .map(|blob| (*blob).to_string())
+                .ok_or_else(|| format!("checkout has no input blob at `{path}`"))
+        })
+        .collect()
+}
+
+/// Require the producer's exact ordered block, anchored to the expected commit.
+/// Agreement between shards remains necessary, but is not input authority.
+fn check_environment(
+    environment: &str,
+    expected_blobs: Option<&[String]>,
+    tag: &str,
+    problems: &mut Vec<String>,
+) {
     for tool in ["cargo-nextest ", "rustc ", "cargo "] {
         if !environment.lines().any(|line| line.starts_with(tool)) {
             problems.push(format!(
@@ -357,16 +440,39 @@ fn check_environment(environment: &str, tag: &str, problems: &mut Vec<String>) {
             ));
         }
     }
-    let blobs = environment
-        .lines()
-        .skip_while(|line| !line.starts_with("input_blobs"))
-        .skip(1)
-        .filter(|line| line.len() == 40 && line.bytes().all(|b| b.is_ascii_hexdigit()))
-        .count();
-    if blobs < 4 {
+    let lines: Vec<&str> = environment.lines().collect();
+    let headers: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| line.starts_with("input_blobs").then_some(index))
+        .collect();
+    let [header] = headers.as_slice() else {
         problems.push(format!(
-            "{tag}: run-context names {blobs} input blobs, expected 4"
+            "{tag}: run-context must have one input_blobs header"
         ));
+        return;
+    };
+    if lines[*header] != INPUT_HEADER {
+        problems.push(format!(
+            "{tag}: run-context input_blobs header is not canonical"
+        ));
+        return;
+    }
+    let blobs = &lines[*header + 1..];
+    if blobs.len() != INPUT_PATHS.len() || blobs.iter().any(|blob| !is_blob_id(blob)) {
+        problems.push(format!(
+            "{tag}: run-context must name exactly four ordered input blobs"
+        ));
+        return;
+    }
+    if let Some(expected) = expected_blobs {
+        for ((path, got), want) in INPUT_PATHS.iter().zip(blobs).zip(expected) {
+            if got != want {
+                problems.push(format!(
+                    "{tag}: input blob `{path}` is `{got}`, expected `{want}`"
+                ));
+            }
+        }
     }
 }
 
@@ -403,13 +509,14 @@ fn check_context(
 }
 
 struct Suite {
-    tag: String,
+    tag: BTreeMap<String, String>,
     cases: u64,
 }
 
 struct Parsed {
-    root: String,
+    root: BTreeMap<String, String>,
     suites: Vec<Suite>,
+    body: String,
     identities: Vec<String>,
     forbidden: BTreeSet<String>,
 }
@@ -423,98 +530,74 @@ const OUTCOME_ELEMENTS: [&str; 5] = [
     "skipped",
 ];
 
-/// Walks the report as XML: comments, CDATA and declarations are skipped, tags
-/// must nest and close, `testsuite` sits in the one `testsuites` root and
-/// `testcase` in a `testsuite` with no testcase inside another.
+/// Validate XML before extracting parser-bounded direct-child suites. Keeping
+/// each suite's original bytes preserves its properties, stdout and CDATA;
+/// tokens inside comments or attributes cannot become extraction boundaries.
 fn parse_junit(junit: &str) -> Result<Parsed, String> {
-    let mut stack: Vec<String> = Vec::new();
+    let document = roxmltree::Document::parse(junit).map_err(|err| err.to_string())?;
+    let root = document.root_element();
+    if root.tag_name().name() != "testsuites" {
+        return Err("expected one `<testsuites>` root".to_string());
+    }
+    let attributes = |node: roxmltree::Node<'_, '_>| {
+        node.attributes()
+            .map(|attribute| (attribute.name().to_string(), attribute.value().to_string()))
+            .collect()
+    };
     let mut parsed = Parsed {
-        root: String::new(),
+        root: attributes(root),
         suites: Vec::new(),
+        body: String::new(),
         identities: Vec::new(),
         forbidden: BTreeSet::new(),
     };
-    let mut roots = 0;
-    let mut pos = 0;
-    while let Some(offset) = junit[pos..].find('<') {
-        let start = pos + offset;
-        let rest = &junit[start..];
-        if rest.starts_with("<!--") {
-            let end = rest.find("-->").ok_or("unterminated comment")?;
-            pos = start + end + 3;
+    for node in root.descendants().filter(roxmltree::Node::is_element) {
+        // The native nextest vocabulary has no namespaces. A detached suite
+        // must not depend on namespace or xml:* declarations at the old root.
+        if node.tag_name().namespace().is_some()
+            || node
+                .attributes()
+                .any(|attribute| attribute.namespace().is_some())
+        {
+            return Err("namespaced JUnit is unsupported".to_string());
+        }
+        if node == root {
             continue;
         }
-        if rest.starts_with("<![CDATA[") {
-            let end = rest.find("]]>").ok_or("unterminated CDATA")?;
-            pos = start + end + 3;
-            continue;
-        }
-        if rest.starts_with("<?") || rest.starts_with("<!") {
-            let end = rest.find('>').ok_or("unterminated declaration")?;
-            pos = start + end + 1;
-            continue;
-        }
-        let end = tag_end(junit, start).ok_or("unterminated tag")?;
-        let text = &junit[start..=end];
-        pos = end + 1;
-        if let Some(closing) = text.strip_prefix("</") {
-            let name = closing.trim_end_matches('>').trim();
-            if stack.pop().as_deref() != Some(name) {
-                return Err(format!("`</{name}>` does not close the open element"));
+        let name = node.tag_name().name();
+        let parent = node.parent_element().map(|parent| parent.tag_name().name());
+        match (name, parent) {
+            ("testsuites", _) => return Err("nested `<testsuites>` root".to_string()),
+            ("testsuite", Some("testsuites")) => {
+                parsed.suites.push(Suite {
+                    tag: attributes(node),
+                    cases: node
+                        .children()
+                        .filter(|child| child.has_tag_name("testcase"))
+                        .count() as u64,
+                });
+                parsed.body.push_str(&junit[node.range()]);
+                parsed.body.push('\n');
             }
-            continue;
-        }
-        let self_closing = text.ends_with("/>");
-        let name: String = text[1..]
-            .chars()
-            .take_while(|c| !c.is_whitespace() && *c != '>' && *c != '/')
-            .collect();
-        let parent = stack.last().map(String::as_str);
-        match (name.as_str(), parent) {
-            ("testsuites", None) => {
-                roots += 1;
-                parsed.root = text.to_string();
-            }
-            ("testsuites", _) | (_, None) => {
-                return Err(format!("`<{name}>` outside the report root"));
-            }
-            ("testsuite", Some("testsuites")) => parsed.suites.push(Suite {
-                tag: text.to_string(),
-                cases: 0,
-            }),
             ("testsuite", _) => return Err("`<testsuite>` outside `<testsuites>`".to_string()),
-            ("testcase", Some("testsuite")) => {
-                if let Some(suite) = parsed.suites.last_mut() {
-                    suite.cases += 1;
-                }
-                parsed.identities.push(format!(
-                    "{} {}",
-                    attribute(text, "classname").unwrap_or_default(),
-                    attribute(text, "name").unwrap_or_default()
-                ));
-            }
+            ("testcase", Some("testsuite")) => parsed.identities.push(format!(
+                "{} {}",
+                node.attribute("classname").unwrap_or_default(),
+                node.attribute("name").unwrap_or_default()
+            )),
             ("testcase", _) => return Err("`<testcase>` outside a `<testsuite>`".to_string()),
             (other, _) if OUTCOME_ELEMENTS.contains(&other) => {
                 parsed.forbidden.insert(other.to_string());
             }
             _ => {}
         }
-        if !self_closing {
-            stack.push(name);
-        }
-    }
-    if !stack.is_empty() {
-        return Err(format!("`<{}>` is never closed", stack.join(">, <")));
-    }
-    if roots != 1 {
-        return Err(format!("expected one `<testsuites>` root, found {roots}"));
     }
     Ok(parsed)
 }
 
 /// A count attribute that is present must be a number; absent is `None`.
-fn count_attribute(tag: &str, name: &str) -> Result<Option<u64>, String> {
-    match attribute(tag, name) {
+fn count_attribute(tag: &BTreeMap<String, String>, name: &str) -> Result<Option<u64>, String> {
+    match tag.get(name) {
         None => Ok(None),
         Some(value) => value
             .parse::<u64>()
@@ -599,45 +682,7 @@ fn check_junit(
     if !problems.is_empty() {
         return Err(problems);
     }
-    let start = junit.find("<testsuite ").unwrap_or(0);
-    let close = junit.rfind("</testsuites>").unwrap_or(junit.len());
-    Ok((
-        cases,
-        format!("{}\n", junit[start..close].trim_matches('\n')),
-    ))
-}
-
-/// Index of the `>` closing the tag that starts at `start`, skipping quoted
-/// attribute values.
-fn tag_end(text: &str, start: usize) -> Option<usize> {
-    let mut quote: Option<char> = None;
-    for (offset, ch) in text[start..].char_indices() {
-        match (quote, ch) {
-            (Some(open), c) if c == open => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(ch),
-            (None, '>') => return Some(start + offset),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The unescaped value of ` name="..."` in one start tag.
-fn attribute(tag: &str, name: &str) -> Option<String> {
-    let needle = format!(" {name}=\"");
-    let from = tag.find(&needle)? + needle.len();
-    let len = tag[from..].find('"')?;
-    Some(unescape(&tag[from..from + len]))
-}
-
-fn unescape(value: &str) -> String {
-    value
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
+    Ok((cases, parsed.body))
 }
 
 /// The unpartitioned step's `run-context.txt` shape, from shard 1's tool
@@ -696,7 +741,7 @@ mod tests {
 
     fn context(shard: u32, shards: u32) -> String {
         format!(
-            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\ninput_blobs (a, b, c, d):\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
+            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\n{INPUT_HEADER}\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
         )
     }
 
@@ -736,7 +781,7 @@ mod tests {
         let root = crate::tests::temp_dir(&format!("verify-shards-{label}"));
         lay_out(&root, nested)?;
         tweak(&root);
-        let outcome = verify(&options(&root, 2));
+        let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         Ok(outcome.problems)
     }
@@ -754,7 +799,7 @@ mod tests {
     fn combined_artifacts_keep_the_unpartitioned_shape() -> Result<(), String> {
         let root = crate::tests::temp_dir("verify-shards-combined");
         lay_out(&root, false)?;
-        let outcome = verify(&options(&root, 2));
+        let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
         assert!(
@@ -951,8 +996,27 @@ mod tests {
 
     #[test]
     fn a_rejected_run_clears_the_previous_accepted_receipts() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
         let root = crate::tests::temp_dir("verify-shards-supersede");
         lay_out(&root, false)?;
+        let sha = crate::run::run_output_owned_in(
+            "git",
+            &["rev-parse".to_string(), "HEAD".to_string()],
+            Path::new("."),
+        )?
+        .trim()
+        .to_string();
+        let blobs = expected_input_blobs(Path::new("."), &sha)?.join("\n") + "\n";
+        for shard in 1..=2 {
+            rewrite(
+                &root,
+                shard,
+                "run-context.txt",
+                &context(shard, 2)
+                    .replace(SHA, &sha)
+                    .replace(&format!("{BLOB}\n").repeat(4), &blobs),
+            );
+        }
         let args: Vec<String> = [
             "--dir",
             "in",
@@ -963,7 +1027,7 @@ mod tests {
             "--repository",
             "o/r",
             "--sha",
-            SHA,
+            &sha,
             "--run-id",
             "7",
             "--shards",
@@ -985,6 +1049,17 @@ mod tests {
         assert!(root.join("out/run-context.txt").exists());
         rewrite(&root, 1, "shard-1.status", "100\n");
         assert!(run(&args).is_err());
+        assert!(!root.join("out/junit.xml").exists());
+        assert!(!root.join("out/run-context.txt").exists());
+        rewrite(&root, 1, "shard-1.status", "0\n");
+        run(&args)?;
+        let mut unknown_commit = args.clone();
+        for value in &mut unknown_commit {
+            if value == &sha {
+                *value = "f".repeat(40);
+            }
+        }
+        assert!(run(&unknown_commit).is_err());
         let left = ["junit.xml", "run-context.txt"]
             .iter()
             .filter(|name| root.join("out").join(name).exists())
@@ -1002,11 +1077,11 @@ mod tests {
     }
 
     #[test]
-    fn xml_escapes_in_identities_are_resolved() {
-        let tag = "<testcase name=\"a &lt;b&gt; &amp; c\" classname=\"x::y/z\" time=\"1\"";
-        assert_eq!(attribute(tag, "name").as_deref(), Some("a <b> & c"));
-        assert_eq!(attribute(tag, "classname").as_deref(), Some("x::y/z"));
-        assert_eq!(attribute(tag, "missing"), None);
+    fn xml_escapes_in_identities_are_resolved() -> Result<(), String> {
+        let xml = junit(&["b a &lt;b&gt; &amp; c &#x31;"]);
+        let parsed = parse_junit(&xml)?;
+        assert_eq!(parsed.identities, ["b a <b> & c 1"]);
+        Ok(())
     }
 
     #[test]
@@ -1015,3 +1090,7 @@ mod tests {
         assert!(parse_options(&["--bogus".to_string(), "x".to_string()]).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "verify_test_shards/tests.rs"]
+mod contract_tests;
