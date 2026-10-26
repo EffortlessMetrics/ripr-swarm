@@ -188,7 +188,7 @@ Run the project tests between the phases. For a Rust repair, the retained cage p
 - the command-owned `target/ripr` writes;
 - every other ignored path, such as an ignored `.env` or log file.
 
-Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path.
+Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path except interpreter and test-runner cache output that running the project's tests writes (#10699): untracked or ignored bytecode under `__pycache__/`, non-source files inside `.pytest_cache/`, `.mypy_cache/` and `.ruff_cache/`, and root-level `.coverage` data. A tracked file, a `.py`/`.pyi` source file, or a sourceless `.pyc` outside `__pycache__/` is never exempt.
 
 If effective ignore rules change after preparation, build-output paths can still
 be refused by the after phase. Recovery names the declared build directory and

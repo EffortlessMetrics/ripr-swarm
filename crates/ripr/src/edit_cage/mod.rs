@@ -1032,12 +1032,13 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 }
 
 /// Whether `path` is interpreter or test-runner cache output that running the
-/// project's Python tests writes: compiled bytecode (`__pycache__/*.pyc`,
-/// `*.pyc`), the pytest, mypy and ruff cache directories, and coverage data
-/// at the repository root. Matching is by path shape only; callers must keep
-/// tracked paths observed, so a tracked file with a cache-like name is never
-/// exempted. Source files (`.py`) outside the cache directories never match,
-/// and under `__pycache__` only bytecode does.
+/// project's Python tests writes: compiled bytecode under a `__pycache__`
+/// directory, non-source files inside the pytest, mypy and ruff cache
+/// directories, and coverage data at the repository root. Matching is by path
+/// shape only; callers must keep tracked paths observed, so a tracked file
+/// with a cache-like name is never exempted. Importable source never matches:
+/// a `.py`/`.pyi` file anywhere (including inside a cache directory), and a
+/// sourceless `.pyc` outside `__pycache__` (Python imports it directly).
 fn is_python_tool_cache(path: &str) -> bool {
     const TOOL_CACHE_DIRS: [&str; 3] = [".pytest_cache", ".mypy_cache", ".ruff_cache"];
     let components = path.split('/').collect::<Vec<_>>();
@@ -1045,11 +1046,10 @@ fn is_python_tool_cache(path: &str) -> bool {
         return false;
     };
     if parents.iter().any(|dir| TOOL_CACHE_DIRS.contains(dir)) {
-        return true;
+        return !(file.ends_with(".py") || file.ends_with(".pyi"));
     }
-    // Bytecode is interpreter output wherever it sits.
     if file.ends_with(".pyc") || file.ends_with(".pyo") {
-        return true;
+        return parents.last() == Some(&"__pycache__");
     }
     parents.is_empty() && (*file == ".coverage" || file.starts_with(".coverage."))
 }
@@ -3438,44 +3438,121 @@ mod tests {
         Ok(())
     }
 
-    /// Negative controls for #10699: the exemption does not hide a production
-    /// edit, a source file in a cache-looking place, a tracked cache-named
-    /// file, or the same caches under a non-Python repair.
+    /// A `.pyi` selected target is a Python repair too: the same caches are
+    /// expected output.
     #[test]
-    fn python_cache_exemption_does_not_widen_the_edit_surface() -> Result<(), String> {
-        // A production edit alongside cache output still violates.
-        let (fixture, policy) = python_fixture("python-cache-prod", "__pycache__/\n")?;
+    fn python_stub_selected_target_also_expects_test_run_caches() -> Result<(), String> {
+        let (fixture, mut policy) = python_fixture("python-cache-pyi", "")?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.pyi",
+            "def test_a() -> None: ...\n",
+        )?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "stub"])?;
+        policy.selected_target = CagePathRule::exact("tests/test_pricing.pyi")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("tests/test_pricing.pyi")?];
+        assert!(policy.expects_python_tool_caches());
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
-        write_fixture_file(&fixture, "__pycache__/pricing.pyc", "cache")?;
-        write_fixture_file(&fixture, "pricing.py", "def discount(q):\n    return 0\n")?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.pyi",
+            "def test_a() -> int: ...\n",
+        )?;
+        write_fixture_file(&fixture, "__pycache__/pricing.cpython-313.pyc", "cache")?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_eq!(
             verdict.status,
-            EditCageVerdictStatus::Violated,
+            EditCageVerdictStatus::Compliant,
             "{verdict:?}"
         );
-        assert!(verdict.violations.iter().any(|v| v.path == "pricing.py"));
+        assert_eq!(
+            verdict.changed_paths,
+            vec!["tests/test_pricing.pyi".to_string()]
+        );
+        Ok(())
+    }
 
-        // A new source file is not a cache, even under `__pycache__`'s
-        // sibling names, and a new production module still violates.
-        let (fixture, policy) = python_fixture("python-cache-source", "")?;
+    /// Run the Python fixture: capture, write `files`, evaluate.
+    fn python_verdict(
+        name: &str,
+        gitignore: &str,
+        files: &[(&str, &str)],
+    ) -> Result<EditCageVerdict, String> {
+        let (fixture, policy) = python_fixture(name, gitignore)?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
-        write_fixture_file(&fixture, "helpers/pytest_cache.py", "x = 1\n")?;
-        write_fixture_file(&fixture, "subdir/.coverage", "not root data")?;
-        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        for (path, text) in files {
+            write_fixture_file(&fixture, path, text)?;
+        }
+        evaluate_repository_edit_cage(&baseline)
+    }
+
+    fn assert_violates(verdict: &EditCageVerdict, paths: &[&str]) {
         assert_eq!(
             verdict.status,
             EditCageVerdictStatus::Violated,
             "{verdict:?}"
         );
-        for path in ["helpers/pytest_cache.py", "subdir/.coverage"] {
+        for path in paths {
             assert!(
-                verdict.violations.iter().any(|v| v.path == path),
+                verdict.violations.iter().any(|v| v.path == *path),
                 "{path}: {verdict:?}"
             );
         }
+    }
 
-        // A tracked file with a cache-like name stays observed.
+    /// Negative control for #10699: a production edit alongside cache output
+    /// still violates.
+    #[test]
+    fn python_cache_exemption_does_not_hide_a_production_edit() -> Result<(), String> {
+        let verdict = python_verdict(
+            "python-cache-prod",
+            "__pycache__/\n",
+            &[
+                ("__pycache__/pricing.pyc", "cache"),
+                ("pricing.py", "def discount(q):\n    return 0\n"),
+            ],
+        )?;
+        assert_violates(&verdict, &["pricing.py"]);
+        Ok(())
+    }
+
+    /// Negative control for #10699: new source files and misplaced
+    /// cache-looking names are not caches, including a sourceless root-level
+    /// `.pyc` (importable) and source inside a tool-cache directory.
+    #[test]
+    fn python_cache_exemption_does_not_hide_importable_or_misplaced_files() -> Result<(), String> {
+        let verdict = python_verdict(
+            "python-cache-source",
+            "",
+            &[
+                ("helpers/pytest_cache.py", "x = 1\n"),
+                ("subdir/.coverage", "not root data"),
+                ("foo.pyc", "sourceless bytecode"),
+                ("helpers/foo.pyo", "sourceless bytecode"),
+                (".pytest_cache/evil.py", "x = 1\n"),
+                (".mypy_cache/evil.pyi", "x: int\n"),
+            ],
+        )?;
+        assert_violates(
+            &verdict,
+            &[
+                "helpers/pytest_cache.py",
+                "subdir/.coverage",
+                "foo.pyc",
+                "helpers/foo.pyo",
+                ".pytest_cache/evil.py",
+                ".mypy_cache/evil.pyi",
+            ],
+        );
+        Ok(())
+    }
+
+    /// Negative control for #10699: a tracked file with a cache-like name
+    /// stays observed.
+    #[test]
+    fn python_cache_exemption_keeps_tracked_cache_named_files_observed() -> Result<(), String> {
         let (fixture, policy) = python_fixture("python-cache-tracked", "")?;
         write_fixture_file(&fixture, "tests/__pycache__/fixture.pyc", "v1")?;
         git_ok(&fixture.root, &["add", "-f", "."])?;
@@ -3483,24 +3560,21 @@ mod tests {
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
         write_fixture_file(&fixture, "tests/__pycache__/fixture.pyc", "v2")?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
-        assert_eq!(
-            verdict.status,
-            EditCageVerdictStatus::Violated,
-            "{verdict:?}"
-        );
+        assert_violates(&verdict, &["tests/__pycache__/fixture.pyc"]);
+        Ok(())
+    }
 
-        // A Rust repair does not get the Python exemption.
+    /// Negative control for #10699: a Rust repair does not get the Python
+    /// exemption.
+    #[test]
+    fn python_cache_exemption_does_not_apply_to_a_rust_repair() -> Result<(), String> {
         let (fixture, mut policy) = python_fixture("python-cache-rust", "")?;
         policy.selected_target = CagePathRule::exact("tests/pricing.rs")?;
         policy.allowed_edit_surface = vec![CagePathRule::exact("tests/pricing.rs")?];
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
         write_fixture_file(&fixture, "__pycache__/pricing.pyc", "cache")?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
-        assert_eq!(
-            verdict.status,
-            EditCageVerdictStatus::Violated,
-            "{verdict:?}"
-        );
+        assert_violates(&verdict, &["__pycache__/pricing.pyc"]);
         Ok(())
     }
 
