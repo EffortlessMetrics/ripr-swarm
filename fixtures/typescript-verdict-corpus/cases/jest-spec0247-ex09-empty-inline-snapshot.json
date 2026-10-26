@@ -13,7 +13,7 @@
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
-    "test_command": "npx jest",
+    "test_command": "npx jest --ci=false",
     "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.15, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
     "mutants": [
       {
@@ -21,7 +21,7 @@
         "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "the edit itself: `toMatchInlineSnapshot()` with no argument stores no expected text, so jest writes the edited output into the test file on the first run and passes"
+        "equivalence_review": "the edit itself: `toMatchInlineSnapshot()` with no argument stores no expected text, so with `--ci=false` jest writes the edited output into the test file on the first run and passes (the test file was reset afterwards)"
       }
     ]
   },
