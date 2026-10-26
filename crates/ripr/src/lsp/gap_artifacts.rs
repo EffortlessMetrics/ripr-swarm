@@ -2258,6 +2258,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustFrameworkOracleUnresolved,
         StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
+        StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
     ]
     .iter()

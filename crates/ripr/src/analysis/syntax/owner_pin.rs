@@ -23,7 +23,9 @@ use super::ra::{
     LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
     std_macro_root_is_unrebound,
 };
-use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
+use crate::analysis::facts::cfg_predicates::{
+    attribute_introduces_only_test, attribute_test_build_availability,
+};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
     ast::{
@@ -2642,6 +2644,7 @@ fn is_test_function(function: &ast::Fn) -> bool {
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
             .is_some_and(|name| matches!(name.text(), "test" | "rstest" | "test_case"))
+            || attribute_introduces_only_test(&attr.syntax().text().to_string())
     })
 }
 
@@ -3242,6 +3245,12 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     }
     if attr.excl_token().is_some() {
         return false;
+    }
+    // `#[cfg_attr(all(), test)]` is the built-in `#[test]` in a test build.
+    if attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     let Some(path) = attr.path() else {
         return false;

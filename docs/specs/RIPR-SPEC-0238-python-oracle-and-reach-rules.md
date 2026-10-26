@@ -831,7 +831,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     fixture: the test requests it as a parameter and no `@pytest.fixture`
     in its module or a `conftest.py` up its directory chain defines a
     fixture of that name (including `@pytest.fixture(name="caplog")` and a decorator imported as an alias with
-    `from pytest import fixture as fx`); otherwise the reading abstains. An assertion about
+    `from pytest import fixture as fx`, unless a later import, assignment, `def` or `class`
+    rebinds that name before the decorated def); otherwise the reading abstains. An assertion about
     unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
