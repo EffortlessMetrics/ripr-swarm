@@ -1,0 +1,20 @@
+diff --git a/shop/route.py b/shop/route.py
+--- a/shop/route.py
++++ b/shop/route.py
+@@ -4,4 +4,4 @@
+ 
+ 
+ def checkout():
+-    response.status_code = 422
++    response.status_code = 400
+diff --git a/shop/pricing.py b/shop/pricing.py
+--- a/shop/pricing.py
++++ b/shop/pricing.py
+@@ -2,6 +2,6 @@
+ 
+ 
+ def discounted_total(amount):
+-    if amount > DISCOUNT_THRESHOLD:
++    if amount >= DISCOUNT_THRESHOLD:
+         return amount - amount // 10
+     return amount

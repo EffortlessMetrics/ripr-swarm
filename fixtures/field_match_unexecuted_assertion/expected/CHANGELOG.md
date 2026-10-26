@@ -141,3 +141,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (12)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (13)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

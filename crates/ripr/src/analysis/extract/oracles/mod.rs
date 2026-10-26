@@ -9,7 +9,10 @@ mod scan;
 pub(crate) use arguments::{
     assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
 };
-pub(crate) use classify::{classify_assertion, classify_assertion_in, is_inequality_assertion};
+pub(crate) use classify::{classify_assertion, classify_assertion_with, is_inequality_assertion};
+pub(crate) use pattern_admission::LazyDecls;
+#[cfg(test)]
+pub(crate) use pattern_admission::table_builds;
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{

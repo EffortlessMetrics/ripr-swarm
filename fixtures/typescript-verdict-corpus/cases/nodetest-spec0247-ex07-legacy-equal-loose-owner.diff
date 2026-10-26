@@ -1,0 +1,9 @@
+diff --git a/src/tally.ts b/src/tally.ts
+index 0000000..1111111 100644
+--- a/src/tally.ts
++++ b/src/tally.ts
+@@ -1,3 +1,3 @@
+ export function tally(items: string[]): number | string {
+-  return items.length;
++  return String(items.length);
+ }

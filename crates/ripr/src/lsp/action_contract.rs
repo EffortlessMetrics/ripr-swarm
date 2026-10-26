@@ -104,16 +104,16 @@ impl ActionDisabledReason {
                 "Analysis snapshot changed; refresh analysis before using this action"
             }
             Self::ClientCapabilityMissing => {
-                "This client did not advertise the command this action needs"
+                "This editor did not advertise the command this action needs; run the same step from the ripr CLI instead"
             }
             Self::VerificationRouteUnavailable => {
-                "No safe verification command is available in this gap record"
+                "This gap record has no safe verification command; refresh analysis, or run the project test command yourself after editing"
             }
             Self::ReceiptRouteUnavailable => {
-                "No safe receipt command is available in this gap record"
+                "This gap record has no safe receipt command; run the verify step first, then refresh analysis"
             }
             Self::PreviewOrStaticLimitation => {
-                "Static preview limitation: no cross-language repair route is available"
+                "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand"
             }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",
@@ -532,6 +532,32 @@ mod tests {
         }
         if names.len() != EMITTED_DISABLED_REASONS.len() + RESERVED_DISABLED_REASONS.len() {
             return Err("emitted + reserved must cover the whole vocabulary".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn emitted_disabled_reasons_name_a_next_step() -> Result<(), String> {
+        // #9244 item 2: a reason must say what to do, not only restate that
+        // the action is disabled.
+        for reason in EMITTED_DISABLED_REASONS {
+            let text = reason.human_reason();
+            let names_next_step = [
+                "wait",
+                "refresh",
+                "run ",
+                "inspect",
+                "resolve",
+                "refresh analysis",
+            ]
+            .iter()
+            .any(|cue| text.contains(cue));
+            if !names_next_step {
+                return Err(format!(
+                    "{} reason names no next step: {text}",
+                    reason.as_str()
+                ));
+            }
         }
         Ok(())
     }

@@ -1,0 +1,48 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/module_reach_super_import_in_file_wrong_module/input
+
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/lib.rs:2
+  Static exposure: weak (severity: warning, confidence 0.66)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Changed behavior: 10 <= qty
+  Analyzer limit: A test may reach this change through an internal helper-call chain ripr cannot
+    fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named
+    limitation, not a coverage claim
+  Related test (1 of 2 matched rows): src/lib.rs:19 discount_boundary
+  Next step: Check whether `discount_boundary`, which may reach `is_bulk` through `order_discount`,
+    asserts on the changed behavior; ripr does not trace that path, so this limitation does not
+    establish a missing test
+  Evidence: reach weak · infection weak · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
+    - reach weak: No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary
+    - infection weak: Related tests contain the changed boundary literal [10] only outside the changed owner's inputs (for example as an expected value); no test input at the changed…
+    - 10 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
+  ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (weak)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

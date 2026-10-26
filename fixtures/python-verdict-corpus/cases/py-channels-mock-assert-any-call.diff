@@ -1,0 +1,12 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -25,7 +25,7 @@
+ 
+ 
+ def notify_d2(sender):
+-    sender.send("a")
++    sender.send("z")
+     sender.send("b")
+ 
+ 

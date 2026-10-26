@@ -1,0 +1,10 @@
+--- a/audit.py
++++ b/audit.py
+@@ -5,6 +5,6 @@
+ 
+ def check_balance(balance):
+     if balance < 10:
+-        log.warning("msgs: 5 caplog.text: 5")
++        log.warning("msgs: 5")
+         return False
+     return True

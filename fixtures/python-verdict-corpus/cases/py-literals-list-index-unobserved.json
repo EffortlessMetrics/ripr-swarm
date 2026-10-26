@@ -1,0 +1,44 @@
+{
+  "case_id": "py-literals-list-index-unobserved",
+  "subject_id": "authored-py-pytest-literals",
+  "diff": "cases/py-literals-list-index-unobserved.diff",
+  "anchor": {
+    "file": "lits/cfg.py",
+    "line": 38
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_value",
+  "test_shape": "pytest_list_other_index_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "\"founder\",",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the first staff entry changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test reads index 1, so a change at index 0 is unobserved.",
+  "labeling_observation": {
+    "ripr_commit": "bb475e9f",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,9 @@
+--- a/labels.py
++++ b/labels.py
+@@ -1,5 +1,5 @@
+ def labels():
+     return {
+         "name": "x",
+-        "tag": "y",
++        "label": "y",
+     }

@@ -1,0 +1,12 @@
+diff --git a/src/b_lookalike.rs b/src/b_lookalike.rs
+--- a/src/b_lookalike.rs
++++ b/src/b_lookalike.rs
+@@ -11,7 +11,7 @@
+ }
+ 
+ pub fn ext_starts_at_cursor(cursor: &Cursor, at: usize) -> bool {
+-    let start = cursor.refind('.').map_or(0, |i| i + 1);
++    let start = cursor.refind('.').map_or(0, |dot| dot + 1);
+     start == at
+ }
+ 

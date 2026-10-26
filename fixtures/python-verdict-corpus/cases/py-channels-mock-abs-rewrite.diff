@@ -1,0 +1,12 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -38,7 +38,7 @@
+ 
+ 
+ def notify_g(sender, n):
+-    sender.send(abs(n))
++    sender.send(n)
+ 
+ 
+ def notify_h(sender, n):
