@@ -1596,6 +1596,10 @@ fn a_dataclass_method_outside_the_evaluator_is_not_credited() -> Check {
             "    def total(self):\n        return round(self.amount * (1 + self.tax_rate.real))\n",
         ),
         (
+            "method named like the field",
+            "    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n\n    def tax_rate(self):\n        return 0.9\n",
+        ),
+        (
             "shadowed round",
             "    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n\n\ndef round(value):\n        return 0\n",
         ),

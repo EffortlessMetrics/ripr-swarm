@@ -1223,7 +1223,7 @@ pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 Value::Float(value) => {
                     let rounded = value.round_ties_even();
                     (rounded.is_finite() && rounded.abs() < FLOAT_EXACT_LIMIT as f64)
-                        .then(|| Value::Int(rounded as i128))
+                        .then_some(Value::Int(rounded as i128))
                 }
                 other => other.number().map(Value::Int),
             }
