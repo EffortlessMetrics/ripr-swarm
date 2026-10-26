@@ -217,3 +217,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_withheld_feature_gated_test (19)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless gap_withheld_feature_gated_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

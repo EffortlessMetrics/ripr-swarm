@@ -571,6 +571,9 @@ fn tokio_lookalike() {}
 
 #[cfg_attr(test, test)]
 fn conditional_test_attribute() {}
+
+#[cfg_attr(feature = "extra", test)]
+fn unevaluated_conditional_test_attribute() {}
 "#,
     )?;
 
@@ -584,6 +587,9 @@ fn conditional_test_attribute() {}
             "qualified_quickcheck",
             "parameterized_case",
             "wasm_case",
+            "conditional_test_attribute",
+            // `cfg_attr(test, test)` is a test in a test build; a predicate
+            // the evaluator cannot read does not make one.
         ]
     );
     assert!(
@@ -595,7 +601,7 @@ fn conditional_test_attribute() {}
         &[
             "rstest_lookalike",
             "tokio_lookalike",
-            "conditional_test_attribute",
+            "unevaluated_conditional_test_attribute",
         ],
     );
     Ok(())
@@ -752,6 +758,8 @@ mod any_gate {
 
 #[cfg_attr(test, test)]
 fn cfg_attr_lookalike() {}
+#[cfg_attr(feature = "extra", test)]
+fn cfg_attr_unevaluated_lookalike() {}
 
 #[quickcheck]
 fn normalizer_credits_explicit_attribute(value: u8) -> bool { value == value }
@@ -850,8 +858,14 @@ fn integration_test() {
         (
             "src/lib.rs",
             "cfg_attr_lookalike",
+            FunctionSourceRole::TestAttribute,
+            "parser: cfg_attr(test, test) introduces test under a predicate known true",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_attr_unevaluated_lookalike",
             FunctionSourceRole::Production,
-            "parser: cfg_attr introductions never promote",
+            "parser: a cfg_attr predicate the evaluator cannot read never promotes",
         ),
         (
             "src/lib.rs",
@@ -1578,5 +1592,33 @@ fn crate_test_stays_a_non_test_without_a_resolvable_wrapper() -> Result<(), Stri
             "{label}: crate::test must not be credited, got {names:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn cfg_attr_test_beside_ignore_or_should_panic_does_not_define_a_test() {
+    // `gap_admission` reads only literal `#[ignore]` / `#[should_panic]`, so a
+    // sibling introduced by `cfg_attr` must not turn the function into a live
+    // test fact that counts as a discriminator.
+    assert!(attributes_define_test(["#[cfg_attr(all(), test)]"]));
+    for attribute in [
+        "#[cfg_attr(all(), test, ignore)]",
+        "#[cfg_attr(all(), ignore, test)]",
+        "#[cfg_attr(all(), test, should_panic)]",
+        "#[cfg_attr(all(), should_panic, test)]",
+    ] {
+        assert!(!attributes_define_test([attribute]), "{attribute}");
+    }
+}
+
+#[test]
+fn syntax_adapter_does_not_make_cfg_attr_test_beside_ignore_a_test_fact() -> Result<(), String> {
+    let source = "#[cfg_attr(all(), test, ignore)]\nfn ignored() { assert!(true); }\n\n\
+                  #[cfg_attr(all(), test, should_panic)]\nfn panics() { assert!(true); }\n\n\
+                  #[cfg_attr(all(), test)]\nfn plain() { assert!(true); }\n";
+    let adapter = RaRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    normalize_file_test_styles(&mut facts)?;
+    assert_eq!(test_names(&facts), ["plain"]);
     Ok(())
 }

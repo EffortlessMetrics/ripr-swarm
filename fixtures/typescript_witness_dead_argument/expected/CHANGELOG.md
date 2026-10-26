@@ -338,3 +338,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (30)
+
+Reason:
+RIPR-SPEC-0224: TS missing_input rows carry the finding's boundary as row-owned miss_support, so the renderer names it (#5495)
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

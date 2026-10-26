@@ -1,0 +1,12 @@
+diff --git a/src/b_two_uses.rs b/src/b_two_uses.rs
+--- a/src/b_two_uses.rs
++++ b/src/b_two_uses.rs
+@@ -1,7 +1,7 @@
+ //! One changed binding with two direct comparison uses.
+ 
+ pub fn within(text: &str, lo: usize, hi: usize) -> bool {
+-    let end = text.len();
++    let end = text.as_bytes().len();
+     if end < lo {
+         return false;
+     }
