@@ -886,7 +886,12 @@ impl ClassifiedProbeEvidence {
                                         .activation
                                     });
                                 wrapper_return_boundary_pinned(
-                                    owner, assertion, chain, activation, test,
+                                    owner,
+                                    assertion,
+                                    chain,
+                                    activation,
+                                    test,
+                                    context.index,
                                 )
                             })
                 },

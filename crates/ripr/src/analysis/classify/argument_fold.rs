@@ -10,15 +10,94 @@
 //! over- or underflows) keeps the unreadable reading.
 
 use super::value_transfer::{EvalOutcome, ExactInputs, TypedValue, evaluate_initializer};
+use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::rust_index::{RustIndex, TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::value_resolution::{NamedConstant, named_constant};
 use ra_ap_syntax::{
     AstNode,
     ast::{self, HasName},
 };
 
+/// Where a `const` operand or a nullary helper is declared: the source of the
+/// file the test lives in. Without it only the test's own bindings fold.
+#[derive(Clone, Copy, Default)]
+pub(super) struct FoldScope<'a> {
+    file_source: Option<&'a str>,
+}
+
+impl<'a> FoldScope<'a> {
+    /// The scope of `test`'s own file in `index`.
+    pub(super) fn of_test(test: &TestSummary, index: &'a RustIndex) -> Self {
+        Self {
+            file_source: index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn of_source(file_source: &'a str) -> Self {
+        Self {
+            file_source: Some(file_source),
+        }
+    }
+
+    /// The decimal value of the one `const`/`static` the file declares as
+    /// `name`, when its initializer is a plain decimal literal.
+    fn const_value(self, name: &str) -> Option<String> {
+        let source = self.file_source?;
+        if !is_const_like(name) || file_imports(source, name) {
+            return None;
+        }
+        match named_constant(source, name) {
+            NamedConstant::Value(value) if is_decimal(&value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The decimal value the one nullary free function `fn name() -> u64 { 1000 }`
+    /// of the file returns, when its body is nothing but that literal. A
+    /// second `fn name` anywhere in the file, an `impl` or `trait` method,
+    /// and an import of the name all leave the call unread: the call may
+    /// reach a different function than the one the scan found.
+    fn helper_value(self, name: &str) -> Option<String> {
+        let source = self.file_source?;
+        if !source.contains(&format!("fn {name}")) || file_imports(source, name) {
+            return None;
+        }
+        let masked = mask_comments_and_strings(source);
+        let [at] = declaration_offsets(&masked, name)[..] else {
+            return None;
+        };
+        if declared_in_associated_block(&masked, at) {
+            return None;
+        }
+        let rest = masked[at..].strip_prefix("fn")?.trim_start();
+        let rest = rest.strip_prefix(name)?.trim_start();
+        let rest = rest.strip_prefix('(')?.trim_start().strip_prefix(')')?;
+        let rest = rest.trim_start();
+        let rest = match rest.strip_prefix("->") {
+            Some(typed) => {
+                let (ty, body) = typed.split_once('{')?;
+                is_integer_type(ty.trim()).then_some(())?;
+                body
+            }
+            None => rest.strip_prefix('{')?,
+        };
+        let literal = rest.split_once('}')?.0.trim();
+        is_decimal(literal).then(|| literal.to_string())
+    }
+}
+
 /// The decimal value `argument` computes in a test whose body is
 /// `test_body`, when every operand is exact; `None` otherwise.
-pub(super) fn folded_argument(test_body: &str, argument: &str) -> Option<String> {
+pub(super) fn folded_argument(
+    test_body: &str,
+    argument: &str,
+    scope: FoldScope<'_>,
+) -> Option<String> {
     let text = argument.trim();
     if text.is_empty()
         || !text.chars().all(|ch| {
@@ -31,41 +110,182 @@ pub(super) fn folded_argument(test_body: &str, argument: &str) -> Option<String>
         return None;
     }
     let mut inputs = ExactInputs::new();
-    for token in text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')) {
-        if token.is_empty() {
+    let mut expression = String::new();
+    let mut resolved = false;
+    let mut rest = text;
+    while let Some(ch) = rest.chars().next() {
+        if !(ch.is_ascii_alphanumeric() || ch == '_') {
+            expression.push(ch);
+            rest = &rest[ch.len_utf8()..];
             continue;
         }
+        let end = rest
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        let (token, after) = rest.split_at(end);
+        rest = after;
         if token.starts_with(|ch: char| ch.is_ascii_digit()) {
             // A suffixed or separated literal (`1u32`, `1_000`) is not read.
-            if !token.chars().all(|ch| ch.is_ascii_digit()) {
+            if !is_decimal(token) {
                 return None;
             }
-            continue;
+            expression.push_str(token);
+        } else if let Some(arguments) = rest.trim_start().strip_prefix('(') {
+            // `big_order()`: a call reads only as a nullary helper whose body
+            // is one literal, and only when the test binds no such name.
+            let closed = arguments.trim_start().strip_prefix(')')?;
+            if binding_pattern_ends(test_body, token)?.0 != 0 {
+                return None;
+            }
+            expression.push_str(&scope.helper_value(token)?);
+            rest = closed;
+            resolved = true;
+        } else if is_const_like(token) {
+            if binding_pattern_ends(test_body, token)?.0 != 0 {
+                return None;
+            }
+            inputs.insert(token.to_string(), scope.const_value(token)?);
+            expression.push_str(token);
+            resolved = true;
+        } else {
+            if !inputs.contains_key(token) {
+                let value =
+                    crate::analysis::value_resolution::test_let_bound_literal(test_body, token)?;
+                if !is_decimal(&value) || !bound_once_before_use(test_body, token, text) {
+                    return None;
+                }
+                inputs.insert(token.to_string(), value);
+            }
+            expression.push_str(token);
+            resolved = true;
         }
-        if inputs.contains_key(token) {
-            continue;
-        }
-        let value = crate::analysis::value_resolution::test_let_bound_literal(test_body, token)?;
-        if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
-            return None;
-        }
-        if !bound_once_before_use(test_body, token, text) {
-            return None;
-        }
-        inputs.insert(token.to_string(), value);
     }
     // Arithmetic over literals alone (`10 * 2`) names no binding; activation
     // keeps reading it as before.
-    if inputs.is_empty() {
+    if !resolved {
         return None;
     }
-    match evaluate_initializer(text, &inputs) {
+    match evaluate_initializer(&expression, &inputs) {
         EvalOutcome::Exact {
             value: TypedValue::Index(value),
             ..
         } => Some(value.to_string()),
         _ => None,
     }
+}
+
+fn is_decimal(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// `LIMIT`, `MAX_ORDER`: an upper-case constant name.
+fn is_const_like(name: &str) -> bool {
+    name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn is_integer_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+    )
+}
+
+/// Whether some `use` line of the file mentions `name`: the call or constant
+/// may then be another item than the file's own declaration.
+fn file_imports(source: &str, name: &str) -> bool {
+    mask_comments_and_strings(source).lines().any(|line| {
+        let line = line.trim_start();
+        (line.starts_with("use ") || line.starts_with("pub use "))
+            && line
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .any(|word| word == name)
+    })
+}
+
+/// Byte offsets of every `fn name` declaration in masked source.
+fn declaration_offsets(masked: &str, name: &str) -> Vec<usize> {
+    let width = "fn ".len() + name.len();
+    masked
+        .match_indices(format!("fn {name}").as_str())
+        .filter_map(|(at, _)| {
+            let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+            let before = masked[..at].chars().next_back();
+            let after = masked[at + width..].chars().next();
+            (before.is_none_or(|ch| !word(ch)) && after.is_none_or(|ch| !word(ch))).then_some(at)
+        })
+        .collect()
+}
+
+/// Whether the byte `at` sits inside an `impl` or `trait` block, where a
+/// bare call would not reach the function.
+fn declared_in_associated_block(masked: &str, at: usize) -> bool {
+    let mut open: Vec<bool> = Vec::new();
+    let mut header_start = 0;
+    for (offset, ch) in masked[..at].char_indices() {
+        match ch {
+            '{' => {
+                let header = &masked[header_start..offset];
+                open.push(
+                    header
+                        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                        .any(|word| matches!(word, "impl" | "trait")),
+                );
+                header_start = offset + 1;
+            }
+            '}' => {
+                open.pop();
+                header_start = offset + 1;
+            }
+            ';' => header_start = offset + 1,
+            _ => {}
+        }
+    }
+    open.contains(&true)
+}
+
+/// How many patterns of the parsed test body bind `name`, and the end offset
+/// of each; `None` when the body does not parse or `name` is assigned.
+fn binding_pattern_ends(test_body: &str, name: &str) -> Option<(usize, Vec<usize>)> {
+    let wrapped;
+    let source =
+        if test_body.trim_start().starts_with("fn ") || test_body.trim_start().starts_with("#[") {
+            test_body
+        } else {
+            wrapped = format!("fn __test() {{\n{test_body}\n}}");
+            &wrapped
+        };
+    let parse = parse_clean_source_file(source)?;
+    let mut ends = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if ast::IdentPat::cast(node.clone())
+            .and_then(|pattern| pattern.name())
+            .is_some_and(|bound| bound.text() == name)
+        {
+            ends.push(usize::from(node.text_range().end()));
+        }
+        if ast::BinExpr::cast(node).is_some_and(|expr| {
+            matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                && expr
+                    .lhs()
+                    .is_some_and(|lhs| lhs.syntax().text().to_string().trim() == name)
+        }) {
+            return None;
+        }
+    }
+    Some((ends.len(), ends))
 }
 
 /// Whether `name` is bound by exactly one pattern in the test body, never
@@ -76,37 +296,18 @@ pub(super) fn folded_argument(test_body: &str, argument: &str) -> Option<String>
 /// the value the call saw (a same-named item may). A body that does not parse
 /// counts as rebinding.
 fn bound_once_before_use(test_body: &str, name: &str, argument: &str) -> bool {
-    let wrapped;
+    let Some((_, ends)) = binding_pattern_ends(test_body, name) else {
+        return false;
+    };
+    let [declared_end] = ends[..] else {
+        return false;
+    };
     let source =
         if test_body.trim_start().starts_with("fn ") || test_body.trim_start().starts_with("#[") {
-            test_body
+            test_body.to_string()
         } else {
-            wrapped = format!("fn __test() {{\n{test_body}\n}}");
-            &wrapped
+            format!("fn __test() {{\n{test_body}\n}}")
         };
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
-    let mut patterns = Vec::new();
-    for node in parse.tree().syntax().descendants() {
-        if ast::IdentPat::cast(node.clone())
-            .and_then(|pattern| pattern.name())
-            .is_some_and(|bound| bound.text() == name)
-        {
-            patterns.push(usize::from(node.text_range().end()));
-        }
-        if ast::BinExpr::cast(node).is_some_and(|expr| {
-            matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
-                && expr
-                    .lhs()
-                    .is_some_and(|lhs| lhs.syntax().text().to_string().trim() == name)
-        }) {
-            return false;
-        }
-    }
-    let [declared_end] = patterns[..] else {
-        return false;
-    };
     source
         .match_indices(argument)
         .next()
@@ -118,7 +319,11 @@ mod tests {
     use super::*;
 
     fn fold(body: &str, argument: &str) -> Option<String> {
-        folded_argument(body, argument)
+        folded_argument(body, argument, FoldScope::default())
+    }
+
+    fn fold_in(file: &str, body: &str, argument: &str) -> Option<String> {
+        folded_argument(body, argument, FoldScope::of_source(file))
     }
 
     #[test]
@@ -206,5 +411,94 @@ mod tests {
     #[test]
     fn a_body_that_does_not_parse_folds_nothing() {
         assert_eq!(fold("fn t() { let base = 9; ", "base + 1"), None);
+    }
+
+    const FILE: &str = "pub const BASE: u32 = 9;\nconst WIDE: u64 = 4000000000;\nfn big() -> u32 {\n    10\n}\nfn small() -> u64 { 9 }\n";
+
+    #[test]
+    fn a_file_const_and_a_nullary_literal_helper_fold() {
+        let body = "fn t() {\n    let n = 3;\n    score(big() * n);\n}";
+        assert_eq!(fold_in(FILE, body, "BASE + 1").as_deref(), Some("10"));
+        assert_eq!(fold_in(FILE, body, "BASE").as_deref(), Some("9"));
+        assert_eq!(fold_in(FILE, body, "big()").as_deref(), Some("10"));
+        assert_eq!(fold_in(FILE, body, "small( ) + 1").as_deref(), Some("10"));
+        assert_eq!(fold_in(FILE, body, "big() - BASE").as_deref(), Some("1"));
+        assert_eq!(fold_in(FILE, body, "big() * n").as_deref(), Some("30"));
+    }
+
+    #[test]
+    fn a_name_the_file_does_not_pin_down_does_not_fold() {
+        let body = "fn t() {}";
+        for (file, argument) in [
+            ("const BASE: u32 = 9;\nconst BASE: u32 = 14;\n", "BASE + 1"),
+            ("const BASE: u32 = 4 + 5;\n", "BASE + 1"),
+            ("static mut BASE: u32 = 9;\n", "BASE + 1"),
+            ("use other::BASE;\nconst BASE: u32 = 9;\n", "BASE + 1"),
+            ("const BASE: &str = \"9\";\n", "BASE + 1"),
+            ("const OTHER: u32 = 9;\n", "BASE + 1"),
+            ("fn big() -> u32 { 10 }\nfn big() -> u32 { 15 }\n", "big()"),
+            (
+                "mod a { pub fn big() -> u32 { 10 } }\nfn big() -> u32 { 15 }\n",
+                "big()",
+            ),
+            ("use other::big;\nfn big() -> u32 { 10 }\n", "big()"),
+            ("fn big() -> u32 { 10 + extra() }\n", "big()"),
+            ("fn big() -> u32 { let x = 10; x }\n", "big()"),
+            ("fn big(extra: u32) -> u32 { 10 }\n", "big()"),
+            ("fn big<T>() -> u32 { 10 }\n", "big()"),
+            ("fn big() -> String { 10 }\n", "big()"),
+            ("fn big() -> u32 { 1_0 }\n", "big()"),
+            ("fn big() -> u32 { 10u32 }\n", "big()"),
+            ("impl Rates {\n    fn big() -> u32 { 10 }\n}\n", "big()"),
+            ("trait Rates {\n    fn big() -> u32 { 10 }\n}\n", "big()"),
+            ("// fn big() -> u32 { 10 }\n", "big()"),
+            ("fn bigger() -> u32 { 10 }\n", "big()"),
+            ("fn big() -> u32 { 10 }\n", "big(1)"),
+            ("fn big() -> u32 { 10 }\n", "BIG()"),
+            ("const WIDE: u64 = 4000000000;\n", "WIDE + 1"),
+        ] {
+            assert_eq!(
+                fold_in(file, body, argument),
+                None,
+                "`{argument}` in `{file}`"
+            );
+        }
+        assert_eq!(
+            fold(body, "BASE + 1"),
+            None,
+            "no file scope reads no constants"
+        );
+        assert_eq!(fold(body, "big()"), None, "no file scope reads no helpers");
+    }
+
+    #[test]
+    fn a_helper_or_constant_the_test_may_rebind_does_not_fold() {
+        let shadowed = "fn t() {\n    let big = || 15;\n    score(big());\n}";
+        assert_eq!(fold_in(FILE, shadowed, "big()"), None, "a local closure");
+        let nested = "fn t() {\n    fn big() -> u32 { 15 }\n}";
+        let file = format!("{FILE}{nested}");
+        assert_eq!(
+            fold_in(&file, nested, "big()"),
+            None,
+            "a second declaration"
+        );
+        let inner_const = "fn t() {\n    const BASE: u32 = 14;\n}";
+        let file = format!("{FILE}{inner_const}");
+        assert_eq!(fold_in(&file, inner_const, "BASE + 1"), None);
+    }
+
+    #[test]
+    fn a_method_call_a_path_or_a_cast_around_a_helper_does_not_fold() {
+        let body = "fn t() {}";
+        for argument in [
+            "Self::big()",
+            "rates::big()",
+            "x.big()",
+            "big() as u8",
+            "&big()",
+            "big()?",
+        ] {
+            assert_eq!(fold_in(FILE, body, argument), None, "`{argument}`");
+        }
     }
 }

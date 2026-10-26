@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-spec0158-modfold-expected",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26 for owner-call arguments that read a same-file const or a nullary literal helper (RIPR-SPEC-0158, #9637)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "b22f60974f261c3ce905a36c0e6854c6077c346dc84b2bdb07fa23bb472f8e75"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "d3a777cc4cae005e21f266e7af4f8036049f8e9538d562dd49472943e0378551"
+    },
+    {
+      "path": "src/m_const.rs",
+      "sha256": "642d3c037a335badd4e4697d2a06596d7f28020d39d921c826d7d9e89442629b"
+    },
+    {
+      "path": "src/m_cshadow.rs",
+      "sha256": "b71a775b0272991790dbec7e35adc879e236b3b81b5eed8d24f80d4f9069870e"
+    },
+    {
+      "path": "src/m_harg.rs",
+      "sha256": "4486a52bf5b29a4cef93f1cb5f192f1316ffdefe08fd61d63d1f438947515001"
+    },
+    {
+      "path": "src/m_hcomp.rs",
+      "sha256": "5031840fbf4f71cb0805d2f8ba60b7c0ef4793e4f7217afa80abcb951297db78"
+    },
+    {
+      "path": "src/m_helper.rs",
+      "sha256": "ab31225df67a9bc8c2799f1d2a7818b001cb820d0e66967c32d019ca220a8544"
+    },
+    {
+      "path": "src/m_hshadow.rs",
+      "sha256": "d23b1c90781038523baad3f5022e1b4cf5fa96d30ff5c251de805e414960ebfb"
+    }
+  ]
+}
