@@ -6,7 +6,8 @@ use super::language::PythonAdapter;
 use super::language::TypeScriptAdapter;
 use super::language::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, is_script_language, route, unanalyzed_source_language,
+    RustAdapter, diff_limit_env, is_script_language, positive_limit_from_env, route,
+    unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -1036,6 +1037,135 @@ fn out_of_scope_limitation(
     ))
 }
 
+/// Default ceiling on the number of added/removed Python diff lines that may
+/// enter the Python adapter (#10730). Same rationale as the Rust guard's
+/// `DIFF_CHANGED_RUST_LINE_LIMIT`: bounded probes on constrained runners.
+/// Python and TypeScript had no equivalent guard, so a 167-file django diff
+/// took 212 s and a 221-file diff hit the 600 s timeout with zero findings.
+const DIFF_CHANGED_PYTHON_LINE_LIMIT: usize = 2_000;
+
+/// Env override for [`DIFF_CHANGED_PYTHON_LINE_LIMIT`]. Operators can raise
+/// it for larger runners or lower it to exercise the guard.
+const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES";
+
+/// Default ceiling on the number of added/removed TypeScript diff lines that
+/// may enter the TypeScript adapter (#10730). Counts the whole TS/JS source
+/// family the one adapter reads (`.ts`/`.tsx`/`.mts`/`.cts` and
+/// `.js`/`.jsx`/`.mjs`/`.cjs`); see [`LanguageId::TypeScript`]'s routing.
+const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT: usize = 2_000;
+
+/// Env override for [`DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT`].
+const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
+
+fn diff_changed_python_line_limit() -> Result<usize, String> {
+    diff_changed_python_line_limit_from_env(diff_limit_env(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV))
+}
+
+fn diff_changed_python_line_limit_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<usize, String> {
+    positive_limit_from_env(
+        DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+        DIFF_CHANGED_PYTHON_LINE_LIMIT,
+        value,
+    )
+}
+
+fn diff_changed_typescript_line_limit() -> Result<usize, String> {
+    diff_changed_typescript_line_limit_from_env(diff_limit_env(
+        DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+    ))
+}
+
+fn diff_changed_typescript_line_limit_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<usize, String> {
+    positive_limit_from_env(
+        DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+        DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT,
+        value,
+    )
+}
+
+/// Added plus removed changed lines of `language`'s files in the parsed diff
+/// — the same measurement the Rust guard uses, per language (#10730).
+fn changed_language_line_count(changed_files: &[diff::ChangedFile], language: LanguageId) -> usize {
+    changed_files
+        .iter()
+        .filter(|file| route(&file.path) == Some(language))
+        .map(|file| {
+            file.added_lines
+                .len()
+                .saturating_add(file.removed_lines.len())
+        })
+        .sum()
+}
+
+/// The `diff_scope_oversized` refusal for one preview language, in the same
+/// voice as the Rust guard's message. The exact `diff_scope_oversized:`
+/// prefix keeps `is_diff_scope_oversized`, the LSP limited-snapshot
+/// conversion and the CLI exit-2 path working unchanged (#10730).
+fn enforce_changed_language_line_limit(
+    changed_files: &[diff::ChangedFile],
+    language: LanguageId,
+    language_label: &str,
+    limit_env: &str,
+    line_limit: usize,
+) -> Result<(), String> {
+    let changed_line_count = changed_language_line_count(changed_files, language);
+    if changed_line_count <= line_limit {
+        return Ok(());
+    }
+    let changed_file_count = changed_files
+        .iter()
+        .filter(|file| route(&file.path) == Some(language))
+        .count();
+    Err(format!(
+        "diff_scope_oversized: {changed_line_count} changed {language_label} lines across \
+         {changed_file_count} {language_label} files exceed the {limit_env} limit ({line_limit}); \
+         analysis was not run to protect runner memory before probe expansion. Repair route: \
+         reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
+         limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
+         `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
+         are reported as not analyzed)."
+    ))
+}
+
+/// Fail closed before any preview adapter runs when an enabled preview
+/// language's diff exceeds its changed-line budget (#10730). Checked at the
+/// dispatch level — not inside the adapters — because a preview adapter
+/// failure is non-abort (recorded in `language_runs`), while this refusal is
+/// infra-class and must propagate exactly like the Rust guard's, so the
+/// `diff_scope_oversized` prefix handling (LSP conversion, CLI exit 2,
+/// `--json` limited artifact) keeps working. Runs after the Rust adapter so
+/// a mixed Rust+Python oversized diff keeps the Rust refusal it gets today.
+fn enforce_changed_preview_line_limits(
+    languages: &[LanguageId],
+    changed_files: &[diff::ChangedFile],
+) -> Result<(), String> {
+    if languages.contains(&LanguageId::Python) {
+        enforce_changed_language_line_limit(
+            changed_files,
+            LanguageId::Python,
+            "Python",
+            DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            diff_changed_python_line_limit()?,
+        )?;
+    }
+    // The one TypeScript adapter serves both the `typescript` and
+    // `javascript` ids, so either enablement admits the whole TS/JS family.
+    if languages.contains(&LanguageId::TypeScript) || languages.contains(&LanguageId::JavaScript) {
+        enforce_changed_language_line_limit(
+            changed_files,
+            LanguageId::TypeScript,
+            "TypeScript",
+            DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            diff_changed_typescript_line_limit()?,
+        )?;
+    }
+    Ok(())
+}
+
 /// Test-only convenience: the ~40 in-module behavioral call sites predate
 /// #7386 and run without a parsed `[languages]` config, so they keep this
 /// default-config wrapper instead of threading one at every site.
@@ -1276,6 +1406,12 @@ fn run_pipeline_for_diff_text_with_language_config(
             &diff_scope_label(None),
         ));
     }
+    // #10730: fail closed before any preview adapter runs when an enabled
+    // preview language's changed-line count exceeds its budget. The refusal
+    // propagates like the Rust guard's, keeping the diff_scope_oversized
+    // prefix handling (LSP conversion, CLI exit 2, --json limited artifact)
+    // intact.
+    enforce_changed_preview_line_limits(languages, &analysis_changed_files)?;
     let scope_label = diff_scope_label(partial_scope.as_ref());
     if let Some(limitation) = unanalyzed_source_language_limitation(&analysis_changed_files)? {
         limitations.push(limitation);
@@ -2961,11 +3097,13 @@ fn zero_file_diff_disclosure(diff_text: &str) -> &'static str {
 mod tests {
     use super::*;
     use crate::analysis::language_outcome::{DiffCompleteness, LanguageOutcomeStatus};
+    use std::env::VarError;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::super::AnalysisMode;
+    use super::super::language::{is_diff_scope_oversized, with_forced_diff_limit_env};
     use crate::config::OraclePolicy;
 
     fn temp_root(name: &str) -> Result<PathBuf, String> {
@@ -8154,6 +8292,364 @@ index 0000000..1111111 100644
             refusal.starts_with("scope_filter_matched_nothing:"),
             "{refusal}"
         );
+        Ok(())
+    }
+
+    // --- Preview-language changed-line guards (#10730) ---
+
+    /// A changed file with `added`/`removed` dummy lines, the shape the
+    /// per-language line-count guards measure.
+    fn changed_line_file(path: &str, added: usize, removed: usize) -> diff::ChangedFile {
+        let added_lines = (0..added)
+            .map(|index| diff::ChangedLine {
+                line: index + 1,
+                text: format!("added {index}"),
+                new_side_line: index + 1,
+            })
+            .collect();
+        let removed_lines = (0..removed)
+            .map(|index| diff::ChangedLine {
+                line: index + 1,
+                text: format!("removed {index}"),
+                new_side_line: index + 1,
+            })
+            .collect();
+        diff::ChangedFile {
+            path: PathBuf::from(path),
+            added_lines,
+            removed_lines,
+        }
+    }
+
+    /// A one-file Python/TypeScript diff whose single file carries
+    /// `changed_lines` added lines — over the default 2000-line guard by
+    /// default, like `scoped_oversized_diff` on the Rust side.
+    fn oversized_preview_diff(path: &str, line_prefix: &str, changed_lines: usize) -> String {
+        let mut diff = format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{changed_lines} @@\n"
+        );
+        for index in 0..changed_lines {
+            diff.push_str(&format!("+{line_prefix} generated_{index}\n"));
+        }
+        diff
+    }
+
+    #[test]
+    fn diff_changed_python_line_limit_defaults_when_unset() -> Result<(), String> {
+        let parsed = diff_changed_python_line_limit_from_env(Err(VarError::NotPresent))?;
+        if parsed != DIFF_CHANGED_PYTHON_LINE_LIMIT {
+            return Err(format!(
+                "expected default {DIFF_CHANGED_PYTHON_LINE_LIMIT}, got {parsed}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_python_line_limit_parses_positive_override() -> Result<(), String> {
+        let parsed = diff_changed_python_line_limit_from_env(Ok("  1500 ".to_string()))?;
+        if parsed != 1500 {
+            return Err(format!("expected parsed limit 1500, got {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_python_line_limit_rejects_invalid_values() {
+        for value in ["0", "invalid", "-1", "", "  "] {
+            let result = diff_changed_python_line_limit_from_env(Ok(value.to_string()));
+            assert!(
+                matches!(&result, Err(err) if err.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV)),
+                "{value:?}: {result:?}"
+            );
+        }
+        let non_unicode =
+            diff_changed_python_line_limit_from_env(Err(VarError::NotUnicode("x".into())));
+        assert!(
+            matches!(&non_unicode, Err(err) if err.contains("valid UTF-8")),
+            "{non_unicode:?}"
+        );
+    }
+
+    #[test]
+    fn diff_changed_typescript_line_limit_defaults_when_unset() -> Result<(), String> {
+        let parsed = diff_changed_typescript_line_limit_from_env(Err(VarError::NotPresent))?;
+        if parsed != DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT {
+            return Err(format!(
+                "expected default {DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT}, got {parsed}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_typescript_line_limit_parses_positive_override() -> Result<(), String> {
+        let parsed = diff_changed_typescript_line_limit_from_env(Ok("  1500 ".to_string()))?;
+        if parsed != 1500 {
+            return Err(format!("expected parsed limit 1500, got {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_typescript_line_limit_rejects_invalid_values() {
+        for value in ["0", "invalid", "-1", "", "  "] {
+            let result = diff_changed_typescript_line_limit_from_env(Ok(value.to_string()));
+            assert!(
+                matches!(&result, Err(err) if err.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV)),
+                "{value:?}: {result:?}"
+            );
+        }
+        let non_unicode =
+            diff_changed_typescript_line_limit_from_env(Err(VarError::NotUnicode("x".into())));
+        assert!(
+            matches!(&non_unicode, Err(err) if err.contains("valid UTF-8")),
+            "{non_unicode:?}"
+        );
+    }
+
+    #[test]
+    fn preview_line_limits_resolve_forced_env_without_process_mutation() -> Result<(), String> {
+        // The thread-local forcing pattern the Rust file guard uses: tests
+        // drive the real lookups without touching the process environment.
+        let resolved = with_forced_diff_limit_env(
+            &[
+                (DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "17"),
+                (DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV, "23"),
+            ],
+            || {
+                Ok::<(usize, usize), String>((
+                    diff_changed_python_line_limit()?,
+                    diff_changed_typescript_line_limit()?,
+                ))
+            },
+        )?;
+        if resolved != (17, 23) {
+            return Err(format!("expected forced limits (17, 23), got {resolved:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_count_ignores_non_python_paths() -> Result<(), String> {
+        let files = vec![
+            changed_line_file("pkg/mod.py", 2, 1),
+            changed_line_file("tests/example.test.ts", 30, 30),
+            changed_line_file("src/lib.rs", 5, 5),
+        ];
+
+        let count = changed_language_line_count(&files, LanguageId::Python);
+        if count != 3 {
+            return Err(format!(
+                "expected only Python changed lines to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_counts_the_whole_ts_js_family() -> Result<(), String> {
+        // The one TypeScript adapter reads the whole routed family; the
+        // guard must measure exactly what the adapter would receive.
+        let files = vec![
+            changed_line_file("web/app.ts", 1, 0),
+            changed_line_file("web/app.tsx", 1, 0),
+            changed_line_file("web/app.mts", 1, 0),
+            changed_line_file("web/app.cts", 1, 0),
+            changed_line_file("web/app.js", 1, 0),
+            changed_line_file("web/app.jsx", 1, 0),
+            changed_line_file("web/app.mjs", 1, 0),
+            changed_line_file("web/app.cjs", 1, 0),
+            changed_line_file("pkg/mod.py", 5, 5),
+            changed_line_file("src/lib.rs", 5, 5),
+        ];
+
+        let count = changed_language_line_count(&files, LanguageId::TypeScript);
+        if count != 8 {
+            return Err(format!(
+                "expected the 8 routed TS/JS extensions to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_limit_rejects_oversized_diff_before_probe_expansion()
+    -> Result<(), String> {
+        let files = vec![changed_line_file("pkg/mod.py", 2, 1)];
+
+        let message = match enforce_changed_language_line_limit(
+            &files,
+            LanguageId::Python,
+            "Python",
+            DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            2,
+        ) {
+            Ok(()) => return Err("three changed Python lines should exceed limit two".to_string()),
+            Err(message) => message,
+        };
+
+        for needle in [
+            "diff_scope_oversized",
+            "3 changed Python lines across 1 Python files",
+            "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
+            "split the extraction PR",
+            "--path <glob>",
+            "--exclude <glob>",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("missing `{needle}` in message: {message}"));
+            }
+        }
+        if !is_diff_scope_oversized(&message) {
+            return Err(format!(
+                "refusal must match is_diff_scope_oversized: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_limit_accepts_at_limit() -> Result<(), String> {
+        let files = vec![changed_line_file("pkg/mod.py", 1, 1)];
+        enforce_changed_language_line_limit(
+            &files,
+            LanguageId::Python,
+            "Python",
+            DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            2,
+        )
+    }
+
+    #[test]
+    fn changed_typescript_line_limit_rejects_oversized_diff_before_probe_expansion()
+    -> Result<(), String> {
+        let files = vec![changed_line_file("web/app.ts", 2, 1)];
+
+        let message = match enforce_changed_language_line_limit(
+            &files,
+            LanguageId::TypeScript,
+            "TypeScript",
+            DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            2,
+        ) {
+            Ok(()) => {
+                return Err("three changed TypeScript lines should exceed limit two".to_string());
+            }
+            Err(message) => message,
+        };
+
+        for needle in [
+            "diff_scope_oversized",
+            "3 changed TypeScript lines across 1 TypeScript files",
+            "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",
+            "split the extraction PR",
+            "--path <glob>",
+            "--exclude <glob>",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("missing `{needle}` in message: {message}"));
+            }
+        }
+        if !is_diff_scope_oversized(&message) {
+            return Err(format!(
+                "refusal must match is_diff_scope_oversized: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_limit_accepts_at_limit() -> Result<(), String> {
+        let files = vec![changed_line_file("web/app.ts", 1, 1)];
+        enforce_changed_language_line_limit(
+            &files,
+            LanguageId::TypeScript,
+            "TypeScript",
+            DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            2,
+        )
+    }
+
+    #[test]
+    fn preview_line_limits_pass_an_at_limit_diff() -> Result<(), String> {
+        // An at-limit diff with every guard evaluated: no refusal, so the
+        // dispatch-level check stays silent on ordinary diffs.
+        let files = vec![changed_line_file("pkg/mod.py", 1, 1)];
+        enforce_changed_preview_line_limits(&[LanguageId::Rust, LanguageId::Python], &files)
+    }
+
+    #[test]
+    fn oversized_python_diff_is_refused_before_python_analysis() -> Result<(), String> {
+        let root = temp_root("py-guard-oversized")?;
+        let refusal = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &oversized_preview_diff("pkg/mod.py", "def", 2_100),
+        )
+        .err()
+        .ok_or("an oversized Python diff must be refused")?;
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(refusal.contains("changed Python lines"), "{refusal}");
+        assert!(
+            refusal.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("--path <glob>") && refusal.contains("--exclude <glob>"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_typescript_diff_is_refused_before_typescript_analysis() -> Result<(), String> {
+        let root = temp_root("ts-guard-oversized")?;
+        let refusal = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+            &crate::config::RustLanguageConfig::default(),
+            &oversized_preview_diff("web/app.ts", "const", 2_100),
+        )
+        .err()
+        .ok_or("an oversized TypeScript diff must be refused")?;
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(refusal.contains("changed TypeScript lines"), "{refusal}");
+        assert!(
+            refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("--path <glob>") && refusal.contains("--exclude <glob>"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_python_diff_passes_when_python_is_not_enabled() -> Result<(), String> {
+        // The guard measures only enabled adapters' languages: with the
+        // default Rust-only set a Python-heavy diff must not be refused by a
+        // guard for an adapter that will never run.
+        let root = temp_root("py-guard-disabled")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            &oversized_preview_diff("pkg/mod.py", "def", 2_100),
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(outcome.counts.changed_file_count, 1);
         Ok(())
     }
 
