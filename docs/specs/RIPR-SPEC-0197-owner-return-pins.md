@@ -1423,6 +1423,33 @@ the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
 neither. A rival in another package, or one whose container is unknown,
 still refuses the pin outright.
 
+### Unwrapped `Ok`/`Some` pins (#9619)
+
+Beside a changed `Ok(..)` or `Some(..)` tail whose other exits build only
+`Err(..)` or `None` (the `Head`/`EarlyHead` exit gate), a test may compare
+`owner(..).unwrap()` or `owner(..).expect("..")` with the bare value, directly
+or through a local bound once from that call, as RIPR-SPEC-0225 decision 6
+already allows beside a whole-value field. The comparison reads as
+`assert_eq!(owner(..), Ok(value))` (`Some(value)`): a passing test cannot have
+taken any other exit, because the unwrap panics on `Err`/`None`.
+
+1. The wrapper is the changed constructor itself. A changed early
+   `return Err(..)` (`Head("Err")`) takes only `unwrap_err` (#7063).
+2. The owner's file must not bind the wrapper name (`Ok` or `Some`) or its
+   opposite (`Err` or `None`) as a value, since the exit reasoning is by
+   spelling and a rebound name could build the same payload through another
+   exit, or an opposite exit that returns the pinned value would pass the
+   unwrap without reaching the changed tail. The file is refused for this reading
+   only, so direct `Ok(value)` pins keep their existing admission.
+3. A bound local follows RIPR-SPEC-0225 rule 1: a plain name bound once by an
+   immutable `let` and mentioned only by that `let` and the pinned comparison.
+   A `mut` binding, a second binding, a method call or argument use, or an
+   initializer around the unwrap (`.unwrap_or(..)`, `.ok()`) does not pin.
+4. Every existing expected-operand gate applies to the synthesized `Ok(value)`:
+   a value computed from the owner, a test helper reaching the owner, or a
+   written file refuses. `assert_ne!`, a different owner and a discarded
+   unwrap do not pin.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -2495,6 +2522,12 @@ assertions. This repair shares the existing callback without that larger migrati
    receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- Unwrapped `Ok`/`Some` pins (#9619):
+  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  bound and `Option` positives; `mut`, shadowing, method use, owner-derived
+  expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
+  discarded unwrap and wrapper- or opposite-exit-binding negatives).
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic
