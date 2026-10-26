@@ -363,31 +363,31 @@ fn on_changed_line(case: &Case) -> Result<Finding, String> {
 
 #[test]
 fn a_relation_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> {
-    for (case, weak_body) in [(
-        ITERATOR,
-        "let v: Vec<u32> = Countdown(3).collect();\n        assert!(!v.is_empty());",
-    )] {
-        // The test reaches the owner through syntax and pins an exact value,
-        // but nothing here says the assertion reads the effect of the changed
-        // line, so the finding is withheld rather than a "add a test" gap.
-        let withheld = on_changed_line(&case)?;
-        if withheld.class != ExposureClass::StaticUnknown {
-            return Err(format!("{}: got {:?}", case.label, withheld.class));
-        }
-        let limit = withheld.static_limit_kind.map(|kind| kind.as_str());
-        assert_eq!(
-            limit,
-            Some("rust_implicit_call_unresolved"),
-            "{}",
-            case.label
-        );
+    let case = ITERATOR;
+    // The test reaches the owner through syntax and pins an exact value, but
+    // nothing here says the assertion reads the effect of the changed line, so
+    // the finding is withheld rather than a "add a test" gap.
+    let withheld = on_changed_line(&case)?;
+    if withheld.class != ExposureClass::StaticUnknown {
+        return Err(format!("{}: got {:?}", case.label, withheld.class));
+    }
+    let limit = withheld.static_limit_kind.map(|kind| kind.as_str());
+    assert_eq!(
+        limit,
+        Some("rust_implicit_call_unresolved"),
+        "{}",
+        case.label
+    );
 
-        // A test with no exact assertion is a real gap whatever runs the owner.
-        let weak = with_body(case, "weak_assertion", weak_body);
-        let class = on_changed_line(&weak)?.class;
-        if class != ExposureClass::WeaklyExposed {
-            return Err(format!("{}: weak assertion got {class:?}", case.label));
-        }
+    // A test with no exact assertion is a real gap whatever runs the owner.
+    let weak = with_body(
+        case,
+        "weak_assertion",
+        "let v: Vec<u32> = Countdown(3).collect();\n        assert!(!v.is_empty());",
+    );
+    let class = on_changed_line(&weak)?.class;
+    if class != ExposureClass::WeaklyExposed {
+        return Err(format!("{}: weak assertion got {class:?}", case.label));
     }
     Ok(())
 }
