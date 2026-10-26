@@ -362,14 +362,14 @@ fn finding_result(
     );
     result.insert(
         "partialFingerprints".to_string(),
-        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file, line) }),
+        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file) }),
     );
     // #2627: also emit top-level fingerprints for GitHub Code Scanning cross-run
     // dedup. partialFingerprints alone is insufficient — GitHub reads
     // fingerprints as the primary dedup key.
     result.insert(
         "fingerprints".to_string(),
-        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file, line) }),
+        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file) }),
     );
     result.insert(
         "properties".to_string(),
@@ -403,12 +403,12 @@ fn seam_result(entry: &ClassifiedSeam, config: &RiprConfig) -> Option<Value> {
     );
     result.insert(
         "partialFingerprints".to_string(),
-        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, line) }),
+        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file) }),
     );
     // #2627: also emit top-level fingerprints for GitHub Code Scanning cross-run dedup.
     result.insert(
         "fingerprints".to_string(),
-        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, line) }),
+        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file) }),
     );
     result.insert("properties".to_string(), seam_properties(entry, severity));
     if entry.class == SeamGripClass::Suppressed {
@@ -938,15 +938,16 @@ fn seam_message(entry: &ClassifiedSeam) -> String {
     )
 }
 
-fn finding_fingerprint(rule_id: &str, finding: &Finding, file: &str, line: usize) -> String {
-    format!(
-        "{rule_id}|{}|{}|{file}|{line}",
-        finding.id, finding.probe.id.0
-    )
+/// Fingerprints deliberately exclude the line: `finding.id` and the seam id
+/// are content-addressed and line-stable, so adding the line back would mint
+/// a "new" alert and orphan the old suppression on every pure line move in
+/// the code scanning dedup that consumes these.
+fn finding_fingerprint(rule_id: &str, finding: &Finding, file: &str) -> String {
+    format!("{rule_id}|{}|{}|{file}", finding.id, finding.probe.id.0)
 }
 
-fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str, line: usize) -> String {
-    format!("{rule_id}|{}|{file}|{line}", entry.seam.id().as_str())
+fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str) -> String {
+    format!("{rule_id}|{}|{file}", entry.seam.id().as_str())
 }
 
 fn finding_rule_id(class: &ExposureClass) -> String {
@@ -1388,9 +1389,12 @@ mod tests {
         output.root = PathBuf::from(".");
         output.findings[0].probe.location.file = PathBuf::from("./src/rate%limit.rs");
         let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        // #10517: the line leaves the fingerprint so a pure line move keeps
+        // alert identity; the unencoded `%` path stays the final component
+        // so the root-spelling invariant this test pins still holds.
         assert_eq!(
             first_result(&sarif)?["partialFingerprints"]["riprFingerprintV1"],
-            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/rate%limit.rs|88"
+            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/rate%limit.rs"
         );
         Ok(())
     }
@@ -2670,8 +2674,9 @@ weakly_gripped = "note"
             .as_str()
             .unwrap_or_default();
         assert!(
-            fingerprint.contains("|src/we ird#dir/a.rs|"),
-            "fingerprint must hash the unencoded path: {fingerprint}"
+            fingerprint.ends_with("|src/we ird#dir/a.rs"),
+            "fingerprint must hash the unencoded path as its final component \
+             (no trailing line segment): {fingerprint}"
         );
         assert_eq!(
             result["partialFingerprints"]["riprFingerprintV1"],

@@ -120,14 +120,20 @@ Every SARIF result should include:
 Finding fingerprints should prefer:
 
 ```text
-rule_id | finding_id | probe_id | normalized_file | line
+rule_id | finding_id | probe_id | normalized_file
 ```
 
 Seam fingerprints should prefer:
 
 ```text
-rule_id | seam_id | normalized_file | line
+rule_id | seam_id | normalized_file
 ```
+
+The line is intentionally absent: `finding_id` and `seam_id` are
+content-addressed and line-stable, and the consumer of these fingerprints is
+cross-run dedup. Including the line would mint a "new" alert and orphan the
+existing suppression on every pure line move — the exact instability the
+stable identifiers exist to prevent.
 
 `normalized_file` and the physical location `uri` do not depend on how
 `--root` is spelled: `.`, `./` and the checkout's absolute path render the
