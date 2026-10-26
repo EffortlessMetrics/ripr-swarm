@@ -170,6 +170,210 @@ fn forwarding_wrapper_relates_and_pairs_its_boundary_pin() -> Result<(), String>
     Ok(())
 }
 
+// #9849: the private bool's whole return is the same observed boundary as
+// its predicate twin; the wrapper's distinct literal branches preserve it.
+#[test]
+fn boolean_return_twin_is_pinned_by_a_forwarding_wrapper() -> Result<(), String> {
+    for tests in [
+        BOUNDARY_TESTS,
+        "        assert_eq!(5, order_discount(10));\n        assert_eq!(0, order_discount(9));",
+    ] {
+        let finding = family_finding(&bulk_source(FORWARDING, tests), BULK_DIFF, "return_value")?;
+        assert_eq!(finding["probe"]["expression"], "10 <= qty", "{finding}");
+        assert_eq!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<(), String> {
+    for (wrapper, tests) in [
+        (FORWARDING, "        assert_eq!(order_discount(10) * 0, 0);"),
+        (FORWARDING, "        assert_eq!(order_discount(10) % 5, 0);"),
+        (
+            FORWARDING,
+            "        let expected = order_discount(10);\n        assert_eq!(order_discount(10), expected);",
+        ),
+        (FORWARDING, "        assert_ne!(order_discount(10), 99);"),
+        (
+            FORWARDING,
+            "        assert_eq!(order_discount(12), 5);\n        assert_eq!(order_discount(3), 0);",
+        ),
+        (
+            FORWARDING,
+            "        let _ = order_discount(10);\n        assert_eq!(order_discount(12), 5);",
+        ),
+        (
+            FORWARDING,
+            "        if false { assert_eq!(order_discount(10), 5); }",
+        ),
+        (
+            FORWARDING,
+            "        let _ = order_discount(10);\n        let order_discount = |_: u32| 5;\n        assert_eq!(order_discount(10), 5);",
+        ),
+        (
+            "    let _ = is_bulk(qty);\n    5",
+            "        assert_eq!(order_discount(10), 5);",
+        ),
+        (
+            "    let _ = is_bulk(qty);\n    if qty >= 10 { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        // #10284: a wrapper-local binding shadows the helper, and a macro
+        // statement may return before the forwarded call.
+        (
+            "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        (
+            "    early!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        (
+            "    if is_bulk(qty) { qty / 2 } else { 5 }",
+            "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 5);",
+        ),
+    ] {
+        let finding = family_finding(&bulk_source(wrapper, tests), BULK_DIFF, "return_value")?;
+        // The refusal must come from the guard, not from a lost relation.
+        assert_eq!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{wrapper}\n{tests}\n{finding}"
+        );
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{wrapper}\n{tests}\n{finding}"
+        );
+        assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    }
+    Ok(())
+}
+
+// #10284: neither twin borrows the wrapper's pins when the wrapper binds
+// the helper's name or runs a macro that may return first. Only a bare
+// standard assertion/format macro with no rebinding stays transparent;
+// logging and path-qualified macros withhold credit from both twins.
+const EPRINTLN: &str = "macro_rules! éprintln { ($q:expr) => { if $q == 10 { return 5; } }; }\n";
+const DEP_PRINTLN: &str = "use crate as dep;\n#[macro_export]\nmacro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }";
+
+#[test]
+fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), String> {
+    for wrapper in [
+        "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+        // #10351 review: U+200E is Rust whitespace, so the bang still invokes.
+        "    bail_at_ten!\u{200E}(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+    ] {
+        let source = bulk_source(wrapper, BOUNDARY_TESTS);
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_ne!(finding["classification"], "exposed", "{wrapper}\n{finding}");
+        }
+    }
+    // #10351 review: a crate-local macro may share a logging name and return
+    // before the helper runs, so `qty > 10` would still pass both pins.
+    for name in ["warn", "error", "debug", "info"] {
+        let source = format!(
+            "macro_rules! {name} {{ ($q:expr) => {{ if $q == 10 {{ return 5; }} }}; }}\n\n{}",
+            bulk_source(
+                &format!("    {name}!(qty);\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", "@@ -3,3 +3,3 @@");
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 4, "{name}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{name}\n{finding}");
+        }
+    }
+    // #10351 review: a crate alias routes a qualified logging path to an
+    // exported user macro, and a local `println!` shadows the standard one.
+    for (prelude, call) in [
+        (
+            "use crate as tracing;\n#[macro_export]\nmacro_rules! info { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "tracing::info!(qty);",
+        ),
+        (
+            "macro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }\n",
+            "println!(qty);",
+        ),
+        // Equivalent spellings of one qualified path to an exported macro.
+        (DEP_PRINTLN, "dep::println!(qty);"),
+        (DEP_PRINTLN, "dep :: println!(qty);"),
+        (DEP_PRINTLN, "dep /* routed */ :: r#println ! (qty);"),
+        // A distinct user macro whose name only ends in `println`; it binds
+        // no standard name, so only the tokenizer can refuse it.
+        (EPRINTLN, "éprintln!(qty);"),
+        (EPRINTLN, "r#éprintln!(qty);"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // Positive controls: the standard `println!`, unshadowed and in its raw
+    // spelling, stays transparent.
+    for call in ["println!(\"{qty}\");", "r#println!(\"{qty}\");"] {
+        let logged = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        assert_eq!(
+            predicate_finding(&logged, BULK_DIFF)?["classification"],
+            "exposed",
+            "{call}"
+        );
+        assert_eq!(
+            family_finding(&logged, BULK_DIFF, "return_value")?["classification"],
+            "exposed",
+            "{call}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
+    let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
+    let split = split.replace(
+        "fn quota_is_two_hundred() {",
+        "fn quota_is_two_hundred() { assert_eq!(order_discount(12), 5);",
+    );
+    let finding = family_finding(&split, BULK_DIFF, "return_value")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+
+    let source = bulk_source(FORWARDING, "        assert_eq!(order_discount(10), 5);")
+        .replace("10 <= qty", "(10 <= qty) || true");
+    let diff = BULK_DIFF
+        .replace("qty >= 10", "(qty >= 10) || true")
+        .replace("10 <= qty", "(10 <= qty) || true");
+    let finding = family_finding(&source, &diff, "return_value")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
 #[test]
 fn wrapper_tests_that_miss_the_boundary_still_report_the_gap() -> Result<(), String> {
     let tests =

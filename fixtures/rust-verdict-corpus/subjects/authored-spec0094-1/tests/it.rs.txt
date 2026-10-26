@@ -1,0 +1,6 @@
+use spec0094_1::compute_score;
+
+#[test]
+fn score_is_positive() {
+    assert!(compute_score(3) > 0);
+}

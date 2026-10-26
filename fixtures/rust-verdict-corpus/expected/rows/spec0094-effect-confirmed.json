@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0094-effect-confirmed",
+  "subject_id": "authored-spec0094-5",
+  "origin": "authored",
+  "anchor": "src/lib.rs:17",
+  "behavior_family": "call_deletion",
+  "test_shape": "unit_test_assert_eq_recorder_state",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

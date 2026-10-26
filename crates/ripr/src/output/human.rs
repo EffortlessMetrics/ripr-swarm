@@ -7112,6 +7112,13 @@ mod tests {
             "exposed/weak = tests appear to notice it fully/partly",
             "unrevealed = tests reach it but nothing appears to notice",
             "no path = no test path found",
+            // #9244 item 4 (leftover jargon): the remaining words the Summary
+            // and Counts lines print.
+            "finding = a probe reported for review",
+            "unsuppressed = not hidden by your suppression policy",
+            "unknown = analysis limited, not a verdict",
+            "base-side = evidence from the old code, not an edit target",
+            "candidate line = changed line ripr considers for probes",
         ] {
             assert!(rendered.contains(meaning), "missing {meaning}:\n{rendered}");
         }

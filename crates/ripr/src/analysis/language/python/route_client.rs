@@ -504,6 +504,51 @@ pub(super) fn client_receivers(body_text: &str) -> Vec<String> {
     receivers
 }
 
+/// Whether `name` is bound anywhere in the body other than as a parameter of
+/// the first line's `def` (a local assignment, import, loop target, ...). An
+/// application name bound this way is not the module-level import it spells.
+pub(super) fn rebinds_name(body_text: &str, name: &str) -> bool {
+    let lines = logical_lines(body_text);
+    let signature = lines
+        .first()
+        .is_some_and(|line| line_binds(line, name) && line.trim_start().contains("def "));
+    binding_count(&lines, name) > usize::from(signature)
+}
+
+/// Whether `name` is a parameter of the first line's `def` that nothing in
+/// the body rebinds, so it is the value the caller (a fixture) supplies.
+pub(super) fn is_unrebound_parameter(body_text: &str, name: &str) -> bool {
+    let lines = logical_lines(body_text);
+    lines
+        .first()
+        .is_some_and(|line| line_binds(line, name) && line.trim_start().contains("def "))
+        && binding_count(&lines, name) == 1
+}
+
+/// The name an alias chain starts from: `c = client` leads to `client`; a name
+/// with no single plain-name binding leads to itself.
+pub(super) fn client_root(body_text: &str, receiver: &str) -> String {
+    let lines = logical_lines(body_text);
+    let mut target = receiver;
+    for _ in 0..=lines.len() {
+        if binding_count(&lines, target) != 1 {
+            break;
+        }
+        let Some((_, value)) = lines
+            .iter()
+            .filter_map(|line| simple_binding(line))
+            .find(|(name, _)| *name == target)
+        else {
+            break;
+        };
+        if !is_plain_name(value) {
+            break;
+        }
+        target = value;
+    }
+    target.to_string()
+}
+
 /// The application name a receiver's client construction passes, following
 /// aliases of the client back to the construction. `None` when the chain does
 /// not end in a construction over a plain name (a fixture, a dotted or called
@@ -527,6 +572,61 @@ pub(super) fn client_app_name(body_text: &str, receiver: &str) -> Option<String>
         target = value;
     }
     None
+}
+
+/// The application name a client fixture builds its client over: every
+/// `return` / `yield` of the fixture body is a client construction over the
+/// same plain name, directly or through one bound name (`with TestClient(app)
+/// as c: yield c`). `None` when any exit is not, so a fixture whose client the
+/// adapter cannot read leaves the application unidentified.
+pub(super) fn fixture_client_app_name(fixture_body: &str) -> Option<String> {
+    let lines = logical_lines(fixture_body);
+    let mut found: Option<String> = None;
+    for line in lines.iter().flat_map(|line| line.split(';')) {
+        let line = exit_statement(line.trim());
+        let Some(value) = line
+            .strip_prefix("return ")
+            .or_else(|| line.strip_prefix("yield "))
+        else {
+            continue;
+        };
+        let value = value.trim();
+        let app = if let Some(arguments) = client_construction(value) {
+            application_argument(arguments)
+                .filter(|application| is_plain_name(application))
+                .map(str::to_string)
+        } else if is_plain_name(value) {
+            client_app_name(fixture_body, value)
+        } else {
+            None
+        }?;
+        match &found {
+            Some(existing) if *existing != app => return None,
+            _ => found = Some(app),
+        }
+    }
+    found
+}
+
+/// The `return`/`yield` statement a line ends in, so that a one-line compound
+/// suite (`if flag: return TestClient(other_app)`) counts as an exit of the
+/// fixture rather than being skipped.
+fn exit_statement(line: &str) -> &str {
+    if line.starts_with("return ") || line.starts_with("yield ") {
+        return line;
+    }
+    ["return ", "yield "]
+        .iter()
+        .filter_map(|keyword| {
+            line.match_indices(keyword).map(|(at, _)| at).find(|at| {
+                line[..*at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|before| before == ':' || before.is_whitespace())
+            })
+        })
+        .min()
+        .map_or(line, |at| &line[at..])
 }
 
 #[cfg(test)]

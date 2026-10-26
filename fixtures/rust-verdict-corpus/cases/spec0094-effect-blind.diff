@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,6 +14,6 @@
+ }
+ 
+ pub fn place(order_id: u32, notifier: &Notifier) -> bool {
+-    notifier.send(order_id + 1);
++    notifier.send(order_id);
+     true
+ }
