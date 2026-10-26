@@ -8,7 +8,7 @@ A local `macro_rules!` test table with `name => (..)` rows whose transcriber emi
 
 ## When
 
-`ripr check` analyzes the changed boundary (`n > 9` -> `n >= 10`).
+`ripr check` analyzes the changed boundary (`n > 10` -> `n >= 10`).
 
 ## Then
 
