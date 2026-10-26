@@ -1,0 +1,49 @@
+{
+  "case_id": "perl-testexception-eval-ok-no-error",
+  "subject_id": "authored-perl-testexception-forms",
+  "diff": "cases/perl-testexception-eval-ok-no-error.diff",
+  "anchor": {
+    "file": "lib/Forms.pm",
+    "line": 49
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "eval_then_ok_not_dollar_at",
+  "hard_case": "An eval whose only check is ok(!$@) observes that no exception was thrown, not the value.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 2 + $n;",
+        "mutated_line": "return 2 + $n;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 2 + 2 is 4, not 3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "eval { eval_ok(2) }; ok(!$@) still passes when the returned value changes, because the result is never read. Spec cells: RIPR-SPEC-0064 Test::Exception.",
+  "labeling_observation": {
+    "ripr_commit": "ab269548",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-eval-ok-no-error.json",
+    "sha256": "974ad5a59b134aa951ac34a0a611f8edcc602e6710b7f6a62862282f41ee5590",
+    "provenance": "producer"
+  }
+}

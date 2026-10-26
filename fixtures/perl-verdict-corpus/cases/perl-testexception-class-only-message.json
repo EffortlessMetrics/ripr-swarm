@@ -1,0 +1,49 @@
+{
+  "case_id": "perl-testexception-class-only-message",
+  "subject_id": "authored-perl-testexception-forms",
+  "diff": "cases/perl-testexception-class-only-message.diff",
+  "anchor": {
+    "file": "lib/Forms.pm",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message",
+  "test_shape": "testexception_throws_ok_class_only",
+  "hard_case": "throws_ok with a class name checks the exception class, not the message the class carries.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die Forms::Error->new(message => \"bad \" . \"value: $n\") if $n < 0;",
+        "mutated_line": "die Forms::Error->new(message => \"bad \" . \"value: $n\") if $n < 0;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the error message changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "throws_ok { class_only(-1) } 'Forms::Error' passes when only the message changes, so the message is not pinned. Spec cells: RIPR-SPEC-0064 Test::Exception.",
+  "labeling_observation": {
+    "ripr_commit": "ab269548",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-class-only-message.json",
+    "sha256": "b083315cc8c2ee8c7624e9baa002f187fbbede58497efd27c60bb359a2300e30",
+    "provenance": "producer"
+  }
+}

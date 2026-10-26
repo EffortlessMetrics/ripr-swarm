@@ -4,10 +4,13 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Seven small authored Perl distributions under `subjects/`, our own code under
+Eight small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
 `authored-perl-test2-ledger` (Test2::V0),
 `authored-perl-testexception-account` (Test::Exception),
+`authored-perl-testexception-forms` (Test::Exception edge forms: an anchored
+prefix regex, a class-only `throws_ok`, `is($@->message)` after `throws_ok`,
+`eval` with `like($@)`, `lives_and { ok(...) }` and `eval` with `ok(!$@)`),
 `authored-perl-testdeep-inventory` (Test::Deep),
 `authored-perl-moose-profile` (Moose and blessed hashes),
 `authored-perl-idioms-toolkit` (closures, wantarray, local, regexes) and

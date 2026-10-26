@@ -1,0 +1,49 @@
+{
+  "case_id": "perl-testexception-lives-and-weak-ok",
+  "subject_id": "authored-perl-testexception-forms",
+  "diff": "cases/perl-testexception-lives-and-weak-ok.diff",
+  "anchor": {
+    "file": "lib/Forms.pm",
+    "line": 44
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "testexception_lives_and_ok_positive",
+  "hard_case": "lives_and { ok($v > 0) } pins only the sign of the returned value.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 4 * $n;",
+        "mutated_line": "return 4 * $n;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 2 * 4 is 8, not 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ok(lives_weak(2) > 0) still passes when the multiplier changes, so the returned value is not pinned. Spec cells: RIPR-SPEC-0064 Test::Exception.",
+  "labeling_observation": {
+    "ripr_commit": "ab269548",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-lives-and-weak-ok.json",
+    "sha256": "b68bf13342db36972d7cd350c71a89c2f6864d681ad92248ddabc98b33c48567",
+    "provenance": "producer"
+  }
+}

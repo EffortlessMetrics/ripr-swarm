@@ -1,0 +1,13 @@
+diff --git a/lib/Forms.pm b/lib/Forms.pm
+index a64ea0b..307b4c0 100644
+--- a/lib/Forms.pm
++++ b/lib/Forms.pm
+@@ -29,7 +29,7 @@ sub class_only {
+ 
+ sub class_then_message {
+     my ($n) = @_;
+-    die Forms::Error->new(message => "bad range: $n") if $n > 100;
++    die Forms::Error->new(message => "bad " . "range: $n") if $n > 100;
+     return $n;
+ }
+ 

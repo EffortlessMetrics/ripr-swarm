@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testexception-eval-like-dollar-at",
+  "subject_id": "authored-perl-testexception-forms",
+  "diff": "cases/perl-testexception-eval-like-dollar-at.diff",
+  "anchor": {
+    "file": "lib/Forms.pm",
+    "line": 38
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message",
+  "test_shape": "eval_then_like_dollar_at",
+  "hard_case": "A plain eval followed by like($@, qr//) pins the message without a Test::Exception call.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die \"zero \" . \"refused\\n\" if $n == 0;",
+        "mutated_line": "die \"zero \" . \"refused\\n\" if $n == 0;",
+        "outcome": "tests_failed",
+        "failing_test": "t/forms.t: zero is refused",
+        "equivalence_review": "not equivalent: the message changes"
+      },
+      {
+        "replacement": "die \"zero \" . \"not allowed\\n\" if $n == 1;",
+        "mutated_line": "die \"zero \" . \"not allowed\\n\" if $n == 1;",
+        "outcome": "tests_failed",
+        "failing_test": "t/forms.t: zero is refused",
+        "equivalence_review": "not equivalent: zero no longer dies"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "like($@, qr/zero not allowed/) after eval fails when the message changes or the guard stops firing. Spec cells: RIPR-SPEC-0064 Test::Exception.",
+  "labeling_observation": {
+    "ripr_commit": "ab269548",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-eval-like-dollar-at.json",
+    "sha256": "965da378c832c0e381238c4a054b61c759ec3edd11d85ab88378aaa2b472ce75",
+    "provenance": "producer"
+  }
+}

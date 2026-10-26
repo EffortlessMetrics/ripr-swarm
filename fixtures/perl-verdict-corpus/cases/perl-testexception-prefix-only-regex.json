@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testexception-prefix-only-regex",
+  "subject_id": "authored-perl-testexception-forms",
+  "diff": "cases/perl-testexception-prefix-only-regex.diff",
+  "anchor": {
+    "file": "lib/Forms.pm",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message",
+  "test_shape": "testexception_throws_ok_anchored_prefix_regex",
+  "hard_case": "throws_ok with an anchored prefix regex pins the head of the message but not its tail.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die \"insufficient: \" . \"want $n\\n\" if $n > 5;",
+        "mutated_line": "die \"insufficient: \" . \"want $n\\n\" if $n > 5;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the message tail changes"
+      },
+      {
+        "replacement": "die \"required: \" . \"need $n\\n\" if $n > 5;",
+        "mutated_line": "die \"required: \" . \"need $n\\n\" if $n > 5;",
+        "outcome": "tests_failed",
+        "failing_test": "t/forms.t: the prefix names the failure",
+        "equivalence_review": "not equivalent: the message head changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "throws_ok { prefix_only(9) } qr/^insufficient/ fails when the head changes and passes when only the tail does, so one of two mutants survives. Spec cells: RIPR-SPEC-0064 Test::Exception.",
+  "labeling_observation": {
+    "ripr_commit": "ab269548",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-prefix-only-regex.json",
+    "sha256": "72f24ddcf3d41d2e2bf1bdb39d63d0bf3d68daa877abd02ed528f770d21072e6",
+    "provenance": "producer"
+  }
+}

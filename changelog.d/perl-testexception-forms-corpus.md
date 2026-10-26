@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Perl verdict corpus: 6 `perl-testexception-*` cases on `authored-perl-testexception-forms` covering Test::Exception edge forms (an anchored prefix regex, a class-only `throws_ok`, `is($@->message)` after `throws_ok`, `eval` with `like($@)`, `lives_and { ok(...) }`, `eval` with `ok(!$@)`), labelled by `prove -l t` mutant runs against packets from the pinned producer; no new false verdicts; two discriminating rows abstain on the producer's zero-based lines and are accepted in `missed-credit.toml` (#3221, #6586).

@@ -1,0 +1,13 @@
+diff --git a/lib/Forms.pm b/lib/Forms.pm
+index a64ea0b..5a3a29f 100644
+--- a/lib/Forms.pm
++++ b/lib/Forms.pm
+@@ -17,7 +17,7 @@ use warnings;
+ 
+ sub prefix_only {
+     my ($n) = @_;
+-    die "insufficient: need $n\n" if $n > 5;
++    die "insufficient: " . "need $n\n" if $n > 5;
+     return $n;
+ }
+ 

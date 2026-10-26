@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-testexception-forms",
+  "origin": "authored",
+  "version_label": "authored@ab269548",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Forms.pm",
+      "sha256": "4026e1baa9da740cbf16edf071ed2430d65e7a42c71ca1b77666f593c11457ed"
+    },
+    {
+      "path": "t/forms.t",
+      "sha256": "773eb7aece23bd74b6f504e246c13159af3422c387f9c3424209a41a92e2e9ec"
+    }
+  ]
+}
