@@ -90,6 +90,32 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     if let Some(note) = &resolution.at_note {
         disclosure.warnings.insert(0, note.clone());
     }
+    // #10683: a related test already reaches the boundary and only its
+    // assertion is weak. A second skeleton test would not fix that; point at
+    // the existing test with `check`'s wording instead.
+    if let Some(guidance) = &resolution.weak_oracle_guidance {
+        const KIND: &str = "existing_test_weak_oracle";
+        if options.json {
+            let document = serde_json::json!({
+                "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
+                "kind": "rust_test_stub",
+                "seam_id": resolution.seam_id,
+                "owner": resolution.owner,
+                "state": "refused",
+                "refusal": {"kind": KIND, "reason": guidance},
+                "grip_class": disclosure.grip_class,
+                "classification": disclosure.classification,
+                "warnings": disclosure.warnings,
+            });
+            write_stdout_refusal_json(render(&document)?).map_err(CommandError::Failure)?;
+        }
+        return Err(CommandError::Decision(refusal_message(
+            &resolution.seam_id,
+            KIND,
+            guidance,
+            resolution.at_note.as_deref(),
+        )));
+    }
     let stub = match &resolution.outcome {
         Ok(stub) => stub,
         Err(refusal) => {

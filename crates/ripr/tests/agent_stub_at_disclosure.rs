@@ -34,8 +34,12 @@ impl Drop for Scratch {
     }
 }
 
+fn ripr_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
+
 fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    let mut command = ripr_command();
     command
         .args(["agent", "stub", "--root"])
         .arg(root)
@@ -49,7 +53,7 @@ fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String>
 }
 
 fn stub_write(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    let mut command = ripr_command();
     command
         .args(["agent", "stub", "--root"])
         .arg(root)
@@ -287,6 +291,74 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
         return Err(format!(
             "the disclosure must name the real reason, not 'configured off': {warning}"
         ));
+    }
+    Ok(())
+}
+
+/// #10683: a related test already reaches the changed boundary and its
+/// assertion is a weak check. `agent stub` must not write a second skeleton
+/// test with `todo!()` placeholders and `repair` must not ask for a new
+/// boundary test or print producer-internal evidence names; both reuse
+/// `check`'s wording and point at the existing test. The control (same crate
+/// without the test) keeps the skeleton.
+#[test]
+fn weak_oracle_boundary_points_at_the_existing_test_instead_of_a_new_one() -> Result<(), String> {
+    const LIB: &str = "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty > 10 { price * 10 / 100 } else { 0 }\n}\n";
+    const WEAK_TEST: &str =
+        "use weakoracle::discount;\n#[test]\nfn t() {\n    assert!(discount(10, 10) > 0);\n}\n";
+    let scratch = Scratch::create("weakoracle", LIB)?;
+    let control = Scratch::create("weakoracle", LIB)?;
+    std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("tests/t.rs"), WEAK_TEST).map_err(|error| error.to_string())?;
+
+    let wording = "write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected)";
+    let pointer = "Related test: tests/t.rs:3 t";
+
+    let human = stub(&scratch.0, "src/lib.rs:2", "predicate", false)?;
+    let stdout = String::from_utf8_lossy(&human.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&human.stderr).to_string();
+    if human.status.code() != Some(3)
+        || !stderr.contains(wording)
+        || !stderr.contains(pointer)
+        || stdout.contains("todo!")
+    {
+        return Err(format!(
+            "weak-oracle stub must refuse with check's wording and the test, no skeleton: status={:?} stdout={stdout} stderr={stderr}",
+            human.status.code()
+        ));
+    }
+
+    let json = stub(&scratch.0, "src/lib.rs:2", "predicate", true)?;
+    let envelope: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("refusal envelope did not parse: {error}"))?;
+    if envelope["state"] != "refused" || envelope["refusal"]["kind"] != "existing_test_weak_oracle"
+    {
+        return Err(format!("expected the weak-oracle refusal: {envelope}"));
+    }
+
+    let repair = ripr_command()
+        .args(["repair", "--root"])
+        .arg(&scratch.0)
+        .output()
+        .map_err(|error| format!("spawn ripr repair: {error}"))?;
+    let repair_err = String::from_utf8_lossy(&repair.stderr).to_string();
+    if !repair_err.contains(wording)
+        || !repair_err.contains(pointer)
+        || repair_err.contains("producer-owned")
+        || repair_err.contains("write the boundary test")
+    {
+        return Err(format!(
+            "repair must reuse check's wording and name the test: {repair_err}"
+        ));
+    }
+    if repair.status.success() {
+        return Err("repair eligibility must stay fail-closed for this seam".to_string());
+    }
+
+    // Control: no related test, so the boundary test is the right ask.
+    let ready = stub(&control.0, "src/lib.rs:2", "predicate", false)?;
+    if !ready.status.success() || !String::from_utf8_lossy(&ready.stdout).contains("todo!") {
+        return Err("the no-test control must keep the skeleton".to_string());
     }
     Ok(())
 }

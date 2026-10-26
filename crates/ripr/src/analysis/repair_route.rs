@@ -241,6 +241,45 @@ pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
     )
 }
 
+/// The seam-side twin of `check`'s boundary-observed weak-oracle gate (#10683;
+/// `domain::boundary_input_observed_with_weak_oracle` is the finding side): a
+/// weakly gripped predicate boundary whose activation is observed, with no
+/// missing boundary fact left to name, and whose only credited related oracle
+/// is a weak check on a direct, admitted existing Rust test. Returns that test:
+/// the remaining work is strengthening its assertion, not writing a new test.
+/// Guidance only; repair eligibility is decided by `repair_packet_eligibility`
+/// and stays fail-closed (this seam has no discriminator fact, so it is never
+/// repair-ready).
+pub(crate) fn boundary_observed_weak_oracle_test(
+    entry: &ClassifiedSeam,
+) -> Option<&RelatedTestGrip> {
+    let evidence = &entry.evidence;
+    if entry.seam.kind() != SeamKind::PredicateBoundary
+        || entry.class != SeamGripClass::WeaklyGripped
+        || evidence.activate.state != StageState::Yes
+        || !evidence.missing_discriminators.is_empty()
+        || cross_language_oracle_visibility_unresolved(entry)
+        || cross_language_test_target_unresolved(entry)
+        || evidence.related_tests.iter().any(|test| {
+            matches!(
+                test.oracle_strength,
+                OracleStrength::Strong | OracleStrength::Medium
+            )
+        })
+    {
+        return None;
+    }
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall
+                && test.test_target.is_some()
+                && test.oracle_strength == OracleStrength::Weak
+        })
+        .map(Arc::as_ref)
+}
+
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
     let discriminator_evidence =
         producer_discriminator_evidence(seam.required_discriminator().as_str());
