@@ -13766,6 +13766,11 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_boundary_assertions_credit_the_same_owner_result",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_boundary_assertions_do_not_borrow_unobserved_or_wrong_results",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_consistency_distinguishes_the_current_true_and_false_result",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_consistency_requires_representable_matching_integer_literals",
+  "crates/ripr/tests/boundary_gap_closure/boolean_owner_pin.rs::natural_boolean_repair_receipt_requires_the_boundary_result",
   "crates/ripr/src/analysis/classify/poll_helper.rs::tests::the_polling_loop_is_a_helper",
   "crates/ripr/src/analysis/classify/poll_helper.rs::tests::the_match_spelling_and_std_paths_are_a_helper",
   "crates/ripr/src/analysis/classify/poll_helper.rs::tests::a_helper_that_changes_the_output_is_not_one",
@@ -14281,6 +14286,8 @@ fixtures = [
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/test_grip_evidence/boolean_boundary_pin.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/classify/poll_helper.rs",
   "crates/ripr/src/analysis/classify/mask_pin.rs",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",

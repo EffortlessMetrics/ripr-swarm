@@ -549,7 +549,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.113`: a clean `#[test_case(.. => literal)]` row credits as the
 /// harness-compared return (RIPR-SPEC-0231 rule 9, #9619). Old entries keep
 /// the row unread.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.113";
+/// `1.114`: a direct bare boolean assertion can grip its whole primitive
+/// integer boundary after owner admission, consistency and exact-call pairing
+/// (#8610). Old entries retain the missed weak repair result.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.114";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -709,7 +712,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.113";
 /// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.120";
+/// `0.121`: same boolean boundary grip as full `1.114` (#8610).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -871,7 +875,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.120";
 /// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.120";
+/// `0.121`: same boolean boundary grip as full `1.114` (#8610).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only

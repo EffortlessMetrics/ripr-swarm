@@ -12,17 +12,22 @@
 //! actionable repair signal is worse than a missed advisory finding, so the
 //! fold's contradiction must be typed instead of credited.
 //!
-//! Scope is deliberately narrow and fail-closed toward the current credit:
+//! The existing integer entrypoints are fail-closed toward the current credit:
 //! when the owner is not a free function of pure literal arithmetic, when any
 //! argument or expected expression does not fold, or when anything about the
 //! shape is unexpected, the verdict is [`ExactValueVerdict::NotEvaluable`]
 //! and every consumer keeps today's behavior. Only a fold that completes and
 //! contradicts the asserted relation downgrades the oracle, states the
 //! contradiction in the receipt, and stops closing the gap. The downgrade
-//! direction is always weaker, so a fold bug cannot manufacture stronger
-//! evidence — it can only withhold it.
+//! direction is always weaker for those entrypoints, so a fold bug can only
+//! withhold their evidence.
+//!
+//! #8610 also reads a boolean result for a narrowly admitted direct assertion:
+//! a whole comparison of primitive integer parameters/literals, called with
+//! literal integer arguments. Only a completed, consistent boolean fold may
+//! pass that new pin's consistency gate; unknown is never promotion evidence.
 
-use crate::analysis::extract::equality_assertion_arguments;
+use crate::analysis::extract::{equality_assertion_arguments, outer_assertion_condition};
 use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -99,6 +104,141 @@ pub(super) fn exact_value_assertion_verdict_for_test(
         }
     }
     verdict
+}
+
+/// Consistency for #8610's already owner-admitted `assert!(owner(literal))`
+/// or `assert!(!owner(literal))`. This never invents equality assertion text.
+/// Qualified calls, let-bound results, parameterized tests and unread owner
+/// shapes stay not evaluable; the caller must not raise their strength.
+pub(super) fn boolean_assertion_verdict_for_test(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test: &TestSummary,
+) -> ExactValueVerdict {
+    if bare_owner_call_is_shadowed(test, &owner.name) {
+        return ExactValueVerdict::NotEvaluable;
+    }
+    let Some(condition) = outer_assertion_condition(oracle_text) else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    let (operand, expected) = match condition.trim().strip_prefix('!') {
+        Some(negated) => (negated.trim_start(), false),
+        None => (condition.trim(), true),
+    };
+    let Some(arguments) = owner_call_arguments(operand, &owner.name) else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    let Some(actual) = fold_boolean_owner_call(owner, &arguments) else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    if actual == expected {
+        ExactValueVerdict::Consistent
+    } else {
+        ExactValueVerdict::Contradicted {
+            expected: expected.to_string(),
+            evaluated: i128::from(actual),
+        }
+    }
+}
+
+fn whole_integer_literal(text: &str) -> Option<i128> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let tokens = tokenize(&masked)?;
+    match tokens.as_slice() {
+        [Token::Int(value)] => Some(*value),
+        [Token::Symbol("-"), Token::Int(value)] => value.checked_neg(),
+        _ => None,
+    }
+}
+
+fn integer_literal_in_type(text: &str, ty: &str) -> Option<i128> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let literal = masked.trim();
+    if INTEGER_SUFFIXES
+        .iter()
+        .find(|suffix| literal.ends_with(**suffix))
+        .is_some_and(|suffix| *suffix != ty)
+    {
+        return None;
+    }
+    let value = whole_integer_literal(text)?;
+    let (low, high) = declared_integer_range(ty)?;
+    (low..=high).contains(&value).then_some(value)
+}
+
+/// Reuse the fold only where integer comparison has primitive Rust semantics.
+/// No arithmetic, overloadable operand, pointer-sized type or hidden statement
+/// can obtain the new boolean credit from the fold's integer approximation.
+fn fold_boolean_owner_call(owner: &FunctionSummary, arguments: &[String]) -> Option<bool> {
+    let parse = parse_clean_source_file(owner.body.as_str())?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function
+        .ret_type()?
+        .syntax()
+        .text()
+        .to_string()
+        .replace(' ', "")
+        != "->bool"
+    {
+        return None;
+    }
+    let parameters = function.param_list()?;
+    if parameters.self_param().is_some() || parameters.params().count() != arguments.len() {
+        return None;
+    }
+    let mut names = Vec::new();
+    let mut types = Vec::new();
+    let mut values = Vec::new();
+    for (parameter, argument) in parameters.params().zip(arguments) {
+        let ty = parameter.ty()?.syntax().text().to_string();
+        values.push(integer_literal_in_type(argument, &ty)?);
+        let ast::Pat::IdentPat(name) = parameter.pat()? else {
+            return None;
+        };
+        if name.pat().is_some() || name.ref_token().is_some() {
+            return None;
+        }
+        names.push(name.name()?.text().to_string());
+        types.push(ty);
+    }
+    let body = function.body()?;
+    if body.stmt_list()?.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::BinExpr(comparison) = body.tail_expr()? else {
+        return None;
+    };
+    if !matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+        return None;
+    }
+    let left = comparison.lhs()?.syntax().text().to_string();
+    let right = comparison.rhs()?.syntax().text().to_string();
+    let parameter_type = |operand: &str| {
+        let masked = crate::analysis::extract::mask_comments_and_strings(operand);
+        let tokens = tokenize(&masked)?;
+        match tokens.as_slice() {
+            [Token::Ident(name)] => names
+                .iter()
+                .position(|parameter| parameter == name)
+                .map(|position| types[position].as_str()),
+            _ => None,
+        }
+    };
+    match (parameter_type(&left), parameter_type(&right)) {
+        (Some(left_type), Some(right_type)) if left_type == right_type => {}
+        (Some(ty), None) => {
+            integer_literal_in_type(&right, ty)?;
+        }
+        (None, Some(ty)) => {
+            integer_literal_in_type(&left, ty)?;
+        }
+        _ => return None,
+    }
+    bool_value(fold_function_value(owner.body.as_str(), &values)?)
 }
 
 /// The `#[case]` parameter bindings of each `#[case(..)]` row of an rstest
@@ -664,6 +804,15 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
 /// [`fold_owner_call`] over the function's source text, so a baseline body
 /// can be folded beside the current one.
 fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
+    match fold_function_value(body, arguments)? {
+        Value::Int(value) => Some(value),
+        Value::Bool(_) => None,
+    }
+}
+
+/// Keep the parser's result type so the narrow boolean caller can inspect it.
+/// Existing integer callers still reject a boolean through `fold_function_text`.
+fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
     let parse = parse_clean_source_file(body)?;
     let function = parse
         .tree()
@@ -1481,7 +1630,7 @@ fn fold_block(
     environment: &BTreeMap<String, i128>,
     range: Option<(i128, i128)>,
     uniform: Option<(i128, i128)>,
-) -> Option<i128> {
+) -> Option<Value> {
     let mut parser = Parser {
         tokens,
         position: 0,
@@ -1493,10 +1642,7 @@ fn fold_block(
     if parser.position != tokens.len() {
         return None;
     }
-    match value {
-        Value::Int(value) => Some(value),
-        Value::Bool(_) => None,
-    }
+    Some(value)
 }
 
 #[cfg(test)]
