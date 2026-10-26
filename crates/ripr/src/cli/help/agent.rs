@@ -14,7 +14,7 @@ Advanced and compatibility workflows:
   stub       Write a compiling Rust test stub for one gap, ready to fill and run.
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
-             Run the one validated, bounded, read-only verify command a packet names.
+             Run the one validated, bounded, read-only verify command that a packet names.
   receipt    Summarize one seam from agent verify JSON for review handoff.
   review-summary
              Join agent-loop artifacts into a compact review packet.
