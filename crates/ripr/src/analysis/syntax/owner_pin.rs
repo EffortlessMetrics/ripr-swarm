@@ -4821,6 +4821,8 @@ fn table_column(
                     | "|"
                     | "||"
                     | "&&"
+                    // `?` leaves the test on an error, so later rows may not run.
+                    | "?"
             )
         })
     {
