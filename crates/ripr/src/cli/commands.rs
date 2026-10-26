@@ -9,6 +9,7 @@ use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
@@ -3464,7 +3465,26 @@ pub(super) fn drill_in_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
-    lsp_with_serve(args, crate::lsp::serve)
+    lsp_with_serve(args, || {
+        write_lsp_terminal_hint(
+            std::io::stdin().is_terminal(),
+            &mut std::io::stderr().lock(),
+        );
+        crate::lsp::serve()
+    })
+}
+
+/// A person who typed `ripr lsp --stdio` at a prompt would otherwise see a
+/// silent hang; an editor pipes stdin, so the hint never reaches one. stderr
+/// only (stdout carries LSP framing), and best effort so an unwritable stderr
+/// cannot keep the server from starting (issue #10347).
+fn write_lsp_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
+    if stdin_is_terminal {
+        let _ = writeln!(
+            stderr,
+            "ripr lsp: waiting for an editor on stdin (this is a language server, not an interactive command); start it from your editor, or press Ctrl-D to exit."
+        );
+    }
 }
 
 /// Argument dispatch for `ripr lsp`, separated from the blocking stdio
@@ -8985,6 +9005,37 @@ language = "rust"
             lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
             Err("transport down".to_string())
         );
+    }
+
+    #[test]
+    fn lsp_terminal_hint_is_written_only_for_terminal_stdin() {
+        let mut shown = Vec::new();
+        write_lsp_terminal_hint(true, &mut shown);
+        let text = String::from_utf8_lossy(&shown);
+        assert!(
+            text.starts_with("ripr lsp: waiting for an editor on stdin"),
+            "{text}"
+        );
+        assert!(text.contains("Ctrl-D"), "{text}");
+        assert_eq!(text.matches('\n').count(), 1, "single line: {text}");
+
+        let mut piped = Vec::new();
+        write_lsp_terminal_hint(false, &mut piped);
+        assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn lsp_terminal_hint_survives_an_unwritable_stderr() {
+        struct Closed;
+        impl std::io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_lsp_terminal_hint(true, &mut Closed);
     }
 
     #[test]

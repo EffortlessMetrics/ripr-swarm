@@ -31,6 +31,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related Python test(s) found for owner `apply_discount`
     - infection unknown: Static limit `unresolved_pytest_fixture` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
@@ -38,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_unresolved_fixture_limit/input --diff <cwd>/fixtures/python_unresolved_fixture_limit/diff.patch --mode fast probe:src_pricing.py:python_preview:ca00849b
   ripr context --root <cwd>/fixtures/python_unresolved_fixture_limit/input --diff <cwd>/fixtures/python_unresolved_fixture_limit/diff.patch --mode fast --at probe:src_pricing.py:python_preview:ca00849b
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.py:python_preview:ca00849b --root <cwd>/fixtures/python_unresolved_fixture_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

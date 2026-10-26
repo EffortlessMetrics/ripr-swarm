@@ -376,13 +376,51 @@ fn evidence_quality_scorecard_inputs(
             None,
             "machine-readable capability maturity metadata",
         )?,
-        traceability: scorecard_input_artifact(
-            Path::new(".ripr/traceability.toml"),
-            "loaded",
-            None,
-            "spec/test/code/output/metric linkage",
-        )?,
+        traceability: scorecard_traceability_input()?,
     })
+}
+
+/// The traceability input. The effective mapping is `.ripr/traceability.toml`
+/// plus every `.ripr/traceability.d/*.toml` fragment, so with fragments present
+/// the recorded hash covers each file's path and content; a fragment-only edit
+/// then changes the receipt identity. Without fragments it is the base
+/// manifest's own hash, as before.
+pub(crate) fn scorecard_traceability_input() -> Result<EvidenceQualityScorecardInput, String> {
+    let mut input = scorecard_input_artifact(
+        Path::new(".ripr/traceability.toml"),
+        "loaded",
+        None,
+        "spec/test/code/output/metric linkage",
+    )?;
+    let Some(base_sha) = input.sha256.clone() else {
+        return Ok(input);
+    };
+    let mut fragments: Vec<PathBuf> = match fs::read_dir(".ripr/traceability.d") {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    if fragments.is_empty() {
+        return Ok(input);
+    }
+    fragments.sort();
+    let mut combined = format!(".ripr/traceability.toml {base_sha}\n");
+    for fragment in &fragments {
+        combined.push_str(&format!(
+            "{} {}\n",
+            normalize_path(fragment),
+            sha256_file(fragment)?
+        ));
+    }
+    input.sha256 = Some(crate::blind_journey::sha256_hex(combined.as_bytes()));
+    input.note = Some(format!(
+        "spec/test/code/output/metric linkage (base manifest plus {} fragment file(s))",
+        fragments.len()
+    ));
+    Ok(input)
 }
 
 fn scorecard_input_artifact(
@@ -2925,12 +2963,7 @@ fn write_limited_evidence_quality_trend_for_previous_input_failure(
             None,
             "class-scoped capability maturity vocabulary",
         )?,
-        traceability: scorecard_input_artifact(
-            Path::new(".ripr/traceability.toml"),
-            "loaded",
-            None,
-            "spec/test/code/output/metric linkage",
-        )?,
+        traceability: scorecard_traceability_input()?,
     };
     let previous_artifact_path = inputs.previous_artifact.path.clone();
     let mut report = evidence_quality_trend_from_values(
@@ -3039,12 +3072,7 @@ fn evidence_quality_trend_inputs(
             None,
             "class-scoped capability maturity vocabulary",
         )?,
-        traceability: scorecard_input_artifact(
-            Path::new(".ripr/traceability.toml"),
-            "loaded",
-            None,
-            "spec/test/code/output/metric linkage",
-        )?,
+        traceability: scorecard_traceability_input()?,
     })
 }
 

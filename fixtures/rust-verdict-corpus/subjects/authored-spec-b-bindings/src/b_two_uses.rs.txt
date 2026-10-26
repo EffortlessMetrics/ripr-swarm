@@ -1,0 +1,22 @@
+//! One changed binding with two direct comparison uses.
+
+pub fn within(text: &str, lo: usize, hi: usize) -> bool {
+    let end = text.len();
+    if end < lo {
+        return false;
+    }
+    end <= hi
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn both_bounds_are_pinned_b_two_uses() {
+        assert!(within("ab", 2, 4));
+        assert!(!within("a", 2, 4));
+        assert!(within("abcd", 2, 4));
+        assert!(!within("abcde", 2, 4));
+    }
+}

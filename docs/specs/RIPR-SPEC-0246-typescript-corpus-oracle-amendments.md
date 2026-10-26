@@ -321,13 +321,59 @@ discriminates the change; that credit is deferred (Decision 9).
 
 **Rule 8. A counted-loop header change read only through a mock call count is
 unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
-both counted `for (init; test; update)` headers that differ, and a related
-oracle-eligible test asserts a mock's call count (`callCount()` or
-`calls.length` in the observed expression), a ladder result of
-`weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
-`gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
-loop header, and the adapter does not model how many iterations the loop
-runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
+both counted `for (init; test; update)` headers that differ (a leading label
+is skipped; whitespace beside brackets, commas and comparison operators is
+ignored; literal contents and `+`/`-` spacing are not, and a header holding a
+`/` is compared as written), and a related test that runs the owner asserts
+the call count of a mock whose flow the rule cannot rule out of the owner, a
+ladder result of `weakly_exposed` with a strong oracle reads `static_unknown`
+with stop reason `gap_evidence_unresolved`.
+
+*Counted mock.* Only an assertion counts: a count read in the observed or
+expected expression (`m.mock.callCount()`, `m.mock.calls.length`,
+`m.callCount`, `m.calledTwice`, `m.getCalls()`), a local that holds one
+(`const n = m.mock.callCount(); assert.equal(n, 2)`), a local that aliases
+`m.mock` (`const { calls } = m.mock`), or `expect(m).toHaveBeenCalledTimes(n)`.
+The mock is the root of the receiver (`other.m.mock.callCount()` counts
+`other`). A count that no assertion reads cannot fail the test and asserts
+nothing.
+
+*Unresolved flow.* Owner binding and mock flow are separate. The owner names
+come from `ts_owner_call_names`, plus a local whose declaration, assignment,
+function or class mentions one (`const r = owner`, `const go = (f) =>
+owner(f)`, `function go(f) { return owner(f); }`, `class H { go(f) {...} }`).
+For methods, only receivers the test builds from the owner's class count
+(`svc.retry`, or an inline `new Svc().retry`; a foreign `(new Other()).retry` is another binding, and a class that merely declares a method named like the owner does not mention it), and a same-named local cannot shadow the property (a bare `retry(fn)` is the method only when the test binds that name to it, `const retry = svc.retry.bind(svc)`). The mock
+and every local assigned from an expression that mentions it (declaration,
+assignment, destructuring, container, multi-line) are carriers, and a count
+read through a local built from plain references to the mock (`const spy =
+m`, `[m]`, `{ m }`) counts the mock too. The rule abstains when a statement
+that mentions the owner also mentions a carrier, when a call that received a
+carrier (including a callback body split across statements and its chained
+`.then(...)`) mentions the owner anywhere in its span, or when a carrier is
+used anywhere the rule cannot show is unrelated. The only unrelated uses are:
+a plain local binding with no call around the mock, a direct invocation
+(`m()`, but not inside a closure that is built to be handed on), a state read or configuration of the mock itself (`m.mock…`,
+`m.callCount`, `m.calledOnce`), `expect(m)`, an argument of a call on an
+observing receiver (`console`, `assert`, `expect`, `JSON`, `Math`, `t.assert`) or of
+`assert(...)`, `String(...)`, `setTimeout`/`setInterval`/`queueMicrotask`, an argument of a member that
+shares the owner's name on another receiver (`other.owner(m)`), and an
+argument of a body-local function that does not reach the owner. Every other
+callee is unresolved flow and abstains, so a call that may store or forward
+the mock (`h.push(m)`, `outer.mockImplementation(m)`, `reg.register(m)`)
+abstains. A member value (`owner(other.m)`), an object key (`{ m: x }`), a
+callback or function parameter, or a `const`/`let`/`var` declared inside the callback, that rebinds the name (`async (m = g) =>
+m()`) and text in a comment or string are not uses of the mock. A call count
+on a mock that never leaves its declaration and its count reads stays an
+actionable gap. The rule fires only when the ladder's oracle is strong, so
+`expect(m).toHaveBeenCalledTimes(n)` (a medium oracle) abstains only beside a
+strong assertion. An owner spelling the adapter does not link as a call
+(`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`) has only
+a heuristic relation (`ambiguous_related_test`) and never routes a repair
+packet. Multi-line `for (` headers, `while`, and chained labels are not read.
+The predicate-boundary witness does not apply to a loop header, and the
+adapter does not model how many iterations the loop runs, so neither a gap
+nor a credit is established. `for...of`, `for...in`,
 `while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
 `static_unknown`; it credits nothing. The credit, which needs an iteration
 count model, is tracked in #9874.

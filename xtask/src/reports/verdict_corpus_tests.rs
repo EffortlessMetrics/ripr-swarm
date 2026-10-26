@@ -1609,9 +1609,9 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
         "fixtures/typescript-verdict-corpus/spec-coverage.toml"
     );
     assert!(
-        coverage.floor >= 109 && coverage.floor <= coverage.covered_examples,
+        coverage.locked_examples >= 109 && coverage.locked_examples <= coverage.covered_examples,
         "typescript ledger floor {} against {} covered",
-        coverage.floor,
+        coverage.locked_examples,
         coverage.covered_examples
     );
     // Every RIPR-SPEC-0243 example has a case. The example count is not
@@ -1708,9 +1708,9 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 40 && coverage.floor <= coverage.covered_examples,
+        coverage.locked_examples >= 40 && coverage.locked_examples <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
-        coverage.floor,
+        coverage.locked_examples,
         coverage.covered_examples
     );
     for example in (1..=34).filter(|&n| n != 10) {

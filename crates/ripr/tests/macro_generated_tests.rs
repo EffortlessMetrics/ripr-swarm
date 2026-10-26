@@ -517,7 +517,9 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
         ExposureClass::Exposed,
         ExposureClass::InfectionUnknown,
         ExposureClass::InfectionUnknown,
-        ExposureClass::WeaklyExposed,
+        // The twin's test mentions the owner only as a value (`let _x = gate;`),
+        // which withholds the gap (RIPR-SPEC-0240, #9442).
+        ExposureClass::StaticUnknown,
         ExposureClass::StaticUnknown,
         ExposureClass::NoStaticPath,
         ExposureClass::StaticUnknown,
