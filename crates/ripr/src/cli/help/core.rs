@@ -56,7 +56,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format FORMAT] [--quiet]
 
 Options:
   --root PATH       Workspace root. Defaults to the current directory, then
@@ -634,8 +634,9 @@ Options:
                 that changed nothing: timing fields are omitted. The human
                 screen always prints its run-time summary; --timings only
                 affects --json.
-  --profile     Check installed-binary analysis (default) or prerequisites for
-                building RIPR from source.
+  --profile NAME  Select the doctor profile: analysis (default; checks the
+                  installed binary) or source-build (prerequisites for
+                  building RIPR from source).
 
 Environment variables:
   RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and

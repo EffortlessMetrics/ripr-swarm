@@ -3070,8 +3070,13 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        _ => Err(format!(
-            "unknown diff format {value:?}; expected `human`, `text`, `md`, `markdown`, or `json`"
+        // Route through the shared value-error helper so a format typo meets
+        // the same "Accepted: ..." contract (plus a near-miss suggestion) as
+        // every other `--format` value in the CLI (#10543).
+        _ => Err(unknown_value(
+            "diff format",
+            value,
+            &["human", "text", "md", "markdown", "json"],
         )),
     }
 }
