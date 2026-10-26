@@ -62,6 +62,11 @@ fn local_assertion_macro_that_does_not_expand_exactly_stays_capped_at_unknown()
             "assert_gate!(11);",
         ),
         (
+            "a transcriber that spans lines",
+            "($x:expr) => {{ assert_eq!(\n            gate($x),\n            true\n        ); }};",
+            "assert_gate!(11);",
+        ),
+        (
             "a tautology after substitution",
             "($x:expr, $y:expr) => {{ assert_eq!($x, $y); }};",
             "assert_gate!(gate(11), gate(11));",

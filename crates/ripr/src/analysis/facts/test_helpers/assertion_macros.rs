@@ -261,6 +261,12 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
     }
     let statement = single_assertion_statement(&arm.transcriber)?;
     let expanded = substitute_fragments(statement, &names, &arguments)?;
+    // The expansion replaces the call's text in place and the call's own
+    // newlines are re-added as padding, so a line break inside the expansion
+    // would shift every later line.
+    if expanded.contains('\n') {
+        return None;
+    }
     let mut assertions = extract_assertions(&expanded, call.start_line);
     if assertions.len() != 1 {
         return None;
