@@ -14076,6 +14076,84 @@
           "type": "must_not_emit_repair_packet"
         }
       ]
+    },
+    {
+      "id": "python_table_continued_foreign_store",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_continued_foreign_store",
+      "vector": "dict_after_a_semicolon_continuation_is_watched_for_foreign_stores",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_continued_store_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_continued_store_removed",
+      "vector": "continued_dict_without_a_foreign_store_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_reexport_reflection",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reexport_reflection",
+      "vector": "reflective_store_through_a_reexported_module_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reexport_no_reflection",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reexport_no_reflection",
+      "vector": "reexported_table_without_reflection_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_code_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_code_replacement",
+      "vector": "reader_code_replacement_withholds_table_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_code_replacement_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_code_replacement_removed",
+      "vector": "reader_without_code_replacement_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
     }
   ]
 }

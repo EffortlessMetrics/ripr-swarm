@@ -23,6 +23,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_parenthesized_dict_is_guarded_like_a_plain_one",
   "crates/ripr/src/analysis/language/python/table_reads_tests.rs::a_parenthesized_dict_definition_is_found",
   "crates/ripr/src/analysis/language/python/table_reads_tests.rs::a_method_call_on_a_subscripted_value_is_a_possible_write",
+  "crates/ripr/src/analysis/language/python/table_reads_tests.rs::a_definition_after_a_semicolon_continuation_is_found",
+  "crates/ripr/src/analysis/language/python/table_reads_tests.rs::an_import_prefix_or_a_module_attribute_does_not_make_a_write_safe",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_reflective_store_through_a_reexported_module_withholds_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::replacing_the_readers_code_withholds_credit",
 ]
 fixtures = [
   "fixtures/python_table_bool_key_get_fallback",
@@ -31,4 +35,10 @@ fixtures = [
   "fixtures/python_table_parenthesized_store_removed",
   "fixtures/python_table_scalar_get_receiver",
   "fixtures/python_table_subscript_method_call",
+  "fixtures/python_table_continued_foreign_store",
+  "fixtures/python_table_continued_store_removed",
+  "fixtures/python_table_reexport_reflection",
+  "fixtures/python_table_reexport_no_reflection",
+  "fixtures/python_table_code_replacement",
+  "fixtures/python_table_code_replacement_removed",
 ]

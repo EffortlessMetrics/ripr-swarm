@@ -205,7 +205,9 @@ pub(super) fn dict_literal_names(source: &str) -> BTreeSet<String> {
                 depth = depth.saturating_sub(1);
                 continue;
             }
-            Tok::Newline => {
+            // A semicolon ends a simple statement as a newline does, including
+            // after an explicit continuation that suppresses the Newline token.
+            Tok::Newline | Tok::Semi => {
                 line_start = true;
                 candidate = None;
                 armed = false;

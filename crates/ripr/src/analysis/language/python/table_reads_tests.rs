@@ -144,3 +144,26 @@ fn a_method_call_on_a_subscripted_value_is_a_possible_write() -> Check {
     assert_safe("def f():\n    return RATES[\"k\"]\n")?;
     assert_safe("def f(i):\n    return RATES[i] + 1\n")
 }
+
+#[test]
+fn a_definition_after_a_semicolon_continuation_is_found() {
+    for source in [
+        "MARKER = 0; \\\nRATES = {\"a\": 1}\n",
+        "MARKER = 0; RATES = {\"a\": 1}\n",
+    ] {
+        let names = dict_literal_names(source);
+        assert!(names.contains("RATES"), "{source}");
+        assert!(!names.contains("MARKER"), "{source}");
+    }
+    // A definition nested under a block is still not a module constant.
+    assert!(!dict_literal_names("if x:\n    RATES = {\"a\": 1}\n").contains("RATES"));
+}
+
+#[test]
+fn an_import_prefix_or_a_module_attribute_does_not_make_a_write_safe() -> Check {
+    assert_unsafe("import os; RATES[\"k\"] = 1\n")?;
+    assert_unsafe("import os; RATES.update({})\n")?;
+    assert_unsafe("import settings\nsettings.RATES[\"k\"] = 1\n")?;
+    assert_unsafe("import settings\nsettings.RATES.update({})\n")?;
+    assert_unsafe("import settings\nalias = settings.RATES\n")
+}

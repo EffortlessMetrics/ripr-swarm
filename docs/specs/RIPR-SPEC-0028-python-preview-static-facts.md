@@ -496,8 +496,12 @@ import or export, a `.get` read or a subscript read on a line that binds
 nothing (the owning module's defining statement aside): a store through a
 subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
 f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
-`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`) that
-mentions the table or its module withholds credit.
+`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`,
+`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
+module withholds credit. A reflective file that also imports modules withholds credit for every
+table, because the module it reflects over may be another file's re-export that no word of the
+file names. A definition after a `;` is discovered like one at the start of a line, so an explicit
+line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 

@@ -67,6 +67,9 @@ pub(super) struct ForeignWrites {
     table_unsafe: Vec<String>,
     /// Every word of the files that can reach a module's objects reflectively.
     reflective_words: Vec<String>,
+    /// Some other file is reflective and imports modules, so it may reach a
+    /// table through an alias or re-export no word of it names.
+    reflective_imports: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -96,7 +99,7 @@ const DYNAMIC_LOADERS: [&str; 13] = [
 ];
 
 /// Spellings that reach a module's objects without writing their names.
-const REFLECTIVE_SPELLINGS: [&str; 11] = [
+const REFLECTIVE_SPELLINGS: [&str; 15] = [
     "getattr",
     "dir",
     "getmembers",
@@ -108,6 +111,12 @@ const REFLECTIVE_SPELLINGS: [&str; 11] = [
     "compile",
     "inspect",
     "gc",
+    // Replacing a reader's code or defaults changes what it returns without
+    // rebinding its name.
+    "__code__",
+    "__defaults__",
+    "__kwdefaults__",
+    "__closure__",
 ];
 
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
@@ -143,6 +152,9 @@ struct IndexedSource<'a> {
     table_unsafe: Vec<String>,
     /// Holds a reflective spelling: every word is a possible table access.
     reflective_words: Option<Vec<&'a str>>,
+    /// The reflective file also imports, so the module it reflects over may
+    /// be another file's re-export.
+    reflective_imports: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -223,6 +235,7 @@ impl<'a> ForeignIndex<'a> {
                     dynamic_words: dynamic.then(|| source_words(source).collect()),
                     table_unsafe,
                     reflective_words: reflective.then(|| source_words(source).collect()),
+                    reflective_imports: reflective && mentions_identifier(source, "import"),
                 });
             }
         }
@@ -247,9 +260,11 @@ impl<'a> ForeignIndex<'a> {
         let mut words = std::collections::BTreeSet::new();
         let mut table_unsafe = std::collections::BTreeSet::new();
         let mut reflective_words = std::collections::BTreeSet::new();
+        let mut reflective_imports = false;
         let mut unparsed = Vec::new();
         for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
             table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+            reflective_imports |= indexed.reflective_imports;
             if let Some(reflective) = &indexed.reflective_words {
                 reflective_words.extend(reflective.iter().map(|word| word.to_string()));
             }
@@ -285,6 +300,7 @@ impl<'a> ForeignIndex<'a> {
             dynamic_words: words.into_iter().collect(),
             table_unsafe: table_unsafe.into_iter().collect(),
             reflective_words: reflective_words.into_iter().collect(),
+            reflective_imports,
             unknown,
         }
     }
@@ -331,6 +347,7 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.may_rebind(name, module_file)
+            || self.reflective_imports
             || self
                 .table_unsafe
                 .iter()

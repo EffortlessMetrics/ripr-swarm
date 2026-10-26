@@ -1731,3 +1731,56 @@ fn a_pinned_lambda_body_edit_is_credited() -> Check {
     }
     Ok(())
 }
+
+#[test]
+fn a_reflective_store_through_a_reexported_module_withholds_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    let bridge = ("hostile/bridge.py", "from hostile import settings as hub\n");
+    // The owner is named only in the bridge and `getattr` only in the store.
+    let reflective = (
+        "hostile/touch.py",
+        "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
+    );
+    assert_not_credited(&classify_table(
+        &source,
+        &[bridge, reflective],
+        &test,
+        TABLE_NEW,
+    )?);
+    // Control: the same re-export with no reflective access keeps the credit.
+    let plain = (
+        "hostile/touch.py",
+        "from hostile.bridge import hub  # noqa: F401\n",
+    );
+    assert_credited(&classify_table(
+        &source,
+        &[bridge, plain],
+        &test,
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn replacing_the_readers_code_withholds_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    for replacement in [
+        "price.__code__ = frozen.__code__",
+        "price.__defaults__ = (1,)",
+        "price.__kwdefaults__ = {}",
+    ] {
+        let test = format!(
+            "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
+        );
+        assert_not_credited(&classify_table(&source, &[], &test, TABLE_NEW)?);
+    }
+    // Control: the same test without the replacement keeps the credit.
+    assert_credited(&classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
