@@ -356,6 +356,7 @@ fn mock_payload_through_a_module_entry_is_not_credited() -> Result<(), String> {
         name: "announce".to_string(),
         exported_as_default: false,
         class_member: None,
+        decorated: None,
     }];
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),

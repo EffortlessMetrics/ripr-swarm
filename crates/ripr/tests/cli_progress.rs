@@ -563,6 +563,48 @@ fn check_unwritable_artifact_projects_failed_not_completed() -> Result<(), Strin
     Ok(())
 }
 
+/// #9244 item 9: a `context --at` selector miss is a user-fixable refusal. The
+/// real error and exit code stay, but no `ripr progress: failed` line precedes
+/// it; the artifact-write control above still projects `failed`.
+#[test]
+fn context_selector_miss_prints_error_without_a_failed_progress_line() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let output = ripr()
+        .args([
+            "context",
+            "--root",
+            root.as_str(),
+            "--diff",
+            diff.as_str(),
+            "--at",
+            "nocolon",
+        ])
+        .output()
+        .map_err(|error| format!("run ripr context: {error}"))?;
+    assert_eq!(output.status.code(), Some(2), "selector miss keeps exit 2");
+    assert!(output.stdout.is_empty(), "selector miss keeps empty stdout");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("no finding matched \"nocolon\""),
+        "the real selector error must still print: {stderr}"
+    );
+    assert!(
+        stderr.contains("ripr progress: building_output [diff]"),
+        "analysis progress still discloses the real work: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: failed"),
+        "a user-fixable selector miss must not project failed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: completed"),
+        "a refused context run must not project completed: {stderr}"
+    );
+    Ok(())
+}
+
 // --- #4945: repo-scoped audit-path formats disclose progress and cost ---
 
 /// Small single-crate fixture workspace for repo-format runs. Repo formats

@@ -1,0 +1,12 @@
+diff --git a/src/s_trim.rs b/src/s_trim.rs
+--- a/src/s_trim.rs
++++ b/src/s_trim.rs
+@@ -15,7 +15,7 @@
+ 
+ pub fn classify_trimmed(input: &str) -> &'static str {
+     let final_state = scan_trim(input.trim());
+-    if final_state == "word" {
++    if final_state == "text" {
+         "word"
+     } else {
+         "blank"

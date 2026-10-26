@@ -1,0 +1,18 @@
+//! The name appears in a comparison only inside a comment and a string.
+
+pub fn end_with_notes(text: &str, width: usize) -> usize {
+    let end = text.len(); // end == width is checked by the caller
+    let _note = "end == width";
+    end + width - width
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_end_is_the_length_b_text() {
+        assert_eq!(end_with_notes("abc", 3), 3);
+        assert_eq!(end_with_notes("abcd", 3), 4);
+    }
+}

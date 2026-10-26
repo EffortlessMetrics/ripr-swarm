@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-ts-spec0247-7loose",
+  "origin": "authored",
+  "version_label": "authored@2026-10-26",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "ab221c1949a9ee75341c9f4811babf6d7c7704fbdba28e75cb0f22c8dcfdcfd4"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/tally.ts",
+      "sha256": "c6aa3f6d1f16cf8abd2a711ea86f1a32c50990c7c740c1e310bf38ff88a484d2"
+    },
+    {
+      "path": "test/tally.test.ts",
+      "sha256": "851a19d8fcc137f8c7815343200122b5282f29b30cdd4bf146fa59c51878ab84"
+    }
+  ]
+}

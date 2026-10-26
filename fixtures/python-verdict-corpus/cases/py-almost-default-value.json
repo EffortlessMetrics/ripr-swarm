@@ -1,0 +1,45 @@
+{
+  "case_id": "py-almost-default-value",
+  "subject_id": "authored-py-unittest-almost",
+  "diff": "cases/py-almost-default-value.diff",
+  "anchor": {
+    "file": "shop/fees.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_unittest_almost_default",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3 + 1",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_fees.py::TestFees::test_default_fee",
+        "equivalence_review": "not equivalent: the owner returns a different value (+1 at default seven places fails the test)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 12: +1 at default seven places fails the test.",
+  "labeling_observation": {
+    "ripr_commit": "602ab7b8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

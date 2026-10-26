@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-offsets",
+  "origin": "authored",
+  "version_label": "authored@b6491843",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "offsets/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "offsets/core.py",
+      "sha256": "4f0ba95059225e697e0a981c73ab3958f0fa2b08ce9c0f1701b985b5bc985f9e"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "d8ed56e4bc9f9ca1097bbe8ef6ba66f618940ae19119f500017f88d922d3fd4c"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_offsets.py",
+      "sha256": "15babeeda22ed0086c2c7cecd61e4b61de8772fbe02a94d87261ec681166e4f5"
+    }
+  ]
+}

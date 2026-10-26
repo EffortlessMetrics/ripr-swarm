@@ -1,0 +1,12 @@
+diff --git a/bands/core.py b/bands/core.py
+--- a/bands/core.py
++++ b/bands/core.py
+@@ -18,7 +18,7 @@
+ 
+ 
+ def band_e(x):
+-    y = x * 3
++    y = x * 3 + 0.5
+     return y
+ 
+ 

@@ -326,6 +326,10 @@ fn limitations(
     limitations.extend([
         "client launch does not establish project-configuration trust",
         "status does not run analysis or refresh evidence",
+        // #10540: `ready` names root discovery only. The tool description
+        // carries this disavowal, but a consumer reading the document alone
+        // (structuredContent or the status resource) must see it here too.
+        "workspace_state ready means only that a repository root was discovered — not that analysis ran or that no issues were found; call ripr_refresh to analyze",
     ]);
     limitations
 }
@@ -624,6 +628,23 @@ mod tests {
             Some(GitWorkTree::MarkerInvalid),
         );
         assert!(limited.iter().any(|text| text.contains("gitdir: <path>")));
+        Ok(())
+    }
+
+    #[test]
+    fn ready_state_disavows_analysis_in_its_own_limitations() -> Result<(), String> {
+        // #10540: the "ready means root discovery only" disavowal must ride
+        // the served document, not only the tool description — a consumer of
+        // structuredContent or the status resource never sees description text.
+        let limited = limitations(ProjectConfigState::BuiltInDefaultsOnly, None);
+        if !limited
+            .iter()
+            .any(|text| text.contains("workspace_state ready"))
+        {
+            return Err(format!(
+                "ready-state disavowal must be a document limitation: {limited:?}"
+            ));
+        }
         Ok(())
     }
 

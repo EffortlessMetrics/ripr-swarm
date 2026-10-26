@@ -51,8 +51,13 @@ fn plant(dir: &Path, name: &str, age: Duration) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn first_cache_entry_dir(cache: &Path) -> Option<PathBuf> {
-    let mut stack = vec![cache.to_path_buf()];
+/// The file-facts store directory: the one every check run sweeps, warm or
+/// not. The cache root also holds other layers (`repo-module-tree-scans`)
+/// that only a write sweeps, so the walk must not take whichever layer
+/// `read_dir` lists first: NTFS lists alphabetically and picked the scans
+/// layer on Windows (#10344).
+fn file_facts_entry_dir(cache: &Path) -> Option<PathBuf> {
+    let mut stack = vec![cache.join("repo-file-facts")];
     while let Some(dir) = stack.pop() {
         let entries = fs::read_dir(&dir).ok()?;
         for entry in entries.flatten() {
@@ -85,7 +90,7 @@ fn next_run_removes_an_old_stranded_temp_file_and_keeps_a_young_one() -> Result<
     fs::write(&diff, DIFF).map_err(|error| error.to_string())?;
 
     run_check(&root, &diff, &cache)?;
-    let entry_dir = first_cache_entry_dir(&cache)
+    let entry_dir = file_facts_entry_dir(&cache)
         .ok_or_else(|| "first run must populate the cache".to_string())?;
 
     // What a run terminated between create and rename leaves behind, and what an

@@ -160,6 +160,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -206,6 +207,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -250,6 +252,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -294,6 +297,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -338,6 +342,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -382,6 +387,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -425,6 +431,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -468,6 +475,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -512,6 +520,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -556,6 +565,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel

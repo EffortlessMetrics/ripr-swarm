@@ -1,0 +1,12 @@
+diff --git a/src/s_string.rs b/src/s_string.rs
+--- a/src/s_string.rs
++++ b/src/s_string.rs
+@@ -15,7 +15,7 @@
+ 
+ pub fn classify_string(input: &str) -> &'static str {
+     let final_state = scan_string(input);
+-    if final_state == "word" {
++    if final_state == "text" {
+         "word"
+     } else {
+         "blank"
