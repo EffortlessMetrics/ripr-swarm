@@ -63,6 +63,10 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// An admitted weaker oracle sits beside a refused `assert_eq!` that
+    /// calls the owner, and every such refusal rests on an analyzer limit
+    /// (#5431, RIPR-SPEC-0240).
+    pub(in crate::analysis) mixed_refusal_is_analyzer_limit: bool,
     /// Related tests `(file, name)` whose reach to the owner is established
     /// by indexed implicit dispatch (a trait impl the language runs without
     /// a named call). Their relation reason is proximity-only, so
@@ -1358,6 +1362,7 @@ impl ClassifiedProbeEvidence {
         };
         // #9871: a reader-only relation has no owner pin to refuse against, so
         // an owner-name scan would only add a misleading refusal note.
+        let mut owner_refusals_are_limits = false;
         let assertion_refusal = (context.const_readers.is_empty()
             && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
                 || discriminate.state != StageState::Yes))
@@ -1401,9 +1406,20 @@ impl ClassifiedProbeEvidence {
                         notes.push(note);
                     }
                 }
+                // #5431: every refusal of an assertion that calls the owner
+                // rests on a limit of ripr's own reading.
+                owner_refusals_are_limits = notes.iter().any(|note| note.calls_owner)
+                    && notes
+                        .iter()
+                        .filter(|note| note.calls_owner)
+                        .all(|note| note.is_analyzer_limit);
                 preferred_refusal_note(notes)
             })
             .flatten();
+        // A refused owner-calling assertion beside an admitted weaker one:
+        // the refused assertion may be the exact oracle the gap asks for.
+        let mixed_refusal_is_analyzer_limit =
+            owner_refusals_are_limits && observe.summary != ASSERTION_CONTEXT_UNESTABLISHED;
         if let Some(note) = &assertion_refusal {
             evidence.push(format!(
                 "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",
@@ -1537,6 +1553,7 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            mixed_refusal_is_analyzer_limit,
             implicit_dispatch_tests,
             debug_assert_eq_pins,
             related_call_budget_saturated,
