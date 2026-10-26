@@ -100,6 +100,9 @@ pub(crate) enum RepairRouteRefusal {
         kind: super::task_first::RefusalKind,
         /// The producer-owned missing-evidence list behind a not-ready route.
         missing: Vec<String>,
+        /// A related test already supplies the changed boundary input and
+        /// only its oracle is weak (#10622).
+        boundary_input_observed: bool,
     },
 }
 
@@ -151,9 +154,33 @@ impl RepairRouteRefusal {
             Self::Ineligible {
                 kind: super::task_first::RefusalKind::RouteNotReady,
                 missing,
+                boundary_input_observed,
                 ..
             } => {
-                if missing.is_empty() {
+                let observed_boundary = *boundary_input_observed
+                    && missing
+                        .iter()
+                        .any(|item| super::task_first::is_boundary_value_discriminator(item));
+                if observed_boundary {
+                    // #10622: the input is already there; only the assertion
+                    // is weak, so do not say the boundary evidence is missing.
+                    let others: Vec<&str> = missing
+                        .iter()
+                        .filter(|item| !super::task_first::is_boundary_value_discriminator(item))
+                        .map(|item| item.as_str())
+                        .collect();
+                    let also = if others.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" It is also still missing: {}.", others.join("; "))
+                    };
+                    format!(
+                        "no repair start offered: a related test already reaches the changed \
+                         boundary input, but ripr grades its assertion as a weak check, so ripr \
+                         cannot build a repair packet for this finding yet.{also} \
+                         Follow the Next step above, then rerun `ripr check`"
+                    )
+                } else if missing.is_empty() {
                     "no repair start offered: ripr cannot build a repair packet for this \
                      finding yet because the static evidence is not complete enough to name a \
                      safe test target; follow the Next step above, then rerun `ripr check`"
@@ -606,6 +633,7 @@ mod tests {
             reason: "not a headline repair target".to_string(),
             kind: RefusalKind::Other,
             missing: Vec::new(),
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert!(
@@ -622,6 +650,7 @@ mod tests {
                 .to_string(),
             kind: RefusalKind::RouteNotReady,
             missing: vec!["boundary_value".to_string(), "activation".to_string()],
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert_eq!(
@@ -629,6 +658,37 @@ mod tests {
             "no repair start offered: ripr cannot build a repair packet for this finding yet \
              because it is still missing: boundary_value; activation; follow the Next step \
              above, then rerun `ripr check`"
+        );
+        // #10622: a boundary input a related test already supplies is not "missing".
+        let internal = "producer-owned missing discriminator fact: boundary_value".to_string();
+        // Discriminating negative: boundary input not observed keeps the
+        // producer-owned wording.
+        let unobserved = RepairRouteRefusal::Ineligible {
+            reason: "repair route not ready".to_string(),
+            kind: RefusalKind::RouteNotReady,
+            missing: vec![internal.clone()],
+            boundary_input_observed: false,
+        }
+        .advisory(gate);
+        assert!(
+            unobserved.contains(
+                "still missing: producer-owned missing discriminator fact: boundary_value"
+            ),
+            "unobserved boundary keeps the generic wording: {unobserved}"
+        );
+        let observed = RepairRouteRefusal::Ineligible {
+            reason: "repair route not ready".to_string(),
+            kind: RefusalKind::RouteNotReady,
+            missing: vec![internal, "safe test target".to_string()],
+            boundary_input_observed: true,
+        }
+        .advisory(gate);
+        assert_eq!(
+            observed,
+            "no repair start offered: a related test already reaches the changed boundary \
+             input, but ripr grades its assertion as a weak check, so ripr cannot build a \
+             repair packet for this finding yet. It is also still missing: \
+             safe test target. Follow the Next step above, then rerun `ripr check`"
         );
         assert!(
             !not_ready.contains("repair route not ready")
@@ -640,6 +700,7 @@ mod tests {
             reason: "repair route not ready".to_string(),
             kind: RefusalKind::RouteNotReady,
             missing: Vec::new(),
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert!(
@@ -653,6 +714,7 @@ mod tests {
             reason: "the gate could not decide".to_string(),
             kind: RefusalKind::Unverified,
             missing: vec!["ignored".to_string()],
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert!(

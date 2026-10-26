@@ -828,7 +828,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 StageEvidence::new(
                     StageState::Yes,
                     Confidence::Medium,
-                    "Detected related test input at the changed boundary",
+                    crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
                 )
             } else if probe_literals.is_empty()
                 && changed_operands.is_none()
