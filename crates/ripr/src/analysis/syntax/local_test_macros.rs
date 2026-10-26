@@ -34,7 +34,7 @@
 //!
 //! The table form is a whole-matcher repetition `$( row ) sep? *` (or `+`)
 //! whose row is `$name:ident`, `literal`, `tt` or `block` variables,
-//! literal `,`, `;` or `:` tokens, and delimited groups of comma-separated
+//! literal `,`, `;`, `:` or `=>` tokens, and delimited groups of comma-separated
 //! metavariables (an `expr` outside a group needs a row separator after it),
 //! paired with a transcriber that is exactly one separator-free
 //! `$( body )*`. The invocation must split into rows with nothing left
@@ -637,14 +637,49 @@ const MAX_EXPANSION_BYTES: usize = 128 * 1024;
 enum RowItem {
     /// `$name:fragment` outside any delimiter.
     Variable { name: String, fragment: String },
-    /// A literal `,`, `;` or `:` between row elements.
-    Separator(SyntaxKind),
+    /// A literal `,`, `;`, `:` or `=>` between row elements.
+    Separator(RowSeparator),
     /// A delimited group of comma-separated metavariables, as in
     /// `name($value:expr, $want:expr)`.
     Group {
         open: char,
         variables: Vec<(String, String)>,
     },
+}
+
+/// A literal token between row elements.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowSeparator {
+    Token(SyntaxKind),
+    /// `=>`, which a token tree keeps as the two puncts `=` and `>`.
+    FatArrow,
+}
+
+/// Whether `elements[position..]` starts a `=>` token: an `=` and a `>` with
+/// nothing between them, not the tail of a longer punct (`==>`, `+=>`,
+/// `<=>`) that rustc lexes differently.
+fn fat_arrow_at(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize) -> bool {
+    let (Some(equals), Some(greater)) = (
+        elements
+            .get(position)
+            .and_then(|element| element.as_token()),
+        elements
+            .get(position + 1)
+            .and_then(|element| element.as_token()),
+    ) else {
+        return false;
+    };
+    let joint_before = position
+        .checked_sub(1)
+        .and_then(|before| elements.get(before))
+        .and_then(|element| element.as_token())
+        .is_some_and(|token| {
+            token.kind().is_punct() && token.text_range().end() == equals.text_range().start()
+        });
+    equals.kind() == SyntaxKind::EQ
+        && greater.kind() == SyntaxKind::R_ANGLE
+        && equals.text_range().end() == greater.text_range().start()
+        && !joint_before
 }
 
 /// `$( row ) sep? *` or `+` as a whole matcher, the shape of a test table.
@@ -725,8 +760,12 @@ fn row_items(row: &SyntaxNode) -> Option<Vec<RowItem>> {
                 index += 1;
             }
             kind @ (SyntaxKind::COMMA | SyntaxKind::SEMICOLON | SyntaxKind::COLON) => {
-                items.push(RowItem::Separator(kind));
+                items.push(RowItem::Separator(RowSeparator::Token(kind)));
                 index += 1;
+            }
+            SyntaxKind::EQ if fat_arrow_at(&elements, index) => {
+                items.push(RowItem::Separator(RowSeparator::FatArrow));
+                index += 2;
             }
             _ => return None,
         }
@@ -763,11 +802,17 @@ fn match_rows(
         let mut bindings = RowBindings::new();
         for (index, item) in matcher.row.iter().enumerate() {
             match item {
-                RowItem::Separator(kind) => {
+                RowItem::Separator(RowSeparator::Token(kind)) => {
                     if elements.get(position)?.kind() != *kind {
                         return None;
                     }
                     position += 1;
+                }
+                RowItem::Separator(RowSeparator::FatArrow) => {
+                    if !fat_arrow_at(&elements, position) {
+                        return None;
+                    }
+                    position += 2;
                 }
                 RowItem::Variable { name, fragment } => {
                     let width = match fragment.as_str() {
@@ -785,13 +830,15 @@ fn match_rows(
                         "expr" => {
                             let end = match matcher.row.get(index + 1) {
                                 Some(RowItem::Separator(end)) => *end,
-                                None => matcher.separator?,
+                                None => RowSeparator::Token(matcher.separator?),
                                 Some(_) => return None,
                             };
-                            elements[position..]
-                                .iter()
-                                .position(|element| element.kind() == end)
-                                .unwrap_or(elements.len() - position)
+                            (position..elements.len())
+                                .find(|&at| match end {
+                                    RowSeparator::Token(kind) => elements[at].kind() == kind,
+                                    RowSeparator::FatArrow => fat_arrow_at(&elements, at),
+                                })
+                                .map_or(elements.len() - position, |at| at - position)
                         }
                         _ => return None,
                     };
@@ -1137,9 +1184,9 @@ mod tests {
             ),
             (
                 "a row item that is not a separator",
-                "$($name:ident => ($v:expr, $w:expr))*",
+                "$($name:ident ~ ($v:expr, $w:expr))*",
                 body,
-                "a => (1, 2)",
+                "a ~ (1, 2)",
             ),
             (
                 "a separator inside the transcriber",
@@ -1168,6 +1215,90 @@ mod tests {
         ] {
             assert!(
                 expand_local_test_macros(&table(matcher, body, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_arrow_separated_table_row_expands_and_other_arrows_refuse() {
+        let table = |matcher: &str, invocation: &str| {
+            format!(
+                "macro_rules! t {{\n    ({matcher}) => {{ $( #[test] fn $name() {{ assert_eq!(gate($v), $w); }} )* }};\n}}\nt! {{ {invocation} }}\n"
+            )
+        };
+        let group = "$($name:ident => ($v:expr, $w:expr))*";
+        let expanded = expand_local_test_macros(&table(group, "a => (1, 2) b => (3, 4)"));
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        let text = &expanded[0].text;
+        assert_eq!(text.matches("#[test]").count(), 2, "{text}");
+        assert!(
+            text.contains("fn b() { assert_eq!(gate(3), 4); }"),
+            "{text}"
+        );
+
+        // An `expr` ends at `=>` exactly as rustc's follow set allows.
+        let expr = "$($name:ident : $v:expr => $w:expr ;)*";
+        let expanded =
+            expand_local_test_macros(&table(expr, "a : 1 + 1 => 2 ; b : f(1, 2) => 3 ;"));
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        let text = &expanded[0].text;
+        assert!(
+            text.contains("gate((1 + 1)), (2)") || text.contains("gate((1 + 1)), 2"),
+            "{text}"
+        );
+        assert!(
+            text.contains("gate(f(1, 2))") || text.contains("gate((f(1, 2)))"),
+            "{text}"
+        );
+
+        // `=>` is the whole token or nothing: every near miss registers no
+        // test, so no neighbouring arm or layout is credited by accident.
+        for (label, matcher, invocation) in [
+            ("a thin arrow", group, "a -> (1, 2)"),
+            ("a comma for the arrow", group, "a , (1, 2)"),
+            ("no separator", group, "a (1, 2)"),
+            ("a spaced arrow", group, "a = > (1, 2)"),
+            ("a doubled arrow", group, "a => => (1, 2)"),
+            ("an equals before the arrow", group, "a ==> (1, 2)"),
+            (
+                "a compound assignment before the arrow",
+                group,
+                "a += > (1, 2)",
+            ),
+            ("a comparison in place of the arrow", group, "a >= (1, 2)"),
+            ("a trailing arrow", group, "a => (1, 2) b =>"),
+            ("a leftover arrow", group, "a => (1, 2) =>"),
+            ("a wrong group arity", group, "a => (1, 2) b => (3)"),
+            (
+                "an arrow the matcher lacks",
+                "$($name:ident($v:expr, $w:expr))*",
+                "a => (1, 2)",
+            ),
+            (
+                "an arrow as the row separator",
+                "$($name:ident($v:expr, $w:expr)) => *",
+                "a(1, 2) => b(3, 4)",
+            ),
+            (
+                "an expr with no separator after it",
+                "$($name:ident => $v:expr)*",
+                "a => 1 b => 2",
+            ),
+            (
+                "an expr followed by the wrong separator",
+                expr,
+                "a : 1 + 1 , 2 ;",
+            ),
+            // `1 ..` is an expression, but rustc lexes `..=` then `>`.
+            (
+                "an arrow that is the tail of a longer punct",
+                expr,
+                "a : 1 ..=> 2 ;",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, invocation)).is_empty(),
                 "{label}"
             );
         }
