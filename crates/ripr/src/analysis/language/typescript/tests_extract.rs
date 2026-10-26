@@ -4441,6 +4441,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
             covered: covered.as_deref().unwrap_or_default(),
             admission,
             shadowed: Vec::new(),
+            evaluated_only: false,
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -4519,6 +4520,8 @@ struct UnextractedTestFinder<'a> {
     /// parameter's value, not a runner registration (`async function run({
     /// test }) { await test(); }`).
     shadowed: Vec<String>,
+    /// Stored function values stay dormant throughout an invoked argument body.
+    evaluated_only: bool,
     gap: Option<(usize, &'static str, String)>,
 }
 
@@ -4556,6 +4559,14 @@ impl UnextractedTestFinder<'_> {
                     break;
                 }
                 finder.visit_statement(stmt);
+                if finder.evaluated_only
+                    && matches!(
+                        stmt,
+                        Statement::ReturnStatement(_) | Statement::ThrowStatement(_)
+                    )
+                {
+                    break;
+                }
             }
         });
     }
@@ -4680,7 +4691,7 @@ impl UnextractedTestFinder<'_> {
             }
             Statement::FunctionDeclaration(func) => {
                 let span = func.span.start as usize..func.span.end as usize;
-                if !self.covered.contains(&span) {
+                if !self.evaluated_only && !self.covered.contains(&span) {
                     self.visit_function(func);
                 }
             }
@@ -4743,6 +4754,14 @@ impl UnextractedTestFinder<'_> {
     }
 
     fn visit_expression(&mut self, expr: &Expression<'_>, statement_position: bool) {
+        if self.evaluated_only {
+            self.visit_empty_table_evaluated_expression(expr);
+        } else {
+            self.visit_expression_inner(expr, statement_position);
+        }
+    }
+
+    fn visit_expression_inner(&mut self, expr: &Expression<'_>, statement_position: bool) {
         match expr {
             Expression::CallExpression(call) => self.visit_call(call, statement_position),
             Expression::NewExpression(new_expr) => self.visit_arguments(&new_expr.arguments),
@@ -5050,7 +5069,7 @@ impl UnextractedTestFinder<'_> {
                 self.visit_empty_table_evaluated_expression(&binary.left);
                 self.visit_empty_table_evaluated_expression(&binary.right);
             }
-            expression => self.visit_expression(expression, false),
+            expression => self.visit_expression_inner(expression, false),
         }
     }
 
@@ -5076,45 +5095,12 @@ impl UnextractedTestFinder<'_> {
         }
     }
 
-    /// Returning or storing a function value in an IIFE still leaves it dormant.
+    /// Propagate evaluation through the shared statement and scope walker.
     fn visit_empty_table_invoked_statements(&mut self, statements: &[Statement<'_>]) {
-        self.with_statement_bindings(statements, |finder| {
-            finder.visit_empty_table_invoked_statements_in_scope(statements);
-        });
-    }
-
-    fn visit_empty_table_invoked_statements_in_scope(&mut self, statements: &[Statement<'_>]) {
-        for statement in statements {
-            if self.gap.is_some() {
-                return;
-            }
-            match statement {
-                Statement::ExpressionStatement(expression) => {
-                    self.visit_empty_table_evaluated_expression(&expression.expression);
-                }
-                Statement::ReturnStatement(returned) => {
-                    if let Some(argument) = &returned.argument {
-                        self.visit_empty_table_evaluated_expression(argument);
-                    }
-                    return;
-                }
-                Statement::VariableDeclaration(declaration) => {
-                    for declarator in &declaration.declarations {
-                        if let Some(initializer) = &declarator.init {
-                            self.visit_empty_table_evaluated_expression(initializer);
-                        }
-                        if self.gap.is_some() {
-                            return;
-                        }
-                    }
-                }
-                Statement::BlockStatement(block) => {
-                    self.visit_empty_table_invoked_statements(&block.body);
-                }
-                Statement::FunctionDeclaration(_) => {}
-                statement => self.visit_statement(statement),
-            }
-        }
+        let outer_mode = self.evaluated_only;
+        self.evaluated_only = true;
+        self.visit_statements(statements);
+        self.evaluated_only = outer_mode;
     }
 
     fn visit_arguments(&mut self, arguments: &[Argument<'_>]) {

@@ -1622,3 +1622,33 @@ fn skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local() {
         );
     }
 }
+
+#[test]
+fn skipped_suite_bindings_keep_control_flow_function_values_dormant() {
+    let file = Path::new("test/binding.test.ts");
+    for body in [
+        "for (const x of [1]) { const dormant = () => { it('dormant', () => {}); }; }",
+        "if (true) { const dormant = () => { it('dormant', () => {}); }; }",
+        "try { const dormant = () => { it('dormant', () => {}); }; } finally {}",
+        "switch (1) { case 1: const dormant = () => { it('dormant', () => {}); }; }",
+        "if (true) { function dormant() { it('dormant', () => {}); } }",
+    ] {
+        for live in [false, true] {
+            let sibling = if live { "it('live', () => {});" } else { "" };
+            let source =
+                format!("describe.skip(new (function () {{ {body} {sibling} }})(), () => {{}});");
+            let tests = extract_tests(file, &source);
+            assert!(tests.is_empty(), "{source}: {tests:?}");
+            let gap = detect_partial_test_extraction(file, &source, &tests);
+            if live {
+                assert!(
+                    gap.as_ref()
+                        .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+                    "{source}: {gap:?}"
+                );
+            } else {
+                assert!(gap.is_none(), "{source}: {gap:?}");
+            }
+        }
+    }
+}
