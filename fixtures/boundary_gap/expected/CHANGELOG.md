@@ -1,12 +1,5 @@
 # Golden Output Changes
 
-### Exported macro_rules! grouped-import classified-cache generation parity
-
-The same snapshots follow corpus cache generation 1.108 to 1.109 for
-grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
-(RIPR-SPEC-0117, #10298), with the same scope: generation, content
-commitment, dependent verify commitments and receipt byte hashes only.
-
 ## Pending — typed function-pointer composition (#9478, #9705)
 
 The bounded typed function-pointer owner proof composes with accepted shared-target
@@ -45,6 +38,13 @@ Updated:
 - `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
 - `first-useful-action/unchanged-after-attempt/agent-verify.json`
 - `first-useful-action/unchanged-after-attempt/agent-receipt.json`
+
+### Exported macro_rules! grouped-import classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.108 to 1.109 for
+grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
 
 ## Pending — boundary_gap (9)
 

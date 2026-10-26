@@ -345,9 +345,10 @@ fn an_exported_generator_named_in_a_use_group_reads_like_the_hand_written_test()
         );
     }
 
-    // A renamed or nested member is not a plain import of the generator.
+    // A renamed, glob or nested member is not a plain import of the generator.
     for import in [
         "use crate::{gate_table as table};\n",
+        "use crate::{gate_table, *};\n",
         "use crate::{unrelated_helper, nested::gate_table};\n",
     ] {
         let unresolved = TempRepo::create(&layout(

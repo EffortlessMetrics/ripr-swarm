@@ -327,8 +327,9 @@ plain `#[macro_export]` (only `doc`, `allow`, `warn` or `deny` besides it).
 ripr hoists that definition like the others and blanks the `use` so the
 expander does not read the import as a second source of the name. In a group
 only the hoisted members are blanked, so `use crate::{NOTE, table};` keeps
-`NOTE`. It
-indexes nothing when a second macro of the name, exported or not, exists
+`NOTE`. A group with a renamed, nested, glob, `self`, `super` or repeated
+member, an empty group, or a `pub` group is not a plain import and resolves
+nothing. The route also indexes nothing when a second macro of the name, exported or not, exists
 anywhere in the crate; when the macro is not exported; when `macro_export` is
 spelled anywhere the scope cannot list as a top-level plain export (inside a
 module or function, behind a `cfg`, with arguments, in a macro body); or when

@@ -19,7 +19,7 @@
 //! file spells `use crate::name;` and exactly one definition of `name` exists
 //! in the file's crate, plain `#[macro_export]`, with nothing else in the
 //! crate able to define or export a macro of that name. Cross-crate paths,
-//! renamed or grouped imports and `include!` are out of scope.
+//! renamed, nested and glob imports and `include!` are out of scope.
 
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
