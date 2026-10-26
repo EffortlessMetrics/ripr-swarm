@@ -1784,3 +1784,33 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
     )?);
     Ok(())
 }
+
+#[test]
+fn replacing_a_scalar_readers_code_withholds_credit() -> Check {
+    let source = "RATES = 6\n\n\ndef price(tier):\n    return RATES\n";
+    for replacement in [
+        "price.__code__ = frozen.__code__",
+        "price.__defaults__ = (1,)",
+        "price.__kwdefaults__ = {}",
+    ] {
+        let test = format!(
+            "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
+        );
+        assert_not_credited(&classify_table_edit(
+            source,
+            &[],
+            &test,
+            "RATES = 5",
+            "RATES = 6",
+        )?);
+    }
+    // Control: the same test without the replacement keeps the credit.
+    assert_credited(&classify_table_edit(
+        source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        "RATES = 5",
+        "RATES = 6",
+    )?);
+    Ok(())
+}

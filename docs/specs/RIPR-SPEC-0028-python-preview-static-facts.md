@@ -486,6 +486,10 @@ multiline setup remains eligible. A generator test lends no executed-body credit
 Formatted strings remain uncertain in this bounded admission because their
 expressions can carry generator syntax. Statement identity uses the reported
 source assertion, independently of the boolean oracle's normalized gate text.
+A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
+`__closure__` can replace a reader without rebinding its name, so it withholds the module
+constant's credit for scalar and table constants alike (#10626).
+
 A one-line module-level dict literal of unique `str` or `int` keys and scalar
 values (#9619) is a constant of the same kind, read only by a module function
 through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table

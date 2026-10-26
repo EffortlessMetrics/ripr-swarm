@@ -119,6 +119,10 @@ const REFLECTIVE_SPELLINGS: [&str; 15] = [
     "__closure__",
 ];
 
+/// Function attributes whose assignment replaces what a reader returns without
+/// rebinding its name (`price.__code__ = other.__code__`).
+const CODE_SLOTS: [&str; 4] = ["__code__", "__defaults__", "__kwdefaults__", "__closure__"];
+
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
 /// tokenized once so a diff that changes many Python files does not repeat
 /// the whole-workspace work per file (#10125).
@@ -329,10 +333,9 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.unknown
-            || self
-                .attributes
-                .iter()
-                .any(|attribute| attribute == name || attribute == "*")
+            || self.attributes.iter().any(|attribute| {
+                attribute == name || attribute == "*" || CODE_SLOTS.contains(&attribute.as_str())
+            })
             || self.dynamic_words.iter().any(|word| word == name)
             || (!stem.is_empty() && self.dynamic_words.iter().any(|word| word == stem))
     }
