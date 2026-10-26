@@ -156,7 +156,7 @@ fn a_definition_after_a_semicolon_continuation_is_found() {
         assert!(!names.contains("MARKER"), "{source}");
     }
     // A definition nested under a block is still not a module constant.
-    assert!(!dict_literal_names("if x:\n    RATES = {\"a\": 1}\n").contains("RATES"));
+    assert!(!dict_literal_names("if flag:\n    RATES = {\"a\": 1}\n").contains("RATES"));
 }
 
 #[test]
