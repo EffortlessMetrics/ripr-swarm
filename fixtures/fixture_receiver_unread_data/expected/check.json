@@ -1,0 +1,173 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/fixture_receiver_unread_data/input",
+  "summary": {"changed_rust_files":2,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":2}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:1ac1207f868072f9a8a8dae8f9733aeff38b71c92b1fd290732bbf1f5ef5aa6e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":2,"changed_line_count":4,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_cfg_rows.rs:return_value:8e82fa17",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_cfg_rows.rs:return_value:8e82fa17",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/cfg_rows.rs",
+        "line": 4,
+        "expression": "self.items.iter().map(|(_, value)| value).sum()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach cfg_total: cfg_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach cfg_total: cfg_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, value)| value).sum() (line 4)", "related test src/cfg_rows.rs:8 cfg_pin uses strong exact value oracle: assert_eq!(cfg_fixture().cfg_total(), 7);", "source assertion argument value 7 at line 8"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.items.iter().map(|(_, value)| value).sum()","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach cfg_total: cfg_pin", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `cfg_pin` (src/cfg_rows.rs:8)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "8": "assert_eq!(cfg_fixture().cfg_total(), 7);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "cfg_pin",
+          "file": "src/cfg_rows.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(cfg_fixture().cfg_total(), 7);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`cfg_pin` (src/cfg_rows.rs:8) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`cfg_pin` (src/cfg_rows.rs:8) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `cfg_pin` (src/cfg_rows.rs:8)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_raw_owner.rs:return_value:d4ace2c1",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_raw_owner.rs:return_value:d4ace2c1",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/raw_owner.rs",
+        "line": 4,
+        "expression": "self.items.iter().map(|(_, value)| value).sum()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach raw_total: raw_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach raw_total: raw_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, value)| value).sum() (line 4)", "related test src/raw_owner.rs:10 raw_pin uses strong exact value oracle: assert_eq!(raw_fixture().raw_total(), 7);", "source assertion argument value 7 at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.items.iter().map(|(_, value)| value).sum()","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach raw_total: raw_pin", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `raw_pin` (src/raw_owner.rs:10)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "10": "assert_eq!(raw_fixture().raw_total(), 7);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "raw_pin",
+          "file": "src/raw_owner.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(raw_fixture().raw_total(), 7);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`raw_pin` (src/raw_owner.rs:10) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`raw_pin` (src/raw_owner.rs:10) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `raw_pin` (src/raw_owner.rs:10)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
