@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_platform_guarded_test (5)
+
+Reason:
+RIPR-SPEC-0243: conditional-registration why-text now also names loops over unenumerable data
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

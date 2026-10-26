@@ -136,7 +136,7 @@ fn conditional_registration_named(
         name: "typescript_conditional_registration",
         sample_source: format!("{}:{}", normalized_path(file), line),
         why_not_actionable: format!(
-            "the recognized test file `{}` registers a test under the unevaluated condition `{condition}` (e.g. a platform or environment guard); static analysis cannot tell whether that registration runs, so the test is indexed for reach but its assertions earn no credit",
+            "the recognized test file `{}` registers a test under the unevaluated condition or loop `{condition}` (e.g. a platform or environment guard, or a loop over data static analysis cannot enumerate); static analysis cannot tell whether, or how many times, that registration runs, so the test is indexed for reach but its assertions earn no credit",
             normalized_path(file),
         ),
         repair_route: "analysis/typescript-conditional-registration",

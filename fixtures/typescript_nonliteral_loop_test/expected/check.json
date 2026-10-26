@@ -1,0 +1,151 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_nonliteral_loop_test/input",
+  "config_path": "<cwd>/fixtures/typescript_nonliteral_loop_test/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:48d84ea994c8821b","base_revision":null,"input_identity":"sha256:637ae83f92fa3c624cd13768f9cbed0eedbf3a0cd732e975131e67136eb36a14","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[{"kind":"unevaluated_condition","producer_stage":"language_adapter","path":"tests/loop.test.ts","affected_items":1,"bounded_detail":"typescript_conditional_registration: `for (... of loadAges())` at tests/loop.test.ts:9","recovery":{"kind":"inspect_failure","detail":"Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_subject.ts:typescript_preview:5c135e82",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_subject.ts:typescript_preview:5c135e82",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/subject.ts",
+        "line": 2,
+        "expression": "  return age >= 18;",
+        "owner": "typescript:src/subject.ts::isAdult"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `isAdult`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4)."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `isAdult`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).", "related test tests/loop.test.ts:9 <computed title, line 9> uses no oracle"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: isAdult", "typescript_limitation: typescript_conditional_registration", "typescript_limitation_sample: typescript_conditional_registration at tests/loop.test.ts:9", "typescript_limitation_why: typescript_conditional_registration — the recognized test file `tests/loop.test.ts` registers a test under the unevaluated condition or loop `for (... of loadAges())` (e.g. a platform or environment guard, or a loop over data static analysis cannot enumerate); static analysis cannot tell whether, or how many times, that registration runs, so the test is indexed for reach but its assertions earn no credit", "typescript_limitation_repair_route: typescript_conditional_registration → analysis/typescript-conditional-registration", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/subject.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_subject.ts:typescript_preview:5c135e82;owner=isAdult", "test_assertion_admission: assertion_like_present_but_unresolved (<computed title, line 9>)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `isAdult` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they assert, is not established either way.", "TypeScript preview actionability `advisory` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "<computed title, line 9>",
+          "file": "tests/loop.test.ts",
+          "line": 9,
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "predicate changed at src/subject.ts:2: `return age >= 18;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "owner": "isAdult",
+        "owner_kind": "function",
+        "probe_family": "predicate",
+        "related_test": {
+          "file": "tests/loop.test.ts",
+          "line": 9,
+          "name": "<computed title, line 9>"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Add an exact boundary assertion for the changed predicate.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/subject.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 2,
+            "owner": "isAdult",
+            "raw": "file=src/subject.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_subject.ts:typescript_preview:5c135e82;owner=isAdult",
+            "sample": null,
+            "source_id": "probe:src_subject.ts:typescript_preview:5c135e82"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/subject.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}

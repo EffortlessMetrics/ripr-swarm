@@ -18817,6 +18817,65 @@ fn describe_nested_under_an_if_guards_its_tests() {
     );
 }
 
+/// #10501: a registration inside a loop over data static analysis cannot
+/// enumerate is indexed under the loop head, with no assertion credit.
+#[test]
+fn for_of_over_non_literal_data_indexes_the_test_under_the_loop_head() {
+    let source = "for (const name of readdirSync('fixtures')) {\n  test(`parses ${name}`, () => {\n    expect(parse(name)).toBe(true);\n  });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("for (... of readdirSync('fixtures'))")
+    );
+    assert!(tests[0].assertions.is_empty(), "{:?}", tests[0].assertions);
+}
+
+#[test]
+fn for_each_over_a_parameter_and_for_in_are_indexed_under_their_loop_head() {
+    let source = "cases.forEach((c) => {\n  it('a', () => { expect(f(c)).toBe(1); });\n});\nfor (const k in table) {\n  it('b', () => { expect(f(k)).toBe(1); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    let guards = tests
+        .iter()
+        .map(|test| test.conditional_registration.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        guards,
+        vec![Some("cases.forEach(...)"), Some("for (... in table)")]
+    );
+}
+
+#[test]
+fn loop_over_a_literal_table_keeps_credit_and_no_guard() {
+    let source = "for (const n of [1, 2]) {\n  test('a', () => { expect(f(n)).toBe(n); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(!tests.is_empty());
+    assert!(
+        tests
+            .iter()
+            .all(|test| test.conditional_registration.is_none()),
+        "{tests:?}"
+    );
+}
+
+#[test]
+fn loop_binding_a_registration_api_is_not_descended() {
+    let source = "for (const test of tests) {\n  test('a', () => { expect(f(1)).toBe(2); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn non_literal_loop_nested_in_an_if_joins_both_guards() {
+    let source = "if (isLinux) {\n  for (const n of load()) {\n    test('a', () => { expect(f(n)).toBe(1); });\n  }\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("isLinux && for (... of load())")
+    );
+}
+
 #[test]
 fn unguarded_registration_keeps_assertion_credit() {
     let source = "test('a', () => {\n  expect(f(1)).toBe(2);\n});\n";

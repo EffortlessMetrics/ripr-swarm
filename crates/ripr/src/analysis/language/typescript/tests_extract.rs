@@ -1057,6 +1057,32 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             }
             continue;
         }
+        // #10501: a loop over data static analysis cannot enumerate may run
+        // zero or many times, so its registrations are indexed for reach under
+        // the loop head as their guard and earn no assertion credit.
+        let unprovable_loop = if loop_body_from_statement(stmt, scope).is_none() {
+            unprovable_loop_body(stmt, source)
+        } else {
+            None
+        };
+        if let Some((guard, loop_bindings, body)) = unprovable_loop {
+            scope.guards.push(guard);
+            scope.levels.push(
+                loop_bindings
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect(),
+            );
+            scope.iterables.push(Vec::new());
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
+            scope.iterables.pop();
+            scope.levels.pop();
+            scope.guards.pop();
+            continue;
+        }
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
             // A `for`/`for...of`/`for...in` or `.forEach` callback body
             // registers its tests once per iteration; its loop variables or
@@ -3987,6 +4013,79 @@ fn loop_body_from_statement<'a>(
         single => std::slice::from_ref(single),
     };
     Some((bindings, body))
+}
+
+/// `[]` or `{}` written directly as the iterable: the loop never runs, so no
+/// registration exists to index.
+fn is_empty_literal(expression: &Expression<'_>) -> bool {
+    match runtime_expression(expression) {
+        Expression::ArrayExpression(array) => array.elements.is_empty(),
+        Expression::ObjectExpression(object) => object.properties.is_empty(),
+        _ => false,
+    }
+}
+
+/// A `for...of`, `for...in` or `.forEach` over data that
+/// [`loop_body_from_statement`] cannot prove non-empty (a call result, a
+/// parameter, a file listing). Returns the loop head as the registration guard,
+/// the loop bindings and the body. `None` for any other statement, and for a
+/// loop whose bindings would shadow a registration API.
+fn unprovable_loop_body<'a>(
+    stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
+) -> Option<(String, Vec<String>, &'a [Statement<'a>])> {
+    let head = |start: u32, end: u32| snippet_for_span(source.text(), start as usize, end as usize);
+    let (guard, bindings, body) = match stmt {
+        Statement::ForOfStatement(for_of) if is_empty_literal(&for_of.right) => return None,
+        Statement::ForInStatement(for_in) if is_empty_literal(&for_in.right) => return None,
+        Statement::ForOfStatement(for_of) => (
+            format!(
+                "for (... of {})",
+                head(for_of.right.span().start, for_of.right.span().end)
+            ),
+            for_left_bindings(&for_of.left)?,
+            &for_of.body,
+        ),
+        Statement::ForInStatement(for_in) => (
+            format!(
+                "for (... in {})",
+                head(for_in.right.span().start, for_in.right.span().end)
+            ),
+            for_left_bindings(&for_in.left)?,
+            &for_in.body,
+        ),
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if member.property.name.as_str() != "forEach" || is_empty_literal(&member.object) {
+                return None;
+            }
+            let callback = call.arguments.first()?;
+            let body = function_body_statements_from_argument(callback)?;
+            let bindings = argument_parameter_names(callback);
+            if binds_registration_api(&bindings) {
+                return None;
+            }
+            let guard = format!(
+                "{}.forEach(...)",
+                head(member.object.span().start, member.object.span().end)
+            );
+            return Some((guard, bindings, body.as_slice()));
+        }
+        _ => return None,
+    };
+    if binds_registration_api(&bindings) {
+        return None;
+    }
+    let body = match body {
+        Statement::BlockStatement(block) => block.body.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    Some((guard, bindings, body))
 }
 
 /// A loop variable or callback parameter named `test`, `it` or `describe`
