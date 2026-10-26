@@ -346,10 +346,19 @@ Relations, first match wins (rank, oracle-eligible):
   module that is not where the owner's application comes from is a rival and
   does not relate: the owner's file imports the receiver from a module (the
   test must import it from that module), or defines it itself (the test must
-  import it from that module or a package above it). A client built
-  elsewhere (a fixture, an unresolved, dotted or called application name, a
-  rebound name, a router an application includes under another name) is
-  unidentified and keeps the path-and-verb match (#10110);
+  import it from that module or a package above it) and so is one built over
+  another symbol of the owner's module. A client's application comes from the
+  test body or, for a fixture parameter, from the nearest `@pytest.fixture` of
+  that name (the test's module, then `conftest.py` up the directory chain)
+  whose every `return` or `yield` builds a client over one imported name. Only
+  a client built over the owner's own application is `api_client_route_call`.
+  A client whose application is not resolved (a fixture it cannot read or that
+  builds on another fixture, an unresolved, dotted or called application name
+  such as a factory, a rebound name, a router an application includes under
+  another name, a decorator on a receiver the adapter does not recognise) that
+  still calls the route's path and verb is `api_client_route_unidentified_app`
+  (2, reach only, never an oracle) and reads as the static limit
+  `missing_import_graph`, not as a gap or a credit (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -437,6 +446,32 @@ This order is the existing behavior and is normative:
      other receiver, and any test that mentions a mock, keeps the limit
      (fail closed). The `monkeypatch` forms and decorator rule are
      unchanged.
+   - `mocked_module` does not apply to a test whose every substitution is
+     `with patch("<dotted.target>", return_value=<nonzero int or str literal>):`
+     (`patch` bound once, from `unittest.mock`/`mock`, or `mock.patch`),
+     when the test is a plain function (no decorators, defaults or
+     `*args`) whose statements are only `assert <expr>`, `name = <expr>`
+     and such `with` blocks of those, with expressions made of names,
+     constants, operators and calls of the owner or a safe builtin (a
+     `;`, a chained, attribute or subscript assignment, a helper call, a
+     nested def or a default argument is not plain, so none can rebind
+     names behind the patch), and the changed line, old and new, is one `return` of an f-string or `+`/`-` expression
+     over names, int and string literals, the substituted zero-argument
+     call (`time.time()` or `time()`) and `int(<that call>)`. The call
+     appears exactly once on each side, with the same sign and the same
+     `int(...)` wrapping, so the expression is `s*v + K` and an edit that
+     changes `K` changes the value the assertion pins, as it would without
+     the patch. With more than one call, or a changed sign, a collision at
+     the fixed value (`v + v` against `v - v + 2` at `v = 1`) hides the
+     edit. Products, divisions, `%`, `max`/`min`, indexing, comparisons,
+     branches, other calls, an assignment on the changed line, and a zero,
+     float, bool or `None` stand-in keep the limit. The patched name must
+     appear in the owner only on the changed line, and the owner and its
+     class must not be a segment of the target. A patch decorator,
+     `patch.object`, an `as` binding, `side_effect`, `autospec`, a
+     non-literal `return_value`, another mock name in the body, or an
+     edit to the patched call's arguments keeps the limit. The substituted
+     calls are not read as unresolved imports (`time.time()`).
 
 ### Sink alignment
 
@@ -490,6 +525,9 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     whole-collection comparison counts only when a dict or list display is
     the other compared operand of the assertion, not when `== {` or `== [`
     appears anywhere in its text.
+    A changed element on its own line of a multi-line literal bound by
+    `return` or an assignment is judged as the joined enclosing literal, so
+    the same rules apply as for a one-line literal.
 11. **The f-string length gate reads the crediting assertion.** For a
     changed f-string whose literal text changed and whose interpolations
     did not, an assertion that is a pure `len(...)` aggregate cannot
@@ -750,7 +788,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     band: an old result already outside the band, a result within `1e-9`
     (relative) of the band edge, a non-literal argument, a positional
     band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode).
+    without the old line (repo mode). The `py-bands-*` cases pin the
+    abstentions: a positional band (an edit the band absorbs and one it
+    rejects, the latter a documented missed credit), a `**` spread,
+    named constants for the expected value and band, a two-statement
+    owner, a method owner and a decorated owner.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
@@ -785,8 +827,13 @@ mutant calibrates the rule; ripr reports only the static shape.
     receiver is `logging` or a module-level `name = logging.getLogger(...)`
     (a detached `logging.Logger(...)` or any other object abstains), the
     method is not `exception` (its traceback can hold the asserted text),
-    and the test never rebinds `caplog`. An assertion about unrelated text
-    keeps its verdict.
+    and the test never rebinds `caplog`. `caplog` must be pytest's own
+    fixture: the test requests it as a parameter and no `@pytest.fixture`
+    in its module or a `conftest.py` up its directory chain defines a
+    fixture of that name (including `@pytest.fixture(name="caplog")` and a decorator imported as an alias with
+    `from pytest import fixture as fx`, unless a later import, assignment, `def` or `class`
+    rebinds that name before the decorated def); otherwise the reading abstains. An assertion about
+    unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
@@ -810,6 +857,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     concatenation, an assertion message and a membership joined by `and`
     all read the same way, while a membership against any other receiver
     is not read.
+    A local alias of a captured-log read (`msgs = caplog.text`,
+    `.messages` or `.records`) reads as the read itself only when the name
+    is bound once, to the read, at the assertion's own indentation and after
+    every owner call, and appears nowhere else in the test but the
+    assertion statement (a wrapped assertion counts as one statement). An
+    alias that is appended to, rebound, deleted, read in a comprehension,
+    taken before the call or inside a nested block keeps the abstention, as
+    does a name spelled inside a quoted literal (single, double or triple
+    quoted), which is data. A local called `text`, `messages` or `records`
+    is not confused with the attribute of `caplog.text` and the like. `caplog`'s
+    reads are rebuilt on each access, so an alias taken before the call
+    would hold earlier records (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
@@ -820,7 +879,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     unittest `assert*` method. The `else` and `finally` blocks
     are still read. A swallowed or dead assertion cannot notice a change, so
     it must not credit one (`py-trap-dead-branch`,
-    `py-trap-swallowed-assert`, #9691).
+    `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
+    `if None:` and `while False:` dead arms, tuple, bare and
+    `builtins.AssertionError` handlers, and the live `else` arm, `else` and
+    `finally` blocks and `fail`-calling handler that stay credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,
@@ -843,7 +905,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     not evaluate whether any other module is installed, so `importorskip`
     of it, or with `minversion` or `reason`, still abstains
     (`py-trap-module-skipped`, `py-trap-empty-table`,
-    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691; the `py-unrun-*`
+    cases add a module `pytestmark` skip, a module-level `pytest.skip`, an
+    `importorskip` of a missing module and an empty tuple table, which
+    abstain, and `xfail(False, reason=...)` and
+    `unittest.skipUnless(True, ...)`, which stay active and credited).
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
@@ -857,7 +923,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     literal, `n * 3`, a name bound outside a loop) still pins, and so does a
     chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
     `assertEqual` and helper forms keep their strength
-    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594; the
+    `py-props-*` cases add the reversed order, a tuple loop target and a
+    loop identity scored as gaps, and a chain, a literal expected value and
+    a name bound outside the loop credited).
 
 ### Verdict ladder
 
@@ -1296,10 +1365,21 @@ and the test is `tests/test_subject.py`, which imports each owner from
   39, and rules 1, 2, 4 and 9 alongside them);
   `python/hypothesis.rs` unit tests pin `@given` pairing and `@example`
   rows.
-- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15),
+- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15; the
+  `py-conjuncts-*` cases add an exact owner conjunct credited, an exact
+  conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
+  comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
-  (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
-  `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
+  (rule 16; the `py-offsets-*` cases add a `C - 1` and a `C + 1` operand
+  hit at the boundary value credited, a parametrize row at `threshold - 1`
+  credited, and inputs that miss the boundary value scored as gaps),
+  `py-fixtures-report-file`, `py-unittest-transfer-notify` and
+  `py-unittest-deposit-add` (rule 17; the `py-channels-*` cases add exact `capfd` and
+  local-after-owner `readouterr()` output, a file read back through the
+  written parameter, and an arithmetic-wrapped mock argument credited, and a
+  `capsys` read before the owner, stderr read as stdout, the other
+  parameter's file, `assert_called_with`, `assert_any_call`, an argument-free
+  or `ANY` mock assertion and an `abs(n)` rewrite scored as gaps), `py-pytest-tax-self-computed`
   (rule 18), and `py-hypothesis-passing-threshold` and
   `py-hypothesis-label-no-crash` (rule 19).
 - Planned: one `classify_change_with_old` test per acceptance example,
@@ -1326,14 +1406,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
   value, unary-sign and changed-argument negatives, and integer zero.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
-  (#6597) score credited under rules 12 to 14,
+  (#6597) score credited under rules 12 to 14; the `py-almost-*` cases
+  cover rule 12's other forms (default and `places=None` credited,
+  explicit `places=` and `delta=`, the positional `delta`, a spread and a
+  non-`self` receiver scored as a gap), the `py-raises-*` cases cover
+  rules 13 and 14 (a callable-form `raises` or `assertRaises`, with and
+  without `match=`, and a coarse length read of a bound exception score
+  as gaps; a bound `.exception` compared with `==` and an `.args` index
+  score credited),
   `py-spec0233-ex11-fluent-helper` scores limited under rule 3, and
   `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
   rule 20. Example 34's `exc.value is not None` and length forms have
   cases (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`,
-  #7546); the corpus has no `assertRaises` callable,
-  `assertRaises ... as cm` or other example 34 form yet, and each needs
-  its own case before those parts read as established.
+  #7546); `assertRaises` callable and `assertRaises ... as cm` now have
+  cases (`py-raises-callable-unittest`,
+  `py-raises-bound-unittest-exception`), and any other example 34 form
+  needs its own case before that part reads as established.
   Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
   mutant the `assert_called_once_with` expectation kills, which scores
   credited under rule 17's called-parameter form, and a sign case

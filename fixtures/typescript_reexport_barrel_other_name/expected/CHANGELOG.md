@@ -205,3 +205,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_barrel_other_name (18)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_barrel_other_name --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_reexport_barrel_other_name (19)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_barrel_other_name --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_reexport_barrel_other_name (20)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_barrel_other_name --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

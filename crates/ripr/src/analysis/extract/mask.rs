@@ -42,7 +42,7 @@ enum MaskState {
 /// lifetimes or labels and stay code. Escape forms (`'\n'`, `'\''`,
 /// `'\u{1F600}'`) are scanned within a bounded window, an escape
 /// consuming the escaped byte.
-fn char_literal_close(bytes: &[u8], quote_index: usize) -> Option<usize> {
+pub(in crate::analysis) fn char_literal_close(bytes: &[u8], quote_index: usize) -> Option<usize> {
     let content = *bytes.get(quote_index + 1)?;
     if content == b'\'' || content == b'\n' {
         // An empty or line-breaking pair is not a character literal.

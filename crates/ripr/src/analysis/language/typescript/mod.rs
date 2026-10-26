@@ -70,6 +70,7 @@ mod classifier;
 mod committed_snapshot;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
+mod decorated_entries;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -79,11 +80,14 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
+mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
 #[cfg(test)]
 mod helper_inline_tests;
 mod hook_owner_guard;
+#[cfg(test)]
+mod identifier_write_scale_tests;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
@@ -166,7 +170,9 @@ mod workspace_packages;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
-pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
+pub(crate) use admission::{
+    RegistrationNames, TypeScriptAdmissionContext, TypeScriptAssertionAdmission,
+};
 pub(crate) use annotation_only::*;
 pub(crate) use assertion_selection::{
     TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
@@ -180,6 +186,7 @@ pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
+pub(crate) use decorated_entries::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
@@ -321,15 +328,58 @@ impl FileOwnerPlan {
     /// First owner whose span contains `line`, exactly as the pre-index
     /// extraction-order scan selected it: the binary-search index for a
     /// monotonic group, a linear scan over extraction order otherwise.
+    /// Test-only shorthand: production callers that resolve an owner also
+    /// need its plan index for the context memo, so they use
+    /// `owner_index_and_ref_for_line` directly.
+    #[cfg(test)]
     fn owner_for_line(&self, line: usize) -> Option<&TypeScriptOwner> {
+        self.owner_index_and_ref_for_line(line)
+            .map(|(_, owner)| owner)
+    }
+
+    /// Owner resolution plus the owner's index within this plan. The index
+    /// is unique per owner, so the changed-line classifier can memoize
+    /// per-owner line context by `usize` instead of cloning the owner's
+    /// file and name Strings for every HashMap key.
+    fn owner_index_and_ref_for_line(&self, line: usize) -> Option<(usize, &TypeScriptOwner)> {
         match self {
             Self::Indexed {
                 owners,
                 end_prefix_max,
-            } => owners.get(owner_index_for_line(owners, end_prefix_max, line)?),
+            } => {
+                let idx = owner_index_for_line(owners, end_prefix_max, line)?;
+                owners.get(idx).map(|owner| (idx, owner))
+            }
             Self::Linear(owners) => owners
                 .iter()
-                .find(|owner| owner.start_line <= line && line <= owner.end_line),
+                .position(|owner| owner.start_line <= line && line <= owner.end_line)
+                .and_then(|idx| owners.get(idx).map(|owner| (idx, owner))),
+        }
+    }
+
+    /// Index of the owner identified by `(name, start_line, end_line)`
+    /// within this plan, for callers that resolved the owner outside the
+    /// plan (the removed-lines pass scans the extraction-order workspace
+    /// vec). The plan holds the same filtered owner set, so the identity
+    /// resolves for exactly the owners that pass resolved. O(log n) plus
+    /// the equal-start group on the sorted variant; the `Linear` variant
+    /// stays an extraction-order scan. As with the old
+    /// `(file, name, start, end)` memo key, two owners sharing the whole
+    /// identity collapse to one memoized context — the same over-share the
+    /// tuple key produced.
+    fn owner_index_by_span(&self, name: &str, start_line: usize, end_line: usize) -> Option<usize> {
+        match self {
+            Self::Indexed { owners, .. } => {
+                let first = owners.partition_point(|owner| owner.start_line < start_line);
+                owners[first..]
+                    .iter()
+                    .take_while(|owner| owner.start_line == start_line)
+                    .position(|owner| owner.name == name && owner.end_line == end_line)
+                    .map(|offset| first + offset)
+            }
+            Self::Linear(owners) => owners.iter().position(|owner| {
+                owner.name == name && owner.start_line == start_line && owner.end_line == end_line
+            }),
         }
     }
 }
@@ -448,6 +498,9 @@ impl TypeScriptAdapter {
         // evaluate (#8714): the credit stands, the disclosure carries the
         // "may never execute" caveat.
         let mut conditional_credit_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
+        // Tests registered under an unevaluated `if` (#10438): indexed for
+        // reach, never credited; one gap per test file.
+        let mut conditional_registration_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
         // Owner shapes the extractor does not index, detected on CHANGED
         // production files only (#4104-A): their changed lines produce no
         // finding today, so the disclosure is the only honest signal.
@@ -568,8 +621,16 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let (mut tests, conditional_credit_gap, expansion) =
-                    extract_tests_with_expansion(relative, source);
+                // #10017: extraction is a pure function of (path, source) and
+                // is served from the content-keyed cache; the clone below is
+                // what snapshot promotion mutates, so promotion still reads
+                // the filesystem on every run.
+                let extraction = extraction_cache::test_extraction_cached(relative, source);
+                let (mut tests, conditional_credit_gap, expansion) = (
+                    extraction.0.clone(),
+                    extraction.1.clone(),
+                    extraction.2.clone(),
+                );
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
                 // The tests of a suite-factory call carry the factory's
                 // snapshot call once per expansion, so the file's calls are
@@ -604,13 +665,25 @@ impl TypeScriptAdapter {
                 if let Some(gap) = conditional_credit_gap {
                     conditional_credit_gaps.push(gap);
                 }
+                // One gap per guarded test, so a finding is marked partial only
+                // by the guarded tests it actually relates to (review on #10456).
+                for test in tests
+                    .iter()
+                    .filter(|test| test.conditional_registration.is_some())
+                {
+                    conditional_registration_gaps.push(TypeScriptConditionalCreditGap {
+                        file: relative.to_path_buf(),
+                        sample_line: test.line,
+                        condition: test.conditional_registration.clone().unwrap_or_default(),
+                    });
+                }
                 all_tests.extend(tests);
             } else {
                 // #10071/#10044: owners came out of the same single parse as
                 // the parse check; the process-lifetime cache lets an LSP
                 // session re-save without re-parsing the whole workspace.
-                // Test extraction stays uncached because committed snapshots
-                // read the filesystem.
+                // Test extraction is cached separately (#10017): only its
+                // pure step, never snapshot promotion.
                 all_owners.extend(facts.owners.clone());
             }
         }
@@ -636,6 +709,9 @@ impl TypeScriptAdapter {
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
+        // Enum-member findings carry no probe owner, but their id was minted
+        // over an `Enum::Member` identity; collision ranking needs it (#10349).
+        let mut minted_owners: std::collections::HashMap<usize, String> = Default::default();
         let mut changed_count: usize = 0;
         // Per-output-language tally (#2103 review): this adapter covers
         // typescript (.ts/.tsx/.mts/.cts) and javascript (.js/.jsx/.mjs/.cjs),
@@ -648,6 +724,10 @@ impl TypeScriptAdapter {
         // then (#4261); an ownerless, import-only or deletion-only TS change
         // never reads the index.
         let mut test_index_consumed = false;
+        // A Rust change related to TypeScript tests through the Bun bridge is
+        // not reachable by TypeScript imports, so it keeps the workspace-wide
+        // partial-extraction disclosure (#10436).
+        let mut cross_language_consumed = false;
         for changed in changed_files {
             for added in &changed.added_lines {
                 if let Some(finding) = bun_cross_language_finding_for_changed_rust_line(
@@ -657,6 +737,7 @@ impl TypeScriptAdapter {
                     &all_tests,
                 ) {
                     test_index_consumed = true;
+                    cross_language_consumed = true;
                     findings.push(finding);
                 }
             }
@@ -790,17 +871,18 @@ impl TypeScriptAdapter {
             let changed_norm = normalized_path(&changed.path);
             // #10021 (memoization half): the four per-owner `all_tests` scans
             // in the classifier depend on the owner, never on the changed
-            // line. Key them by the owner's identity (file, name, span) so a
-            // file with many changed lines — and the deleted-lines pass —
-            // computes each scan once per owner instead of once per line.
-            let mut owner_contexts: std::collections::HashMap<
-                (String, String, usize, usize),
-                OwnerLineContext<'_>,
-            > = std::collections::HashMap::new();
+            // line. Key them by the owner's index within this changed file's
+            // `FileOwnerPlan` — unique per owner within the file — so a file
+            // with many changed lines — and the deleted-lines pass —
+            // computes each scan once per owner instead of once per line,
+            // without cloning the owner's file and name Strings for every
+            // HashMap key.
+            let mut owner_contexts: std::collections::HashMap<usize, OwnerLineContext<'_>> =
+                std::collections::HashMap::new();
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
-                    .filter(|owner| normalized_path(&owner.file) == changed_norm)
+                    .filter(|owner| normalized_path_eq(&owner.file, &changed_norm))
                     .cloned()
                     .collect(),
             );
@@ -827,6 +909,7 @@ impl TypeScriptAdapter {
                     .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
                     && is_new_owner_opening_line(
                         &changed.path,
+                        &changed_norm,
                         added.line,
                         &added.text,
                         &all_owners,
@@ -856,38 +939,37 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
-                let resolved_finding = owner_plan.owner_for_line(added.line).and_then(|owner| {
-                    let key = (
-                        changed_norm.clone(),
-                        owner.name.clone(),
-                        owner.start_line,
-                        owner.end_line,
-                    );
-                    let context = owner_contexts.entry(key).or_insert_with(|| {
-                        owner_line_context(
+                let resolved_finding = owner_plan
+                    .owner_index_and_ref_for_line(added.line)
+                    .and_then(|(owner_idx, owner)| {
+                        // Memoize per-owner line context by the owner's plan
+                        // index: unique within this changed file, so the key
+                        // needs no cloned Strings.
+                        let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
+                            owner_line_context(
+                                owner,
+                                &all_tests,
+                                Some(&options.root),
+                                &reexport_index,
+                                &relation_index,
+                                alias_map_ref,
+                            )
+                        });
+                        classify_resolved_owner(
+                            &changed.path,
+                            added.line,
+                            &added.text,
+                            old_line_text,
                             owner,
+                            owner_plan.owners(),
+                            context,
                             &all_tests,
                             Some(&options.root),
                             &reexport_index,
-                            &relation_index,
                             alias_map_ref,
+                            alias_load_gap.as_ref(),
                         )
                     });
-                    classify_resolved_owner(
-                        &changed.path,
-                        added.line,
-                        &added.text,
-                        old_line_text,
-                        owner,
-                        owner_plan.owners(),
-                        context,
-                        &all_tests,
-                        Some(&options.root),
-                        &reexport_index,
-                        alias_map_ref,
-                        alias_load_gap.as_ref(),
-                    )
-                });
                 if let Some(mut finding) = resolved_finding {
                     test_index_consumed = true;
                     finding.evidence.extend(discovery_evidence.clone());
@@ -943,6 +1025,7 @@ impl TypeScriptAdapter {
                     let mut finding =
                         enum_member_finding(&changed.path, added.line, &added.text, identity);
                     finding.evidence.extend(discovery_evidence.clone());
+                    minted_owners.insert(findings.len(), identity.to_string());
                     findings.push(finding);
                 }
             }
@@ -960,17 +1043,21 @@ impl TypeScriptAdapter {
                     // receives (its file matched by normalized path), so a
                     // line outside the owner's span classified nothing. Keep
                     // that guard, then share the memoized per-owner context
-                    // with the added-lines pass above (#10021).
+                    // with the added-lines pass above (#10021). The plan
+                    // holds the same owner set this pass filtered by
+                    // normalized path (`normalized_path_eq` is exactly
+                    // `normalized_path(path) == normalized`), so the
+                    // (name, start, end) identity always resolves to the
+                    // plan's index for that owner — no cloned Strings.
                     if line < owner.start_line || line > owner.end_line {
                         return None;
                     }
-                    let key = (
-                        changed_norm.clone(),
-                        owner.name.clone(),
+                    let owner_idx = owner_plan.owner_index_by_span(
+                        &owner.name,
                         owner.start_line,
                         owner.end_line,
-                    );
-                    let context = owner_contexts.entry(key).or_insert_with(|| {
+                    )?;
+                    let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
                         owner_line_context(
                             owner,
                             &all_tests,
@@ -1087,11 +1174,35 @@ impl TypeScriptAdapter {
         // The index is workspace-wide, so a diff that classified nothing
         // against it (Rust-only, or TS test edits only) is not made partial by
         // test shapes it never consulted (#4261).
-        let consulted_gaps: &[_] = if test_index_consumed {
-            &extraction_gaps
+        // #10436: a dropped registration matters only when a test in its file
+        // could be related to code this diff changed. `GapReach` answers that
+        // from the file's local import closure and keeps the gap whenever it
+        // cannot prove otherwise.
+        let scoped_gaps: Vec<TypeScriptTestExtractionGap> = if test_index_consumed {
+            let owner_names = all_owners
+                .iter()
+                .filter(|owner| changed_paths.contains(&normalized_path(&owner.file)))
+                .flat_map(|owner| {
+                    std::iter::once(owner.name.clone()).chain(owner.class_name.clone())
+                })
+                .collect::<Vec<_>>();
+            let reach = gap_reach::GapReach::new(
+                &source_by_normalized,
+                &changed_paths,
+                owner_names,
+                alias_map_ref,
+                &options.root,
+                cross_language_consumed,
+            );
+            extraction_gaps
+                .iter()
+                .filter(|gap| reach.may_reach(&gap.file))
+                .cloned()
+                .collect()
         } else {
-            &[]
+            Vec::new()
         };
+        let consulted_gaps: &[_] = &scoped_gaps;
         // One summary limitation for the whole workspace-wide index, not one
         // line per unrelated test file: the gaps are not in the diff, so a
         // per-file list buried the changed-file result.
@@ -1110,12 +1221,35 @@ impl TypeScriptAdapter {
             .flat_map(|finding| finding.related_tests.iter())
             .map(|related| normalized_path(&related.file))
             .collect();
+        let consulted_test_lines: std::collections::BTreeSet<(String, usize)> = findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .map(|related| (normalized_path(&related.file), related.line))
+            .collect();
         let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
             consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
         } else {
             Vec::new()
         };
         if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
+            limitations.push(limitation);
+        }
+        let consulted_registration_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            if test_index_consumed {
+                conditional_registration_gaps
+                    .iter()
+                    .filter(|gap| {
+                        consulted_test_lines
+                            .contains(&(normalized_path(&gap.file), gap.sample_line))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if let Some(limitation) = conditional_gap_summary(
+            &consulted_registration_gaps,
+            ConditionalGapKind::Registration,
+        )? {
             limitations.push(limitation);
         }
         // Partial owner extraction (#4104-A): changed lines inside owner
@@ -1242,7 +1376,7 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
-        dedup_typescript_probe_ids(&mut findings);
+        dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
             findings,
@@ -1356,6 +1490,48 @@ const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
 fn conditional_assertion_credit_summary(
     gaps: &[&TypeScriptConditionalCreditGap],
 ) -> Result<Option<AnalysisLimitation>, String> {
+    conditional_gap_summary(gaps, ConditionalGapKind::AssertionCredit)
+}
+
+/// Which unevaluated-condition disclosure a gap summary is for.
+#[derive(Clone, Copy)]
+enum ConditionalGapKind {
+    /// An assertion sits under the condition and keeps its credit (#8714).
+    AssertionCredit,
+    /// A test registration sits under the condition and earns no credit
+    /// (#10438).
+    Registration,
+}
+
+impl ConditionalGapKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => "typescript_conditional_assertion_credit",
+            Self::Registration => "typescript_conditional_registration",
+        }
+    }
+
+    fn plural_subject(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => {
+                "credit assertions under conditions static analysis cannot evaluate"
+            }
+            Self::Registration => "register tests under conditions static analysis cannot evaluate",
+        }
+    }
+
+    fn limitation(self, gap: &TypeScriptConditionalCreditGap) -> TypeScriptNamedLimitation {
+        match self {
+            Self::AssertionCredit => conditional_assertion_credit_limitation(gap),
+            Self::Registration => conditional_registration_limitation(gap),
+        }
+    }
+}
+
+fn conditional_gap_summary(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    kind: ConditionalGapKind,
+) -> Result<Option<AnalysisLimitation>, String> {
     let recovery = || {
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
@@ -1366,7 +1542,7 @@ fn conditional_assertion_credit_summary(
         [] => Ok(None),
         [gap] => {
             let gap = *gap;
-            let limitation = conditional_assertion_credit_limitation(gap);
+            let limitation = kind.limitation(gap);
             Ok(Some(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::UnevaluatedCondition,
@@ -1376,8 +1552,10 @@ fn conditional_assertion_credit_summary(
                 .with_path(gap.file.to_string_lossy())?
                 .with_affected_items(1)?
                 .with_detail(format!(
-                    "typescript_conditional_assertion_credit: `{}` at {}",
-                    gap.condition, limitation.sample_source
+                    "{}: `{}` at {}",
+                    kind.name(),
+                    gap.condition,
+                    limitation.sample_source
                 ))?,
             ))
         }
@@ -1393,14 +1571,16 @@ fn conditional_assertion_credit_summary(
                     format!(
                         "`{}` at {}",
                         gap.condition,
-                        conditional_assertion_credit_limitation(gap).sample_source
+                        kind.limitation(gap).sample_source
                     )
                 })
                 .collect::<Vec<_>>();
             let remainder = gaps.len().saturating_sub(samples.len());
             let head = format!(
-                "typescript_conditional_assertion_credit: {} test file(s) credit assertions under conditions static analysis cannot evaluate",
-                files.len()
+                "{}: {} test file(s) {}",
+                kind.name(),
+                files.len(),
+                kind.plural_subject()
             );
             let mut detail = format!("{head}; e.g. {}", samples.join("; "));
             if remainder > 0 {

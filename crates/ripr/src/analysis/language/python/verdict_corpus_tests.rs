@@ -2142,9 +2142,16 @@ fn a_route_decorator_edit_needs_a_client_call_to_the_route() -> Result<(), Strin
         classify(ROUTE_OWNER, 8, "    return 2", direct)?,
         ExposureClass::Exposed
     );
-    let client = "def test_f(client):\n    assert client.get(\"/b\").json == 1\n";
+    let client = "from starlette.testclient import TestClient\nfrom src.shop import app\n\n\ndef test_f():\n    client = TestClient(app)\n    assert client.get(\"/b\").json == 1\n";
     assert_ne!(
         classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", client)?,
+        ExposureClass::StaticUnknown
+    );
+    // A client whose application is not resolved reaches the route too, but
+    // reads as the unresolved-application limit rather than a gap.
+    let unresolved = "def test_f(client):\n    assert client.get(\"/b\").json == 1\n";
+    assert_eq!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", unresolved)?,
         ExposureClass::StaticUnknown
     );
     Ok(())

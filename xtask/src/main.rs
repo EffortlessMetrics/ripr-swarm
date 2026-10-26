@@ -65,6 +65,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod size_scaling;
 mod termination_qualification;
 mod types;
 mod work_adapter_identity;
@@ -212,8 +213,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
-    write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, read_evidence_promotion_corpus,
+    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -6462,11 +6463,26 @@ fn validate_spec_references(
     ids: &BTreeMap<String, Vec<String>>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    for relative in [
-        ".ripr/traceability.toml",
-        "metrics/capabilities.toml",
-        "docs/CAPABILITY_MATRIX.md",
-    ] {
+    let mut references = vec![
+        ".ripr/traceability.toml".to_string(),
+        "metrics/capabilities.toml".to_string(),
+        "docs/CAPABILITY_MATRIX.md".to_string(),
+    ];
+    if let Ok(entries) = fs::read_dir(root.join(TRACEABILITY_FRAGMENT_DIR)) {
+        let mut fragments: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+            .map(|entry| {
+                format!(
+                    "{TRACEABILITY_FRAGMENT_DIR}/{}",
+                    entry.file_name().to_string_lossy()
+                )
+            })
+            .collect();
+        fragments.sort();
+        references.extend(fragments);
+    }
+    for relative in &references {
         let path = root.join(relative);
         if !path.exists() {
             continue;
@@ -6529,7 +6545,7 @@ fn check_traceability() -> Result<(), String> {
         return finish_traceability_report(&violations, &advisories);
     }
 
-    let (behaviors, parse_violations) = parse_traceability_manifest(manifest)?;
+    let (behaviors, parse_violations) = load_traceability_behaviors(manifest)?;
     violations.extend(parse_violations);
     if behaviors.is_empty() {
         violations.push(".ripr/traceability.toml has no [[behavior]] entries".to_string());
@@ -6877,6 +6893,76 @@ fn is_ascii_digits(value: &str) -> bool {
     value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// Directory of traceability fragments. A PR registers its tests, fixtures,
+/// code, outputs and metrics, or a whole new behavior, in a file of its own
+/// here instead of editing the shared `.ripr/traceability.toml` arrays that
+/// every PR otherwise appends to.
+const TRACEABILITY_FRAGMENT_DIR: &str = ".ripr/traceability.d";
+
+/// The base manifest plus every fragment, with `[[extend]]` entries folded
+/// into the behavior they name. An `[[extend]]` whose id no behavior carries
+/// is a violation, and a fragment may not set `name` or `spec` on an extend.
+fn load_traceability_behaviors(
+    manifest: &Path,
+) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
+    let (mut all, mut violations) = parse_traceability_manifest(manifest)?;
+    let dir = manifest
+        .parent()
+        .map(|parent| parent.join("traceability.d"))
+        .unwrap_or_else(|| PathBuf::from(TRACEABILITY_FRAGMENT_DIR));
+    if dir.is_dir() {
+        let mut fragments: Vec<PathBuf> = fs::read_dir(&dir)
+            .map_err(|error| format!("failed to read {}: {error}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        fragments.sort();
+        for fragment in fragments {
+            let (behaviors, fragment_violations) = parse_traceability_manifest(&fragment)?;
+            violations.extend(fragment_violations);
+            all.extend(behaviors);
+        }
+    }
+
+    let mut merged: Vec<TraceBehavior> = Vec::new();
+    let mut extends = Vec::new();
+    for behavior in all {
+        if behavior.extends {
+            extends.push(behavior);
+        } else {
+            merged.push(behavior);
+        }
+    }
+    for extend in extends {
+        let location = format!("{}:{}", extend.source, extend.line);
+        let Some(id) = extend.id.as_ref() else {
+            violations.push(format!("{location} [[extend]] is missing `id`"));
+            continue;
+        };
+        if extend.name.is_some() || extend.spec.is_some() {
+            violations.push(format!(
+                "{location} [[extend]] for {id} sets `name` or `spec`; those belong to its [[behavior]]"
+            ));
+        }
+        let Some(base) = merged
+            .iter_mut()
+            .find(|behavior| behavior.id.as_ref() == Some(id))
+        else {
+            violations.push(format!(
+                "{location} [[extend]] names {id}, which no [[behavior]] carries"
+            ));
+            continue;
+        };
+        base.tests.extend(extend.tests);
+        base.fixtures.extend(extend.fixtures);
+        base.code.extend(extend.code);
+        base.outputs.extend(extend.outputs);
+        base.metrics.extend(extend.metrics);
+    }
+    Ok((merged, violations))
+}
+
 fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
     let text = read_text_lossy(path)?;
     let mut behaviors = Vec::new();
@@ -6921,12 +7007,14 @@ fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<S
             }
             continue;
         }
-        if trimmed == "[[behavior]]" {
+        if trimmed == "[[behavior]]" || trimmed == "[[extend]]" {
             if let Some(behavior) = current.take() {
                 behaviors.push(behavior);
             }
             current = Some(TraceBehavior {
                 line: line_number,
+                extends: trimmed == "[[extend]]",
+                source: normalize_path(path),
                 ..TraceBehavior::default()
             });
             continue;
@@ -14202,7 +14290,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 13] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 14] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -14231,6 +14319,10 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9442: a test in an integration-test file sees the owner only as a
+        // value through the crate's public path; the layout authority stays
+        // `is_test_file` and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/indirect_owner.rs",
         // #9982: a facade crate's integration test is a file under `tests/**`
         // of the facade package; the layout authority stays `is_test_file`
         // and the module decides no role of its own.
@@ -14977,6 +15069,10 @@ fn check_doc_index() -> Result<(), String> {
 }
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
+/// Per-PR `[[artifact]]` fragments beside the ledger (`<ledger stem>.d/`), so a
+/// PR that registers a spec adds a file instead of appending to the ledger
+/// tail every other such PR edits (#9859).
+const DOC_ARTIFACT_FRAGMENT_EXTENSION: &str = "d";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
 /// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
 /// was added (#1718). Lower this as specs are registered.
@@ -15025,6 +15121,8 @@ struct DocArtifactLedger {
 #[derive(Clone, Debug, Default)]
 struct DocArtifactEntry {
     line: usize,
+    /// Fragment file the entry came from; `None` for the main ledger.
+    source: Option<String>,
     seen_fields: BTreeSet<String>,
     id: Option<String>,
     kind: Option<String>,
@@ -15187,16 +15285,19 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 
     let mut ids_by_line = BTreeMap::new();
     for artifact in &ledger.artifacts {
+        let origin = artifact.source.as_deref().unwrap_or(&ledger_display);
         let Some(id) = artifact.id.as_deref() else {
             violations.push(format!(
-                "{ledger_display}:{} artifact is missing required field `id`",
+                "{origin}:{} artifact is missing required field `id`",
                 artifact.line
             ));
             continue;
         };
-        if let Some(previous_line) = ids_by_line.insert(id.to_string(), artifact.line) {
+        if let Some((previous_origin, previous_line)) =
+            ids_by_line.insert(id.to_string(), (origin.to_string(), artifact.line))
+        {
             violations.push(format!(
-                "{ledger_display}:{} duplicate artifact id `{id}`; first defined at line {previous_line}",
+                "{origin}:{} duplicate artifact id `{id}`; first defined at {previous_origin}:{previous_line}",
                 artifact.line
             ));
         }
@@ -15219,7 +15320,54 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 fn parse_doc_artifact_ledger(path: &Path) -> Result<DocArtifactLedger, String> {
     let text = read_text_lossy(path)?;
     let display = normalize_path(path);
-    parse_doc_artifact_ledger_text(&display, &text)
+    let mut ledger = parse_doc_artifact_ledger_text(&display, &text)?;
+    ledger.artifacts.extend(parse_doc_artifact_fragments(path)?);
+    Ok(ledger)
+}
+
+/// Reads `<ledger stem>.d/*.toml` in file-name order. Only an absent directory
+/// is optional: an unreadable directory, a non-`.toml` entry, or a fragment
+/// that sets `schema_version` fails, so a fragment cannot be silently skipped.
+fn parse_doc_artifact_fragments(ledger_path: &Path) -> Result<Vec<DocArtifactEntry>, String> {
+    let dir = ledger_path.with_extension(DOC_ARTIFACT_FRAGMENT_EXTENSION);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?;
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "toml") {
+            return Err(format!(
+                "{} is not a .toml artifact fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    let mut artifacts = Vec::new();
+    for path in paths {
+        let display = normalize_path(&path);
+        let text = read_text_lossy(&path)?;
+        let fragment = parse_doc_artifact_ledger_text(&display, &text)?;
+        if fragment.schema_version.is_some() {
+            return Err(format!(
+                "{display} must not set schema_version; only the main ledger does"
+            ));
+        }
+        if fragment.artifacts.is_empty() {
+            return Err(format!("{display} has no [[artifact]] entries"));
+        }
+        for mut artifact in fragment.artifacts {
+            artifact.source = Some(display.clone());
+            artifacts.push(artifact);
+        }
+    }
+    Ok(artifacts)
 }
 
 fn parse_doc_artifact_ledger_text(display: &str, text: &str) -> Result<DocArtifactLedger, String> {
@@ -15338,6 +15486,7 @@ fn validate_doc_artifact_entry(
     artifact_ids: &BTreeSet<String>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
+    let ledger_display = artifact.source.as_deref().unwrap_or(ledger_display);
     let id_label = artifact.id.as_deref().unwrap_or("<missing id>");
     let Some(id) = artifact.id.as_deref() else {
         return Ok(());
@@ -16882,7 +17031,7 @@ fn changed_source_layers(changes: &[ChangedPath]) -> BTreeSet<&'static str> {
 fn source_layer_for_path(path: &str) -> Option<&'static str> {
     if path.starts_with(".github/workflows/") {
         Some("workflows")
-    } else if path == ".ripr/traceability.toml" {
+    } else if path == ".ripr/traceability.toml" || path.starts_with(".ripr/traceability.d/") {
         Some("traceability")
     } else if path.starts_with(".ripr/goals/") {
         Some("goal-manifest")
@@ -19155,6 +19304,7 @@ fn check_count_policy(
     is_candidate: fn(&str) -> bool,
 ) -> Result<(), String> {
     let allowlist = read_count_policy_allowlist(allowlist_path)?;
+    let fragment_dir = normalize_path(&Path::new(allowlist_path).with_extension("d"));
     let mut counts = BTreeMap::<(String, String), usize>::new();
 
     for normalized in tracked_files()? {
@@ -19178,7 +19328,7 @@ fn check_count_policy(
             .unwrap_or(0);
         if *count > allowed {
             violations.push(format!(
-                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add to {allowlist_path}:\n  {path}|{pattern}|{count}|owner|reason"
+                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add a file under {fragment_dir}/ (named for this PR, e.g. <issue>-<slug>.txt) holding:\n  {path}|{pattern}|{count}|owner|reason"
             ));
         } else if *count < allowed {
             // Stale bound: the allowlist grants more budget than the code
@@ -21090,6 +21240,7 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
             || is_fixture_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         warnings.push(
@@ -21207,6 +21358,7 @@ fn critic_findings(
             || is_golden_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         findings.push(CriticFinding {
@@ -21782,7 +21934,56 @@ fn strip_status_suffix(path: &str) -> &str {
 
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
     let text = read_text_lossy(Path::new(path))?;
-    parse_count_policy_allowlist(path, &text)
+    let mut allowed = parse_count_policy_allowlist(path, &text)?;
+    let mut declared_in = allowed
+        .keys()
+        .map(|key| (key.clone(), path.to_string()))
+        .collect::<BTreeMap<_, _>>();
+    for (fragment_path, fragment_text) in count_policy_fragments(path)? {
+        for (key, max_count) in parse_count_policy_allowlist(&fragment_path, &fragment_text)? {
+            if let Some(first) = declared_in.get(&key) {
+                return Err(format!(
+                    "{fragment_path}: path|pattern `{}|{}` is already declared in {first}",
+                    key.0, key.1
+                ));
+            }
+            declared_in.insert(key.clone(), fragment_path.clone());
+            allowed.insert(key, max_count);
+        }
+    }
+    Ok(allowed)
+}
+
+/// Per-PR rows beside a count-policy allowlist (`<allowlist stem>.d/*.txt`),
+/// so a PR that adds a spawn or network site adds a file instead of appending
+/// to the list tail every such PR edits (#9859). Only an absent directory is
+/// optional; a non-`.txt` entry or a read error fails, and fragments are read
+/// in file-name order.
+fn count_policy_fragments(allowlist_path: &str) -> Result<Vec<(String, String)>, String> {
+    let dir = Path::new(allowlist_path).with_extension("d");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?
+            .path();
+        if path.extension().is_none_or(|extension| extension != "txt") {
+            return Err(format!(
+                "{} is not a .txt allowlist fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| Ok((normalize_path(&path), read_text_lossy(&path)?)))
+        .collect()
 }
 
 fn parse_count_policy_allowlist(

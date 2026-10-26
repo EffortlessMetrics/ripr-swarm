@@ -32,6 +32,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain
     - infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
@@ -39,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_module_prior_failing_assert/input --diff <cwd>/fixtures/python_module_prior_failing_assert/diff.patch --mode fast probe:settings.py:python_preview:b36e33fd
   ripr context --root <cwd>/fixtures/python_module_prior_failing_assert/input --diff <cwd>/fixtures/python_module_prior_failing_assert/diff.patch --mode fast --at probe:settings.py:python_preview:b36e33fd
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:settings.py:python_preview:b36e33fd --root <cwd>/fixtures/python_module_prior_failing_assert/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -2949,3 +2949,42 @@ fn loop_header_opening_a_multiline_string_fails_open() -> Result<(), String> {
     }
     Ok(())
 }
+
+// A string-opening header written with a tab, no space or a parenthesized
+// condition is still a header (#9919): the keyword boundary decides, not a
+// required ASCII space after it.
+#[test]
+fn string_opening_header_with_any_keyword_boundary_fails_open() -> Result<(), String> {
+    let prefix = "def f(x):\n    if x > 0:\n        return 1\n";
+    let mut sources = Vec::new();
+    for quote in ["\"\"\"", "'''"] {
+        let string = format!("{quote}\na{quote}");
+        for head in ["for s in ", "for\ts in ", "for(s)in"] {
+            sources.push(format!(
+                "{prefix}    {head}({string},):\n        return 42\n"
+            ));
+        }
+        for gap in ["", "\t"] {
+            for keyword in ["while", "if", "elif"] {
+                sources.push(format!(
+                    "{prefix}    {keyword}{gap}(x < 0 and {string}):\n        return 42\n"
+                ));
+            }
+        }
+    }
+    for source in sources {
+        let line = source
+            .lines()
+            .position(|text| text == "        return 42")
+            .ok_or("fixture must contain the changed return")?
+            + 1;
+        let tests = "from src.subject import f\n\ndef test_f():\n    assert f(-1) == 42\n";
+        let finding = classify_added_case(&source, tests, line, "        return 42")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}

@@ -372,17 +372,21 @@ fn mentions_identifier(text: &str, name: &str) -> bool {
 
 pub(crate) fn is_new_owner_opening_line(
     file: &Path,
+    changed_file_normalized: &str,
     line: usize,
     line_text: &str,
     owners: &[TypeScriptOwner],
     removed_texts: &[&str],
     has_added_probe_line: impl Fn(usize) -> bool,
 ) -> bool {
-    let changed_file = normalized_path(file);
+    // The caller computes `changed_file_normalized` once per changed file;
+    // normalizing here per added line cost 2-3 allocations for every
+    // guard-miss line in large diffs.
+    let changed_file = changed_file_normalized;
     let opens_owner_with_added_body = owners.iter().any(|owner| {
         owner.start_line == line
             && owner.end_line > line
-            && normalized_path(&owner.file) == changed_file
+            && normalized_path_eq(&owner.file, changed_file)
             && !matches!(owner.owner_kind, OwnerKind::ModuleFunction)
             && owner.method_kind != TypeScriptMethodKind::Constructor
             && (line + 1..=owner.end_line).any(&has_added_probe_line)

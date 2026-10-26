@@ -170,7 +170,7 @@ fn confirmed_over_credits(report: &Value) -> Result<Vec<Value>, String> {
             },
             "promotion_recipe": {
                 "step_1": "extract a minimal REGULAR fixture (with golden expected/check.json) reproducing this row's false-promotion shape; the retained diff at the provenance diff_path is the extraction source — manifest-only fixture dirs are rejected by the SPEC-0108 meta-gate",
-                "step_2": "add a corpus case to fixtures/evidence-promotion-honesty-corpus/corpus.json with assertions [\"must_not_promote\"] (plus expected_finding_count where the shape pins one)",
+                "step_2": "add a corpus case as fixtures/evidence-promotion-honesty-corpus/cases/<id>.json with assertions [\"must_not_promote\"] (plus expected_finding_count where the shape pins one)",
                 "step_3": "run cargo xtask check-evidence-promotion-honesty — it must pass; a failing promotion case means the analyzer genuinely over-promotes and the analyzer fix lands in this same PR",
                 "step_4": "re-bless affected goldens in the same PR with zero unexplained drift",
             },
