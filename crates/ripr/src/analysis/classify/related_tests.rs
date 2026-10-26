@@ -4068,7 +4068,15 @@ fn free_fn_returns_type(
                     .any(|offset| masked[..offset].trim_end().ends_with(keyword.trim_end()))
             })
     });
-    if shadowed || free_fn_name_is_imported_or_parameter(index, test_file, name) {
+    // A `fn name` nested in a body (or any other non-free fn of that name in the
+    // file) can be what the call resolves to, so the free helper is not the
+    // call's authority.
+    let nested = index.functions().iter().any(|other| {
+        other.name == name
+            && other.file == test_file
+            && other.item.container != FunctionContainer::Free
+    });
+    if shadowed || nested || free_fn_name_is_imported_or_parameter(index, test_file, name) {
         return FactoryReturn::Other;
     }
     if super::owner_pin::function_declaration_is_async(function, index) != Some(false) {

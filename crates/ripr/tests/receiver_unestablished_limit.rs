@@ -425,7 +425,14 @@ fn a_bare_factory_shadowed_by_an_import_keeps_the_gap() -> Result<(), String> {
         "use std::iter::empty as fixture; std::assert_eq!(fixture::<u8>().read(), 4);",
     )?
     .finding()?;
-    assert_keeps_gap("import shadows the free fn", &shadowed)
+    assert_keeps_gap("import shadows the free fn", &shadowed)?;
+    let nested = Workspace::create_shaped(
+        Placement::Generated,
+        shape,
+        "fn fixture()->Other{Other} std::assert_eq!(fixture().read(), 4);",
+    )?
+    .finding()?;
+    assert_keeps_gap("a nested fn shadows the free fn", &nested)
 }
 
 /// `foreign::Widget::seeded()` is a different type than the local `Widget`,
