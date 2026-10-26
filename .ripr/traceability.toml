@@ -17684,6 +17684,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
 ]
 fixtures = [
+  "fixtures/typescript_exported_expect_lookalike",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",

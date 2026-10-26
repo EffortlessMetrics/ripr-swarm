@@ -2219,21 +2219,41 @@ fn regex_pattern_is_anchored(pattern: &str) -> bool {
 }
 
 /// Whether a top-level statement declares the name `expect` (`const`,
-/// `let`, `var`, `function` or `class`).
+/// `let`, `var`, `function` or `class`). An exported declaration still
+/// creates the same local binding; a re-export creates no local binding.
 fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
-    match stmt {
-        Statement::VariableDeclaration(decl) => decl.declarations.iter().any(|declarator| {
-            declarator
+    if let Statement::ExportDefaultDeclaration(export) = stmt {
+        return match &export.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(function) => function
                 .id
-                .get_binding_identifiers()
-                .iter()
-                .any(|ident| ident.name.as_str() == "expect")
-        }),
-        Statement::FunctionDeclaration(function) => function
+                .as_ref()
+                .is_some_and(|id| id.name.as_str() == "expect"),
+            ExportDefaultDeclarationKind::ClassDeclaration(class) => class
+                .id
+                .as_ref()
+                .is_some_and(|id| id.name.as_str() == "expect"),
+            _ => false,
+        };
+    }
+    let declaration = match stmt {
+        Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
+        other => other.as_declaration(),
+    };
+    match declaration {
+        Some(Declaration::VariableDeclaration(decl)) => {
+            decl.declarations.iter().any(|declarator| {
+                declarator
+                    .id
+                    .get_binding_identifiers()
+                    .iter()
+                    .any(|ident| ident.name.as_str() == "expect")
+            })
+        }
+        Some(Declaration::FunctionDeclaration(function)) => function
             .id
             .as_ref()
             .is_some_and(|id| id.name.as_str() == "expect"),
-        Statement::ClassDeclaration(class) => class
+        Some(Declaration::ClassDeclaration(class)) => class
             .id
             .as_ref()
             .is_some_and(|id| id.name.as_str() == "expect"),

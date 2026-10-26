@@ -391,7 +391,10 @@ is bound by an import from `vitest`, `@jest/globals`, `@playwright/test` or
 parameter (Vitest `test("x", ({ expect }) => ...)`). Any other binding of
 `expect` makes step 2 produce no assertion: a file-level or test-body
 declaration (`const`, `let`, `var`, `function`, `class`), another parameter,
-or an import from any other module. A chai-bound `expect` is read only by
+or an import from any other module. Named exports of those declarations and
+named default-exported functions/classes create the same local binding and
+withhold matcher credit. A source re-export (`export { expect } from ...`)
+creates no local binding. A chai-bound `expect` is read only by
 step 1, so a chai chain step 1 does not know yields no assertion instead of
 falling through to the Jest table. A renamed import (`expect as e`) and
 `expect.soft` stay unrecognised.
