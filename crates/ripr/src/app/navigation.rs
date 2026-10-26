@@ -164,10 +164,10 @@ impl RepairRouteRefusal {
                 if observed_boundary {
                     // #10622: the input is already there; only the assertion
                     // is weak, so do not say the boundary evidence is missing.
-                    let others: Vec<String> = missing
+                    let others: Vec<&str> = missing
                         .iter()
                         .filter(|item| !super::task_first::is_boundary_value_discriminator(item))
-                        .cloned()
+                        .map(|item| item.as_str())
                         .collect();
                     let also = if others.is_empty() {
                         String::new()

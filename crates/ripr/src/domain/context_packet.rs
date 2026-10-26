@@ -362,6 +362,52 @@ mod tests {
         }
     }
 
+    #[test]
+    fn boundary_input_observed_flag_requires_every_condition() {
+        let mut positive = sample_finding();
+        positive.infect_for_boundary_test();
+        assert!(positive.boundary_input_observed_with_weak_oracle());
+
+        let mut other_class = positive.clone();
+        other_class.class = ExposureClass::ReachableUnrevealed;
+        assert!(!other_class.boundary_input_observed_with_weak_oracle());
+
+        let mut other_family = positive.clone();
+        other_family.probe.family = ProbeFamily::ReturnValue;
+        assert!(!other_family.boundary_input_observed_with_weak_oracle());
+
+        let mut infect_weak = positive.clone();
+        infect_weak.ripr.infect.state = StageState::Weak;
+        assert!(!infect_weak.boundary_input_observed_with_weak_oracle());
+
+        let mut other_summary = positive.clone();
+        other_summary.ripr.infect.summary = "Possible infection".to_string();
+        assert!(!other_summary.boundary_input_observed_with_weak_oracle());
+
+        // An assertion-shaped owner gets the assertion-helper Next step, so
+        // the advisory must not claim the boundary is reached.
+        let mut assertion_shaped = positive.clone();
+        assertion_shaped.recommended_next_step =
+            Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP.to_string());
+        assert!(!assertion_shaped.boundary_input_observed_with_weak_oracle());
+
+        let mut no_step = positive;
+        no_step.recommended_next_step = None;
+        assert!(!no_step.boundary_input_observed_with_weak_oracle());
+    }
+
+    impl Finding {
+        fn infect_for_boundary_test(&mut self) {
+            self.ripr.infect = StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
+            );
+            self.recommended_next_step =
+                Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+        }
+    }
+
     fn related(name: &str) -> RelatedTest {
         RelatedTest {
             name: name.to_string(),

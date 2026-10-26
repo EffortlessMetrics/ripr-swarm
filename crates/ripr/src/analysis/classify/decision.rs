@@ -256,7 +256,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
         && *class == ExposureClass::WeaklyExposed
         && matches!(probe.family, ProbeFamily::Predicate)
     {
-        return Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+        return Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
     }
     // RIPR-SPEC-0133: an assertion-shaped owner is the oracle, not the code
     // under test, so the standard code-under-test advice is incoherent for it.
@@ -479,8 +479,6 @@ fn uncertainty_next_step(
     step
 }
 
-const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input; strengthen its assertion to compare the exact returned value (for example assert_eq!) so the old and changed behavior differ.";
-
 fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
     match family {
         ProbeFamily::Predicate => {
@@ -633,7 +631,7 @@ mod tests {
         );
         assert_eq!(
             observed.as_deref(),
-            Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
         );
         // Discriminating negative: boundary input not observed keeps the
         // boundary-test template.
@@ -660,7 +658,22 @@ mod tests {
         );
         assert_ne!(
             other_family.as_deref(),
-            Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        );
+    }
+
+    #[test]
+    fn boundary_observed_does_not_override_assertion_shaped_owner_guidance() {
+        let step = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::Predicate, "qty > 10"),
+            &ExposureClass::WeaklyExposed,
+            true,
+            &[],
+            true,
+        );
+        assert_eq!(
+            step.as_deref(),
+            Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP)
         );
     }
 

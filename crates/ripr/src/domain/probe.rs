@@ -813,12 +813,18 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 impl Finding {
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
-    /// the input (#10622). Static evidence only.
+    /// the input (#10622). Static evidence only. The finding must also carry
+    /// the boundary-observed Next step itself, so the advisory never claims
+    /// more than the Next step says: an assertion-shaped owner (which gets the
+    /// assertion-helper Next step) or an earlier Next-step branch never
+    /// qualifies.
     pub(crate) fn boundary_input_observed_with_weak_oracle(&self) -> bool {
         self.class == ExposureClass::WeaklyExposed
             && self.probe.family == ProbeFamily::Predicate
             && self.ripr.infect.state == crate::domain::StageState::Yes
             && self.ripr.infect.summary == crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY
+            && self.recommended_next_step.as_deref()
+                == Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
     }
 
     /// Related tests that supplied an oracle row or a refusal, skipping tests
