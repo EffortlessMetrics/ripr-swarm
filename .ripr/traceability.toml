@@ -1783,6 +1783,7 @@ tests = [
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_accepts_an_out_dir_that_names_the_default_workflow_dir",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_missing_snapshot_named_like_a_refusal_is_operational",
   "crates/ripr/tests/cli_smoke.rs::agent_repair_operational_error_after_attempt_selection_stays_failure",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_invalid_attempt_before_reading_verify_input",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_phase_values_keep_their_exact_meaning",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_phase_refusals_render_scoped_recovery_without_writes",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",

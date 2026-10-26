@@ -9915,6 +9915,48 @@ fn agent_repair_operational_error_after_attempt_selection_stays_failure()
 }
 
 #[test]
+fn agent_receipt_rejects_invalid_attempt_before_reading_verify_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-invalid-attempt");
+    std::fs::create_dir_all(&root)?;
+    for (attempt, expected) in [
+        (
+            "bogus",
+            "repair attempt ID must start with `repair-attempt-`",
+        ),
+        (
+            "repair-attempt-short",
+            "repair attempt ID suffix must contain 24 lowercase hexadecimal characters",
+        ),
+        (
+            "repair-attempt-0123456789abcdef01234567",
+            "repair attempt manifest not found for repair-attempt-0123456789abcdef01234567 at ",
+        ),
+    ] {
+        let output = run_ripr(&[
+            "agent",
+            "receipt",
+            "--root",
+            &root.display().to_string(),
+            "--verify-json",
+            "absent-verify.json",
+            "--seam-id",
+            "seam-a",
+            "--attempt",
+            attempt,
+            "--json",
+        ]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{attempt}: {stderr}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(stderr.contains(expected), "{attempt}: {stderr}");
+        assert!(!stderr.contains("absent-verify.json"), "{stderr}");
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn agent_packet_rejects_configured_off_seam() -> Result<(), Box<dyn std::error::Error>> {
     let (root, diff) = agent_brief_sample_workspace("agent-packet-config-off")?;
     let root_path = root.display().to_string();

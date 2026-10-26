@@ -450,7 +450,13 @@ fn agent_receipt_with_an_unknown_attempt_refuses_before_reading_the_verify_json(
     ]));
     let _ = std::fs::remove_dir_all(&root);
     match result {
-        Err(CommandError::Failure(message)) if !message.contains("agent-verify.json") => Ok(()),
+        Err(CommandError::Failure(message))
+            if message.starts_with(
+                "repair attempt manifest not found for repair-attempt-0123456789abcdef01234567 at ",
+            ) && !message.contains("agent-verify.json") =>
+        {
+            Ok(())
+        }
         other => Err(format!(
             "attempt binding must refuse before the verify read: {other:?}"
         )),
@@ -475,7 +481,11 @@ fn agent_receipt_with_a_malformed_attempt_id_is_a_failure() -> Result<(), String
     ]));
     let _ = std::fs::remove_dir_all(&root);
     match result {
-        Err(CommandError::Failure(_)) => Ok(()),
+        Err(CommandError::Failure(message))
+            if message == "repair attempt ID must start with `repair-attempt-`" =>
+        {
+            Ok(())
+        }
         other => Err(format!("expected a failure, got {other:?}")),
     }
 }
