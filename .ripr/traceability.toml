@@ -1940,6 +1940,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json",
   "crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet",
+  "crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2",
+  "crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2",
   "crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots",
   "editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)",
   "editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions",
