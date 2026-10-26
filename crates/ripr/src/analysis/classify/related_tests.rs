@@ -4049,8 +4049,10 @@ fn free_fn_returns_type(
     ty: &str,
     name: &str,
 ) -> FactoryReturn {
+    let unraw_name = |ident: &str| ident.strip_prefix("r#").unwrap_or(ident).to_string();
     let mut declarations = index.functions().iter().filter(|function| {
-        function.name == name && function.item.container == FunctionContainer::Free
+        unraw_name(&function.name) == unraw_name(name)
+            && function.item.container == FunctionContainer::Free
     });
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return FactoryReturn::Other;
@@ -4071,8 +4073,10 @@ fn free_fn_returns_type(
     // A `fn name` nested in a body (or any other non-free fn of that name in the
     // file) can be what the call resolves to, so the free helper is not the
     // call's authority.
+    // `r#fixture` and `fixture` name the same fn, so compare unraw identities.
+    let unraw = |ident: &str| ident.strip_prefix("r#").unwrap_or(ident).to_string();
     let nested = index.functions().iter().any(|other| {
-        other.name == name
+        unraw(&other.name) == unraw(name)
             && other.file == test_file
             && other.item.container != FunctionContainer::Free
     });
