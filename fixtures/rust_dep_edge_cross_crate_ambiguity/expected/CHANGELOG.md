@@ -379,3 +379,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_dep_edge_cross_crate_ambiguity (28)
+
+Reason:
+RIPR-SPEC-0122: #10701 check repair advisory states a plain-language reason and names the stub route; weak return-value gaps now reach a repair start
+
+Command:
+`cargo xtask goldens bless rust_dep_edge_cross_crate_ambiguity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

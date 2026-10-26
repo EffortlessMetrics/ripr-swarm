@@ -488,3 +488,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_swallowed (38)
+
+Reason:
+RIPR-SPEC-0122: #10701 check repair advisory states a plain-language reason and names the stub route; weak return-value gaps now reach a repair start
+
+Command:
+`cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

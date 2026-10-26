@@ -409,3 +409,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_one_hop (32)
+
+Reason:
+RIPR-SPEC-0122: #10701 check repair advisory states a plain-language reason and names the stub route; weak return-value gaps now reach a repair start
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

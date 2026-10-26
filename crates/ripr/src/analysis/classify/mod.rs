@@ -93,7 +93,9 @@ pub(in crate::analysis) use helper_transfer::{
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
-pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
+pub(in crate::analysis) use indirect_owner::{
+    related_tests_reach_owner_indirectly, withhold_indirect_owner_gap,
+};
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };

@@ -83,3 +83,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_bare_import_control (8)
+
+Reason:
+RIPR-SPEC-0122: #10701 check repair advisory states a plain-language reason and names the stub route; weak return-value gaps now reach a repair start
+
+Command:
+`cargo xtask goldens bless module_reach_bare_import_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

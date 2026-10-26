@@ -164,10 +164,10 @@ impl RepairRouteRefusal {
                 if observed_boundary {
                     // #10622: the input is already there; only the assertion
                     // is weak, so do not say the boundary evidence is missing.
-                    let others: Vec<&str> = missing
+                    let others: Vec<String> = missing
                         .iter()
                         .filter(|item| !super::task_first::is_boundary_value_discriminator(item))
-                        .map(|item| item.as_str())
+                        .map(|item| crate::analysis::repair_route::plain_missing_evidence(item))
                         .collect();
                     let also = if others.is_empty() {
                         String::new()
@@ -190,7 +190,11 @@ impl RepairRouteRefusal {
                         "no repair start offered: ripr cannot build a repair packet for this \
                          finding yet because it is still missing: {}; follow the Next step \
                          above, then rerun `ripr check`",
-                        missing.join("; ")
+                        missing
+                            .iter()
+                            .map(|item| crate::analysis::repair_route::plain_missing_evidence(item))
+                            .collect::<Vec<_>>()
+                            .join("; ")
                     )
                 }
             }
@@ -672,8 +676,8 @@ mod tests {
         .advisory(gate);
         assert!(
             unobserved.contains(
-                "still missing: producer-owned missing discriminator fact: boundary_value"
-            ),
+                "still missing: the exact boundary input the changed comparison turns on"
+            ) && !unobserved.contains("producer-owned"),
             "unobserved boundary keeps the generic wording: {unobserved}"
         );
         let observed = RepairRouteRefusal::Ineligible {

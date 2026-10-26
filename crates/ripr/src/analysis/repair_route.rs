@@ -231,6 +231,48 @@ pub(crate) fn producer_discriminator_evidence(kind: &str) -> String {
     format!("{PRODUCER_DISCRIMINATOR_EVIDENCE}: {kind}")
 }
 
+/// Plain-language wording for one readiness evidence item, for human refusal
+/// text (#10701). The machine items stay as the producer wrote them (JSON,
+/// packets); only the rendered sentence avoids internal vocabulary such as
+/// "producer-owned" and "discriminator fact". Items that are not a
+/// discriminator fact pass through unchanged.
+pub(crate) fn plain_missing_evidence(item: &str) -> String {
+    let Some(kind) = item
+        .strip_prefix(PRODUCER_DISCRIMINATOR_EVIDENCE)
+        .and_then(|rest| rest.strip_prefix(": "))
+    else {
+        return item.to_string();
+    };
+    match kind {
+        "return_value" => "no existing test that calls this function and could be \
+             strengthened to check the exact changed return value"
+            .to_string(),
+        "error_variant" => "no existing test that calls this function and could be \
+             strengthened to check the exact changed error"
+            .to_string(),
+        "boundary_value" => "the exact boundary input the changed comparison turns on".to_string(),
+        "field_value" => "the exact changed field value".to_string(),
+        "match_arm_taken" => "an input that selects the changed match arm".to_string(),
+        "effect" => "the exact changed side effect".to_string(),
+        "call_site" => "the exact changed call".to_string(),
+        other => format!("the exact changed {}", other.replace('_', " ")),
+    }
+}
+
+/// The `ripr agent stub --kind` spelling for a missing discriminator item
+/// whose gap has a working hand-written route, if any.
+pub(crate) fn stub_kind_for_missing_evidence(item: &str) -> Option<&'static str> {
+    let kind = item
+        .strip_prefix(PRODUCER_DISCRIMINATOR_EVIDENCE)?
+        .strip_prefix(": ")?;
+    match kind {
+        "return_value" => Some("return_value"),
+        "error_variant" => Some("error_path"),
+        "boundary_value" => Some("predicate"),
+        _ => None,
+    }
+}
+
 /// Whether a readiness evidence item names the boundary-value discriminator.
 pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
     item == producer_discriminator_evidence(
