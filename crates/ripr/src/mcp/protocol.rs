@@ -90,7 +90,7 @@ const RECEIPT_TEMPLATE_DESCRIPTION: &str = "The receipt status document for one 
 
 const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from the committed snapshot by the shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found or seam_not_found).";
 
-const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card — seam subject, changed behavior, exact blocker or named limitation, fix instruction, edit cage, done-when goals, attempt state, typed next action — plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failures carry typed codes from the shared failure vocabulary enumerated in the outputSchema — including no_snapshot and seam_not_found; policy_omitted and witness_unavailable stay named on the wire for stability. The resource ripr://repair-card/{canonical_id} returns the same document.";
+const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failures: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, incomplete_inventory, result_too_large, workspace_unavailable, analysis_failed; policy_omitted and witness_unavailable stay named on the wire for stability. The resource ripr://repair-card/{canonical_id} returns the same document.";
 
 pub(super) fn tools_list_result() -> Value {
     // #9852 context-sink budget: this payload rides every session start, so
@@ -1649,7 +1649,7 @@ mod tests {
             ("tool ripr_prepare_repair", 1235),
             ("tool ripr_get_repair_attempt", 1315),
             ("tool ripr_get_receipt_status", 1495),
-            ("tool ripr_get_repair_card", 1560),
+            ("tool ripr_get_repair_card", 1475),
             ("tool ripr_list_repair_attempts", 1090),
             ("resource ripr-workspace-status", 650),
             ("template ripr-snapshot-evidence", 475),
@@ -1727,7 +1727,7 @@ mod tests {
         // terminal mapping moved onto the outputSchema status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 15198);
+        assert_eq!(total, 15115);
         Ok(())
     }
 
@@ -2179,24 +2179,29 @@ mod tests {
     #[test]
     fn pre_call_scope_routes_untracked_files_through_staging_or_explicit_diff() -> Result<(), String>
     {
-        let tools = tools_list_result();
-        for (surface, text) in [
-            ("instructions", INSTRUCTIONS),
-            ("refresh", json_str(&tools, "/tools/1/description")?),
+        // #10541: the detailed scope routes live on INSTRUCTIONS once; the
+        // refresh description names the committed-input boundary and points
+        // at that block instead of duplicating the routes into every
+        // session's tools/list payload.
+        for required in [
+            "committed input only",
+            "staged and unstaged tracked edits only",
+            "Untracked files need staging/intent-to-add",
+            "git add -N <paths>",
+            "before `--worktree`, or explicit `--diff`",
         ] {
-            for required in [
-                "committed input only",
-                "staged and unstaged tracked edits only",
-                "Untracked files need staging/intent-to-add",
-                "git add -N <paths>",
-                "before `--worktree`, or explicit `--diff`",
-            ] {
-                if !text.contains(required) {
-                    return Err(format!(
-                        "{surface} lost the input-scope route {required:?}: {text}"
-                    ));
-                }
+            if !INSTRUCTIONS.contains(required) {
+                return Err(format!(
+                    "instructions lost the input-scope route {required:?}: {INSTRUCTIONS}"
+                ));
             }
+        }
+        let tools = tools_list_result();
+        let refresh = json_str(&tools, "/tools/1/description")?;
+        if !refresh.contains("committed input only") || !refresh.contains("INSTRUCTIONS") {
+            return Err(format!(
+                "refresh description must name the committed-input boundary and point at INSTRUCTIONS: {refresh}"
+            ));
         }
         Ok(())
     }
