@@ -223,6 +223,19 @@ exercised boundary from a missing one.
   in the function. Any other shape keeps the boundary operand unresolved
   (`infection_unknown`).
 
+### Literal-only integer folding for observation (#10479)
+
+A changed `return_value` expression made only of plain decimal literals, `+ - * / %`
+and parentheses (`8 * 100`, `(2 + 2) * 200`) folds, through the same exact integer
+arithmetic, to its value. That value is one more owner-scoped digit token of the
+probe, so an exact-value assertion bound to the owner's result and carrying the
+folded literal confirms observation, as an unrewritten literal already does. A
+wrong expected value (`801`), a result at or above the arithmetic bound, an
+overflow, an underflow, a division by zero, and any name, suffix, sign,
+underscore, string or method call leave the expression unfolded and the
+assertion unconfirmed. The fold adds no reach and no new family: a test that
+only reaches the owner without a bound exact assertion stays below `exposed`.
+
 ## Required Evidence
 
 - The complete retained `authored-tokens` subject's six Rust sources,
@@ -361,7 +374,10 @@ exercised boundary from a missing one.
 
 ## Test Mapping
 
-`analysis/classify/value_transfer.rs` `tests`;
+`analysis/classify/value_transfer.rs` `tests` (including
+`literal_only_integer_expressions_fold_to_their_value` and
+`literal_folding_refuses_everything_that_is_not_plain_integer_arithmetic`);
+`crates/ripr/tests/literal_arithmetic_observation.rs`;
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,
 `exact_values_compare_plain_decimals_by_digits_only` and

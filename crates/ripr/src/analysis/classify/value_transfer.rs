@@ -115,6 +115,31 @@ pub(crate) fn evaluate_initializer(initializer: &str, inputs: &ExactInputs) -> E
     }
 }
 
+/// The folded decimal value of a literal-only integer expression (#10479):
+/// plain decimal literals joined by `+ - * / %` and parentheses, with no
+/// names, suffixes, signs or method calls. A bare literal is not an
+/// expression to fold (its own token already confirms), and an overflow, an
+/// underflow, a division by zero or a result at the arithmetic bound answers
+/// `None` through [`evaluate_initializer`]'s fail-closed arithmetic. The
+/// unwritten integer type could change a result beyond that bound.
+pub(crate) fn fold_literal_integer(expression: &str) -> Option<String> {
+    let text = expression.trim().trim_end_matches([',', ';']).trim();
+    let literal_only = text
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || "+-*/%()".contains(ch));
+    let has_operator = text.contains(['+', '-', '*', '/', '%']);
+    if !literal_only || !has_operator {
+        return None;
+    }
+    match evaluate_initializer(text, &ExactInputs::new()) {
+        EvalOutcome::Exact {
+            value: TypedValue::Index(folded),
+            ..
+        } => Some(folded.to_string()),
+        _ => None,
+    }
+}
+
 /// The exact value of a product of non-negative integers (#9329): factors
 /// joined by `*`, each a plain decimal literal or an identifier bound in
 /// `inputs` to a plain decimal. Nothing else is read: no parentheses, sums,
@@ -934,6 +959,50 @@ mod tests {
         assert_eq!(exact("n / 4", table), TypedValue::Index(1));
         assert_eq!(exact("\"a-b\".len() + 1", &[]), TypedValue::Index(4));
         assert_eq!(exact("(input).len()", table), TypedValue::Index(5));
+    }
+
+    #[test]
+    fn literal_only_integer_expressions_fold_to_their_value() {
+        for (expression, folded) in [
+            ("8 * 100", "800"),
+            ("8 * 100,", "800"),
+            ("(2 + 2) * 200", "800"),
+            ("1000 - 200", "800"),
+            ("40 + 2", "42"),
+            ("2 + 3 * 4", "14"),
+        ] {
+            assert_eq!(
+                super::fold_literal_integer(expression).as_deref(),
+                Some(folded),
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_folding_refuses_everything_that_is_not_plain_integer_arithmetic() {
+        for expression in [
+            "800",
+            "SCALE * 100",
+            "scale * 100",
+            "8u32 * 100",
+            "-8 * 100",
+            "1_000 * 2",
+            "100000 * 100000",
+            "5 - 6",
+            "5 / 0",
+            "5 % 0",
+            "\"a\".len() + 1",
+            "8 * 100 + x",
+            "",
+            "+",
+        ] {
+            assert_eq!(
+                super::fold_literal_integer(expression),
+                None,
+                "{expression}"
+            );
+        }
     }
 
     #[test]
