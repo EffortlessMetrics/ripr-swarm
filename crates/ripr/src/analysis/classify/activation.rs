@@ -720,10 +720,16 @@ fn intrinsic_parameter_types(
         return vec![None; names.len()];
     }
     let source_facts = index.files().get(&owner.file);
-    let source = source_facts
+    let (source, start_line) = source_facts
         .as_ref()
-        .map_or(owner.body.as_str(), |facts| facts.source.as_ref());
-    let bindings = crate::analysis::syntax::fn_signature::TypeNameBindings::from_source(source);
+        .map_or((owner.body.as_str(), 1), |facts| {
+            (facts.source.as_ref(), owner.start_line)
+        });
+    let bindings = crate::analysis::syntax::fn_signature::TypeNameBindings::for_owner(
+        source,
+        &owner.name,
+        start_line,
+    );
     names
         .iter()
         .map(|name| {

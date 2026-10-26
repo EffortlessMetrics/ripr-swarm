@@ -67,6 +67,9 @@ exercised boundary from a missing one.
   A same-file type alias, import rename or unresolved glob that can shadow
   an intrinsic type spelling refuses integer evaluation in both direct
   expressions and local initializers, including raw identifier spellings.
+  Type parameters of the owner and its enclosing impl/trait also refuse
+  intrinsic identity; unrelated functions' generic parameters do not bind
+  that owner. A missing or ambiguous owner context remains unresolved.
   Both forms share the intrinsic-identity admission; their operation-family
   limits remain distinct. Literal-only expressions do not require unused
   parameter types to be resolved. Alias resolution is not inferred from a name.
@@ -326,7 +329,7 @@ exercised boundary from a missing one.
 `an_integer_local_meets_only_an_integer_counterpart_cell`;
 `crates/ripr/tests/local_value_transfer_semantics.rs` and fixture
 `binding_value_semantics_fail_closed` (declared integer widths and eager
-`map_or` defaults, with intrinsic-index and safe-default controls);
+`map_or` defaults, with intrinsic-index, scoped-generic and safe-default controls);
 `rust-verdict-corpus` cases `local-boundary-flag-hit`,
 `local-boundary-flag-trap`, `local-boundary-flag-negated`,
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and

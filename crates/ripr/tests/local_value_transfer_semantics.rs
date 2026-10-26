@@ -51,6 +51,7 @@ fn finding_with_prelude(
     )
 }
 
+#[derive(Clone, Copy)]
 enum OperandShape {
     Local,
     Direct,
@@ -59,6 +60,18 @@ enum OperandShape {
 
 fn finding_with_shape(
     prelude: &str,
+    ty: &str,
+    expression: &str,
+    argument: &str,
+    bound: &str,
+    shape: OperandShape,
+) -> Result<Value, String> {
+    finding_with_signature(prelude, "", ty, expression, argument, bound, shape)
+}
+
+fn finding_with_signature(
+    prelude: &str,
+    generics: &str,
     ty: &str,
     expression: &str,
     argument: &str,
@@ -102,7 +115,7 @@ fn finding_with_shape(
         ),
     };
     let source = format!(
-        "{prelude}pub fn score(n: {ty}) -> bool {{\n{binding}    {after}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn anchor() {{ assert!(score({argument})); }}\n}}\n"
+        "{prelude}pub fn score{generics}(n: {ty}) -> bool {{\n{binding}    {after}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn anchor() {{ assert!(score({argument})); }}\n}}\n"
     );
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let diff = scratch.0.join("change.diff");
@@ -110,7 +123,7 @@ fn finding_with_shape(
     std::fs::write(
         &diff,
         format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},{lines} +{start},{lines} @@\n pub fn score(n: {ty}) -> bool {{\n{}-    {before}\n+    {after}\n }}\n",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},{lines} +{start},{lines} @@\n pub fn score{generics}(n: {ty}) -> bool {{\n{}-    {before}\n+    {after}\n }}\n",
             binding.replace("    let", "     let")
         ),
     )
@@ -148,6 +161,83 @@ fn finding_with_shape(
         "setup: the literal call reaches the owner: {finding}"
     );
     Ok(finding.clone())
+}
+
+#[test]
+fn unrelated_generic_parameters_preserve_intrinsic_boundaries() -> Result<(), String> {
+    for prelude in [
+        "fn helper<usize>() {}\n",
+        "fn helper<r#usize>() {}\n",
+        "use std::primitive::usize;\nfn helper<std, core, alloc>() {}\n",
+        "struct Other<T>(T);\nimpl<usize> Other<usize> { fn helper() {} }\n",
+        "trait Other<usize> { fn helper() {} }\n",
+    ] {
+        for shape in [
+            OperandShape::Local,
+            OperandShape::Direct,
+            OperandShape::Reversed,
+        ] {
+            let finding = finding_with_shape(prelude, "usize", "n + 1", "2", "3", shape)?;
+            assert_eq!(
+                finding["ripr"]["infect"]["state"], "yes",
+                "{prelude}: {finding}"
+            );
+            assert!(
+                finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing observed values")?
+                    .iter()
+                    .any(|value| value["value"]
+                        .as_str()
+                        .is_some_and(|value| value.contains(" == "))),
+                "the exact matching input retains its boundary: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn owner_generic_parameters_still_refuse_intrinsic_identity() -> Result<(), String> {
+    for shape in [
+        OperandShape::Local,
+        OperandShape::Direct,
+        OperandShape::Reversed,
+    ] {
+        let intrinsic = finding_with_shape("", "usize", "n + n", "2_usize", "4", shape)?;
+        assert_eq!(
+            intrinsic["ripr"]["infect"]["state"], "yes",
+            "the identical typed literal is supported for a primitive owner: {intrinsic}"
+        );
+        let finding = finding_with_signature(
+            "",
+            "<usize: core::ops::Add<Output = core::primitive::usize> + Copy>",
+            "usize",
+            "n + n",
+            "2_usize",
+            "4",
+            shape,
+        )?;
+        assert_eq!(finding["ripr"]["infect"]["state"], "unknown", "{finding}");
+        assert!(
+            finding["activation"]["observed_values"]
+                .as_array()
+                .ok_or("missing observed values")?
+                .iter()
+                .all(|value| !value["value"]
+                    .as_str()
+                    .is_some_and(|value| value.contains(" == "))),
+            "a scoped generic is not a declared primitive: {finding}"
+        );
+        assert!(
+            finding["activation"]["missing_discriminators"]
+                .as_array()
+                .ok_or("missing discriminators")?
+                .is_empty(),
+            "a refused generic cannot invent a missing boundary: {finding}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

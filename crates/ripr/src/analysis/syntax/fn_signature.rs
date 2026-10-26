@@ -387,6 +387,16 @@ pub(crate) struct TypeNameBindings {
 
 impl TypeNameBindings {
     pub(crate) fn from_source(source: &str) -> Self {
+        Self::collect(source, None)
+    }
+
+    /// Generic parameters bind only in the selected function and its enclosing
+    /// impl/trait, unlike the conservative file-wide item/import evidence.
+    pub(crate) fn for_owner(source: &str, name: &str, start_line: usize) -> Self {
+        Self::collect(source, Some((name, start_line)))
+    }
+
+    fn collect(source: &str, owner: Option<(&str, usize)>) -> Self {
         let Some(parse) = parse_clean_source_file(source) else {
             return Self {
                 names: Default::default(),
@@ -396,16 +406,38 @@ impl TypeNameBindings {
         let mut names = std::collections::BTreeSet::new();
         let mut root_bindings = std::collections::BTreeSet::new();
         let mut imports = Vec::new();
+        let owner_line = owner.and_then(|(_, line)| {
+            let start = match line {
+                0 => return None,
+                1 => 0,
+                _ => source.match_indices('\n').nth(line - 2)?.0 + 1,
+            };
+            let end = source[start..]
+                .find('\n')
+                .map_or(source.len(), |offset| start + offset);
+            Some(start..end)
+        });
+        let mut owner_functions = Vec::new();
         for node in parse.tree().syntax().descendants().filter(|node| {
             !node
                 .ancestors()
                 .filter_map(ast::Module::cast)
                 .any(|module| module_attributes_require_test(&module))
         }) {
+            if let Some(function) = ast::Fn::cast(node.clone())
+                && let Some((name, _)) = owner
+                && function.name().is_some_and(|ident| ident.text() == name)
+                && function.fn_token().is_some_and(|token| {
+                    owner_line
+                        .as_ref()
+                        .is_some_and(|line| line.contains(&usize::from(token.text_range().start())))
+                })
+            {
+                owner_functions.push(function);
+            }
             let type_name = ast::Adt::cast(node.clone())
                 .and_then(|item| item.name())
-                .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|item| item.name()))
-                .or_else(|| ast::TypeParam::cast(node.clone()).and_then(|item| item.name()));
+                .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|item| item.name()));
             if let Some(name) = type_name {
                 names.insert(name.text().trim_start_matches("r#").to_string());
             }
@@ -419,6 +451,38 @@ impl TypeNameBindings {
                 && tree.use_tree_list().is_none()
             {
                 imports.push(TypeImportBinding::from_tree(&tree));
+            }
+        }
+        if owner.is_some() {
+            let [function] = owner_functions.as_slice() else {
+                // A missing or same-name/same-line ambiguous owner cannot
+                // establish which scoped bindings apply.
+                return Self {
+                    names,
+                    unresolved_glob: true,
+                };
+            };
+            let mut add_generics = |list: Option<ast::GenericParamList>| {
+                for parameter in list.into_iter().flat_map(|list| list.generic_params()) {
+                    if let ast::GenericParam::TypeParam(parameter) = parameter
+                        && let Some(name) = parameter.name()
+                    {
+                        names.insert(name.text().trim_start_matches("r#").to_string());
+                    }
+                }
+            };
+            add_generics(function.generic_param_list());
+            for ancestor in function.syntax().ancestors().skip(1) {
+                // Nested fn/module items do not inherit outer generic
+                // parameters; methods do inherit their impl/trait parameters.
+                if ast::Fn::can_cast(ancestor.kind()) || ast::Module::can_cast(ancestor.kind()) {
+                    break;
+                }
+                if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+                    add_generics(item.generic_param_list());
+                } else if let Some(item) = ast::Trait::cast(ancestor) {
+                    add_generics(item.generic_param_list());
+                }
             }
         }
         root_bindings.extend(names.iter().cloned());
@@ -1413,7 +1477,10 @@ mod cmp {
 
     #[test]
     fn intrinsic_type_bindings_keep_generic_test_and_root_chain_controls() {
-        assert!(shadows_type_name("fn score<usize>(n: usize) {}", "usize"));
+        assert!(
+            TypeNameBindings::for_owner("fn score<usize>(n: usize) {}", "score", 1)
+                .shadows("usize")
+        );
         assert!(!shadows_type_name(
             "#[cfg(test)] mod tests { type usize = u8; }",
             "usize"
@@ -1429,5 +1496,48 @@ mod cmp {
         assert!(bindings.shadows("usize"));
         assert!(bindings.shadows("u32"));
         assert!(!bindings.shadows("String"));
+    }
+
+    #[test]
+    fn intrinsic_generic_bindings_follow_the_selected_owner_scope() {
+        for source in [
+            "fn helper<usize>() {}\nfn score(n: usize) {}",
+            "struct Other<usize>(usize); impl<usize> Other<usize> { fn helper() {} }\nfn score(n: usize) {}",
+            "trait Other<usize> { fn helper() {} }\nfn score(n: usize) {}",
+            "fn outer<usize>() {\nfn score(n: usize) {}\n}",
+            "use std::primitive::usize; fn helper<std, core, alloc>() {}\nfn score(n: usize) {}",
+        ] {
+            assert!(
+                !TypeNameBindings::for_owner(source, "score", 2).shadows("usize"),
+                "{source}"
+            );
+        }
+        for source in [
+            "fn score<usize>(n: usize) {}",
+            "fn score<r#usize>(n: r#usize) {}",
+            "struct Cell<T>(T); impl<usize> Cell<usize> { fn score(n: usize) {} }",
+            "trait Cell<usize> { fn score(n: usize) {} }",
+        ] {
+            assert!(
+                TypeNameBindings::for_owner(source, "score", 1).shadows("usize"),
+                "{source}"
+            );
+        }
+        for (source, name, line) in [
+            ("fn score(n: usize) {}", "missing", 1),
+            ("fn score(n: usize) {}", "score", 2),
+            ("fn score(n: usize) {", "score", 1),
+            (
+                "mod a { fn score() {} } mod b { fn score() {} }",
+                "score",
+                1,
+            ),
+        ] {
+            assert!(TypeNameBindings::for_owner(source, name, line).shadows("usize"));
+        }
+        assert!(
+            !TypeNameBindings::for_owner("fn helper<usize>() {} fn score(n: usize) {}", "score", 1)
+                .shadows("usize")
+        );
     }
 }

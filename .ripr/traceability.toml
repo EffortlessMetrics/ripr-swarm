@@ -11762,6 +11762,10 @@ spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
   "crates/ripr/tests/local_value_transfer_semantics.rs",
   "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_type_bindings_keep_generic_test_and_root_chain_controls",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_generic_bindings_follow_the_selected_owner_scope",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::unrelated_generic_parameters_preserve_intrinsic_boundaries",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::owner_generic_parameters_still_refuse_intrinsic_identity",
+  "crates/ripr/src/analysis/test_stub/tests.rs::unrelated_generic_does_not_remove_a_concrete_stub_comparison",
   "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
   "crates/ripr/src/analysis/probes/lexical.rs::tests::empty_closure_head_is_not_a_predicate",
