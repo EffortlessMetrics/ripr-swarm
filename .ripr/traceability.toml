@@ -17811,8 +17811,12 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::an_operator_edit_names_no_new_number_and_stays_unknown_far_from_the_bound",
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::an_equivalent_rewrite_is_still_not_reported_as_unexercised",
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::exported_local_expect_declarations_refuse_runner_authority",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::export_aliases_and_default_expressions_do_not_bind_local_expect",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::exported_bindings_preserve_genuine_imported_runner_expect",
 ]
 fixtures = [
+  "fixtures/typescript_exported_expect_lookalike",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",
