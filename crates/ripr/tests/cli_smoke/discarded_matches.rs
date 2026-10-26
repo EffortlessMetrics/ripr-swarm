@@ -122,53 +122,32 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
-/// Normalize the two repair-route advisory sentences whose wording moved
-/// (#9244) so `RepairRouteRefusal::advisory` owns the boilerplate while the
-/// historical capture keeps its original bytes:
+/// Normalize the repair-route line of the human report (#9244, #10701).
 ///
-/// - NoBindingSeam (old capture or current producer text) becomes a fixed slot.
-/// - Not-ready (RouteNotReady) keeps its producer-owned missing-evidence list:
-///   the old `(missing evidence: LIST); run ...` form and the current
-///   `still missing: LIST; follow ...` form both become
-///   `<not-ready missing=LIST>`, so the list is still compared byte-exact and
-///   a wrong list fails. A line in neither shape is left untouched.
+/// The historical capture keeps its original bytes. Its repair-route line was
+/// a refusal advisory ("no seam ... binds this finding" or "repair route not
+/// ready (missing evidence: ...)"); the producer now words those refusals in
+/// plain language and starts a repair for a weak or discarded-only changed
+/// return value, printing `ripr repair <id> --root ...` instead. This test
+/// owns discarded-matcher credit, not the repair route, so every spelling of
+/// that one line (old or current advisory, or a printed repair start)
+/// projects to one fixed slot present on both sides or neither. Dedicated
+/// tests own the route itself (`return_value_repair_start`, the goldens).
 ///
-/// Every other advisory line stays byte-exact. Returns the projected bytes and
-/// how many lines were normalized.
+/// Every other line stays byte-exact. Returns the projected bytes and how
+/// many lines were normalized.
 fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
-    const NO_BINDING: [&str; 2] = [
-        "  no repair start offered: no seam in the finding's file binds this finding;",
-        "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
-    ];
-    const OLD_NOT_READY: &str =
-        "  no repair start offered: repair route not ready (missing evidence: ";
-    const OLD_LIST_END: &str = "); run `";
-    const NEW_NOT_READY: &str = "  no repair start offered: ripr cannot build a repair packet for this \
-         finding yet because it is still missing: ";
-    const NEW_LIST_END: &str = "; follow the Next step above";
-    let list_between = |line: &str, start: &str, end: &str| -> Option<String> {
-        let rest = line.strip_prefix(start)?;
-        let list = &rest[..rest.find(end)?];
-        Some(format!(
-            "  no repair start offered: <not-ready missing={list}>\n"
-        ))
-    };
     let mut normalized = 0;
     let projected = String::from_utf8_lossy(bytes)
         .split_inclusive('\n')
         .map(|line| {
-            let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
-                Some("  no repair start offered: <no-binding-seam advisory>\n".to_string())
+            if line.starts_with("  no repair start offered: ")
+                || (line.starts_with("  ripr repair ") && line.contains(" --root "))
+            {
+                normalized += 1;
+                "  <repair-route advisory or start>\n".to_string()
             } else {
-                list_between(line, OLD_NOT_READY, OLD_LIST_END)
-                    .or_else(|| list_between(line, NEW_NOT_READY, NEW_LIST_END))
-            };
-            match replacement {
-                Some(text) => {
-                    normalized += 1;
-                    text
-                }
-                None => line.to_string(),
+                line.to_string()
             }
         })
         .collect::<String>()
