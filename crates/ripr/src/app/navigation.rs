@@ -680,9 +680,9 @@ mod tests {
         .advisory(gate);
         assert!(
             unobserved.contains(
-                "still missing: producer-owned missing discriminator fact: boundary_value"
-            ),
-            "unobserved boundary keeps the generic wording: {unobserved}"
+                "still missing: a test assertion that pins the changed boundary value exactly"
+            ) && !unobserved.contains("producer-owned missing discriminator fact"),
+            "unobserved boundary renders the plain phrase, not the internal code: {unobserved}"
         );
         let observed = RepairRouteRefusal::Ineligible {
             reason: "repair route not ready".to_string(),
