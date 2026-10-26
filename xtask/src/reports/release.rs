@@ -719,6 +719,14 @@ fn check_install_provenance(
 /// `ripr <version>` install whose `path+file://` source is `package_root`, so
 /// a binary installed from the workspace path cannot pass as the packaged
 /// crate (#9312). Returns the recorded source path.
+/// Cargo's install record names each binary by its file name, so on Windows
+/// it lists `ripr.exe`, not `ripr` (#10344). The host suffix is passed in so
+/// both spellings are testable on any host.
+fn records_ripr_bin(bins: &[Value], exe_suffix: &str) -> bool {
+    let name = format!("ripr{exe_suffix}");
+    bins.iter().any(|bin| bin.as_str() == Some(name.as_str()))
+}
+
 fn validate_install_provenance(
     record: &str,
     package_root: &Path,
@@ -746,7 +754,7 @@ fn validate_install_provenance(
     if !install
         .get("bins")
         .and_then(Value::as_array)
-        .is_some_and(|bins| bins.iter().any(|bin| bin.as_str() == Some("ripr")))
+        .is_some_and(|bins| records_ripr_bin(bins, std::env::consts::EXE_SUFFIX))
     {
         return Err(format!(
             "cargo install record `{key}` installed no ripr binary"
@@ -3733,11 +3741,12 @@ mod tests {
         extract_packaged_crate, file_url_path, init_pin_version_check_from,
         latency_parity_contradiction, latency_readiness_from, latest_released_version_in,
         missing_required_needles, package_version, packaged_archive_commit,
-        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
-        release_readiness_markdown, release_readiness_status, repo_exposure_latency_output_parity,
-        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
-        validate_install_provenance, validate_installed_version, validate_installed_version_result,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        parse_release_readiness_args, read_crate_version, readiness_check, records_ripr_bin,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
+        validate_binary_identity, validate_doctor_result, validate_install_provenance,
+        validate_installed_version, validate_installed_version_result, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::{Value, json};
     use std::fs;
@@ -3986,9 +3995,10 @@ mod tests {
                 .to_string()
         };
         let packaged = url(&package)?;
+        let ripr_bin = format!("ripr{}", std::env::consts::EXE_SUFFIX);
         let result = (|| -> Result<(), String> {
             let source = validate_install_provenance(
-                &record(&packaged, "0.11.0", json!(["ripr"])),
+                &record(&packaged, "0.11.0", json!([ripr_bin])),
                 &package,
                 "0.11.0",
             )?;
@@ -3996,7 +4006,7 @@ mod tests {
                 return Err(format!("percent-escaped space was not decoded: {source}"));
             }
             match validate_install_provenance(
-                &record(&url(&workspace)?, "0.11.0", json!(["ripr"])),
+                &record(&url(&workspace)?, "0.11.0", json!([ripr_bin])),
                 &package,
                 "0.11.0",
             ) {
@@ -4004,7 +4014,7 @@ mod tests {
                 other => return Err(format!("a workspace-path install must refuse: {other:?}")),
             }
             for (bad, why) in [
-                (record(&packaged, "0.10.0", json!(["ripr"])), "is not a path install"),
+                (record(&packaged, "0.10.0", json!([ripr_bin])), "is not a path install"),
                 (record(&packaged, "0.11.0", json!(["other"])), "installed no ripr binary"),
                 (
                     json!({"installs": {}}).to_string(),
@@ -4012,14 +4022,14 @@ mod tests {
                 ),
                 (
                     json!({"installs": {
-                        format!("ripr 0.11.0 (path+file://{packaged})"): {"bins": ["ripr"]},
+                        format!("ripr 0.11.0 (path+file://{packaged})"): {"bins": [ripr_bin]},
                         "other 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)": {"bins": ["other"]}
                     }})
                     .to_string(),
                     "exactly one install, found 2",
                 ),
                 (
-                    json!({"installs": {"ripr 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)": {"bins": ["ripr"]}}}).to_string(),
+                    json!({"installs": {"ripr 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)": {"bins": [ripr_bin]}}}).to_string(),
                     "is not a path install",
                 ),
             ] {
@@ -4032,6 +4042,17 @@ mod tests {
         })();
         let _ = fs::remove_dir_all(&base);
         result
+    }
+
+    #[test]
+    fn install_record_bin_names_follow_the_host_executable_suffix() {
+        let bins = |names: &[&str]| names.iter().map(|name| json!(name)).collect::<Vec<_>>();
+        assert!(records_ripr_bin(&bins(&["ripr"]), ""));
+        assert!(!records_ripr_bin(&bins(&["ripr.exe"]), ""));
+        assert!(records_ripr_bin(&bins(&["other.exe", "ripr.exe"]), ".exe"));
+        assert!(!records_ripr_bin(&bins(&["ripr"]), ".exe"));
+        assert!(!records_ripr_bin(&bins(&["ripr-other.exe"]), ".exe"));
+        assert!(!records_ripr_bin(&[], ".exe"));
     }
 
     #[test]
