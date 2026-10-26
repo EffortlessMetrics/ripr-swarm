@@ -92,9 +92,9 @@ jobs:
           printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
           # The partition lists let `verify` prove the shards are a disjoint cover.
           # Listing reuses the build above; shard 1 also lists the whole workspace.
-          cargo nextest list --workspace --profile ci --partition count:${{ matrix.shard }}/4 --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          cargo nextest list --workspace --profile ci --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
           if [ "${{ matrix.shard }}" = 1 ]; then
-            cargo nextest list --workspace --profile ci --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+            cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
           fi
           if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
             echo "::error::nextest shard ${{ matrix.shard }} succeeded without a fresh JUnit report naming at least one test"

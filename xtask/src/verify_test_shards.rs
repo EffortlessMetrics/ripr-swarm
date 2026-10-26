@@ -39,9 +39,18 @@ struct Options {
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
-    let outcome = verify(&options);
     fs::create_dir_all(&options.out)
         .map_err(|err| format!("cannot create {}: {err}", options.out.display()))?;
+    // A rejected run must not leave a previous run's accepted receipts behind.
+    for name in ["junit.xml", "run-context.txt", "shards-summary.txt"] {
+        let path = options.out.join(name);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("cannot clear {}: {err}", path.display())),
+        }
+    }
+    let outcome = verify(&options);
     write(&options.out.join("shards-summary.txt"), &outcome.summary)?;
     println!("{}", outcome.summary);
     if outcome.problems.is_empty() {
@@ -120,6 +129,7 @@ fn verify(options: &Options) -> Outcome {
     let mut union: Vec<String> = Vec::new();
     let mut total_tests = 0u64;
     let mut first_context = String::new();
+    let mut first_environment = String::new();
 
     for shard in 1..=options.shards {
         let dir = options.dir.join(format!(
@@ -145,8 +155,15 @@ fn verify(options: &Options) -> Outcome {
 
         if let Some(context) = read_named(&dir, "run-context.txt", &tag, &mut problems) {
             check_context(&context, options, shard, &tag, &mut problems);
+            let environment = environment_of(&context);
+            check_environment(&environment, &tag, &mut problems);
             if shard == 1 {
                 first_context = context;
+                first_environment = environment;
+            } else if environment != first_environment {
+                problems.push(format!(
+                    "{tag}: run-context tool versions or input blobs differ from shard 1"
+                ));
             }
         }
 
@@ -230,47 +247,74 @@ fn verify(options: &Options) -> Outcome {
     }
 }
 
+/// List lines with terminal colour escapes removed: the hosted job sets
+/// `CARGO_TERM_COLOR=always`, which nextest honours when it lists.
 fn lines_of(text: &str) -> impl Iterator<Item = String> + '_ {
     text.lines()
-        .map(str::trim)
+        .map(strip_ansi)
+        .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty())
-        .map(str::to_string)
 }
 
-/// The archive root moves with the optional report paths a shard also uploads,
-/// so files are found by name below the shard's artifact directory.
-fn read_named(dir: &Path, name: &str, tag: &str, problems: &mut Vec<String>) -> Option<String> {
-    match find_file(dir, name).map(|path| fs::read_to_string(&path)) {
-        Some(Ok(text)) => Some(text),
-        Some(Err(err)) => {
-            problems.push(format!("{tag}: cannot read {name}: {err}"));
-            None
-        }
-        None => {
-            problems.push(format!("{tag}: {name} is missing"));
-            None
-        }
-    }
-}
-
-fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(next) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&next) else {
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
             continue;
-        };
-        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.file_name().and_then(|n| n.to_str()) == Some(name) {
-                return Some(path);
+        }
+        if chars.next() == Some('[') {
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
             }
         }
     }
-    None
+    out
+}
+
+/// The archive root moves with the optional report paths a shard also uploads,
+/// so files are found by name below the shard's artifact directory. Two members
+/// with one name are ambiguous, so neither is trusted.
+fn read_named(dir: &Path, name: &str, tag: &str, problems: &mut Vec<String>) -> Option<String> {
+    let mut found = Vec::new();
+    find_files(dir, name, &mut found);
+    match found.as_slice() {
+        [path] => match fs::read_to_string(path) {
+            Ok(text) => Some(text),
+            Err(err) => {
+                problems.push(format!("{tag}: cannot read {name}: {err}"));
+                None
+            }
+        },
+        [] => {
+            problems.push(format!("{tag}: {name} is missing"));
+            None
+        }
+        _ => {
+            problems.push(format!(
+                "{tag}: {name} is ambiguous ({} members)",
+                found.len()
+            ));
+            None
+        }
+    }
+}
+
+fn find_files(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            find_files(&path, name, found);
+        } else if path.file_name().and_then(|n| n.to_str()) == Some(name) {
+            found.push(path);
+        }
+    }
 }
 
 fn context_value<'a>(context: &'a str, key: &str) -> Option<&'a str> {
@@ -280,6 +324,50 @@ fn context_value<'a>(context: &'a str, key: &str) -> Option<&'a str> {
         .filter(|(name, _)| *name == key)
         .map(|(_, value)| value.trim())
         .next_back()
+}
+
+const PARTITION_KEYS: [&str; 8] = [
+    "repository=",
+    "checkout_sha=",
+    "run_id=",
+    "run_attempt=",
+    "profile=",
+    "shard=",
+    "command=",
+    "nextest_exit=",
+];
+
+/// The tool-version and blob-identity lines, which every shard must share.
+fn environment_of(context: &str) -> String {
+    context
+        .lines()
+        .filter(|line| !PARTITION_KEYS.iter().any(|key| line.starts_with(key)))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// A run context without tool versions and the four input blobs would not say
+/// what produced the results, so it is not a receipt.
+fn check_environment(environment: &str, tag: &str, problems: &mut Vec<String>) {
+    for tool in ["cargo-nextest ", "rustc ", "cargo "] {
+        if !environment.lines().any(|line| line.starts_with(tool)) {
+            problems.push(format!(
+                "{tag}: run-context has no `{}` version",
+                tool.trim()
+            ));
+        }
+    }
+    let blobs = environment
+        .lines()
+        .skip_while(|line| !line.starts_with("input_blobs"))
+        .skip(1)
+        .filter(|line| line.len() == 40 && line.bytes().all(|b| b.is_ascii_hexdigit()))
+        .count();
+    if blobs < 4 {
+        problems.push(format!(
+            "{tag}: run-context names {blobs} input blobs, expected 4"
+        ));
+    }
 }
 
 fn check_context(
@@ -314,75 +402,187 @@ fn check_context(
     }
 }
 
-/// Returns the declared test count and the report's `<testsuite>` elements, or
+struct Suite {
+    tag: String,
+    cases: u64,
+}
+
+struct Parsed {
+    root: String,
+    suites: Vec<Suite>,
+    identities: Vec<String>,
+    forbidden: BTreeSet<String>,
+}
+
+/// Elements whose presence means a test did not simply pass.
+const OUTCOME_ELEMENTS: [&str; 5] = [
+    "failure",
+    "error",
+    "flakyFailure",
+    "rerunFailure",
+    "skipped",
+];
+
+/// Walks the report as XML: comments, CDATA and declarations are skipped, tags
+/// must nest and close, `testsuite` sits in the one `testsuites` root and
+/// `testcase` in a `testsuite` with no testcase inside another.
+fn parse_junit(junit: &str) -> Result<Parsed, String> {
+    let mut stack: Vec<String> = Vec::new();
+    let mut parsed = Parsed {
+        root: String::new(),
+        suites: Vec::new(),
+        identities: Vec::new(),
+        forbidden: BTreeSet::new(),
+    };
+    let mut roots = 0;
+    let mut pos = 0;
+    while let Some(offset) = junit[pos..].find('<') {
+        let start = pos + offset;
+        let rest = &junit[start..];
+        if rest.starts_with("<!--") {
+            let end = rest.find("-->").ok_or("unterminated comment")?;
+            pos = start + end + 3;
+            continue;
+        }
+        if rest.starts_with("<![CDATA[") {
+            let end = rest.find("]]>").ok_or("unterminated CDATA")?;
+            pos = start + end + 3;
+            continue;
+        }
+        if rest.starts_with("<?") || rest.starts_with("<!") {
+            let end = rest.find('>').ok_or("unterminated declaration")?;
+            pos = start + end + 1;
+            continue;
+        }
+        let end = tag_end(junit, start).ok_or("unterminated tag")?;
+        let text = &junit[start..=end];
+        pos = end + 1;
+        if let Some(closing) = text.strip_prefix("</") {
+            let name = closing.trim_end_matches('>').trim();
+            if stack.pop().as_deref() != Some(name) {
+                return Err(format!("`</{name}>` does not close the open element"));
+            }
+            continue;
+        }
+        let self_closing = text.ends_with("/>");
+        let name: String = text[1..]
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != '>' && *c != '/')
+            .collect();
+        let parent = stack.last().map(String::as_str);
+        match (name.as_str(), parent) {
+            ("testsuites", None) => {
+                roots += 1;
+                parsed.root = text.to_string();
+            }
+            ("testsuites", _) | (_, None) => {
+                return Err(format!("`<{name}>` outside the report root"));
+            }
+            ("testsuite", Some("testsuites")) => parsed.suites.push(Suite {
+                tag: text.to_string(),
+                cases: 0,
+            }),
+            ("testsuite", _) => return Err("`<testsuite>` outside `<testsuites>`".to_string()),
+            ("testcase", Some("testsuite")) => {
+                if let Some(suite) = parsed.suites.last_mut() {
+                    suite.cases += 1;
+                }
+                parsed.identities.push(format!(
+                    "{} {}",
+                    attribute(text, "classname").unwrap_or_default(),
+                    attribute(text, "name").unwrap_or_default()
+                ));
+            }
+            ("testcase", _) => return Err("`<testcase>` outside a `<testsuite>`".to_string()),
+            (other, _) if OUTCOME_ELEMENTS.contains(&other) => {
+                parsed.forbidden.insert(other.to_string());
+            }
+            _ => {}
+        }
+        if !self_closing {
+            stack.push(name);
+        }
+    }
+    if !stack.is_empty() {
+        return Err(format!("`<{}>` is never closed", stack.join(">, <")));
+    }
+    if roots != 1 {
+        return Err(format!("expected one `<testsuites>` root, found {roots}"));
+    }
+    Ok(parsed)
+}
+
+/// A count attribute that is present must be a number; absent is `None`.
+fn count_attribute(tag: &str, name: &str) -> Result<Option<u64>, String> {
+    match attribute(tag, name) {
+        None => Ok(None),
+        Some(value) => value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|err| format!("{name}=\"{value}\" is not a number: {err}")),
+    }
+}
+
+/// Returns the number of testcases and the report's `<testsuite>` elements, or
 /// every reason the report is not an acceptable record of the partition.
 fn check_junit(
     junit: &str,
     listed: &BTreeSet<String>,
     tag: &str,
 ) -> Result<(u64, String), Vec<String>> {
+    let parsed = match parse_junit(junit) {
+        Ok(parsed) => parsed,
+        Err(why) => {
+            return Err(vec![format!(
+                "{tag}: junit.xml is not a complete report: {why}"
+            )]);
+        }
+    };
     let mut problems = Vec::new();
-    let Some(root_start) = junit.find("<testsuites") else {
-        return Err(vec![format!(
-            "{tag}: junit.xml has no <testsuites> element"
-        )]);
-    };
-    let Some(root_end) = tag_end(junit, root_start) else {
-        return Err(vec![format!(
-            "{tag}: junit.xml <testsuites> tag is not closed"
-        )]);
-    };
-    let Some(close) = junit.rfind("</testsuites>") else {
-        return Err(vec![format!("{tag}: junit.xml is not a complete report")]);
-    };
-    if close < root_end || !junit[close + "</testsuites>".len()..].trim().is_empty() {
-        return Err(vec![format!("{tag}: junit.xml is not a complete report")]);
+    let cases = parsed.identities.len() as u64;
+    match count_attribute(&parsed.root, "tests") {
+        Ok(Some(declared)) if declared == cases && cases > 0 => {}
+        Ok(declared) => problems.push(format!(
+            "{tag}: junit.xml declares {} tests but holds {cases} testcases",
+            declared.map_or_else(|| "no".to_string(), |count| count.to_string())
+        )),
+        Err(why) => problems.push(format!("{tag}: junit.xml root {why}")),
     }
-    let root = &junit[root_start..=root_end];
-    let number = |name: &str| attribute(root, name).and_then(|value| value.parse::<u64>().ok());
-    let declared = number("tests");
-    if declared.is_none_or(|count| count == 0) {
-        problems.push(format!("{tag}: junit.xml declares no tests"));
-    }
-    for name in ["failures", "errors"] {
-        if number(name).is_some_and(|count| count != 0) {
-            problems.push(format!("{tag}: junit.xml reports {name}"));
+    for name in ["failures", "errors", "skipped"] {
+        match count_attribute(&parsed.root, name) {
+            Ok(Some(0) | None) => {}
+            Ok(Some(count)) => problems.push(format!("{tag}: junit.xml reports {count} {name}")),
+            Err(why) => problems.push(format!("{tag}: junit.xml root {why}")),
         }
     }
-    let body = &junit[root_end + 1..close];
-    for element in ["<failure", "<error", "<flakyFailure", "<rerunFailure"] {
-        if body.contains(element) {
-            problems.push(format!("{tag}: junit.xml contains a {element}> element"));
+    for suite in &parsed.suites {
+        match count_attribute(&suite.tag, "tests") {
+            Ok(Some(declared)) if declared == suite.cases => {}
+            Ok(declared) => problems.push(format!(
+                "{tag}: a testsuite declares {} tests but holds {} testcases",
+                declared.map_or_else(|| "no".to_string(), |count| count.to_string()),
+                suite.cases
+            )),
+            Err(why) => problems.push(format!("{tag}: a testsuite {why}")),
         }
+        for name in ["failures", "errors", "skipped"] {
+            match count_attribute(&suite.tag, name) {
+                Ok(Some(0) | None) => {}
+                Ok(Some(count)) => {
+                    problems.push(format!("{tag}: a testsuite reports {count} {name}"));
+                }
+                Err(why) => problems.push(format!("{tag}: a testsuite {why}")),
+            }
+        }
+    }
+    for element in &parsed.forbidden {
+        problems.push(format!("{tag}: junit.xml contains a <{element}> element"));
     }
     let mut identities = BTreeSet::new();
-    let mut cases = 0u64;
-    let mut cursor = 0;
-    while let Some(offset) = body[cursor..].find("<testcase ") {
-        let start = cursor + offset;
-        let Some(end) = tag_end(body, start) else {
-            problems.push(format!(
-                "{tag}: junit.xml has an unterminated <testcase> tag"
-            ));
-            break;
-        };
-        let element = &body[start..=end];
-        cases += 1;
-        let identity = format!(
-            "{} {}",
-            attribute(element, "classname").unwrap_or_default(),
-            attribute(element, "name").unwrap_or_default()
-        );
+    for identity in &parsed.identities {
         if !identities.insert(identity.clone()) {
             problems.push(format!("{tag}: junit.xml repeats testcase `{identity}`"));
         }
-        cursor = end + 1;
-    }
-    if declared != Some(cases) {
-        problems.push(format!(
-            "{tag}: junit.xml declares {} tests but holds {cases} testcases",
-            declared.map_or_else(|| "no".to_string(), |count| count.to_string())
-        ));
     }
     if &identities != listed {
         let absent = listed.difference(&identities).count();
@@ -396,11 +596,15 @@ fn check_junit(
             "{tag}: junit.xml testcases are not the partition list ({absent} listed but not reported, {unlisted} reported but not listed{example})"
         ));
     }
-    if problems.is_empty() {
-        Ok((cases, format!("{}\n", body.trim_matches('\n'))))
-    } else {
-        Err(problems)
+    if !problems.is_empty() {
+        return Err(problems);
     }
+    let start = junit.find("<testsuite ").unwrap_or(0);
+    let close = junit.rfind("</testsuites>").unwrap_or(junit.len());
+    Ok((
+        cases,
+        format!("{}\n", junit[start..close].trim_matches('\n')),
+    ))
 }
 
 /// Index of the `>` closing the tag that starts at `start`, skipping quoted
@@ -451,24 +655,7 @@ fn combined_context(first: &str, options: &Options) -> String {
         options.shards,
         options.shards
     );
-    for line in first.lines() {
-        let partition_specific = [
-            "repository=",
-            "checkout_sha=",
-            "run_id=",
-            "run_attempt=",
-            "profile=",
-            "shard=",
-            "command=",
-            "nextest_exit=",
-        ]
-        .iter()
-        .any(|prefix| line.starts_with(prefix));
-        if !partition_specific {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
+    out.push_str(&environment_of(first));
     out.push_str("nextest_exit=0\n");
     out
 }
@@ -478,6 +665,7 @@ mod tests {
     use super::*;
 
     const SHA: &str = "abc123";
+    const BLOB: &str = "0123456789abcdef0123456789abcdef01234567";
 
     fn options(dir: &Path, shards: u32) -> Options {
         Options {
@@ -508,7 +696,7 @@ mod tests {
 
     fn context(shard: u32, shards: u32) -> String {
         format!(
-            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\ninput_blobs:\nabcd\nnextest_exit=0\n"
+            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\ninput_blobs (a, b, c, d):\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
         )
     }
 
@@ -689,7 +877,7 @@ mod tests {
             (
                 "truncated-xml",
                 Box::new(|r| rewrite(r, 2, "junit.xml", "<testsuites tests=\"1\"")),
-                "not closed",
+                "not a complete report",
             ),
             (
                 "failures-attr",
@@ -701,7 +889,7 @@ mod tests {
                         &junit(&["b three"]).replace("failures=\"0\"", "failures=\"1\""),
                     )
                 }),
-                "reports failures",
+                "reports 1 failures",
             ),
             (
                 "failure-element",
@@ -759,6 +947,58 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_rejected_run_clears_the_previous_accepted_receipts() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-supersede");
+        lay_out(&root, false)?;
+        let args: Vec<String> = [
+            "--dir",
+            "in",
+            "--artifact",
+            "art",
+            "--attempt",
+            "1",
+            "--repository",
+            "o/r",
+            "--sha",
+            SHA,
+            "--run-id",
+            "7",
+            "--shards",
+            "2",
+            "--out",
+            "out",
+        ]
+        .iter()
+        .map(|arg| {
+            if matches!(*arg, "in" | "out") {
+                root.join(arg).display().to_string()
+            } else {
+                (*arg).to_string()
+            }
+        })
+        .collect();
+        run(&args)?;
+        assert!(root.join("out/junit.xml").exists());
+        assert!(root.join("out/run-context.txt").exists());
+        rewrite(&root, 1, "shard-1.status", "100\n");
+        assert!(run(&args).is_err());
+        let left = ["junit.xml", "run-context.txt"]
+            .iter()
+            .filter(|name| root.join("out").join(name).exists())
+            .count();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(left, 0, "a rejected run left accepted receipts behind");
+        Ok(())
+    }
+
+    #[test]
+    fn coloured_list_lines_match_their_plain_testcases() {
+        let coloured = "\u{1b}[35;1mb\u{1b}[0m \u{1b}[34mone\u{1b}[0m\nb two\n";
+        let lines: Vec<String> = lines_of(coloured).collect();
+        assert_eq!(lines, ["b one", "b two"]);
     }
 
     #[test]
