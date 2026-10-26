@@ -1,0 +1,9 @@
+# Registers the dirty-submodule disclosure (#10648) under RIPR-SPEC-0083.
+[[extend]]
+id = "RIPR-SPEC-0083"
+tests = [
+  "crates/ripr/src/analysis/diff/parse.rs::dirty_submodule_without_mode_header_counts_as_a_submodule",
+]
+code = [
+  "crates/ripr/src/analysis/diff/parse.rs",
+]

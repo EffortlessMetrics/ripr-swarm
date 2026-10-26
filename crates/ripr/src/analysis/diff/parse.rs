@@ -523,6 +523,29 @@ mod parser_state {
             }
         }
 
+        /// A submodule whose working tree is dirty diffs as `Subproject commit
+        /// <sha>-dirty` with no `160000` mode or index header, so the header
+        /// handlers never see a gitlink. The hunk body is the only evidence:
+        /// count it once so the section is disclosed as a skipped submodule
+        /// instead of being reported as a non-source file.
+        fn note_unheadered_gitlink(&mut self, raw: &str) {
+            let is_gitlink_line = raw
+                .strip_prefix(['-', '+'])
+                .and_then(|body| body.strip_prefix("Subproject commit "))
+                .is_some_and(|sha| {
+                    let sha = sha.strip_suffix("-dirty").unwrap_or(sha);
+                    sha.len() >= 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+                });
+            if is_gitlink_line && !self.submodule_section {
+                self.submodule_section = true;
+                self.current_section_awaits_body = false;
+                if !self.submodule_counted {
+                    self.submodule_file_count = self.submodule_file_count.saturating_add(1);
+                    self.submodule_counted = true;
+                }
+            }
+        }
+
         pub(super) fn handle_submodule_index(&mut self, raw: &str) -> bool {
             if self.in_hunk {
                 return false;
@@ -842,6 +865,7 @@ mod parser_state {
                 return;
             }
             self.account_hunk_line(raw);
+            self.note_unheadered_gitlink(raw);
             if raw.starts_with("\\ No newline at end of file") {
                 return;
             }
@@ -1330,6 +1354,23 @@ deleted file mode 100644
         assert_eq!(parsed.truncated_file_sections, 0);
         let parsed = parse_unified_diff_with_metadata("");
         assert_eq!(parsed.truncated_file_sections, 0);
+    }
+
+    #[test]
+    fn dirty_submodule_without_mode_header_counts_as_a_submodule() {
+        // A dirty submodule diffs with no `160000` header, only the
+        // `Subproject commit <sha>-dirty` hunk body.
+        let sha = "d218730df2a5e1b323f294571b25575a6afbfe86";
+        let dirty = format!(
+            "diff --git a/vendor/dep b/vendor/dep\n--- a/vendor/dep\n+++ b/vendor/dep\n@@ -1 +1 @@\n-Subproject commit {sha}\n+Subproject commit {sha}-dirty\n"
+        );
+        let parsed = parse_unified_diff_with_metadata(&dirty);
+        assert_eq!(parsed.submodule_file_count, 1);
+
+        // Prose that merely starts the same way is not a gitlink.
+        let prose = "diff --git a/notes.md b/notes.md\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-Subproject commit soon\n+Subproject commit later\n";
+        let parsed = parse_unified_diff_with_metadata(prose);
+        assert_eq!(parsed.submodule_file_count, 0);
     }
 
     #[test]
