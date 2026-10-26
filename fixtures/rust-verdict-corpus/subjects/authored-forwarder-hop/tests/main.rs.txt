@@ -1,4 +1,4 @@
-use forwarder_hop::{Fin, Lane, Pool, Right};
+use forwarder_hop::{Fin, Gate, Lane, Pool, Right};
 
 #[test]
 fn grow_keeps_four_inline_and_spills_five() {
@@ -24,4 +24,18 @@ fn fold_answers_for_the_other_type() {
 fn cut_answers_for_the_right_type() {
     let mut right = Right::default();
     assert_eq!(right.cut(4), Ok(true));
+}
+
+#[test]
+fn std_receivers_named_like_the_ring_forwarder() {
+    assert_eq!(vec![1, 2, 3].len(), 3);
+    let mut seen = std::collections::HashSet::new();
+    assert!(seen.insert(4));
+}
+
+#[test]
+fn gate_insert_pins_the_boundary() {
+    let mut gate = Gate::default();
+    assert_eq!(gate.insert(4), Ok(false));
+    assert_eq!(gate.insert(5), Ok(true));
 }

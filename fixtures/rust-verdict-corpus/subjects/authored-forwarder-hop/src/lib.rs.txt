@@ -115,3 +115,41 @@ impl Right {
         self.try_halve(wanted)
     }
 }
+
+#[derive(Default)]
+pub struct Ring {
+    pushed: usize,
+}
+
+impl Ring {
+    pub fn try_push(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.pushed += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn len(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_push(wanted)
+    }
+}
+
+#[derive(Default)]
+pub struct Gate {
+    shut: usize,
+}
+
+impl Gate {
+    pub fn try_shut(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.shut += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn insert(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_shut(wanted)
+    }
+}

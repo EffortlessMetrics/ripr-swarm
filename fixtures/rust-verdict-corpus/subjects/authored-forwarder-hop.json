@@ -11,11 +11,11 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "2d897adc93223b8265a0550698d2a78d11cf19a32ce2e45ef0d40ef2a9fe5ae6"
+      "sha256": "f0a14185a5fff661ba29e405e8c731871854bb344320f4ab22b315f2c2fd2816"
     },
     {
       "path": "tests/main.rs",
-      "sha256": "1cf7004c308e081365c87d642db62911448aacf5bcab0d6348a643a504c51e27"
+      "sha256": "c365ce317b3e3304288947862309a0900fc98f6c45179582970d5fe1b7a766c6"
     }
   ]
 }

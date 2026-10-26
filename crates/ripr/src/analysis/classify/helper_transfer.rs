@@ -1176,18 +1176,30 @@ pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
 }
 
 /// #9638: whether `test` enters `chain` through a receiver call of a hop
-/// caller that is a method (`v.grow(8)` for `fn grow(&mut self, ..) {
+/// caller that is a method (`pool.grow(8)` for `fn grow(&mut self, ..) {
 /// self.try_grow(..) }`), the form the free-call test in `find_related_tests`
-/// cannot see. Every condition fails closed:
+/// cannot see. Every condition fails closed.
 ///
-/// - the entry is an inherent method (`impl Type`, a plain `self` receiver
-///   parameter) in production source, and the one workspace function of its
-///   name, so the receiver's type is not guessed from a collision;
-/// - every hop from the owner up to that entry is a direct call or an
-///   identity-bound `self.` hop: no macro hop, no foreign import, no
-///   test-local binding or nested `fn` of the name;
-/// - the test's only mentions of the name are receiver calls (`x.grow(..)`),
-///   so a path call, a function value or a macro argument never counts.
+/// Checked here, each pinned by a `helper_wrapper_reach` negative:
+///
+/// - the entry is an inherent method (`impl Type`, not a trait impl) whose
+///   first parameter text is `self`, `&self` or `&mut self` (so an associated fn without a receiver is refused), in production source
+///   (no evidence role, no `#[cfg(test)]` item or impl);
+/// - no hop from the owner up to the entry goes through a macro argument;
+/// - the test's only mentions of the name are receiver calls (never a path
+///   call or function value) that no test-local binding shadows;
+/// - every receiver is provably a value of the entry's own impl type: a
+///   `let` the test binds only to that type's constructor or struct literal,
+///   or an inline constructor, read by the owner-pin receiver reader. A std
+///   or external receiver, a parameter, a rebound name or a foreign import of
+///   the type never relates the test (`Vec::len` is not a forwarder `len`).
+///
+/// Not decided here (upstream chain construction, not pinned by a negative in
+/// this rule): that the entry is the one workspace function of its name and
+/// that each hop is a direct or identity-bound `self.` call. The in-package
+/// condition is applied by `find_related_tests`, and a test in another
+/// package is refused end to end (`forwarder_method_called_from_another_package_is_not_related`),
+/// though no single guard of it is mutation-pinned.
 ///
 /// This only relates the test. Whether the entry's result reaches an oracle
 /// is still decided by the forwarding rules, which refuse a method entry
@@ -1201,18 +1213,117 @@ pub(crate) fn test_calls_method_entry(
     chain.hops.iter().enumerate().any(|(at, hop)| {
         let entry = &hop.caller;
         matches!(entry.item.container, FunctionContainer::Inherent { .. })
-            && entry.item.has_self_param
             && !entry.source_role.is_evidence_role()
             && chain.hops[..=at].iter().all(|below| !below.through_macro)
             && super::activation::signature_parameter_texts(entry)
                 .first()
                 .is_some_and(|first| matches!(first.trim(), "self" | "&self" | "&mut self"))
+            && !entry
+                .attrs
+                .iter()
+                .chain(&entry.impl_attrs)
+                .any(|attr| attr.replace(' ', "").contains("cfg(test)"))
             && test.calls.iter().any(|call| {
                 call.name == entry.name
                     && mentions_only_as_receiver_call(&call.text, &entry.name)
                     && !test_call_is_shadowed(index, test, &entry.name, call.line)
+                    && receivers_are_entry_type(index, test, entry, &call.text)
             })
     })
+}
+
+/// #9638 (false-credit review F1): every `.<entry>(` on the call line has a
+/// receiver the test provably built as a value of the entry's own impl type.
+/// A receiver whose type is not established (`vec![1].len()`, a `HashSet`, a
+/// `String`, an iterator, a parameter or field) never relates the test: a
+/// method name alone is not type identity. Reads the owner-pin receiver
+/// reader, which also refuses a foreign or aliased import of the type.
+fn receivers_are_entry_type(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    entry: &FunctionSummary,
+    line: &str,
+) -> bool {
+    let Some(entry_type) = impl_self_type(entry) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    let needle = format!(".{}(", entry.name);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mentions = masked
+        .match_indices(entry.name.as_str())
+        .filter(|(at, _)| {
+            !masked[..*at].chars().next_back().is_some_and(is_word)
+                && !masked[at + entry.name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .count();
+    let dots: Vec<usize> = masked.match_indices(&needle).map(|(at, _)| at).collect();
+    if dots.is_empty() || dots.len() != mentions {
+        return false;
+    }
+    let scope = super::owner_pin::OwnerScope::new(&entry.name, entry.start_line, &entry.file);
+    dots.into_iter().all(|dot| {
+        receiver_expression(&masked, dot)
+            .and_then(|receiver| {
+                super::owner_pin::test_receiver_named_type(test, &receiver, scope, index)
+            })
+            .is_some_and(|named| named == entry_type)
+    })
+}
+
+/// The receiver expression ending at the `.` at `dot`: an identifier, or a
+/// bracketed constructor (`Pool::default()`, `Pool { .. }`) with its type
+/// path. `None` for a field or chained receiver (`a.b.grow(..)`,
+/// `make().grow(..)` is a call head, read as `make()`), which is not read.
+fn receiver_expression(masked: &str, dot: usize) -> Option<String> {
+    let before = masked[..dot].trim_end();
+    let is_path = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':';
+    let last = before.chars().next_back()?;
+    let start = if last == ')' || last == '}' {
+        let (open, close) = if last == ')' { ('(', ')') } else { ('{', '}') };
+        let mut depth = 0usize;
+        let mut opener = None;
+        for (at, ch) in before.char_indices().rev() {
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    opener = Some(at);
+                    break;
+                }
+            }
+        }
+        let opener = opener?;
+        let head = before[..opener].trim_end();
+        let head_len = head
+            .chars()
+            .rev()
+            .take_while(|ch| is_path(*ch))
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if head_len == 0 {
+            return None;
+        }
+        head.len() - head_len
+    } else if last.is_ascii_alphanumeric() || last == '_' {
+        before.len()
+            - before
+                .chars()
+                .rev()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .map(char::len_utf8)
+                .sum::<usize>()
+    } else {
+        return None;
+    };
+    if masked[..start].trim_end().ends_with('.') {
+        return None;
+    }
+    Some(before[start..].to_string())
 }
 
 /// The receiver self forms a method hop admits. `&mut self` is refused: the

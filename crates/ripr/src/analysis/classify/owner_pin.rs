@@ -13290,6 +13290,57 @@ fn named_or_slice(
     Some(ReceiverType::Named(base.to_string()))
 }
 
+/// #9638: the workspace type name a test's receiver expression is proven to
+/// be a value of, by the owner-pin receiver reader: a plain identifier the
+/// test binds only by `let [mut] x [: T] = <constructor of T>;`, or an inline
+/// constructor expression (`Pool::default()`, `Pool { .. }`). `None` when the
+/// type is not established (a std or external type, a rebound name, a
+/// foreign or aliased import of the type, a non-`Self` constructor), so the
+/// caller must fail closed.
+pub(in crate::analysis) fn test_receiver_named_type(
+    test: &TestSummary,
+    receiver: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+) -> Option<String> {
+    let files = index.files();
+    let test_source: Option<&str> = files
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    let imports_foreign = |_: &Path, name: &str| {
+        test_source.is_none_or(|source| {
+            super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
+        })
+    };
+    let syntax = OwnerPinSyntax::default();
+    let receiver = receiver.trim();
+    let typed = if is_plain_identifier(receiver) {
+        test_receiver_type(
+            test,
+            receiver,
+            test_source,
+            index,
+            &imports_foreign,
+            owner,
+            &syntax,
+        )
+    } else {
+        binding_type(
+            &format!("= {receiver}"),
+            test,
+            test_source,
+            index,
+            &imports_foreign,
+            owner,
+            &syntax,
+        )
+    };
+    match typed? {
+        ReceiverType::Named(name) => Some(name),
+        ReceiverType::ByteSlice => None,
+    }
+}
+
 /// The owner's identity, for the #6957 shadow exemption: the owner's own
 /// scope holds the production declaration, so it is not a test-local
 /// shadow. The single-file check resolves the scope in the test file's own

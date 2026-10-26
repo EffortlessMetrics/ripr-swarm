@@ -1375,12 +1375,14 @@ fn find_related_tests_with_candidates<'a>(
                 )
             });
         // #9638: a receiver call of a method hop's caller (`v.grow(8)` for
-        // `fn grow(&mut self, ..) { self.try_grow(..) }`). Unlike the free
-        // call above it does not bypass the package guard: only a test in the
-        // owner's package can use it, since a receiver call has no crate path
-        // that could tie it to the owner's package.
+        // `fn grow(&mut self, ..) { self.try_grow(..) }`). It does not ride
+        // the free-call bypasses of `calls_helper_entry`: a receiver call has
+        // no crate path that could tie it to the owner's package, so only a
+        // test in the owner's package qualifies. The cross-package test pins
+        // the outcome; this explicit prefix check is defense in depth that no
+        // mutation test pins on its own (the later cross-package `continue`
+        // and the receiver-type proof refuse the same test).
         let calls_method_entry = !calls_helper_entry
-            && !property_only_owner_call
             && owner_package_prefix
                 .as_ref()
                 .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
