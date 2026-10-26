@@ -34,7 +34,7 @@
   },
   "reasoning": "No test constructs a `Ring`; `vec![1, 2, 3].len()` and `HashSet::insert` are std calls. A method name alone is not type identity, so ripr must not relate these tests to `Ring::len`. 0 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, passes it too. Spec cells: RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "PENDING",
+    "ripr_commit": "4228803",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "no_static_path"

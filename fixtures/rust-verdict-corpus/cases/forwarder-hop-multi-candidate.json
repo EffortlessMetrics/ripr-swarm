@@ -34,7 +34,7 @@
   },
   "reasoning": "`Right::cut` forwards `self.try_halve(wanted)`, but that call is `Right`'s own method. The owner name `try_halve` has two candidates, so the forwarder cannot be tied to the changed `Left` one. 0 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, passes it too. Spec cells: RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "2492dde",
+    "ripr_commit": "4228803",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "no_static_path"
