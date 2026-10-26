@@ -26,11 +26,11 @@ reason = "Measured row that abstains while its tests discriminate; accepted when
 
 [[entry]]
 case = "py-shapes-decorator-loop-bound"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0238 Decision 16, #9619): the oracle depends on module state across calls, and its equivalent twin must not credit. Delete this entry when a fixture-backed state evaluator credits the row."
 
 [[entry]]
 case = "py-shapes-decorator-retry-count"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0238 Decision 16, #9619): the oracle depends on module state across calls, and its equivalent twin must not credit. Delete this entry when a fixture-backed state evaluator credits the row."
 
 [[entry]]
 case = "py-shapes-relative-import-quote"
