@@ -51,9 +51,11 @@ for qualification and conditional landing authorization instead. For the legacy
 route, the delivery owner completes this order before spending the
 `merge-ready`-requested `Ripr Rust Small Result` qualification:
 
-1. Bind the exact candidate head and integration basis. Complete independent
-   substantive review through `review-pr` with a reviewer sub-agent spawned inside
-   the working session, disposition every known finding, and
+1. Bind the exact candidate head and integration basis. Complete directed
+   substantive review through `review-pr` inline in the owning session's main
+   context, using distinct criteria and counterexamples. Subagents and bot input
+   are optional additional evidence; preserve actual required reviews and checks.
+   Disposition every known finding and
    compose accepted repairs into that candidate while Draft.
 2. Run applicable, available local proof on the composed head and refresh affected review.
    Follow changed expectations into their consumers: corpus rows can change a
@@ -110,8 +112,10 @@ head with a queued or running required run: it cancels it. Retain its run link a
 ### PR-native continuation record
 
 Keep one current block in the existing PR body or owned issue/PR comment. Edit
-it at a transition; link the underlying reviews and reports instead of repeating
-their prose. Live GitHub metadata remains authoritative over a stale block.
+it at a meaningful transition; link the underlying reviews and reports instead of
+repeating their prose. Tracking is support work, not an additional delivery gate
+or a parent payload approval requirement. Live GitHub metadata remains authoritative
+over a stale block; an unavailable read is an evidence limit, not invented state.
 
 ```text
 Owner / governing claim:

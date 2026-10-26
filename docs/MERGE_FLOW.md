@@ -31,7 +31,13 @@ remain separate states.
 
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
-One writer owns each candidate; independent readers may challenge it. Do not
+One writer owns each candidate through its authorized issue-to-merge outcome,
+with evolving directed review stages inline in the main context. Optional
+in-session subagents and Claw/UB/bots add evidence; they are not mandatory
+reviewer identities or substitutes for owner review. Preserve actual required
+reviews and checks. Routine repairs, evidence comments and finish-through do
+not require parent payload approval; coordinate actual overlapping writers and
+consequential changes. Do not
 force-push another writer's branch, start a competing repair or make a second
 candidate merely to keep an agent occupied.
 

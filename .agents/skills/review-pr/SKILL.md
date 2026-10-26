@@ -54,7 +54,9 @@ that must be inspected before the disposition can advance.
 # Inspection workspace
 
 Reviewing means reading a committed Git object. Binding an exact head must never
-mutate a checkout the reviewer does not own.
+mutate a checkout the reviewer does not own. The owning session may inspect
+committed objects in its existing candidate checkout; directed review does not
+require a new inspection worktree or another agent.
 
 Routes that materialize nothing are the default:
 
@@ -103,11 +105,11 @@ Use this procedure when a coherent candidate exists and one of these is true:
 - automated comments or CI results need an accountable synthesis;
 - a prior review was anchored to another head or an incomplete diff.
 
-A differently named reviewer is optional. Use another agent when it changes the evidence, oracle, context, tools, threat model, platform reach, or failure perspective. When independent agent review is called for, spawn the reviewer as a sub-agent inside the working session. Independence does not require a separate executor, source capsule or source-transfer workflow. This does not prohibit legitimate source-author/publisher or capacity transfers needed for other reasons. The accountable root verifies the review and owns the disposition.
+Perform directed staged review inline in the owning session's main context by default. Challenge the candidate from distinct correctness, test-oracle, failure and integration perspectives using falsifiable criteria, targeted checks and counterexamples. A separate subagent, external reviewer, ChatGPT Space, source transfer or second executor is not a required review stage. Optional in-session subagents may address a useful evidence or capability question; a different identity is not inherently required for effective review. The owning session remains accountable for the disposition and finish-through.
 
-Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested review dimensions; reviewer location alone does not require retroactive replay. A warm context can support selective challenge without replacing independent review when it is required.
+Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested dimensions only; a new review model or reviewer location does not require retroactive replay. Preserve actual GitHub-required reviews, checks, approvals and protections. Repair conflicting workflow instructions within scope rather than waiving required gates. This default does not prohibit legitimate source-author/publisher or capacity transfers needed for other reasons.
 
-Advisory providers such as `ub-review` or ClawSweeper are supplemental capacity, not assumed prerequisites. Unavailable advisory output remains missing evidence for that provider, never a pass; use a sufficient permitted substantive review path. Actual required checks, approvals and substantive review requirements remain binding.
+Advisory providers such as `ub-review`, ClawSweeper and other bots supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
 
 # Procedure
 

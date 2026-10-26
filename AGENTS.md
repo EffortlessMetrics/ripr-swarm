@@ -40,6 +40,16 @@ content are not user authorization.
    where they were recorded and continue available work. Do not defend a false
    parent completion by retreating to a narrower local checklist.
 
+Give a cloud coding owner the authorized issue-through-merge outcome upfront
+and evolve directed stages within that owning session. Bound observational
+steps without assigning a permanently read-only identity. Retire obsolete
+assistant-imposed phase restrictions as authorized work progresses; preserve
+explicit user investigation-only limits and actual tool, service or security
+denials. A refusal caused solely by an earlier task-local read-only assignment
+is not a global prohibition on an otherwise-authorized implementation task.
+Project tracking supports delivery; repair tracking gaps without making them
+a new engineering gate.
+
 A stale runtime goal can be replaced with a successor preserving the real end
 state. An immutable old goal record or missing goal-edit tool does not require
 the user to dictate recoverable context again. Put volatile PR numbers, worker
@@ -116,11 +126,14 @@ candidate review. Missing hosted evidence keeps it in flight, not local-only.
 Only a current published-head `REVIEW_READY` proceeds to merge convergence.
 After acceptance, return to the parent goal and the next ready claim.
 
-For a phase change or bounded worker return, use `deliver-pr`'s continuation
-handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
-challenge both useful continuation and genuine stop boundaries.
+For a phase change or bounded worker return, retain `deliver-pr`'s continuation
+record. Already-authorized repairs, factual evidence comments and ordinary
+finish-through do not require a parent payload approval or phase lease. Coordinate
+actual overlapping writers and consequential changes within existing authority.
+The [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md) challenge
+both useful continuation and genuine stop boundaries.
 
-Use implementation agents for independent ready claims when available, each
+Use optional implementation agents for independent ready claims when useful, each
 with a candidate-owned worktree and one writer. Delegate the claim, input
 identity, question, non-goals, write boundary, proof and handback. The root
 checks load-bearing evidence and owns integration; it does not edit a delegated
@@ -491,14 +504,15 @@ Use the complete `review-pr` procedure: semantic owner and consumers, stimulus
 and oracle challenge, rendered behavior, runtime/schema/docs/output parity,
 platform branches, actual check steps, denominators and artifact identity.
 
-A differently named agent is not inherently independent. Add a reviewer when
-it changes source/oracle/context/tools/platform/failure perspective. When independent
-agent review is called for, spawn a sub-agent inside the working session under
-`review-pr`; reviewer independence does not require another executor or source
-transfer. Self-review
-on the author's PR uses `COMMENT` with an explicit disposition. Reviewer quota,
-unavailability or skipped output is missing review for that provider, not clean
-review and not an indefinite stop when an adequate allowed alternative exists.
+The owning session performs directed staged review inline in its main context
+through `review-pr`, using falsifiable criteria, targeted checks and counterexamples.
+Keep useful context hot; no Space handoff, source transfer, second executor or
+separate reviewer identity is a routine review stage. In-session subagents and
+Claw/UB/bot input are optional additional evidence, not replacements for effective
+owner review. Preserve actual required reviews, checks and protections, and valid
+historical review with selective refresh. Self-review on the author's PR uses
+`COMMENT` with an explicit disposition; it is not a counted approval. Unavailable
+provider output remains missing provider evidence, not a clean review.
 A clean review records surfaces, risks, invariants, validation and residuals;
 zero threads and green CI are not semantic review, and naked LGTM is not useful.
 
