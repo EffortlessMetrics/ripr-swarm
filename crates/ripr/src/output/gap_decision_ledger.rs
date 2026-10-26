@@ -540,7 +540,10 @@ fn repo_exposure_analysis_coverage(
     // checkout-path independent `source_subject`); the coverage corpus carries
     // both.
     let mut corpus = source.pointer("/source_subject/corpus")?.clone();
-    corpus["analysis_inputs"] = source.get("analysis_inputs")?.clone();
+    corpus.as_object_mut()?.insert(
+        "analysis_inputs".to_string(),
+        source.get("analysis_inputs")?.clone(),
+    );
     let corpus = &corpus;
     if !corpus_identity_is_well_formed(corpus)
         || crate::output::gap_source_subject::analyzed_production_files(corpus).is_none()

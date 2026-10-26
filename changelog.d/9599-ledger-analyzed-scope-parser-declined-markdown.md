@@ -9,6 +9,8 @@
   edited or stale ledgers, limited or parser-declined runs, non-Rust paths and
   paths outside the producer's actual production-file membership (including
   symlink aliases and evidence-only sources) still read `not_evaluated` (#9599).
+  Malformed corpus values refuse coverage without panicking, including when
+  their content commitment is valid and the run contains no seams (#9599).
   Gate admission verifies current membership and eight non-Rust analysis input
   identities (config bytes, test intent, suppressions, build features, Cargo
   manifests, lockfile, toolchain, analyzer build) as well as corpus content; the

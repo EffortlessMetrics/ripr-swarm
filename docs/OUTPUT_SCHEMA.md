@@ -18602,8 +18602,9 @@ top-level `source_subject`:
   including raw `ripr.toml` bytes), `test_intent_hash`, `suppressions_hash`,
   `workspace_manifests_hash` (Cargo manifests and configuration, bound to the
   checkout path), `lockfile_hash`, `toolchain_hash` and `analyzer_version`.
-  A gate recomputes them to admit baseline coverage; they are 64-bit FNV
-  change detection, not authentication.
+  A gate recomputes them to admit baseline coverage. The seven hash fields use
+  64-bit FNV change detection; `analyzer_version` is the build identity string.
+  Neither is producer authentication.
   This is the existing
   cache content authority, not another digest or a HEAD identity. Cold and
   warm inventories carry the same authority. Derived writers copy it only
