@@ -627,3 +627,50 @@ fn source_preservation_closes_stable_crate_metadata_without_cfg_credit() {
         );
     }
 }
+
+#[test]
+fn cfg_attr_introduces_test_only_under_a_predicate_known_true() {
+    for (text, only_test) in [
+        ("#[cfg_attr(all(), test)]", true),
+        ("#[cfg_attr(test, test)]", true),
+        ("#[ cfg_attr ( all ( ) , test ) ]", true),
+        ("#[cfg_attr(not(any()), test)]", true),
+        ("#[cfg_attr(all(), test, ignore)]", false),
+        ("#[cfg_attr(all(), test, should_panic)]", false),
+        ("#[cfg_attr(all(), should_panic, test)]", false),
+        ("#[cfg_attr(all(), ignore)]", false),
+        ("#[cfg_attr(any(), test)]", false),
+        ("#[cfg_attr(feature = \"extra\", test)]", false),
+        ("#[cfg_attr(all(), tokio::test)]", false),
+        ("#[cfg_attr(all(), test(arg))]", false),
+        ("#[cfg_attr(all(), r#test)]", false),
+        ("#[cfg_attr(all(),)]", false),
+        ("#[cfg_attr(all(), test", false),
+        ("#[test]", false),
+        ("#![cfg_attr(all(), test)]", false),
+        ("#[cfg(test)]", false),
+    ] {
+        assert_eq!(attribute_introduces_only_test(text), only_test, "{text}");
+    }
+}
+
+#[test]
+fn cfg_attr_introduces_a_bare_sibling_only_under_a_predicate_known_true() {
+    for (text, word, expected) in [
+        ("#[cfg_attr(all(), ignore)]", "ignore", true),
+        ("#[cfg_attr(all(), test, ignore)]", "ignore", true),
+        ("#[cfg_attr(all(), should_panic)]", "should_panic", true),
+        ("#[cfg_attr(any(), ignore)]", "ignore", false),
+        ("#[cfg_attr(feature = \"x\", ignore)]", "ignore", false),
+        ("#[cfg_attr(all(), ignore = \"slow\")]", "ignore", true),
+        (
+            "#[cfg_attr(all(), should_panic(expected = \"x\"))]",
+            "should_panic",
+            true,
+        ),
+        ("#[cfg_attr(all(), should_panic)]", "ignore", false),
+        ("#[ignore]", "ignore", false),
+    ] {
+        assert_eq!(attribute_introduces_bare(text, word), expected, "{text}");
+    }
+}
