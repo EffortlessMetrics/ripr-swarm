@@ -4,6 +4,8 @@
 id = "RIPR-SPEC-0028"
 tests = [
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::removed_type_guard_is_credited_to_a_foreign_literal_comparison",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::removed_type_guard_ignores_a_ne_assertion_on_a_builtin_subclass",
+  "crates/ripr/src/analysis/language/python/type_guard.rs::tests::a_class_header_with_any_base_is_based",
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::removed_type_guard_stays_an_abstention_without_the_exact_shape",
   "crates/ripr/src/analysis/language/python/type_guard.rs::tests::guard_removal_needs_the_exact_one_line_shape",
   "crates/ripr/src/analysis/language/python/type_guard.rs::tests::only_a_plain_stored_attribute_comparison_counts",
