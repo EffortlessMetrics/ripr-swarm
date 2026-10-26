@@ -647,6 +647,8 @@ fn review_comments_with_admission(
                 }),
         )
         .collect::<Vec<_>>();
+    receipt.step("corpus_admission");
+    receipt.write_atomic(&receipt_path)?;
     let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
     })
@@ -670,6 +672,8 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    receipt.step("test_change_detection");
+    receipt.write_atomic(&receipt_path)?;
     let changed_tests = analysis::cancellation::with_token(&cancellation, || {
         analysis::diff_test_changes(
             &input.root,
@@ -694,6 +698,8 @@ fn review_comments_with_admission(
     // under the same token as the other analysis phases so a large diff
     // cannot spend the budget here with no interior checkpoint to stop it
     // (#1604); an expiry inside it surfaces at the deadline check below.
+    receipt.step("owner_attribution");
+    receipt.write_atomic(&receipt_path)?;
     let (changed_owners, enclosing_owners) =
         analysis::cancellation::with_token(&cancellation, || {
             attribute_owners(&input.root, &changed_lines)
@@ -2175,6 +2181,15 @@ mod tests {
         }
         if result.is_ok() {
             return Err("run completed after its budget expired in attribution".to_string());
+        }
+        if receipt
+            .get("active_step")
+            .and_then(serde_json::Value::as_str)
+            != Some("owner_attribution")
+        {
+            return Err(format!(
+                "timeout receipt must name the owner_attribution pass: {receipt}"
+            ));
         }
         if out.exists() || out.with_extension("md").exists() {
             return Err("expired attribution published review artifacts".to_string());

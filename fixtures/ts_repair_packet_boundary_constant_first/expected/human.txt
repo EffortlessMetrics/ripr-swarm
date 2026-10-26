@@ -23,7 +23,7 @@ Start here:
     strong assertion observes a `discountedTotal(...)` call at the changed predicate boundary
     `DISCOUNT_THRESHOLD == amount`; inputs on one side of the boundary do not discriminate the
     changed comparison
-  Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (no input this test passes was seen reaching `DISCOUNT_THRESHOLD == amount`)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `DISCOUNT_THRESHOLD == amount`; the repair packet is complete and delegatable
     (advisory)
@@ -35,6 +35,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 2 related test(s) found for owner `discountedTotal`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full

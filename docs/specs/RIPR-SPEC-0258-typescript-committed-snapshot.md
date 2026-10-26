@@ -106,7 +106,7 @@ runner's entry for it can be named and is committed:
   object literals with no `rootDir`, `roots`, `root`, `workspace` or
   `projects` key and no `preset` other than a `ts-jest` preset delegates to
   nothing and is read, whether the key is bare or quoted and wherever a
-  comment mentions the word, and a regex literal such as `globals: { tag: /a(b)/ }` is a value, not a call, #10139), no `package.json` passes a config, project list or root
+  comment mentions the word, and a regex literal such as `globals: { tag: /a(b)/ }` is a value, not a call, #10139), and a quoted property value (`displayName: "projects"`) is a value, not a key, while a string passed to a call or bound by `=` (`Object.defineProperty(c, 'root', ..)`) keeps the refusal, while a config holding a template literal, a `/` (regex or division) or an unterminated string keeps the refusal (#10295), no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
@@ -376,6 +376,7 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `computed_and_member_spellings_of_delegating_keys_stay_medium`,
   `json_escaped_whitespace_before_the_update_flag_stays_medium`,
   `plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses`,
+  `vitest_string_values_are_not_keys_but_real_keys_still_refuse`,
   `submodule_git_file_does_not_end_the_walk` and
   `only_a_submodule_pointer_is_not_a_boundary` pin example 8 and the
   #8768 spellings;

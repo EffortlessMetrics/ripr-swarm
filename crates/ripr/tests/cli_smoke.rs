@@ -706,6 +706,9 @@ fn unique_temp_workspace(label: &str) -> PathBuf {
 fn printed_path(path: &Path) -> String {
     let text = path.to_string_lossy();
     if cfg!(windows) {
+        if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+            return format!("//{}", share.replace('\\', "/"));
+        }
         text.strip_prefix(r"\\?\")
             .unwrap_or(&text)
             .replace('\\', "/")
@@ -2109,7 +2112,7 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
         .map_err(|error| format!("canonicalize workspace root: {error}"))?;
     let expected_disclosure = format!(
         "ripr: resolved workspace root to {} (Cargo.toml contains [workspace])",
-        expected_root.display()
+        printed_path(&expected_root)
     );
     assert!(
         String::from_utf8_lossy(&implicit.stderr).contains(&expected_disclosure),
@@ -2276,7 +2279,7 @@ fn check_from_a_package_source_dir_analyzes_the_crate_root() -> Result<(), Strin
     let stderr = String::from_utf8_lossy(&from_src.stderr);
     let disclosure = format!(
         "ripr: resolved workspace root to {} (nearest Cargo.toml)",
-        expected_root.display()
+        printed_path(&expected_root)
     );
     assert!(stderr.contains(&disclosure), "stderr:\n{stderr}");
     Ok(())
@@ -3823,7 +3826,9 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
             "refusal must echo the caller-supplied base: {value}"
         ));
     }
-    if value["root"] != root_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&root_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -3893,7 +3898,9 @@ fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), Strin
         "repository_root_unusable",
         "analysis/repository-root",
     )?;
-    if value["root"] != plain_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&plain_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -4144,7 +4151,9 @@ fn diff_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
             "refusal must echo the caller-supplied mode: {value}"
         ));
     }
-    if value["root"] != root_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&root_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -4345,7 +4354,9 @@ fn agent_packet_json_unusable_root_emits_refusal_envelope() -> Result<(), String
         "repository_root_unusable",
         "analysis/repository-root",
     )?;
-    if value["root"] != root_arg.as_str() {
+    // The JSON root renders through display_path: on Windows that is the
+    // plain `/` spelling of the argument, so compare against printed_path.
+    if value["root"] != printed_path(Path::new(&root_arg)).as_str() {
         return Err(format!(
             "refusal must echo the caller-supplied root: {value}"
         ));
@@ -8614,7 +8625,7 @@ fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
     assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
     let packet = root.join("target/ripr/workflow/agent-packet.json");
     assert!(
-        stdout.contains(&packet.display().to_string()),
+        stdout.contains(&printed_path(&packet)),
         "before summary must name the root-resolved packet:\n{stdout}"
     );
     assert!(stdout.contains("Next, after the test edit: "), "{stdout}");
@@ -8649,7 +8660,7 @@ fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
         "target/ripr/workflow/agent-verify.json",
     ] {
         assert!(
-            stdout.contains(&root.join(artifact).display().to_string()),
+            stdout.contains(&printed_path(&root.join(artifact))),
             "after summary must name the root-resolved {artifact}:\n{stdout}"
         );
     }
@@ -12709,6 +12720,77 @@ fn doctor_json_reports_an_unpinned_generated_workflow_as_advisory() -> Result<()
             && evidence.contains("ripr init --ci github --force")),
         "{check}"
     );
+    Ok(())
+}
+
+#[test]
+fn doctor_verifies_mcp_json_in_human_and_json_without_changing_exit() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let mcp_check = |report: &serde_json::Value| {
+        report["checks"].as_array().and_then(|checks| {
+            checks
+                .iter()
+                .find(|check| check["name"] == "mcp_config")
+                .cloned()
+        })
+    };
+    let json_of = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("doctor JSON did not parse: {err}"))
+    };
+
+    // No file: no line, no check.
+    let absent_human = run_ripr(&["doctor", "--root", &root]);
+    let absent_json = json_of(&run_ripr(&["doctor", "--root", &root, "--json"]))?;
+    assert!(
+        !String::from_utf8_lossy(&absent_human.stdout).contains(".mcp.json"),
+        "absent .mcp.json must add no line"
+    );
+    assert!(mcp_check(&absent_json).is_none());
+
+    // The entry `ripr init --mcp` writes: ✓ line, pass check.
+    std::fs::write(
+        workspace.join(".mcp.json"),
+        r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+    )
+    .map_err(|err| format!("write .mcp.json: {err}"))?;
+    let ok_human = run_ripr(&["doctor", "--root", &root]);
+    let ok_json = json_of(&run_ripr(&["doctor", "--root", &root, "--json"]))?;
+    let ok_text = String::from_utf8_lossy(&ok_human.stdout).to_string();
+    assert!(
+        ok_text.contains("✓ .mcp.json: `ripr` MCP server runs `ripr mcp --stdio`"),
+        "{ok_text}"
+    );
+    assert_eq!(
+        mcp_check(&ok_json).map(|check| check["status"].clone()),
+        Some(serde_json::json!("pass"))
+    );
+
+    // A different server only: ~ line, advisory check, same exit status.
+    std::fs::write(
+        workspace.join(".mcp.json"),
+        r#"{"mcpServers":{"other":{"command":"x"}}}"#,
+    )
+    .map_err(|err| format!("write .mcp.json: {err}"))?;
+    let bad_human = run_ripr(&["doctor", "--root", &root]);
+    let bad_json = json_of(&run_ripr(&["doctor", "--root", &root, "--json"]))?;
+    let bad_text = String::from_utf8_lossy(&bad_human.stdout).to_string();
+    let bad_check =
+        mcp_check(&bad_json).ok_or_else(|| format!("missing mcp_config: {bad_json}"))?;
+    std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+    assert!(
+        bad_text.contains("~ .mcp.json: has no `ripr` server entry"),
+        "{bad_text}"
+    );
+    assert_eq!(bad_check["status"], "advisory");
+    assert!(
+        bad_check["evidence"]
+            .as_str()
+            .is_some_and(|evidence| evidence.contains("has no `ripr` server entry")),
+        "{bad_check}"
+    );
+    assert_eq!(bad_human.status.code(), ok_human.status.code());
     Ok(())
 }
 

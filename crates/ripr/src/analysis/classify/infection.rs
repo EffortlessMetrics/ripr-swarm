@@ -49,7 +49,7 @@ fn changed_operands_are_never_evaluated(
         return false;
     };
     let parameters = after.parameters();
-    let Some(runs) = owner_literal_runs(activation, related_tests, owner, parameters) else {
+    let Some(runs) = owner_literal_runs(activation, related_tests, owner, parameters, &[]) else {
         return false;
     };
     after.changed_operands_never_evaluated(&prior, &runs)
@@ -65,6 +65,7 @@ fn owner_literal_runs(
     related_tests: &[&TestSummary],
     owner: &FunctionSummary,
     parameters: &[String],
+    table_tests: &[&TestSummary],
 ) -> Option<Vec<Vec<Option<String>>>> {
     // A related test that never writes the owner's name cannot call it when
     // no other function holds the owner (the caller's `owner_has_other_callers`
@@ -75,12 +76,17 @@ fn owner_literal_runs(
     // the owner as a value and a later `g(..)` is a call this scan cannot see.
     let reaches = |test: &TestSummary| mentions_word(&test.body, &owner.name);
     let bystander = |test: &TestSummary| {
-        !reaches(test)
-            && !test.calls.iter().any(|call| {
-                related_tests
-                    .iter()
-                    .any(|other| other.name == call.name && other.name != test.name)
-            })
+        // A constant-row table test is read row by row by
+        // `table_test_runs`; its argument facts are not call-line inputs.
+        table_tests
+            .iter()
+            .any(|table| table.name == test.name && table.file == test.file)
+            || !reaches(test)
+                && !test.calls.iter().any(|call| {
+                    related_tests
+                        .iter()
+                        .any(|other| other.name == call.name && other.name != test.name)
+                })
     };
     let readers = related_tests
         .iter()
@@ -172,13 +178,241 @@ fn boolean_truth_table_is_exercised(
     };
     // A row counts only when it is live and its result is asserted bare: a
     // call under `#[ignore]`, an `if`, a closure or a tautology (`r == r`,
-    // `|| true`) separates nothing at runtime.
-    related_tests
+    // `|| true`) separates nothing at runtime. A test that feeds its rows
+    // through one constant `for` table (`table_test_runs`) is read row by row.
+    let mentioning = related_tests
         .iter()
+        .copied()
         .filter(|test| !word_call_offsets(&test.body, &owner.name).is_empty())
-        .all(|test| only_bare_row_assertions(test, &owner.name))
-        && owner_literal_runs(activation, related_tests, owner, chain.parameters())
-            .is_some_and(|runs| chain.runs_tell_apart_one_step_mutants(&runs))
+        .collect::<Vec<_>>();
+    if mentioning.is_empty() {
+        return false;
+    }
+    let mut table_tests = Vec::new();
+    let mut runs = Vec::new();
+    for test in &mentioning {
+        if let Some(rows) = table_test_runs(test, &owner.name, chain.parameters()) {
+            table_tests.push(*test);
+            runs.extend(rows);
+        } else if !only_bare_row_assertions(test, &owner.name) {
+            return false;
+        }
+    }
+    if table_tests.len() < mentioning.len() {
+        let Some(direct) = owner_literal_runs(
+            activation,
+            related_tests,
+            owner,
+            chain.parameters(),
+            &table_tests,
+        ) else {
+            return false;
+        };
+        runs.extend(direct);
+    }
+    chain.runs_tell_apart_one_step_mutants(&runs)
+}
+
+/// RIPR-SPEC-0353: the rows of a test whose whole body is one constant
+/// `for` table asserting the owner against a boolean column,
+///
+/// ```text
+/// let rows = [(true, true, true), (true, false, false)];
+/// for (paid, in_stock, want) in rows {
+///     assert_eq!(owner(paid, in_stock), want);
+/// }
+/// ```
+///
+/// (the `let` is optional; the table may be written inline, but a `let` must be
+/// the table the loop iterates). One run per
+/// row, in the owner's parameter order. `None` unless the test is a plain
+/// `#[test]` holding nothing else, every argument is a loop variable or a
+/// boolean literal, the expected value is a loop variable, and every cell of every column read is a boolean literal. A
+/// table that `constant_table_column` cannot establish (a `continue`, an
+/// `if`, a non-constant row, a rebound name) declines.
+fn table_test_runs(
+    test: &TestSummary,
+    owner: &str,
+    parameters: &[String],
+) -> Option<Vec<Vec<Option<String>>>> {
+    if test.attrs.iter().any(|attr| attr.trim() != "#[test]") {
+        return None;
+    }
+    let body = test.body.as_ref();
+    let (open, close) = (body.find('{')?, body.rfind('}')?);
+    if open >= close {
+        return None;
+    }
+    let inner = &body[open + 1..close];
+    let masked = mask_comments_and_strings(inner);
+    if masked.len() != inner.len() || inner.contains("//") || inner.contains("/*") {
+        return None;
+    }
+    let mut rest = masked.trim();
+    let mut bound_table = None;
+    if let Some(after_let) = rest.strip_prefix("let ") {
+        let (name, table) = after_let.split_once('=')?;
+        let name = name.trim();
+        if !is_plain_identifier(name) {
+            return None;
+        }
+        bound_table = Some(name);
+        let end = matching_close(table.trim_start(), '[', ']')?;
+        let table = table.trim_start();
+        rest = table[end + 1..]
+            .trim_start()
+            .strip_prefix(';')?
+            .trim_start();
+    }
+    let after_for = rest.strip_prefix("for ")?;
+    let (pattern, after_in) = after_for.split_once(" in ")?;
+    let pattern = pattern.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let variables = pattern
+        .split(',')
+        .map(str::trim)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if variables.len() < 2 || variables.iter().any(|name| !is_plain_identifier(name)) {
+        return None;
+    }
+    let after_in = after_in.trim_start();
+    // A `let` is read only as the table the loop iterates, so its
+    // initializer is validated as constant rows and cannot hide a `return`
+    // or a panic ahead of an inline table.
+    let body_open = match bound_table {
+        Some(name) => {
+            let iterable = &after_in[..after_in.find(char::is_whitespace)?];
+            if iterable != name {
+                return None;
+            }
+            iterable.len()
+        }
+        None if after_in.starts_with('[') => matching_close(after_in, '[', ']')? + 1,
+        None => return None,
+    };
+    let loop_body = after_in[body_open..]
+        .trim_start()
+        .strip_prefix('{')?
+        .trim_end()
+        .strip_suffix('}')?
+        .trim();
+    let statement = loop_body.strip_suffix(';')?.trim();
+    if statement.contains(';') {
+        return None;
+    }
+    let arguments = statement.strip_prefix("assert_eq!(")?.strip_suffix(')')?;
+    let parts = split_top_level_commas(arguments)?;
+    // An optional message must be a single string literal (its contents are
+    // masked to spaces), so no call hides in a format argument.
+    let plain_message = |part: &str| {
+        let part = part.trim();
+        let inside = part
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .unwrap_or(part);
+        inside.trim().is_empty()
+    };
+    if !(parts.len() == 2 || (parts.len() == 3 && plain_message(parts[2]))) {
+        return None;
+    }
+    let call = parts[0].trim();
+    let want = parts[1].trim();
+    let call_arguments = call
+        .strip_prefix(owner)?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    let call_arguments = split_top_level_commas(call_arguments)?;
+    if call_arguments.len() != parameters.len() {
+        return None;
+    }
+    let column = |name: &str| -> Option<Vec<String>> {
+        let column = crate::analysis::syntax::constant_table_column(&test.body, name)?;
+        column
+            .iter()
+            .all(|cell| matches!(cell.as_str(), "true" | "false"))
+            .then_some(column)
+    };
+    let value_of = |text: &str| -> Option<Result<Vec<String>, String>> {
+        let text = text.trim();
+        if matches!(text, "true" | "false") {
+            return Some(Err(text.to_string()));
+        }
+        variables.iter().any(|name| name == text).then_some(())?;
+        column(text).map(Ok)
+    };
+    let want_values = match value_of(want)? {
+        Ok(values) => values,
+        Err(_) => return None,
+    };
+    let rows = want_values.len();
+    if rows == 0 {
+        return None;
+    }
+    let argument_values = call_arguments
+        .iter()
+        .map(|argument| value_of(argument))
+        .collect::<Option<Vec<_>>>()?;
+    if argument_values
+        .iter()
+        .any(|value| matches!(value, Ok(values) if values.len() != rows))
+    {
+        return None;
+    }
+    Some(
+        (0..rows)
+            .map(|row| {
+                argument_values
+                    .iter()
+                    .map(|value| match value {
+                        Ok(values) => Some(values[row].clone()),
+                        Err(literal) => Some(literal.clone()),
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// The byte offset of the bracket closing the `open` that `text` starts with.
+fn matching_close(text: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
+fn is_plain_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with(|character: char| character.is_ascii_digit())
+        && text.bytes().all(is_ident_byte)
+}
+
+/// `text` split at its top-level commas (outside any bracket).
+fn split_top_level_commas(text: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    for (at, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                parts.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    Some(parts)
 }
 
 /// `test` is a plain `#[test]` whose body is nothing but top-level
@@ -250,8 +484,10 @@ pub(in crate::analysis) fn exercised_bool_chain_return_sink(
     related_tests: &[&TestSummary],
     owner: &FunctionSummary,
     owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
 ) -> Option<FlowSinkFact> {
     (probe.family == ProbeFamily::ReturnValue
+        && !assertion_macros_rebound
         && probe.owner.as_ref() == Some(&owner.id)
         && !owner_has_other_callers
         && probe
@@ -450,6 +686,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
         unresolved_boundary,
         None,
         true,
+        false,
     )
 }
 
@@ -458,7 +695,10 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
 /// parameters and that its body is the whole chain. Without an owner, or when
 /// any function other than the related tests calls the owner by name
 /// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
-/// that reading declines.
+/// that reading declines. The truth-table reading (#6488) also declines when
+/// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
+/// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
+/// a shadowing `macro_rules!` compares nothing.
 pub(in crate::analysis) fn infection_evidence_for_owner(
     probe: &Probe,
     related_tests: &[&TestSummary],
@@ -466,6 +706,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     unresolved_boundary: Option<&str>,
     owner: Option<&FunctionSummary>,
     owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
 ) -> StageEvidence {
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -482,6 +723,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             unresolved_boundary,
             owner,
             owner_has_other_callers,
+            assertion_macros_rebound,
         );
         if matches!(evidence.state, StageState::Weak) {
             return evidence;
@@ -573,6 +815,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 && changed_operands.is_none()
                 && unresolved_boundary.is_none()
                 && !owner_has_other_callers
+                && !assertion_macros_rebound
                 && owner.is_some_and(|owner| {
                     boolean_truth_table_is_exercised(probe, activation, related_tests, owner)
                 })

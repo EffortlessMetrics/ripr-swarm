@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript and JavaScript diff findings whose expressions share an eight-hex ID fingerprint at one owner (and enum-member findings in different enums) now take their `.2`, `.3` suffixes by a full payload digest instead of diff order, matching the Rust path, so each keeps the same ID whichever the diff lists first. IDs for non-colliding findings and for repeated identical lines are unchanged (#10349, #8838).

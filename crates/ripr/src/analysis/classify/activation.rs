@@ -465,7 +465,8 @@ fn observed_discriminator_values(
             .and_then(|resolved| {
                 exact_operand_for_row(resolved, &row, &inputs, index, workspace_complete)
             })
-            .or_else(|| visible_operand(&right, right_constant.as_ref()));
+            .or_else(|| visible_operand(&right, right_constant.as_ref()))
+            .or_else(|| scanner_state_path_operand(&right, left_exact.as_slice()));
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
             && exact_values_equal(&left_value.value, &right_value.value)
         {
@@ -1762,7 +1763,11 @@ fn parameter_rebound_before(
     if owner_declares_local(owner, name, declared_line.saturating_sub(1)) {
         return true;
     }
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    // Char literals are blanked first so `';'` / `'{'` do not end a pattern
+    // region early and `'"'` does not open a string (#10228).
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(
+        &crate::analysis::language::mask_rust_char_literals(&owner.body),
+    );
     if pattern_position_binds_before(owner, &masked, name, initializer) {
         return true;
     }
@@ -2314,6 +2319,7 @@ fn missing_boundary_discriminator(
                     exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
                 })
                 .or_else(|| visible_operand(&right, right_constant.as_ref()))
+                .or_else(|| scanner_state_path_operand(&right, &lefts))
                 .into_iter()
                 .collect::<Vec<_>>();
             (lefts, rights)
@@ -3376,18 +3382,28 @@ const READ_MACROS: &[&str] = &[
 /// macro binding scan the trusted-assertion reading uses; an out-of-line
 /// module counts as unresolved, which only withholds the guard reading.
 fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bool {
+    macro_names_rebound(index, READ_MACROS)
+}
+
+/// [`read_macro_name_rebound`] for an arbitrary set of macro names, so a
+/// reader that trusts only the assertion macros by name asks the same
+/// parser-backed question about just those.
+pub(in crate::analysis) fn macro_names_rebound(
+    index: &crate::analysis::rust_index::RustIndex,
+    names: &[&str],
+) -> bool {
     index.files().iter().any(|(path, file)| {
         if file
             .macro_candidates
             .as_deref()
-            .is_some_and(|candidates| READ_MACROS.iter().all(|name| !candidates.may_bind(name)))
+            .is_some_and(|candidates| names.iter().all(|name| !candidates.may_bind(name)))
         {
             return false;
         }
         !crate::analysis::syntax::trusted_macro_binding_sites(
             &file.source,
             index.macro_scope_crates(),
-            READ_MACROS,
+            names,
             &|_, _| false,
             &|krate| index.drop_in_manifests.verified_root(path, krate),
         )
@@ -5494,6 +5510,56 @@ fn visible_operand(operand: &str, constant: Option<&BoundaryConstant>) -> Option
         provenance: format!("constant {operand} = {value} (same-file const)"),
         value,
     })
+}
+
+/// RIPR-SPEC-0163 example 2 (#10108): a path-qualified scanner state such as
+/// `Scan::Word` is compared as a normalized text token, so the right operand
+/// `Scan::Word` of `final_state == Scan::Word` reads as that token when the
+/// left side evaluated to one. The token form is the left value's own
+/// (`"Scan::Word"`), never a guess from the operand's spelling alone: a left
+/// that is not a quoted path token (an integer, a plain string state, an
+/// unresolved side) leaves the operand unresolved as before, and a
+/// SCREAMING_CASE tail stays a constant, not a state.
+fn scanner_state_path_operand(operand: &str, lefts: &[ExactOperand]) -> Option<ExactOperand> {
+    let identifier = |segment: &str| {
+        let mut chars = segment.chars();
+        chars
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    let is_path = |text: &str| {
+        let mut segments = text.split("::");
+        let first = segments.next().is_some_and(&identifier);
+        let second = segments.next().is_some_and(&identifier);
+        first && second && segments.all(&identifier)
+    };
+    let token = operand.trim();
+    // A `crate::`, `self::` or `super::` prefix is a spelling the scanner
+    // never returns, so it could only miss; leave such an operand unresolved.
+    if !is_path(token)
+        || token.starts_with("crate::")
+        || token.starts_with("self::")
+        || token.starts_with("super::")
+        || super::text::path_value_is_constant(token)
+    {
+        return None;
+    }
+    // Only a value a helper returned can be a scanner state: a quoted call
+    // argument or a literal that merely looks like a path is not (#10308).
+    lefts
+        .iter()
+        .filter(|left| left.provenance.contains(" via helper return of "))
+        .any(|left| {
+            left.value
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .is_some_and(is_path)
+        })
+        .then(|| ExactOperand {
+            provenance: format!("scanner state path {token}"),
+            value: format!("\"{token}\""),
+        })
 }
 
 /// Direct owner calls in related tests whose argument for the compared
@@ -8740,6 +8806,83 @@ assert_eq!(input.amount, 100);"#
         );
     }
 
+    fn scanner_left(value: &str) -> ExactOperand {
+        ExactOperand {
+            value: value.to_string(),
+            provenance: format!(
+                "scan = {value} via helper return of `scan` over bound inputs (1 hop)"
+            ),
+        }
+    }
+
+    // RIPR-SPEC-0163 example 2 (#10108): the variant operand reads as the
+    // quoted token the scanner returns, and only beside such a token.
+    #[test]
+    fn scanner_state_path_operand_reads_a_variant_beside_a_path_state() {
+        let lefts = [scanner_left("\"Scan::Word\"")];
+        let operand = scanner_state_path_operand(" Scan::Word ", &lefts);
+        assert_eq!(
+            operand.map(|operand| operand.value),
+            Some("\"Scan::Word\"".to_string())
+        );
+        // A prefixed spelling can never equal the scanner's token.
+        assert!(scanner_state_path_operand("crate::Scan::Word", &lefts).is_none());
+    }
+
+    #[test]
+    fn scanner_state_path_operand_stays_unresolved_without_a_path_state_left() {
+        // No left, an integer, a plain string state and an unquoted path
+        // are not scanner path states: the operand keeps its old reading.
+        for left in ["", "7", "\"word\"", "Scan::Word", "\"error: a::b\""] {
+            let lefts = if left.is_empty() {
+                Vec::new()
+            } else {
+                vec![scanner_left(left)]
+            };
+            assert!(
+                scanner_state_path_operand("Scan::Word", &lefts).is_none(),
+                "left {left:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanner_state_path_operand_needs_a_helper_returned_left() {
+        // #10308: a quoted call argument or literal that looks like a path is
+        // not a scanner state, whatever the right operand spells.
+        for provenance in [
+            "exact input input = \"Scan::Word\"",
+            "state = \"Scan::Word\" (exact literal)",
+        ] {
+            let lefts = [ExactOperand {
+                value: "\"Scan::Word\"".to_string(),
+                provenance: provenance.to_string(),
+            }];
+            assert!(
+                scanner_state_path_operand("Scan::Word", &lefts).is_none(),
+                "{provenance}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanner_state_path_operand_refuses_constants_and_non_paths() {
+        let lefts = [scanner_left("\"Scan::Word\"")];
+        for operand in [
+            "Word",
+            "u64::MAX",
+            "limits::MAX",
+            "Scan::Word()",
+            "a + Scan::Word",
+            "Scan::",
+        ] {
+            assert!(
+                scanner_state_path_operand(operand, &lefts).is_none(),
+                "operand {operand:?}"
+            );
+        }
+    }
+
     fn test_with_call(name: &str, call: &str) -> TestSummary {
         TestSummary {
             name: name.to_string(),
@@ -9955,6 +10098,14 @@ assert_eq!(input.amount, 100);"#
             (
                 "match k {\n        None => { drop(1); }\n        Some(Foo { n, .. })\n            => 1,\n    };\n    ",
                 "match k {\n        None => { drop(1); }\n        Some(Foo { a, .. })\n            => 1,\n    };\n    ",
+            ),
+            (
+                "match (x, c) {\n        Some(n)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+                "match (x, c) {\n        Some(a)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+            ),
+            (
+                "if let ('=', n) = pair {\n        drop(n);\n    }\n    ",
+                "if let ('=', a) = pair {\n        drop(a);\n    }\n    ",
             ),
             (
                 "match k { Some(n) => 1, None => 2 };\n    ",

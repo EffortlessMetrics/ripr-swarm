@@ -337,21 +337,8 @@ fn strings_bytes(strings: &[String]) -> usize {
         .sum()
 }
 
-/// Approximate heap bytes of a `Vec<(String, String)>`.
-fn string_pairs_bytes(pairs: &[(String, String)]) -> usize {
-    pairs
-        .iter()
-        .map(|(left, right)| {
-            left.len()
-                .saturating_add(right.len())
-                .saturating_add(2 * std::mem::size_of::<String>())
-        })
-        .sum()
-}
-
-/// Approximate retained bytes of one extracted test. File-wide lists
-/// (imports, mocks, helpers) are copied into EVERY test of a file, so they
-/// dominate for files with many tests and must be counted per test.
+/// Approximate retained bytes of one extracted test, without the file-wide
+/// lists its tests share; `shared_bytes` counts each of those once.
 fn test_bytes(test: &super::types::TypeScriptTest) -> usize {
     std::mem::size_of::<super::types::TypeScriptTest>()
         .saturating_add(test.name.len())
@@ -360,25 +347,58 @@ fn test_bytes(test: &super::types::TypeScriptTest) -> usize {
         .saturating_add(test.reach_body_text.as_ref().map_or(0, String::len))
         .saturating_add(test.file.as_os_str().len())
         .saturating_add(strings_bytes(&test.describe_names))
-        .saturating_add(strings_bytes(&test.mocks_in_file))
-        .saturating_add(strings_bytes(&test.unstable_member_roots_in_file))
-        .saturating_add(strings_bytes(&test.identity_helpers_in_file))
-        .saturating_add(strings_bytes(&test.written_locals_in_file))
         .saturating_add(strings_bytes(&test.setup_hook_bodies))
-        .saturating_add(string_pairs_bytes(&test.default_member_only_locals_in_file))
-        .saturating_add(string_pairs_bytes(&test.mock_factories_in_file))
-        .saturating_add(string_pairs_bytes(&test.mock_spread_sources_in_file))
-        // Elements own further strings; a flat 96 bytes each keeps the estimate
-        // on the safe (large) side without walking their fields.
-        .saturating_add(test.imports_in_file.len().saturating_mul(
-            std::mem::size_of::<super::types::TypeScriptImport>().saturating_add(96),
-        ))
-        .saturating_add(test.scope_bindings.len().saturating_mul(
-            std::mem::size_of::<super::types::TypeScriptScopeBinding>().saturating_add(96),
-        ))
         .saturating_add(test.assertions.len().saturating_mul(
             std::mem::size_of::<super::types::TypeScriptAssertion>().saturating_add(96),
         ))
+}
+
+/// Approximate retained bytes of the file-wide lists (imports, mocks,
+/// helpers, scope bindings) the tests of one file share. Each distinct list is
+/// counted once however many tests hold it.
+fn shared_bytes(tests: &[super::types::TypeScriptTest]) -> usize {
+    use super::types::{Shared, TypeScriptImport, TypeScriptScopeBinding};
+    use std::collections::HashSet;
+
+    // Elements own further strings; a flat 96 bytes each keeps the estimate
+    // on the safe (large) side without walking their fields.
+    fn elements<T: Clone>(list: &Shared<T>, seen: &mut HashSet<usize>, each: usize) -> usize {
+        if list.is_empty() || !seen.insert(list.identity() as usize) {
+            return 0;
+        }
+        list.len().saturating_mul(each.saturating_add(96))
+    }
+    let mut seen = HashSet::new();
+    let mut total = 0usize;
+    for test in tests {
+        for list in [
+            &test.mocks_in_file,
+            &test.unstable_member_roots_in_file,
+            &test.identity_helpers_in_file,
+            &test.written_locals_in_file,
+        ] {
+            total = total.saturating_add(elements(list, &mut seen, std::mem::size_of::<String>()));
+        }
+        for list in [
+            &test.default_member_only_locals_in_file,
+            &test.mock_factories_in_file,
+            &test.mock_spread_sources_in_file,
+        ] {
+            total =
+                total.saturating_add(elements(list, &mut seen, 2 * std::mem::size_of::<String>()));
+        }
+        total = total.saturating_add(elements(
+            &test.imports_in_file,
+            &mut seen,
+            std::mem::size_of::<TypeScriptImport>(),
+        ));
+        total = total.saturating_add(elements(
+            &test.scope_bindings,
+            &mut seen,
+            std::mem::size_of::<TypeScriptScopeBinding>(),
+        ));
+    }
+    total
 }
 
 impl TestExtractionCache {
@@ -392,7 +412,12 @@ impl TestExtractionCache {
     }
 
     fn entry_bytes(key: &CacheKey, extraction: &TestExtraction) -> usize {
-        let tests_bytes: usize = extraction.0.iter().map(test_bytes).sum();
+        let tests_bytes: usize = extraction
+            .0
+            .iter()
+            .map(test_bytes)
+            .sum::<usize>()
+            .saturating_add(shared_bytes(&extraction.0));
         let expansion_bytes = extraction
             .2
             .as_ref()
@@ -436,6 +461,18 @@ thread_local! {
 /// uncached extraction. Test extraction costs about 4 s/MB in a debug build,
 /// which an unchanged test file used to pay again on every LSP save.
 pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestExtraction> {
+    test_extraction_cached_with(relative, source, || {
+        super::tests_extract::try_extract_tests_with_expansion(relative, source)
+    })
+}
+
+/// [`test_extraction_cached`] with the extractor injected, so a test can
+/// force the worker-failure path that cannot be provoked from outside.
+fn test_extraction_cached_with(
+    relative: &Path,
+    source: &str,
+    extract: impl FnOnce() -> Result<TestExtraction, String>,
+) -> Rc<TestExtraction> {
     // Lossless path identity, not `normalized_path`: the extracted tests store
     // `relative` as their `file`, and a Unix filename may contain a literal
     // backslash that normalization would fold into a directory separator.
@@ -457,8 +494,7 @@ pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestEx
     }
     // A worker failure is environmental, not a function of the bytes: serve
     // the empty result this call but never store it.
-    let extraction = match super::tests_extract::try_extract_tests_with_expansion(relative, source)
-    {
+    let extraction = match extract() {
         Ok(extraction) => Rc::new(extraction),
         Err(_) => return Rc::new((Vec::new(), None, None)),
     };
@@ -939,7 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extraction_cache_counts_file_wide_lists_once_per_test() {
+    fn test_extraction_cache_counts_a_shared_file_wide_list_once() {
         let many_imports: String = (0..40)
             .map(|n| format!("import {{ f{n} }} from '../src/f{n}';\n"))
             .collect();
@@ -959,9 +995,12 @@ mod tests {
             * std::mem::size_of::<super::super::types::TypeScriptImport>();
         assert!(one_test_imports > 0);
         assert!(
-            bytes >= 50 * one_test_imports,
-            "the per-test copies of the file's imports must be counted: {bytes} < {}",
-            50 * one_test_imports
+            bytes >= one_test_imports,
+            "the file's imports must be counted: {bytes} < {one_test_imports}"
+        );
+        assert!(
+            bytes < 50 * one_test_imports,
+            "the tests share one import list, so it is not charged per test: {bytes}"
         );
     }
 
@@ -985,5 +1024,29 @@ mod tests {
         let mut roomy = TestExtractionCache::with_bounds(8, 1 << 30);
         roomy.insert(key, extraction);
         assert_eq!(roomy.entries.len(), 1);
+    }
+
+    #[test]
+    fn a_worker_failure_is_served_empty_but_never_stored() {
+        let path = Path::new("tests/worker_failure.test.ts");
+        let before = test_extraction_cache_len();
+        let failed = test_extraction_cached_with(path, TEST_FILE, || {
+            Err("static limit parse_worker_failed: forced".to_string())
+        });
+        assert!(
+            failed.0.is_empty(),
+            "the failing call serves an empty result"
+        );
+        assert_eq!(
+            test_extraction_cache_len(),
+            before,
+            "the failure must not be stored"
+        );
+        let recovered = test_extraction_cached(path, TEST_FILE);
+        assert_eq!(
+            recovered.0.len(),
+            1,
+            "after the worker recovers, the same bytes must extract their test"
+        );
     }
 }

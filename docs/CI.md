@@ -446,6 +446,7 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded required step can be measured before the required workflow changes (#10341). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
 - **Test steps run under `windows-advisory-run`** (#9272, #9660). The
@@ -1196,6 +1197,21 @@ no PR code, takes only the PR number, head SHA and base branch name as `env` val
 third-party actions, and holds job-level `pull-requests: write` and
 `statuses: write` only. It is a notice, not a required check; the author merges
 the base branch, resolves the conflict, and re-applies `merge-ready`.
+
+### Base Still Merges Cleanly (rust-gates)
+
+`actions/checkout` tests the merge ref as it stood when a pull-request run was
+admitted. The `Base still merges cleanly` step of `rust-gates.yml` (`pull_request`
+events only) runs just before `Required Rust tests`, fetches the current base and
+runs `git merge-tree --write-tree HEAD^2 origin/<base>`. If the base moved and now
+conflicts with the PR head, the step fails with an error naming the base, the PR head
+and the remedy (merge the base, resolve, re-apply `merge-ready`), so the required
+check goes red before the ~18-minute test step instead of after it (#10341). It cannot
+cancel the run (that needs `actions: write`) and it only looks once, so a conflict
+that appears later still finishes the run. It fails open: a failed fetch, or a Git
+older than 2.38 (no `merge-tree --write-tree`), emits a warning and passes. Its
+outcome has its own row in the gate summary. `xtask/tests/rust_gate_merge_ref_check.rs`
+runs the step's script against real Git repositories.
 
 ### PR Staleness Watchdog
 

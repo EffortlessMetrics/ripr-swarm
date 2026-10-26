@@ -114,6 +114,35 @@ pub(crate) fn conditional_assertion_credit_limitation(
     }
 }
 
+/// Build the `typescript_conditional_registration` named limitation from one
+/// test registered under an unevaluated `if` condition (#10438).
+///
+/// The test is indexed so it still reaches its owner, but it may never be
+/// registered at runtime, so its assertions earn no credit: a finding that
+/// consults it can read `reachable_unrevealed` where an unconditional test
+/// would have been credited. Fail-closed; nothing is promoted by it.
+pub(crate) fn conditional_registration_limitation(
+    gap: &TypeScriptConditionalCreditGap,
+) -> TypeScriptNamedLimitation {
+    conditional_registration_named(&gap.file, gap.sample_line, &gap.condition)
+}
+
+fn conditional_registration_named(
+    file: &Path,
+    line: usize,
+    condition: &str,
+) -> TypeScriptNamedLimitation {
+    TypeScriptNamedLimitation {
+        name: "typescript_conditional_registration",
+        sample_source: format!("{}:{}", normalized_path(file), line),
+        why_not_actionable: format!(
+            "the recognized test file `{}` registers a test under the unevaluated condition `{condition}` (e.g. a platform or environment guard); static analysis cannot tell whether that registration runs, so the test is indexed for reach but its assertions earn no credit",
+            normalized_path(file),
+        ),
+        repair_route: "analysis/typescript-conditional-registration",
+    }
+}
+
 /// Map a `StaticLimitKind` producer to its TS-specific named limitation, if any.
 ///
 /// Only `MockedModule` and `MissingImportGraph` are mapped here because they
@@ -782,7 +811,26 @@ pub(crate) fn named_limitations_for_oracle_candidates(
     let mut saw_table_case = false;
     let mut saw_dynamic_assertion = false;
 
+    let mut saw_conditional_registration = false;
+
     for candidate in candidates.iter().filter(|c| c.relation.uses_oracle()) {
+        // #10438: a registration under an unevaluated `if` reaches the owner
+        // but earns no credit; its emptied assertion list is not a helper-
+        // gated or unresolved oracle, so name the real cause instead.
+        if let Some(condition) = &candidate.test.conditional_registration {
+            if !saw_conditional_registration {
+                limitations.push(conditional_registration_named(
+                    &candidate.test.file,
+                    candidate
+                        .test
+                        .factory_call_line
+                        .unwrap_or(candidate.test.line),
+                    condition,
+                ));
+                saw_conditional_registration = true;
+            }
+            continue;
+        }
         if !saw_oracle_helper_gated
             && candidate.test.assertions.is_empty()
             && let Some((helper_name, helper_line)) =

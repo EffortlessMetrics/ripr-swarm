@@ -38,7 +38,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
         "schema_version": CHECK_OUTPUT_SCHEMA_VERSION,
         "tool": "ripr",
         "mode": input.mode.as_str(),
-        "root": input.root.display().to_string(),
+        "root": crate::output::path::display_path(&input.root),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,
@@ -125,7 +125,7 @@ pub(crate) fn render_refusal_envelope(
     let mut value = json!({
         "schema_version": context.schema_version,
         "tool": "ripr",
-        "root": context.root.display().to_string(),
+        "root": crate::output::path::display_path(context.root),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,
@@ -609,6 +609,41 @@ mod tests {
         }
         if value.pointer("/analysis_scope/downstream_consumable") != Some(&Value::Bool(false)) {
             return Err(format!("downstream_consumable must be false: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn limited_and_refused_roots_render_through_display_path() -> Result<(), String> {
+        // #9806: both envelopes print `root` with the check-JSON renderer. A
+        // `%` in the root is escaped by that renderer on every host, so this
+        // fails if either site goes back to the raw `display()` spelling.
+        let mut percent_input = input();
+        percent_input.root = PathBuf::from("repo%41");
+        let limited = render_diff_scope_limited_check_json(
+            &percent_input,
+            "diff_scope_oversized: 3 changed Rust lines exceed the limit",
+        )?
+        .ok_or("expected limited artifact")?;
+        let refused = render_refusal_envelope(
+            &RefusalEnvelopeContext {
+                schema_version: CHECK_OUTPUT_SCHEMA_VERSION,
+                scope: "diff",
+                mode: None,
+                root: std::path::Path::new("repo%41"),
+                base: None,
+            },
+            &CoreError::gap_ledger_unusable("read gap ledger nope.json failed: missing"),
+        )?;
+        for (label, rendered) in [("limited", limited), ("refused", refused)] {
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse {label} JSON: {err}"))?;
+            let root = value.pointer("/root").and_then(Value::as_str);
+            if root != Some("repo%2541") {
+                return Err(format!(
+                    "{label} root must use display_path spelling, got {root:?}"
+                ));
+            }
         }
         Ok(())
     }

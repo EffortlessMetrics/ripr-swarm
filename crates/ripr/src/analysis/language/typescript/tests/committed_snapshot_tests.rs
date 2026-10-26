@@ -1720,9 +1720,98 @@ fn repository_tracking_nothing_under_root_is_unknown() -> Result<(), String> {
 /// `rootDir`/`roots`/`root`, a second `projects`, a template placeholder and
 /// a member assignment keep the reading at medium.
 #[test]
+fn vitest_string_values_are_not_keys_but_real_keys_still_refuse() -> Result<(), String> {
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, expected) in [
+        (
+            "vitest.config.ts",
+            "export default { test: { name: \"root\" } };",
+            OracleStrength::Strong,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { root: \"./x\" } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { \"root\": \"./x\" } };",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-vitest-string-values",
+                PRICE_TEST,
+                &[(SNAP_PATH, &vitest), (config, text)]
+            )?,
+            vec![expected],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> Result<(), String> {
     let jest = jest_snap(&[("price 1", "140")]);
     for (text, expected) in [
+        (
+            "module.exports = { projects: [{ displayName: \"projects\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a...b\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"my root\", name: 'workspace' }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { displayName: \"root\", testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { name: `it's`, root: ', x' };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /'/, root: ', x' };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { name: \"a\\\"b\", root: \"./other\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { k: a ? /\"/ : 1, projects: ['./o'], sep: \",\", z: '\"', w: 1, q: ' };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"\u{2028}\u{2028}\u{2028}\u{2028}\", x: 1 }, { rootDir: 'x' }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "Object.defineProperty(module.exports, 'root', { value: './other' });",
+            OracleStrength::Medium,
+        ),
+        (
+            "const k = 'projects', v = 1; module.exports = { v };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"projects\" }], projects: [\"./other\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", \"root\": \"./other\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", [\"root\"]: \"./other\" }] };",
+            OracleStrength::Medium,
+        ),
         (
             "module.exports = { projects: [{ displayName: \"unit\", preset: \"ts-jest\", testMatch: [\"<rootDir>/test/**/*.test.ts\"] }] };",
             OracleStrength::Strong,

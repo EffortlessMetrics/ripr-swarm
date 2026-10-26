@@ -216,8 +216,8 @@ fn validate_snapshot_path(root: &Path, path: &Path, flag: &str) -> Result<PathBu
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent receipt {flag} {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
     Ok(candidate)
