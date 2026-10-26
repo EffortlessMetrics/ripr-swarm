@@ -164,9 +164,8 @@ pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name t
 Usage: ripr check [OPTIONS]
 
 Common options:
-  --base REV        Compare against this revision. When omitted, ripr uses the
-                    local origin/HEAD ref, then origin/main, origin/master,
-                    main, and master in order.
+  --base REV        Compare against this revision; when omitted, ripr tries
+                    origin/HEAD, origin/main, origin/master, main, master.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
@@ -182,9 +181,7 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
-  --timeout SECS    Wall-clock budget for the analysis (default 600; 0
-                    disables). A timed-out run reports `analysis_timeout`
-                    and how to raise the budget.
+  --timeout SECS    Wall-clock budget in seconds (default 600; 0 disables).
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
