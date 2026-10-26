@@ -715,10 +715,6 @@ fn check_install_provenance(
     validate_install_provenance(&record, package_root, version)
 }
 
-/// Require Cargo's install record (`<root>/.crates2.json`) to hold exactly one
-/// `ripr <version>` install whose `path+file://` source is `package_root`, so
-/// a binary installed from the workspace path cannot pass as the packaged
-/// crate (#9312). Returns the recorded source path.
 /// Cargo's install record names each binary by its file name, so on Windows
 /// it lists `ripr.exe`, not `ripr` (#10344). The host suffix is passed in so
 /// both spellings are testable on any host.
@@ -727,6 +723,10 @@ fn records_ripr_bin(bins: &[Value], exe_suffix: &str) -> bool {
     bins.iter().any(|bin| bin.as_str() == Some(name.as_str()))
 }
 
+/// Require Cargo's install record (`<root>/.crates2.json`) to hold exactly one
+/// `ripr <version>` install whose `path+file://` source is `package_root`, so
+/// a binary installed from the workspace path cannot pass as the packaged
+/// crate (#9312). Returns the recorded source path.
 fn validate_install_provenance(
     record: &str,
     package_root: &Path,
