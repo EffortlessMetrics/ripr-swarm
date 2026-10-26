@@ -236,6 +236,44 @@ pub(crate) fn lexically_clean(path: &Path) -> PathBuf {
     }
 }
 
+/// Whether lexical `..` resolution can disagree with the filesystem: true
+/// when a component that [`lexically_clean`] would pop is itself a symlink
+/// the kernel follows before the later `..` (or when a relative path keeps
+/// a leading `..` that cannot be checked at all). Callers that accepted a
+/// path on a lexical comparison must refuse in that case — the spelled path
+/// and the cleaned path can then name different real directories (#10624
+/// review).
+pub(crate) fn parent_dir_follows_symlink(path: &Path) -> bool {
+    let mut walked = PathBuf::new();
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if stack.pop().is_some() {
+                    // `walked` currently ends at the popped component, so it
+                    // is exactly the path the kernel would follow first.
+                    if is_symlink(&walked) {
+                        return true;
+                    }
+                    walked.pop();
+                } else if !is_absolute {
+                    // lexically_clean preserves a leading relative `..`;
+                    // there is nothing on disk to prove it against.
+                    return true;
+                }
+            }
+            Component::Normal(name) => {
+                walked.push(name);
+                stack.push(name.to_owned());
+            }
+            Component::RootDir | Component::Prefix(_) => walked.push(component.as_os_str()),
+        }
+    }
+    false
+}
+
 pub(crate) fn check_repo_exposure_command(root: &str, mode: &str, out_path: &str) -> String {
     check_repo_exposure_command_with_base(root, None, mode, out_path)
 }

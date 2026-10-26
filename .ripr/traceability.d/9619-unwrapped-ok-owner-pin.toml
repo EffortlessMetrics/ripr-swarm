@@ -1,0 +1,6 @@
+# Registers the unwrapped Ok/Some owner-pin controls (#9619) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/unwrapped_ok_owner_pin.rs::unwrapped_ok_pins_credit_only_when_the_value_stays_the_owners",
+]
