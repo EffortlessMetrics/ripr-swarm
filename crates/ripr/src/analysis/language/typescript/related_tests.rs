@@ -1900,12 +1900,18 @@ pub(crate) fn receiver_owner_call_relation(
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
     for binding in test.scope_bindings.iter() {
+        // A destructured fixture parameter is the binding itself, not a
+        // declaration that shadows it: scan the body after the parameters.
+        let body = binding
+            .parameter_end
+            .and_then(|end| test.body_text.get(end..))
+            .unwrap_or(&test.body_text);
         if binding
             .constructed_by
             .as_ref()
             .is_some_and(|constructor| constructor_names.contains(constructor))
-            && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-            && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+            && !local_identifier_declared_in_test_body(body, &binding.name)
+            && !super::tests_extract::identifier_written_in(body, &binding.name)
         {
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
