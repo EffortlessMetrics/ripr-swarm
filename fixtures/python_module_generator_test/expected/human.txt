@@ -1,0 +1,58 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_module_generator_test/input
+config: <cwd>/fixtures/python_module_generator_test/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: static limitation `missing_import_graph` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  File: settings.py:1
+  Language: python
+  Language status: preview
+  Static exposure: unknown (severity: note, confidence 0.20)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: LIMIT = 12
+  Analyzer limit: Static limit `missing_import_graph`: the changed line is a module-level statement
+    (a constant, decorator argument or conditional definition) that runs when a test imports the
+    module; related tests are linked only by a name heuristic and the preview adapter does not
+    follow top-level values into their use sites, so it does not grade this edit as a gap
+  Related test: tests/test_settings.py:3 test_it
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
+    - reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain
+    - infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/python_module_generator_test/input --diff <cwd>/fixtures/python_module_generator_test/diff.patch --mode fast probe:settings.py:python_preview:b36e33fd
+  ripr context --root <cwd>/fixtures/python_module_generator_test/input --diff <cwd>/fixtures/python_module_generator_test/diff.patch --mode fast --at probe:settings.py:python_preview:b36e33fd
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
+  related test(s). This is not a coverage assessment. A test may already exercise these changes
+  through macros, helper-call chains, or integration tests that ripr's static model does not yet
+  trace; if none does, add co-located tests that observe the changed behavior.
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

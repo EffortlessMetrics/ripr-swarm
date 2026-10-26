@@ -75,7 +75,7 @@ fn validate_repo_scope_diff_inputs(
     } else {
         Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
-            input.root.display()
+            crate::output::path::human_path(&input.root)
         )))
     }
 }

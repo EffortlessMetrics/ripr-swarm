@@ -1,0 +1,44 @@
+{
+  "case_id": "py-route-clients-nested-fixture-app",
+  "subject_id": "authored-py-pytest-route-clients",
+  "diff": "cases/py-route-clients-nested-fixture-app.diff",
+  "anchor": {
+    "file": "routeclients/invoices.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_client_fixture_built_on_another_fixture",
+  "hard_case": "the client fixture takes the application from a second fixture the adapter does not attach",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"total\": 31}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the invoice total changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`tests/invoices/conftest.py` builds `client(invoice_app)` over a second fixture, `invoice_app`, which returns the `invoices` route's `app`. The adapter reads the client fixture but not the fixture it depends on, so the application is unidentified and the verdict is `limited`. A changed total passes the test.",
+  "labeling_observation": {
+    "ripr_commit": "1818f481",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

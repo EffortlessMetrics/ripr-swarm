@@ -1,0 +1,56 @@
+{
+  "case_id": "spec-b-0150-rfind-map-or-equality",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0150-rfind-map-or-equality.diff",
+  "anchor": {
+    "file": "src/b_accept.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_rfind_map_or_equality",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = input.rfind(delim).map_or(1, |at| at);",
+        "mutated_line": "let end = input.rfind(delim).map_or(1, |at| at);",
+        "outcome": "tests_failed",
+        "failing_test": "b_accept::tests::the_last_delimiter_is_the_cut_b_accept",
+        "equivalence_review": "not equivalent: b_accept::tests::the_last_delimiter_is_the_cut_b_accept fails on it"
+      },
+      {
+        "replacement": "let end = input.rfind(delim).map_or(0, |at| at + 1);",
+        "mutated_line": "let end = input.rfind(delim).map_or(0, |at| at + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "b_accept::tests::the_last_delimiter_is_the_cut_b_accept",
+        "equivalence_review": "not equivalent: b_accept::tests::the_last_delimiter_is_the_cut_b_accept fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "end is the last delimiter index or the default and feeds end == start. The abc rows pin the default and the a.b.c rows pin the Some branch. Spec cells: RIPR-SPEC-0150#1, RIPR-SPEC-0157#1.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0150#1",
+    "RIPR-SPEC-0157#1"
+  ]
+}
