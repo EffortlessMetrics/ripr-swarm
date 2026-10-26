@@ -1,0 +1,11 @@
+# RIPR-SPEC-0028: a reflective file withholds table credit only for modules in its import component (#9619).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::reflection_only_withholds_credit_for_modules_it_can_reach",
+]
+fixtures = [
+  "fixtures/python_table_reflection_unconnected",
+  "fixtures/python_table_reflection_helper_argument",
+  "fixtures/python_table_reflection_dynamic_import",
+]

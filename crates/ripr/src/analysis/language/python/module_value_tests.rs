@@ -2249,6 +2249,9 @@ fn a_code_slot_assignment_replaces_readers_but_does_not_rebind_plain_names() {
     assert!(foreign.may_replace_reader_code());
     assert!(!foreign.may_rebind("version_info", Path::new("sys.py")));
     assert!(!foreign.may_rebind("LIMIT", own));
+}
+
+#[test]
 fn reflection_only_withholds_credit_for_modules_it_can_reach() -> Check {
     let source = table_source(TABLE_NEW, "");
     let test = silver_test("assert price(\"silver\") == 5");
