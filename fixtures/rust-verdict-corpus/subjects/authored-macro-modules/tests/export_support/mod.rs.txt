@@ -33,3 +33,15 @@ macro_rules! crate_called_table {
         )*
     };
 }
+
+#[macro_export]
+macro_rules! grouped_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_grouped($width, $limit), $want);
+            }
+        )*
+    };
+}
