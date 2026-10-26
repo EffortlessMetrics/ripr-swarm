@@ -114,7 +114,9 @@ fn scan_line(
                 (Some((Tok::Name { name: method }, _, _)), Some((Tok::Lpar, _, _))) if method.as_str() == "get"
             )
         } else if matches!(next, Some(Tok::Lsqb)) {
-            !assigns
+            // A method call on the subscripted value (`NAME[k].append(x)`)
+            // can mutate it in place, so only a bare read is safe.
+            !assigns && !subscript_is_called_on(&line[index + 1..])
         } else {
             false
         };
@@ -122,6 +124,29 @@ fn scan_line(
             unsafe_names.insert(name.to_string());
         }
     }
+}
+
+/// Whether the subscript opening `rest[0]` is followed by an attribute access
+/// or a call once its brackets close.
+fn subscript_is_called_on(rest: &[(Tok, usize, usize)]) -> bool {
+    let mut depth = 0usize;
+    for (position, (tok, _, _)) in rest.iter().enumerate() {
+        match tok {
+            Tok::Lsqb => depth += 1,
+            Tok::Rsqb => {
+                depth = depth.saturating_sub(1);
+                // `NAME[i][0].sort()` chains further subscripts before the call.
+                if depth == 0 {
+                    match rest.get(position + 1).map(|(tok, _, _)| tok) {
+                        Some(Tok::Lsqb) => {}
+                        next => return matches!(next, Some(Tok::Dot | Tok::Lpar)),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether the logical line can bind or delete a target anywhere: an

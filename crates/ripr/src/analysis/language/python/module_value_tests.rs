@@ -1311,6 +1311,24 @@ fn a_bool_key_is_unknown_not_absent_for_get_fallbacks() -> Check {
 }
 
 #[test]
+fn get_on_a_scalar_receiver_is_unknown_not_the_default() -> Check {
+    // `5.get(...)` raises AttributeError in Python; the default is never read.
+    let old = "RATES = {\"gold\": 10, \"silver\": 5}";
+    let new = "RATES = {\"gold\": 10, \"silver\": 6}";
+    let source = format!(
+        "{new}\n\n\ndef price(tier):\n    return tier.get(\"silver\", RATES[\"silver\"])\n"
+    );
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(5) == 5"),
+        old,
+        new,
+    )?);
+    Ok(())
+}
+
+#[test]
 fn a_parenthesized_dict_is_guarded_like_a_plain_one() -> Check {
     let old = "RATES = ({\"gold\": 10, \"silver\": 5})";
     let new = "RATES = ({\"gold\": 10, \"silver\": 6})";

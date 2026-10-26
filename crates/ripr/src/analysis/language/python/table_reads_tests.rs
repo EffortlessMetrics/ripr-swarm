@@ -134,3 +134,13 @@ fn a_parenthesized_dict_definition_is_found() {
     }
     assert!(!dict_literal_names("RATES = f({\"a\": 1})\n").contains("RATES"));
 }
+
+#[test]
+fn a_method_call_on_a_subscripted_value_is_a_possible_write() -> Check {
+    assert_unsafe("def f(x):\n    RATES[\"k\"].append(x)\n")?;
+    assert_unsafe("def f():\n    return RATES[\"k\"].pop()\n")?;
+    assert_unsafe("def f(i):\n    RATES[i][0].sort()\n")?;
+    // Controls: bare subscript reads stay safe.
+    assert_safe("def f():\n    return RATES[\"k\"]\n")?;
+    assert_safe("def f(i):\n    return RATES[i] + 1\n")
+}

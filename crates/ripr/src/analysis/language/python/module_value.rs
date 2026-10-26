@@ -1142,6 +1142,10 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 return None;
             }
             let table = evaluate(&attribute.value, scope)?;
+            // `.get` on a scalar raises AttributeError: undecided, not absent.
+            if !matches!(table, Value::Table(_)) {
+                return None;
+            }
             let (key, default) = match call.args.as_slice() {
                 [key] => (key, None),
                 [key, default] => (key, Some(default)),
