@@ -621,7 +621,9 @@ under `rust_indirect_owner_call_unresolved`:
   gap, since no test is shown to run it. Item declarations are not value
   mentions, including multiline imports. A nested `fn` or an import of
   another item only shadows bare references within its lexical block; an
-  owner-qualified value remains a mention. Grouped imports retain their full
+  owner-qualified value (including a raw identifier) remains a mention. A
+  nested module does not inherit the enclosing block's item shadows. Grouped
+  imports retain their full
   paths, and an inner owner-preserving import overrides an outer shadow.
   References after a declaration on the same line remain visible. Opaque,
   conditional and glob bindings do not establish another owner. Imports suppress

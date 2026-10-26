@@ -277,7 +277,8 @@ fn names_value(
     }
     let items = ItemBindings::read(source, name, import_is_other);
     identifier_offsets(code, name).any(|at| {
-        let before = code[..at].trim_end();
+        let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
+        let before = code[..reference_at].trim_end();
         if items.declaration_at(at) || (!before.ends_with("::") && items.shadows_at(at)) {
             return false;
         }
@@ -290,8 +291,8 @@ fn names_value(
             || method
             || called
             || field_label
-            || typed_fn_pointer_initializer(code, at)
-            || !qualifier_may_name_owner(&code[..at], owner_names))
+            || typed_fn_pointer_initializer(code, reference_at)
+            || !qualifier_may_name_owner(before, owner_names))
     })
 }
 
@@ -425,6 +426,13 @@ impl ItemBindings {
         };
         let mut result = Self::default();
         for node in parse.tree().syntax().descendants() {
+            // An item scope cannot inherit the surrounding function's local
+            // shadow. Its imports also need their own module context; leave
+            // that identity unresolved instead of borrowing the test's.
+            if ast::ItemList::can_cast(node.kind()) {
+                result.scopes.push((node.text_range(), false));
+                continue;
+            }
             let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
                 let Some(declared) = function.name() else {
                     continue;

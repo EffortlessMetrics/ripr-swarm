@@ -875,3 +875,35 @@ fn an_unresolved_reexport_of_the_owner_is_still_a_limit() -> Result<(), String> 
     }
     Ok(())
 }
+
+#[test]
+fn a_raw_qualified_owner_value_beside_a_shadow_is_still_a_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        fn inc(x: u32) -> u32 { x + 9 }
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(super::r#inc), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, "    x + 2", "raw qualified owner")
+}
+
+#[test]
+fn a_nested_module_owner_value_does_not_inherit_a_block_shadow() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        fn inc(x: u32) -> u32 { x + 9 }
+        mod inner {
+            use crate::inc;
+            pub fn mapped() -> [u32; 2] { [1, 2].map(inc) }
+        }
+        assert!(super::inc(1) > 0);
+        assert_eq!(inner::mapped(), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, "    x + 2", "nested module owner")
+}
