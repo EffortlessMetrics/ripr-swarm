@@ -17879,6 +17879,7 @@ tests = [
   "crates/ripr/tests/recording_double_credit.rs::primitive_slice_setup_and_later_append_keep_the_exact_pin",
   "crates/ripr/tests/recording_double_credit.rs::recording_credit_preserves_observer_and_receiver_refusals",
   "crates/ripr/tests/recording_double_credit.rs::user_read_methods_do_not_supply_recording_credit",
+  "crates/ripr/tests/recording_double_credit.rs::user_push_dispatch_cannot_supply_recording_credit",
   "crates/ripr/tests/framework_oracle_limit.rs::a_hand_written_recorder_compared_by_field_is_credited",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
   "crates/ripr/tests/proximity_oracle_credit.rs::same_file_test_that_reaches_the_owner_through_a_helper_keeps_credit",

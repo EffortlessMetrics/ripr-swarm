@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/recording_double_observer_refusals/input
 
-Summary: 10 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 10 unknown); 10 of 10 findings unsuppressed
+Summary: 12 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 12 unknown); 12 of 12 findings unsuppressed
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 5 changed file(s), 10 changed line(s), 5 candidate line(s), 10 probe(s), 10 finding(s)
+  Counts: 6 changed file(s), 12 changed line(s), 6 candidate line(s), 12 probe(s), 12 finding(s)
 
 Start here:
   State: limited by static analysis
@@ -48,10 +48,12 @@ Next: drill into the top finding:
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
-  9 lower-priority finding(s) omitted from default human output.
+  11 lower-priority finding(s) omitted from default human output.
     - ./src/let_else.rs:13 (unknown)
     - ./src/owned_clone.rs:13 (unknown)
     - ./src/owned_clone.rs:13 (unknown)
+    - ./src/push_dispatch.rs:13 (unknown)
+    - ./src/push_dispatch.rs:13 (unknown)
     - ./src/raw_binding.rs:13 (unknown)
     - ./src/raw_binding.rs:13 (unknown)
     - ./src/raw_receiver.rs:13 (unknown)

@@ -73,16 +73,21 @@ fn assert_reading_with_probe(
     label: &str,
     source: &str,
     exposed: bool,
-    after: Option<&str>,
+    edit: Option<(&str, &str)>,
 ) -> Result<(), String> {
     let subject = Subject::new(source)?;
-    if let Some(after) = after {
+    if let Some((before, after)) = edit {
         let path = subject.0.join("edit.diff");
         let diff = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let changed = diff.replace(
-            "+    sink.send(format!(\"n={n}\"));",
-            &format!("+    {after}"),
-        );
+        let changed = diff
+            .replace(
+                "-    sink.send(format!(\"n={}\", n));",
+                &format!("-    {before}"),
+            )
+            .replace(
+                "+    sink.send(format!(\"n={n}\"));",
+                &format!("+    {after}"),
+            );
         assert_ne!(
             diff, changed,
             "the alternate changed call must reach the diff producer"
@@ -334,7 +339,10 @@ fn the_changed_call_cannot_hide_execution_in_format_arguments() -> Result<(), St
         "hostile changed call with clean indexed source",
         &candidate,
         false,
-        Some("sink.send(format!(\"n={}\", { std::process::exit(0); n }));"),
+        Some((
+            "sink.send(format!(\"n={}\", n));",
+            "sink.send(format!(\"n={}\", { std::process::exit(0); n }));",
+        )),
     )
 }
 
@@ -374,4 +382,44 @@ fn plain_test_cfg_uses_the_shared_predicate_authority() -> Result<(), String> {
     )
     .replace("#[cfg(test)]", "#[cfg( /* plain test gate */ test )]");
     assert_reading("plain test gate with trivia", &candidate, true)
+}
+
+#[test]
+fn user_push_dispatch_cannot_supply_recording_credit() -> Result<(), String> {
+    let base = source(
+        "self.lines.push(line);",
+        "&mut dyn Sink",
+        &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+    );
+    let borrowed = "\ntrait FalsePush { fn push(&self, line: String); }\nimpl FalsePush for Vec<String> { fn push(&self, _: String) { std::process::exit(0); } }\n";
+    for (label, declarations) in [
+        ("borrowed push", borrowed.to_string()),
+        ("raw borrowed push", borrowed.replace("fn push", "fn r#push")),
+        ("default borrowed push", "\ntrait FalsePush { fn push(&self, _: String) { std::process::exit(0); } }\nimpl FalsePush for Vec<String> {}\n".to_string()),
+    ] {
+        assert_reading(label, &format!("{base}{declarations}"), false)?;
+    }
+    let mutable = "\ntrait FalsePush { fn push(&mut self, line: String); }\nimpl FalsePush for Vec<String> { fn push(&mut self, _: String) { std::process::exit(0); } }\n";
+    assert_reading(
+        "inherent vector push wins at the mutable receiver",
+        &format!("{base}{mutable}"),
+        true,
+    )?;
+    let named_push = base.replace("send", "push");
+    let changed = Some((
+        "sink.push(format!(\"n={}\", n));",
+        "sink.push(format!(\"n={n}\"));",
+    ));
+    assert_reading_with_probe(
+        "pre-existing push-named sink refusal",
+        &named_push,
+        false,
+        changed,
+    )?;
+    assert_reading_with_probe(
+        "push-named sink cannot exempt a competing borrowed push",
+        &format!("{named_push}{borrowed}"),
+        false,
+        changed,
+    )
 }

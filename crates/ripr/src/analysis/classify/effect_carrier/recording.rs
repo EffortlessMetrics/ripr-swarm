@@ -357,6 +357,12 @@ impl RecordingDouble {
                 || ast::Fn::cast(node.clone()).is_some_and(|f| {
                     f.name().is_some_and(|n| {
                         matches!(n.text().trim_start_matches("r#"), "clone" | "to_string")
+                            // Vec::push wins at the mutable receiver, but an
+                            // earlier receiver candidate can intercept retention.
+                            || (n.text().trim_start_matches("r#") == "push"
+                                && f.param_list()
+                                    .and_then(|parameters| parameters.self_param())
+                                    .is_none_or(|receiver| text(&receiver) != "&mutself"))
                     })
                 })
                 || ast::Use::cast(node.clone()).is_some_and(|u| {

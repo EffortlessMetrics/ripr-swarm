@@ -446,7 +446,12 @@ non-ignored related test matches one of these shapes:
   on unknown values, let-else, other setup/effects, type aliases, ambiguous imports,
   item expansion/attributes, and user-defined `clone`/`to_string` methods
   (including raw spellings) refuse
-  this credit. Concrete mutable parameters, standard collection receivers,
+  this credit. A competing `push` declaration without the exact `&mut self`
+  receiver also refuses credit: a borrowed trait method can run before the
+  inherent vector mutation. A competing mutable-receiver method does not
+  displace the inherent vector mutation. This guard does not broaden the
+  existing refusal for an owner calling a push-named sink method.
+  Concrete mutable parameters, standard collection receivers,
   count-only observations, before-call assertions, no-op/constant writers and
   comparisons of another field retain their prior refusals. This rule grants
   no fixture-builder receiver credit.
@@ -835,6 +840,7 @@ Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
 `missing_argument_transfer_is_never_credited`,
 `recording_credit_preserves_observer_and_receiver_refusals`,
 `user_read_methods_do_not_supply_recording_credit`,
+`user_push_dispatch_cannot_supply_recording_credit`,
 `hidden_execution_and_module_value_twins_cannot_supply_credit`,
 `a_scalar_shadow_drops_slice_provenance`,
 `the_changed_call_cannot_hide_execution_in_format_arguments`,

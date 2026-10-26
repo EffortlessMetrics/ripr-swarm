@@ -28,3 +28,9 @@ diff --git a/src/let_else.rs b/src/let_else.rs
 @@ -13 +13 @@
 -    sink.send(format!("n={}", n));
 +    sink.send(format!("n={n}"));
+diff --git a/src/push_dispatch.rs b/src/push_dispatch.rs
+--- a/src/push_dispatch.rs
++++ b/src/push_dispatch.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));

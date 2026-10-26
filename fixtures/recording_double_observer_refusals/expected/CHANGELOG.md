@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (5)
+
+Reason:
+RIPR-SPEC-0240: reject borrowed trait push dispatch; native early-exit controls and frozen a0146be7 false-exposed pair justify two new static_unknown findings, with independent twelve-finding and must_not_promote invariants preserving the original ten refusals
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
