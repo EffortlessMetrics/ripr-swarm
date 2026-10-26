@@ -455,6 +455,10 @@ id = "RIPR-SPEC-0224"
 scope = "in"
 
 [[spec.waived]]
+example = 1
+reason = "its real-repository edit (semver 1.0.23) now abstains as static_unknown because `comparator` is not a unique function name, and the synthetic analogue spec0224-parse-exact-arm-unobserved lists the test with observation_unconfirmed, so no corpus case yet produces the assertion_not_observing miss the example names"
+
+[[spec.waived]]
 example = 2
 reason = "an aggregate over 20 fast-tier corpus repositories and output sizes, not one edit"
 
@@ -766,11 +770,6 @@ reason = "the meta-gate's own pass/fail messages over charter fixtures; the Rust
 id = "RIPR-SPEC-0150"
 scope = "in"
 
-# Rust producer-owned source role
-[[unmeasured]]
-id = "RIPR-SPEC-0153"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
-
 # Assertion-form parity
 [[spec]]
 id = "RIPR-SPEC-0154"
@@ -822,11 +821,6 @@ reason = "the repeated state is reached only by an input that recurses forever a
 [[spec]]
 id = "RIPR-SPEC-0168"
 scope = "in"
-
-# Contextual source-role composition
-[[unmeasured]]
-id = "RIPR-SPEC-0169"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # path-dependency diff-scope expansion
 [[spec]]

@@ -69,6 +69,7 @@ mod boundary;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
+mod dataclass_default;
 mod deleted_lines;
 mod guard_activation;
 mod guard_credit;
@@ -104,6 +105,7 @@ mod row_reach;
 mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
+mod table_reads;
 mod table_rows;
 #[cfg(test)]
 use discriminators::{
@@ -845,8 +847,16 @@ impl PythonAdapter {
     ) -> Result<LanguageDiffResult, String> {
         let discovered =
             collect_workspace_python_files_with_handwritten(&options.root, handwritten);
+        // Changed files are the subject of the diff, so the cap only ever
+        // refuses context around them (#10461).
+        let changed_walk_paths: BTreeSet<String> = changed_files
+            .iter()
+            .map(|changed| normalized_path(&changed.path))
+            .collect();
         let (workspace_files, refused_files) =
-            truncate_workspace_files(discovered, walk_limits.max_workspace_files);
+            truncate_workspace_files(discovered, walk_limits.max_workspace_files, |file| {
+                changed_walk_paths.contains(&normalized_path(file))
+            });
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
@@ -1005,7 +1015,7 @@ impl PythonAdapter {
                         .map_err(|err| format!("refused file count overflows u64: {err}"))?,
                 )?
                 .with_detail(format!(
-                    "python workspace walk stopped at the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed.",
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed .py files are kept past this cap.",
                     walk_limits.max_workspace_files,
                 ))?,
             );
