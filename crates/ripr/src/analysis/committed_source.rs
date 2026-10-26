@@ -677,8 +677,17 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
+        // Exit 128 is Git refusing the repository state (a truncated index is
+        // the common case); name the repair rather than repeat Git's line
+        // alone (#10567).
+        let repair = if output.status.code() == Some(128) {
+            ". If Git names `.git/index`, remove that file and run `git reset` to rebuild \
+             it; otherwise correct or restore the file it names. Then re-run."
+        } else {
+            ""
+        };
         return Err(format!(
-            "committed-source probe: `git {describe}` exited with {}: {detail}",
+            "committed-source probe: `git {describe}` exited with {}: {detail}{repair}",
             output.status
         )
         .into());

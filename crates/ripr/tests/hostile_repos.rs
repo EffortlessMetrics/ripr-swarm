@@ -1110,6 +1110,28 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     Ok(())
 }
 
+/// A truncated `.git/index` is refused with Git's reason and a rebuild route,
+/// not Git's `fatal:` line alone (#10567).
+#[test]
+fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
+    let scratch = Scratch::new("truncated-index")?;
+    let root = plain(&scratch, "truncated-index")?;
+    let index = root.join(".git/index");
+    let bytes = fs::read(&index).map_err(|e| format!("read index failed: {e}"))?;
+    fs::write(&index, &bytes[..bytes.len().min(20)]).map_err(|e| format!("write failed: {e}"))?;
+    let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&ran, "truncated index")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for needle in ["index file smaller than expected", "run `git reset`"] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    Ok(())
+}
+
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
 /// still a repository checkout; "run it from inside your repository" is the
 /// wrong repair (#6927).
