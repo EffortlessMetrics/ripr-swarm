@@ -90,8 +90,8 @@ fn note_names_substitution(note: &str, requested: &str, stubbed: &str) -> Result
     }
 }
 
-/// #10716: capability is decided from the selected path before Rust seam
-/// analysis, independent of --kind, JSON rendering, or a requested write.
+/// #10716: after root/config admission, capability is decided from the selected
+/// path before Rust seam analysis, independent of --kind, JSON, or a write.
 /// Rust-looking contents under a non-Rust suffix must not bypass the gate.
 #[test]
 fn non_rust_paths_refuse_before_rust_analysis_and_never_write() -> Result<(), String> {
@@ -118,6 +118,11 @@ fn non_rust_paths_refuse_before_rust_analysis_and_never_write() -> Result<(), St
         let unrelated = "pub fn unrelated(\n";
         let scratch = Scratch::create("non_rust_language", unrelated)?;
         let root = &scratch.0;
+        // Configuration admission precedes stub resolution. Pin Rust so a
+        // Python-shaped path cannot select an unavailable preview adapter in
+        // the Rust-only build; the path still must receive a language refusal.
+        let config = "[languages]\nenabled = [\"rust\"]\n";
+        std::fs::write(root.join("ripr.toml"), config).map_err(|error| error.to_string())?;
         std::fs::write(root.join(file), source).map_err(|error| error.to_string())?;
         let at = format!("{file}:2");
         for kind in [None, Some("predicate")] {
@@ -207,6 +212,11 @@ fn non_rust_paths_refuse_before_rust_analysis_and_never_write() -> Result<(), St
                             .map_err(|error| error.to_string())?,
                         unrelated
                     );
+                    assert_eq!(
+                        std::fs::read_to_string(root.join("ripr.toml"))
+                            .map_err(|error| error.to_string())?,
+                        config
+                    );
                     assert!(
                         !root.join("tests").exists(),
                         "{file}: unsupported write created a tests target"
@@ -215,6 +225,95 @@ fn non_rust_paths_refuse_before_rust_analysis_and_never_write() -> Result<(), St
             }
         }
     }
+    Ok(())
+}
+
+/// An unconfigured Python marker retains the existing adapter admission check.
+/// Both feature sets execute this control; only their expected result differs.
+#[test]
+fn python_marker_without_config_keeps_feature_admission() -> Result<(), String> {
+    let source = "pub fn value(n: u32) -> bool {\n    n > 3\n}\n";
+    let scratch = Scratch::create("python_config_admission", source)?;
+    let root = &scratch.0;
+    // Make this fixture a config-discovery boundary, including when TMPDIR is
+    // inside another repository, without creating or inheriting ripr.toml.
+    let manifest =
+        std::fs::read_to_string(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!("{manifest}\n[workspace]\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    let file = "src/pricing.rs.py";
+    std::fs::write(root.join(file), source).map_err(|error| error.to_string())?;
+    assert!(!root.join("ripr.toml").exists());
+
+    let output = stub_write(root, "src/pricing.rs.py:2", None, true)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if cfg!(feature = "lang-python") {
+        assert_eq!(output.status.code(), Some(3), "{stdout}{stderr}");
+        let document: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|error| format!("Python capability refusal JSON: {error}: {stdout}"))?;
+        assert_eq!(document["refusal"]["kind"], "unsupported_language");
+    } else {
+        assert_eq!(output.status.code(), Some(2), "{stdout}{stderr}");
+        assert!(
+            stdout.is_empty(),
+            "configuration failure wrote stdout: {stdout}"
+        );
+        for expected in [
+            "Python project markers were detected",
+            "without Cargo feature `lang-python`",
+            "[languages] enabled = [\"rust\"]",
+        ] {
+            assert!(stderr.contains(expected), "missing {expected:?}: {stderr}");
+        }
+    }
+    for path in [file, "src/lib.rs"] {
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).map_err(|error| error.to_string())?,
+            source
+        );
+    }
+    assert!(!root.join("ripr.toml").exists());
+    assert!(!root.join("tests").exists());
+    Ok(())
+}
+
+/// A capability refusal must not mask malformed repository configuration.
+#[test]
+fn malformed_config_precedes_non_rust_stub_refusal() -> Result<(), String> {
+    let rust_source = "pub fn value(n: u32) -> bool {\n    n > 3\n}\n";
+    let python_source = "def fee(n):\n    return n * 4\n";
+    let malformed_config = "[analysis\n";
+    let scratch = Scratch::create("malformed_config_admission", rust_source)?;
+    let root = &scratch.0;
+    std::fs::write(root.join("pricing.py"), python_source).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("ripr.toml"), malformed_config).map_err(|error| error.to_string())?;
+
+    let output = stub_write(root, "pricing.py:2", None, true)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stdout}{stderr}");
+    assert!(
+        stdout.is_empty(),
+        "configuration failure wrote stdout: {stdout}"
+    );
+    assert!(stderr.contains("ripr.toml"), "{stderr}");
+    assert!(stderr.contains("Fix the error above"), "{stderr}");
+    assert!(!stderr.contains("unsupported_language"), "{stderr}");
+    for (path, expected) in [
+        ("pricing.py", python_source),
+        ("src/lib.rs", rust_source),
+        ("ripr.toml", malformed_config),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).map_err(|error| error.to_string())?,
+            expected
+        );
+    }
+    assert!(!root.join("tests").exists());
     Ok(())
 }
 

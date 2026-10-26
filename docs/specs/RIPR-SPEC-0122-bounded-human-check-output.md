@@ -389,7 +389,8 @@ write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
 
-Before selecting seams, a direct `--at` path that does not route to Rust is
+After root and configuration admission, but before selecting seams, a direct
+`--at` path that does not route to Rust is
 refused as `unsupported_language` (#10716), with or without `--kind` and
 including under `--write`. This capability refusal makes no claim about a
 check finding's presence or exposure and does not diagnose a non-Rust file
@@ -401,6 +402,9 @@ The new refusal spelling requires stub schema `0.4`; the field set is unchanged,
 unresolved identity/disclosure fields stay null, and warnings stay empty.
 Supported Rust, absent Rust selectors, and malformed Rust keep their distinct
 existing outcomes. No Python or TypeScript stub generator is introduced.
+Configuration failures retain exit 2 before this capability decision, including
+an unavailable Python adapter selected by automatic project detection when no
+`ripr.toml` is discovered, or a malformed `ripr.toml`.
 
 For an integration-file stub, `run_command` names the effective cargo test
 target (#8794): an explicit `[[test]]` entry for the file supplies the name,
@@ -782,6 +786,8 @@ not a head-only row and prints no note.
 - `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::non_rust_paths_refuse_before_rust_analysis_and_never_write`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::python_marker_without_config_keeps_feature_admission`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::malformed_config_precedes_non_rust_stub_refusal`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::rust_paths_keep_ready_missing_and_malformed_results`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
