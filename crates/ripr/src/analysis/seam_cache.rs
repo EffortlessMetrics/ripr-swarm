@@ -5036,7 +5036,8 @@ mod tests {
         // 1.110 -> 1.111: polling-helper owner pin (RIPR-SPEC-0197, #9478).
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
         // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.113");
+        // 1.113 -> 1.114: direct boolean boundary owner grip (RIPR-SPEC-0197, #8610).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.114");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5136,8 +5137,9 @@ mod tests {
         // 0.117 -> 0.118: same polling-helper owner pin as full 1.111.
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
         // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.120");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.120");
+        // 0.120 -> 0.121: same boolean boundary grip as full 1.114 (#8610).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.121");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.121");
     }
 
     #[test]
