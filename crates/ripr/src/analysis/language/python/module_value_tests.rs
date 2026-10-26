@@ -1023,6 +1023,16 @@ fn classify_table(
     test_source: &str,
     new: &str,
 ) -> Result<Finding, String> {
+    classify_table_edit(source, others, test_source, TABLE_OLD, new)
+}
+
+fn classify_table_edit(
+    source: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+    old: &str,
+    new: &str,
+) -> Result<Finding, String> {
     let own = Path::new("hostile/settings.py");
     let mut owners = owners_of(source);
     let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
@@ -1051,7 +1061,7 @@ fn classify_table(
         own,
         1,
         new,
-        Some(TABLE_OLD),
+        Some(old),
         &owners,
         &tests,
         PythonNoBehaviorContext {
@@ -1264,5 +1274,57 @@ fn pure_reads_and_re_exports_elsewhere_keep_the_credit() -> Check {
             TABLE_NEW,
         )?);
     }
+    Ok(())
+}
+
+#[test]
+fn a_bool_key_is_unknown_not_absent_for_get_fallbacks() -> Check {
+    // `True` selects integer key 1, so the assertion holds under both tables;
+    // the changed fallback must not be read as the answer.
+    let old = "RATES = {1: 5, 2: 5}";
+    let new = "RATES = {1: 5, 2: 6}";
+    let source = format!("{new}\n\n\ndef price(tier):\n    return RATES.get(tier, RATES[2])\n");
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(True) == 5"),
+        old,
+        new,
+    )?);
+    // Controls: a present integer key is unaffected by the edit, and a
+    // genuinely missing key reads the changed fallback.
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(1) == 5"),
+        old,
+        new,
+    )?);
+    assert_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(3) == 5"),
+        old,
+        new,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_parenthesized_dict_is_guarded_like_a_plain_one() -> Check {
+    let old = "RATES = ({\"gold\": 10, \"silver\": 5})";
+    let new = "RATES = ({\"gold\": 10, \"silver\": 6})";
+    let source = table_source(new, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    let store = "from hostile.settings import RATES\n\nRATES[\"silver\"] = 5\n";
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[("hostile/other.py", store)],
+        &test,
+        old,
+        new,
+    )?);
+    // The same edit with no foreign write keeps its credit.
+    assert_credited(&classify_table_edit(&source, &[], &test, old, new)?);
     Ok(())
 }

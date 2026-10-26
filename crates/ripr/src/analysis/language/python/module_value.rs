@@ -1148,6 +1148,11 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 _ => return None,
             };
             let key = evaluate(key, scope)?;
+            // An unsupported key type (`True` hashes as `1`) is unknown, not
+            // absent: it must not fall through to the default.
+            if !matches!(key, Value::Int(_) | Value::Str(_)) {
+                return None;
+            }
             let fallback = match default {
                 Some(default) => Some(evaluate(default, scope)?),
                 None => None,

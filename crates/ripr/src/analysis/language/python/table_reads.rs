@@ -165,7 +165,9 @@ pub(super) fn dict_literal_names(source: &str) -> BTreeSet<String> {
     let mut depth = 0usize;
     let mut line_start = true;
     let mut candidate: Option<String> = None;
-    let mut previous: Option<Tok> = None;
+    // Set by `=`, kept through opening parentheses: `NAME = ({...})` is the
+    // same dict as `NAME = {...}`.
+    let mut armed = false;
     for token in lex(source, Mode::Module) {
         let Ok((tok, _)) = token else { break };
         match &tok {
@@ -181,19 +183,21 @@ pub(super) fn dict_literal_names(source: &str) -> BTreeSet<String> {
             Tok::Newline => {
                 line_start = true;
                 candidate = None;
-                previous = Some(tok);
+                armed = false;
                 continue;
             }
             Tok::Name { name } if line_start && depth == 0 => candidate = Some(name.to_string()),
-            Tok::Lbrace if matches!(previous, Some(Tok::Equal)) => {
+            Tok::Equal => armed = true,
+            Tok::Lpar if armed => {}
+            Tok::Lbrace if armed => {
                 if let Some(name) = candidate.take() {
                     names.insert(name);
                 }
+                armed = false;
             }
-            _ => {}
+            _ => armed = false,
         }
         line_start = false;
-        previous = Some(tok);
     }
     names
 }

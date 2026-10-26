@@ -122,3 +122,15 @@ fn the_defining_line_need_not_be_the_first() {
     assert!(unsafe_in(source, Some(3)).is_empty());
     assert!(unsafe_in(source, Some(1)).contains("RATES"));
 }
+
+#[test]
+fn a_parenthesized_dict_definition_is_found() {
+    for source in [
+        "RATES = ({\"a\": 1})\n",
+        "RATES = (({\"a\": 1}))\n",
+        "RATES: dict = ({\"a\": 1})\n",
+    ] {
+        assert!(dict_literal_names(source).contains("RATES"), "{source}");
+    }
+    assert!(!dict_literal_names("RATES = f({\"a\": 1})\n").contains("RATES"));
+}
