@@ -1071,8 +1071,11 @@ fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
                 let ret = compact_syntax_text(ret.syntax().text().to_string());
                 // `fn with_cache<Site>(..) -> Site` names its own type
                 // parameter, not the impl's type: spelling is not identity.
+                // Both sides are compared without `r#`, as the generic scan does.
+                let ret = ident_name(&ret);
                 ret == "Self"
-                    || (ret == *self_ty && !generic_type_param_named(function.syntax(), &ret))
+                    || (ret == ident_name(self_ty)
+                        && !generic_type_param_named(function.syntax(), ret))
             }
             _ => false,
         };
@@ -1123,15 +1126,13 @@ fn is_unconditional_impl_associated_fn(function: &ast::Fn) -> bool {
     if gated(function.attrs()) {
         return false;
     }
-    function.syntax().ancestors().skip(1).all(|node| {
-        if let Some(block) = ast::Impl::cast(node.clone()) {
-            !gated(block.attrs())
-        } else if let Some(module) = ast::Module::cast(node) {
-            !gated(module.attrs())
-        } else {
-            true
-        }
-    })
+    // Every attributed ancestor counts, not only impls and modules: an impl
+    // nested in a gated `fn`, `const` or `static` can be just as inactive.
+    function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .all(|node| ast::AnyHasAttrs::cast(node).is_none_or(|item| !gated(item.attrs())))
 }
 
 /// The item a type-path call `T::name(` would find this `fn` in (#4558).
