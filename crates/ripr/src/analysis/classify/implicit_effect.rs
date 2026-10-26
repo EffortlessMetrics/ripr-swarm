@@ -1199,11 +1199,15 @@ fn implicit_observer() {
         assert!(observes(CELL_OBSERVER, "next", "next", DIRECT)?);
         assert!(observes(ADD_OBSERVER, "add", "add", DIRECT)?);
         assert!(observes(VEC_OBSERVER, "next", "record", REVERSE)?);
-        for form in [
-            "counter.for_each(|_| {});",
-            "while counter.next().is_some() {}",
+        for (form, binding) in [
+            ("counter.for_each(|_| {});", "let counter = Counter"),
+            (
+                "while counter.next().is_some() {}",
+                "let mut counter = Counter",
+            ),
         ] {
-            let source = edit(CELL_OBSERVER, "for _ in counter {}", form)?;
+            let source = edit(CELL_OBSERVER, "let counter = Counter", binding)?;
+            let source = edit(&source, "for _ in counter {}", form)?;
             assert!(observes(&source, "next", "next", DIRECT)?, "{form}");
         }
         Ok(())
