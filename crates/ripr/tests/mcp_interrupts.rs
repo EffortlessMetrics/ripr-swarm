@@ -743,7 +743,7 @@ impl FixtureTree {
             .ok_or("descendant custody missing")?;
         descendant.wait_terminal(false)?;
         if descendant.reap_adopted()? != Some(Signal::KILL.as_raw()) {
-            return Err("descendant was not killed by product tree settlement".into());
+            return Err("descendant was not terminated by product tree settlement".into());
         }
         self.primary.reaped = true;
         Ok(())
@@ -875,7 +875,7 @@ impl Harness {
         )?);
         let session = self.session.as_mut().ok_or("repeat session missing")?;
         session.process.pinned.signal(Signal::INT)?;
-        session.ping("first-signal-survived")?;
+        session.ping("first-signal-session-live")?;
         session.process.pinned.signal(Signal::TERM)?;
         let status = bounded_wait(&mut session.process.child, REAP_BUDGET)?
             .ok_or("repeated signal did not terminate the server")?;
