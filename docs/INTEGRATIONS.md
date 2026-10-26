@@ -18,7 +18,7 @@ surfaces where a developer would feel ripr in the inner loop.
 | pre-commit framework | Catches the gap before the push | Snippet below; no hook ships for users |
 | GitLab CI and other hosted CI | Not everyone is on GitHub | Snippet below; no generator |
 | cargo-nextest | The standard Rust test runner | Ordering guidance below; ripr never runs tests |
-| cargo-mutants | The runtime authority ripr is the cheap pre-filter for | Positioning below; no automated handoff |
+| cargo-mutants | The runtime authority ripr is the cheap pre-filter for | Advisory import of existing results; external execution |
 | Dev containers and Docker | Reproducible onboarding | Snippet below |
 | Sibling tools and `ub-review` | The org's own PR gate | [Sibling tools](interop/sibling-tools.md) |
 
@@ -110,8 +110,21 @@ git diff origin/main > pr.diff
 cargo mutants --in-diff pr.diff
 ```
 
-There is no automated bridge today: ripr does not read cargo-mutants results
-and does not claim any mutant outcome. `--in-diff` is cargo-mutants' own flag.
+After the external run, `ripr calibrate cargo-mutants` can import supplied
+`outcomes.json` or a `mutants.out` directory and join the results to a
+`repo-exposure-json` snapshot as advisory calibration. Run
+`ripr calibrate cargo-mutants --help` for cargo-mutants input-production steps
+and import options. The importer does not launch cargo-mutants, change static
+classifications, or configure CI policy. `--in-diff` is cargo-mutants' own flag.
+
+Keep the supplied artifacts tied to the intended repository and source state.
+The importer matches by seam identity, span, or file/line; it does not verify
+that both inputs describe the same repository, commit, or working tree.
+Matching paths or heads alone cannot establish that provenance.
+
+A `mutants.json`-only import contains unexecuted candidates, not observed
+runtime results. Those rows remain `unknown` / `no_runtime_data`; use
+`outcomes.json`, or a directory containing it, for observed outcomes.
 
 ## Dev containers
 
