@@ -35,10 +35,10 @@
   },
   "reasoning": "The `export * as units` member is pinned to two decimals, which 2.5 misses. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
   "labeling_observation": {
-    "ripr_commit": "3608bb9",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "17e10e3",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "no_static_path"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   }

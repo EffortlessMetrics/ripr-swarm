@@ -150,6 +150,7 @@ mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
+mod close_to_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
@@ -183,6 +184,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
+pub(crate) use close_to_guard::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
@@ -698,6 +700,14 @@ impl TypeScriptAdapter {
             &options.root,
             alias_map_ref,
             is_test_file,
+        );
+
+        // A named import of `export * as ns from` reads as the namespace import
+        // it binds (RIPR-SPEC-0095).
+        reexport_index.rewrite_namespace_reexport_imports(
+            &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
         );
 
         // #10028: invert the test corpus once so each owner's relation scans
