@@ -139,7 +139,35 @@ fn printable_ascii(text: &str) -> bool {
     text.chars().all(|ch| (' '..='~').contains(&ch))
 }
 
+/// The longest string and the deepest expression the evaluator builds, so a
+/// hostile `replace` or `+` chain in a reviewed diff cannot exhaust memory or
+/// the stack.
+const MAX_STRING_BYTES: usize = 4096;
+const MAX_DEPTH: usize = 48;
+
+thread_local! {
+    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn evaluate(expression: &Expr, lookup: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
+    let depth = DEPTH.with(|depth| {
+        depth.set(depth.get() + 1);
+        depth.get()
+    });
+    let value = if depth > MAX_DEPTH {
+        None
+    } else {
+        evaluate_node(expression, lookup)
+    };
+    DEPTH.with(|depth| depth.set(depth.get() - 1));
+    value.filter(|value| match value {
+        Value::Str(text) => text.len() <= MAX_STRING_BYTES,
+        Value::Words(words) => words.iter().map(String::len).sum::<usize>() <= MAX_STRING_BYTES,
+        _ => true,
+    })
+}
+
+fn evaluate_node(expression: &Expr, lookup: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
     match expression {
         Expr::Constant(_) => literal(expression),
         Expr::Name(name) => lookup(name.id.as_str()),
@@ -236,7 +264,11 @@ fn call_of(call: &ast::ExprCall, lookup: &dyn Fn(&str) -> Option<Value>) -> Opti
                     };
                     // `"".replace("", x)` inserts between characters; the empty
                     // pattern is a different operation this reader excludes.
-                    (!old.is_empty()).then(|| Value::Str(text.replace(&old, &new)))
+                    // The result is at most `text` times `new`; refuse before
+                    // building a string the cap would discard.
+                    (!old.is_empty()
+                        && text.len().saturating_mul(new.len().max(1)) <= MAX_STRING_BYTES)
+                        .then(|| Value::Str(text.replace(&old, &new)))
                 }
                 _ => None,
             }
@@ -320,4 +352,99 @@ fn character_at(text: &str, index: i128) -> Option<Value> {
     }
     let character = characters.get(usize::try_from(resolved).ok()?)?;
     Some(Value::Str(character.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::language::python::source_facts::parse_module_result;
+    use rustpython_parser::ast::Mod;
+
+    fn run(def: &str, arguments: &[Value]) -> Option<Value> {
+        let Ok(Mod::Module(module)) = parse_module_result(std::path::Path::new("m.py"), def) else {
+            return None;
+        };
+        let Some(Stmt::FunctionDef(function)) = module.body.first() else {
+            return None;
+        };
+        Function::of(function)?.call(arguments)
+    }
+
+    fn int(value: i128) -> Value {
+        Value::Int(value)
+    }
+
+    fn text(value: &str) -> Value {
+        Value::Str(value.to_string())
+    }
+
+    #[test]
+    fn floor_division_and_modulo_follow_the_divisor_sign() {
+        assert_eq!(
+            run("def f(a, b):\n    return a // b\n", &[int(-7), int(2)]),
+            Some(int(-4))
+        );
+        assert_eq!(
+            run("def f(a, b):\n    return a % b\n", &[int(-7), int(2)]),
+            Some(int(1))
+        );
+        assert_eq!(
+            run("def f(a, b):\n    return a % b\n", &[int(7), int(-2)]),
+            Some(int(-1))
+        );
+        assert_eq!(
+            run("def f(a, b):\n    return a // b\n", &[int(1), int(0)]),
+            None
+        );
+    }
+
+    #[test]
+    fn slices_normalize_indexes_like_python() {
+        assert_eq!(
+            run("def f(s):\n    return s[-2:]\n", &[text("abcd")]),
+            Some(text("cd"))
+        );
+        assert_eq!(
+            run("def f(s):\n    return s[:-9]\n", &[text("abcd")]),
+            Some(text(""))
+        );
+        assert_eq!(
+            run("def f(s):\n    return s[1:99]\n", &[text("abcd")]),
+            Some(text("bcd"))
+        );
+        assert_eq!(run("def f(s):\n    return s[9]\n", &[text("abcd")]), None);
+    }
+
+    #[test]
+    fn integer_overflow_and_bool_int_confusion_decide_nothing() {
+        let big = int(i128::MAX);
+        assert_eq!(run("def f(a):\n    return a + 1\n", &[big]), None);
+        assert_eq!(
+            run("def f(a):\n    return a + 1\n", &[Value::Bool(true)]),
+            None
+        );
+        assert_ne!(int(1).repr(), Value::Bool(true).repr());
+    }
+
+    #[test]
+    fn a_len_parameter_is_not_the_builtin() {
+        assert_eq!(run("def f(len):\n    return len('a')\n", &[int(1)]), None);
+    }
+
+    #[test]
+    fn an_exponential_replace_chain_is_refused_not_built() {
+        let mut expression = String::from("s");
+        for _ in 0..45 {
+            expression.push_str(".replace('a', 'aa')");
+        }
+        let def = format!("def f(s):\n    return {expression}\n");
+        assert_eq!(run(&def, &[text("a")]), None);
+    }
+
+    #[test]
+    fn a_deep_sum_is_refused_not_recursed() {
+        let expression = vec!["s"; 400].join(" + ");
+        let def = format!("def f(s):\n    return {expression}\n");
+        assert_eq!(run(&def, &[text("a")]), None);
+    }
 }

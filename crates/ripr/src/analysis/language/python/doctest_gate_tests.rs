@@ -168,3 +168,97 @@ fn collection_is_read_from_pytest_ini_and_cfg_headers() {
         assert_eq!(collected, expected, "{name}: {text}");
     }
 }
+
+#[test]
+fn a_module_that_binds_len_is_not_read() -> Result<(), String> {
+    let (old, new) = pair(
+        "len(text)",
+        "len(text) + 1",
+        "    >>> clip('abc', 3)\n    3\n",
+    );
+    let (old, new) = (
+        format!("{old}\ndef len(x):\n    return 0\n"),
+        format!("{new}\ndef len(x):\n    return 0\n"),
+    );
+    assert_eq!(count("len", ENABLED, &old, &new)?, 0);
+    let (old, new) = (format!("len = abs\n{old}"), format!("len = abs\n{new}"));
+    assert_eq!(count("len-assign", ENABLED, &old, &new)?, 0);
+    Ok(())
+}
+
+#[test]
+fn a_positional_collection_target_in_addopts_stops_the_read() -> Result<(), String> {
+    let (old, new) = pair("text[:n]", "text[:n + 1]", EXAMPLE);
+    for config in [
+        "[tool.pytest.ini_options]\naddopts = \"--doctest-modules tests/\"\n",
+        "[tool.pytest.ini_options]\naddopts = \"--doctest-modules --import-mode=importlib\"\n",
+        "[tool.pytest.ini_options]\naddopts = \"--doctest-modules\"\nnorecursedirs = [\"src\"]\n",
+    ] {
+        assert_eq!(count("positional", config, &old, &new)?, 0, "{config}");
+    }
+    Ok(())
+}
+
+#[test]
+fn conftest_hooks_and_namespaces_outside_the_file_path_stop_the_read() -> Result<(), String> {
+    for (label, name, body) in [
+        (
+            "glob",
+            "src/conftest.py",
+            "collect_ignore_glob = ['*.py']\n",
+        ),
+        (
+            "namespace",
+            "src/conftest.py",
+            "@pytest.fixture\ndef doctest_namespace(): ...\n",
+        ),
+        (
+            "sibling",
+            "tests/conftest.py",
+            "def pytest_collection_modifyitems(items): ...\n",
+        ),
+    ] {
+        let root = root(label, ENABLED)?;
+        let path = root.join(name);
+        std::fs::create_dir_all(path.parent().ok_or("parent")?).map_err(|err| format!("{err}"))?;
+        std::fs::write(&path, body).map_err(|err| format!("{err}"))?;
+        let collected = collects_doctests(&root, Path::new("src/texts.py"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!collected, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn newer_pytest_config_files_leave_collection_unknown() -> Result<(), String> {
+    for name in [".pytest.ini", "pytest.toml", ".pytest.toml"] {
+        let root = root("newer", ENABLED)?;
+        std::fs::write(root.join(name), "").map_err(|err| format!("{err}"))?;
+        let collected = collects_doctests(&root, Path::new("src/texts.py"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!collected, "{name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn attached_short_flags_and_cache_selectors_stop_the_read() -> Result<(), String> {
+    let (old, new) = pair("text[:n]", "text[:n + 1]", EXAMPLE);
+    for flags in ["-kfoo", "-mslow", "--lf", "-o doctest_optionflags=X"] {
+        let config =
+            format!("[tool.pytest.ini_options]\naddopts = \"--doctest-modules {flags}\"\n");
+        assert_eq!(count("flags", &config, &old, &new)?, 0, "{flags}");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_escape_in_the_docstring_source_drops_it() -> Result<(), String> {
+    let (old, new) = pair(
+        "text[:n]",
+        "text[:n + 1]",
+        "    >>> clip('abcdef', 3)\\n    'abc'\n",
+    );
+    assert_eq!(count("escape", ENABLED, &old, &new)?, 0);
+    Ok(())
+}

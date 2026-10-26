@@ -78,6 +78,11 @@ pub(super) fn doctest_tests(
     };
     let new_text = SourceText::new(new_source);
     let old_text = SourceText::new(old_source);
+    // The evaluator reads `len` as the builtin; a module that binds the name
+    // may run something else.
+    if binds_len(&new_module.body, new_source) || binds_len(&old_module.body, old_source) {
+        return Vec::new();
+    }
     let new_names = defined_names(&new_module.body, new_source);
     let old_names = defined_names(&old_module.body, old_source);
     let mut tests = Vec::new();
@@ -98,10 +103,10 @@ pub(super) fn doctest_tests(
         }) else {
             continue;
         };
-        let Some(new_examples) = examples_of(function, &new_text) else {
+        let Some(new_examples) = examples_of(function, &new_text, new_source) else {
             continue;
         };
-        let old_examples = examples_of(old_function, &old_text).unwrap_or_default();
+        let old_examples = examples_of(old_function, &old_text, old_source).unwrap_or_default();
         let (Some(new_body), Some(old_body)) = (Function::of(function), Function::of(old_function))
         else {
             continue;
@@ -202,7 +207,7 @@ struct PytestSection {
 
 impl PytestSection {
     fn collects(&self, file: &Path) -> bool {
-        const REFUSED_FLAGS: [&str; 12] = [
+        const REFUSED_FLAGS: [&str; 18] = [
             "--ignore",
             "--ignore-glob",
             "--deselect",
@@ -215,8 +220,33 @@ impl PytestSection {
             "--co",
             "--confcutdir",
             "--rootdir",
+            "--import-mode",
+            "--override-ini",
+            "-o",
+            "-c",
+            "--config-file",
+            "-p",
         ];
+        // A positional token names a collection target, so a bare `pytest` run
+        // collects that target and not the whole tree.
         if self.reshapes
+            || self.addopts.iter().any(|token| !token.starts_with('-'))
+            || self.addopts.iter().any(|token| {
+                ["-k", "-m", "-o", "-c", "-p"]
+                    .iter()
+                    .any(|short| token.starts_with(short) && !token.starts_with("--"))
+                    || matches!(
+                        token.as_str(),
+                        "--lf"
+                            | "--ff"
+                            | "--sw"
+                            | "--nf"
+                            | "--last-failed"
+                            | "--failed-first"
+                            | "--stepwise"
+                            | "--new-first"
+                    )
+            })
             || !self
                 .addopts
                 .iter()
@@ -251,17 +281,27 @@ fn read_bounded(path: &Path) -> Option<String> {
     if !metadata.file_type().is_file() || metadata.len() > MAX_CONFIG_BYTES {
         return None;
     }
+    // One byte past the limit: a file that grew after the check is refused,
+    // never read as a truncated configuration that hides a later flag.
     let mut text = String::new();
     std::fs::File::open(path)
         .ok()?
-        .take(MAX_CONFIG_BYTES)
+        .take(MAX_CONFIG_BYTES + 1)
         .read_to_string(&mut text)
         .ok()?;
-    Some(text)
+    (text.len() as u64 <= MAX_CONFIG_BYTES).then_some(text)
 }
 
 /// The first configuration file pytest would use, as a section.
 fn pytest_section(root: &Path) -> Option<PytestSection> {
+    // Newer pytest reads these before the files modeled below; their options
+    // are not modeled, so their presence leaves collection unknown.
+    if [".pytest.ini", "pytest.toml", ".pytest.toml"]
+        .iter()
+        .any(|name| root.join(name).exists())
+    {
+        return None;
+    }
     if root.join("pytest.ini").exists() {
         return section_of(&read_bounded(&root.join("pytest.ini"))?, "[pytest]", false);
     }
@@ -269,6 +309,7 @@ fn pytest_section(root: &Path) -> Option<PytestSection> {
         && text
             .lines()
             .any(|line| line.trim() == "[tool.pytest.ini_options]")
+        && !text.lines().any(|line| line.trim() == "[tool.pytest]")
     {
         return section_of(&text, "[tool.pytest.ini_options]", true);
     }
@@ -345,32 +386,49 @@ fn tokens(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every `conftest.py` from the root down to the file's directory must leave
-/// collection and the doctest namespace alone.
+/// Every `conftest.py` from the root down to the file's directory, and the
+/// ones directly under the root's subdirectories (a hook there reshapes every
+/// collected item), must leave collection and the doctest namespace alone.
+/// Substring matches are deliberate: `collect_ignore_glob`, a `doctest_namespace`
+/// fixture or any `pytest_*` hook is refused without modeling it.
 fn conftests_allow_collection(root: &Path, file: &Path) -> bool {
-    const REFUSED: [&str; 7] = [
+    // On the module's path a fixture or an ignore list reaches the module's
+    // items; a conftest elsewhere reaches them only through a session-wide
+    // hook or plugin list (its fixtures and ignore lists stay in its own tree).
+    const ON_PATH: [&str; 5] = [
         "doctest",
         "collect_ignore",
-        "pytest_ignore_collect",
-        "pytest_collect_file",
-        "pytest_collection_modifyitems",
-        "pytest_configure",
-        "pytest_load_initial_conftests",
+        "def pytest_",
+        "autouse",
+        "pytest_plugins",
     ];
+    const ELSEWHERE: [&str; 2] = ["def pytest_", "pytest_plugins"];
+    const MAX_SIBLING_DIRECTORIES: usize = 256;
+    let clean = |directory: &Path, refused: &[&str]| {
+        let conftest = root.join(directory).join("conftest.py");
+        !conftest.exists()
+            || read_bounded(&conftest)
+                .is_some_and(|text| !refused.iter().any(|word| text.contains(word)))
+    };
     let mut directory = PathBuf::new();
-    let mut directories = vec![directory.clone()];
+    if !clean(&directory, &ON_PATH) {
+        return false;
+    }
     for component in file.parent().into_iter().flat_map(Path::components) {
         directory.push(component);
-        directories.push(directory.clone());
-    }
-    directories.iter().all(|directory| {
-        let conftest = root.join(directory).join("conftest.py");
-        if !conftest.exists() {
-            return true;
+        if !clean(&directory, &ON_PATH) {
+            return false;
         }
-        read_bounded(&conftest)
-            .is_some_and(|text| !REFUSED.iter().any(|word| mentions_identifier(&text, word)))
-    })
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return true;
+    };
+    entries
+        .flatten()
+        .take(MAX_SIBLING_DIRECTORIES)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| entry.path().strip_prefix(root).map(Path::to_path_buf).ok())
+        .all(|directory| clean(&directory, &ELSEWHERE))
 }
 
 /// One `>>> call(...)` example and the literal line that follows it.
@@ -406,7 +464,11 @@ impl Example {
 
 /// Every example of a function's docstring, or `None` when the function has no
 /// docstring or it holds anything that is not a plain call-and-literal example.
-fn examples_of(function: &ast::StmtFunctionDef, text: &SourceText<'_>) -> Option<Vec<Example>> {
+fn examples_of(
+    function: &ast::StmtFunctionDef,
+    text: &SourceText<'_>,
+    source: &str,
+) -> Option<Vec<Example>> {
     let Some(Stmt::Expr(expression)) = function.body.first() else {
         return None;
     };
@@ -416,6 +478,16 @@ fn examples_of(function: &ast::StmtFunctionDef, text: &SourceText<'_>) -> Option
     let Constant::Str(value) = &constant.value else {
         return None;
     };
+    // An escape in the source (`\n`, `\x0a`, a line continuation) decodes to
+    // text whose line count differs from the file's, so the lines read here
+    // would not be the file's lines.
+    let range = expression.value.range();
+    if source
+        .get(usize::from(range.start())..usize::from(range.end()))
+        .is_none_or(|raw| raw.contains('\\'))
+    {
+        return None;
+    }
     let first_line = text.line_for_offset(usize::from(expression.value.range().start()));
     read_examples(value, first_line)
 }
@@ -557,7 +629,7 @@ fn defined_names(body: &[Stmt], source: &str) -> Vec<String> {
             }
         }
     }
-    if mentions_identifier(&other_text, "__test__") {
+    if mentions_identifier(&other_text, "__test__") || other_text.contains("import *") {
         return Vec::new();
     }
     names
@@ -568,4 +640,21 @@ fn defined_names(body: &[Stmt], source: &str) -> Vec<String> {
         })
         .cloned()
         .collect()
+}
+
+/// Whether a top-level statement binds or mentions `len`, which could shadow
+/// the builtin the evaluator assumes. A function that uses `len` itself is
+/// the common case, so only statements outside function bodies count, plus a
+/// `def len`.
+fn binds_len(body: &[Stmt], source: &str) -> bool {
+    body.iter().any(|statement| match statement {
+        Stmt::FunctionDef(function) => function.name.as_str() == "len",
+        Stmt::ClassDef(class) => class.name.as_str() == "len",
+        other => {
+            let range = other.range();
+            source
+                .get(usize::from(range.start())..usize::from(range.end()))
+                .is_none_or(|text| mentions_identifier(text, "len"))
+        }
+    })
 }
