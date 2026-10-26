@@ -339,7 +339,13 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             let [actual, ..] = arguments.as_slice() else {
                 return false;
             };
-            let Some(call_arguments) = owner_call_arguments(actual, &owner.name) else {
+            // Invisibility only: equal owner values at the literal arguments
+            // give equal results through any one-argument wrapper
+            // (`block_on(owner(..))`), so reading through it can only
+            // withhold credit, never grant it.
+            let Some(call_arguments) = owner_call_arguments(actual, &owner.name)
+                .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
+            else {
                 return false;
             };
             let environment = BTreeMap::new();
@@ -498,6 +504,24 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
         return None;
     }
     Some(super::split_top_level_commas(&inside))
+}
+
+/// The owner call's arguments when `operand` is `owner(..).await` or
+/// `wrapper(owner(..))` with a plain identifier wrapper and nothing else
+/// around the call.
+fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
+    let trimmed = operand.trim();
+    // `owner(..).await` is the same call read through the executor.
+    if let Some(call) = trimmed.strip_suffix(".await") {
+        return owner_call_arguments(call, owner_name);
+    }
+    let name_end = trimmed.find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))?;
+    if name_end == 0 || trimmed[..name_end] == *owner_name {
+        return None;
+    }
+    let rest = trimmed[name_end..].trim_start();
+    let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
+    owner_call_arguments(inner, owner_name)
 }
 
 /// Evaluate the owner's body as a pure integer function of `arguments`.

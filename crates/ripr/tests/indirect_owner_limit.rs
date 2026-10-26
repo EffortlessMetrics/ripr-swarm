@@ -887,3 +887,53 @@ fn a_counterfeit_import_root_cannot_hide_a_polling_method() -> Result<(), String
     );
     Ok(())
 }
+
+/// The pinned input does not separate the old and new behavior: both return
+/// 0 at `p = 0`, and differ at 100. Wrapping the call in the genuine poller
+/// must not turn that into value credit.
+#[test]
+fn a_polling_helper_input_that_hides_the_change_is_not_credited() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 0;\n        assert_eq!(block_on(add_tax(0)), expected);",
+    );
+    let findings = edited(&lib, TAX_BEFORE, "    p + p / 5")?;
+    if findings.iter().any(|f| f.class == ExposureClass::Exposed) {
+        return Err(format!(
+            "input 0 hides the change: expected no exposed finding, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
+/// Direct-await parity for the same input: a `#[tokio::test]`-style
+/// `add_tax(0).await` is not credited either.
+#[test]
+fn the_polling_helper_matches_the_direct_await_on_a_hidden_change() -> Result<(), String> {
+    let helper = edited(
+        &ASYNC_OWNER.replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 0;\n        assert_eq!(block_on(add_tax(0)), expected);",
+        ),
+        TAX_BEFORE,
+        "    p + p / 5",
+    )?;
+    let awaited = edited(
+        &ASYNC_OWNER.replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 0;\n        assert_eq!(add_tax(0).await, expected);",
+        ),
+        TAX_BEFORE,
+        "    p + p / 5",
+    )?;
+    let exposed = |findings: &[Finding]| findings.iter().any(|f| f.class == ExposureClass::Exposed);
+    if exposed(&helper) != exposed(&awaited) {
+        return Err(format!(
+            "helper {:?} differs from direct await {:?}",
+            summary(&helper),
+            summary(&awaited)
+        ));
+    }
+    Ok(())
+}
