@@ -401,3 +401,25 @@ fn ava_runner_edge_forms_credit_only_a_real_ava_registration() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn a_comment_inside_an_ava_expectation_never_supplies_the_message() -> Result<(), String> {
+    // The real property is `message: "x"`, which matches neither version.
+    let (class, summary) = class_for(
+        "ava-comment-message",
+        "t.throws(() => parse(\"\"), { /* message: \"blank\" */ message: \"x\" })",
+    )?;
+    assert_eq!(class, ExposureClass::WeaklyExposed, "{summary}");
+    let (line_comment, summary) = class_for(
+        "ava-line-comment-message",
+        "t.throws(() => parse(\"\"), {\n    // message: \"blank\"\n    message: \"x\"\n  })",
+    )?;
+    assert_eq!(line_comment, ExposureClass::WeaklyExposed, "{summary}");
+    // An ordinary comment beside the real message still credits it.
+    let (commented, summary) = class_for(
+        "ava-commented-message",
+        "t.throws(() => parse(\"\"), { /* the new text */ message: \"blank\" })",
+    )?;
+    assert_eq!(commented, ExposureClass::Exposed, "{summary}");
+    Ok(())
+}

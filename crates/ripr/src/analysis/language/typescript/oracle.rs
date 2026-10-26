@@ -1421,6 +1421,23 @@ fn ava_message_only(expectation: &Argument<'_>) -> bool {
     )
 }
 
+/// `{ message: <literal> }` rebuilt from the one admitted property's own
+/// string-literal span, so no comment or whitespace in the written object
+/// reaches the text-based message guard.
+fn ava_message_object_text(expectation: &Argument<'_>, source: &str) -> Option<String> {
+    let Argument::ObjectExpression(object) = expectation else {
+        return None;
+    };
+    let [ObjectPropertyKind::ObjectProperty(property)] = object.properties.as_slice() else {
+        return None;
+    };
+    let Expression::StringLiteral(literal) = &property.value else {
+        return None;
+    };
+    let text = source.get(literal.span.start as usize..literal.span.end as usize)?;
+    Some(format!("{{ message: {text} }}"))
+}
+
 /// Match an AVA / `node:test`-style assertion `<receiver>.method(actual, expected?)`
 /// where `receiver` is the test callback's first parameter (the `t` in
 /// `test('name', t => { t.is(...) })`). Requiring the exact receiver identifier
@@ -1498,13 +1515,20 @@ pub(crate) fn ava_assertion_from_expression(
                         .get(1)
                         .is_some_and(|arg| ava_message_only(arg))
                 })
-                .map(|payload| TypeScriptErrorPayload {
-                    kind: if method == "throwsAsync" {
-                        TypeScriptErrorPayloadKind::AvaThrowsAsyncObject
-                    } else {
-                        TypeScriptErrorPayloadKind::AvaThrowsObject
-                    },
-                    ..payload
+                .and_then(|_validated| {
+                    // The guard reads the payload as text, so hand it the
+                    // admitted `message` literal alone: a comment inside the
+                    // object (`{ /* message: "blank" */ message: "x" }`)
+                    // must not supply the value.
+                    let expected = ava_message_object_text(call.arguments.get(1)?, source)?;
+                    Some(TypeScriptErrorPayload {
+                        expected,
+                        kind: if method == "throwsAsync" {
+                            TypeScriptErrorPayloadKind::AvaThrowsAsyncObject
+                        } else {
+                            TypeScriptErrorPayloadKind::AvaThrowsObject
+                        },
+                    })
                 })
         }
         _ => None,
