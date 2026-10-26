@@ -382,8 +382,6 @@ pub(crate) struct AssertionContext<'a> {
 }
 
 impl<'a> AssertionContext<'a> {
-    /// This context for a statement nested in a block, loop, branch or
-    /// `try`, which no longer reads the body's literal `const`s.
     /// This context for the argument of a `return`, which the runner awaits
     /// when the callback hands its value over.
     fn returning(&self) -> AssertionContext<'a> {
@@ -396,6 +394,8 @@ impl<'a> AssertionContext<'a> {
         }
     }
 
+    /// This context for a statement nested in a block, loop, branch or
+    /// `try`, which no longer reads the body's literal `const`s.
     fn nested(&self) -> AssertionContext<'a> {
         AssertionContext {
             receiver: self.receiver,
