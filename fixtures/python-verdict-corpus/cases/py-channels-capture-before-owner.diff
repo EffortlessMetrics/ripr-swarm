@@ -1,0 +1,12 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def say_a(name):
+-    print("hello " + name)
++    print("hi " + name)
+ 
+ 
+ def warn_b(name):

@@ -156,7 +156,9 @@ use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod forwarding_decorator;
 mod helper_assertions;
+mod literal_patch;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -440,7 +442,12 @@ struct PythonTest {
 /// relation rules as a test body when a test names it as a parameter (#4563).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonFixtureDef {
+    /// The public name a test requests; differs from `binding` when the
+    /// decorator renames the fixture (`name=`).
     name: String,
+    /// The module attribute the def binds, which a later def of the same name
+    /// replaces.
+    binding: String,
     file: PathBuf,
     body_text: String,
     imports: Vec<PythonImport>,
@@ -1069,6 +1076,7 @@ impl PythonAdapter {
                 continue;
             }
             changed_count += 1;
+            let file_start = findings.len();
             if is_test_file(&changed.path) {
                 continue;
             }
@@ -1219,6 +1227,7 @@ impl PythonAdapter {
                     findings.push(finding);
                 }
             }
+            classify::number_colliding_candidates(&mut findings[file_start..], &mut value_origins);
             // A deleted behavior line no added line pairs with is kept as
             // base-side evidence on its owner, as the Rust adapter keeps it
             // (#7587, RIPR-SPEC-0156).
@@ -1334,6 +1343,8 @@ mod capability_disposition_tests;
 
 #[cfg(test)]
 mod helper_inline_tests;
+#[cfg(test)]
+mod literal_patch_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

@@ -42,9 +42,11 @@ Weakness
 
 Stop reasons:
   - dynamic_dispatch_unresolved — the path goes through a dynamic call ripr cannot resolve statically
+    Next: Call the changed owner on the concrete type in a test, not through a trait object, and assert on its result.
 
 Static limitation
   dynamic_dispatch — Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
+  Next: Add a test that calls the changed owner on the concrete type, not through a trait object or `dyn` value, and assert on its result.
 Drill in:
   ripr explain --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/diff.patch --mode fast probe:src_nr.py:python_preview:852b3ff0
   ripr context --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/diff.patch --mode fast --at probe:src_nr.py:python_preview:852b3ff0

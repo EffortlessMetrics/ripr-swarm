@@ -682,7 +682,7 @@ fn persist_before_repair_attempt(
     // attempt.
     commands::before_phase_stdout(
         &packet_text,
-        &agent_packet.display().to_string(),
+        &crate::output::path::human_path(&agent_packet),
         options.json,
         &continuation,
     )

@@ -1,0 +1,44 @@
+{
+  "case_id": "py-props-loop-identity",
+  "subject_id": "authored-py-pytest-properties",
+  "diff": "cases/py-props-loop-identity.diff",
+  "anchor": {
+    "file": "props/core.py",
+    "line": 18
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "returned_value",
+  "test_shape": "pytest_loop_identity_property",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return a ** 2 * b",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns a different value (the loop only calls the owner with a == 1, where a ** 2 * b equals a * b)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 25: the loop only calls the owner with a == 1, where a ** 2 * b equals a * b.",
+  "labeling_observation": {
+    "ripr_commit": "cf7ea6d8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

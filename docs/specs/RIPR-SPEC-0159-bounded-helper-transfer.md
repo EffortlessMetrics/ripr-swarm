@@ -365,9 +365,17 @@ can only hint that a caller "may lead here" without changing anything.
   entry by the library declaration chain above, the test file by an
   unconditional, un-remapped chain from `src/lib.rs` whose only `cfg` is a bare
   `#[cfg(test)]` on the test module's own out-of-line declaration and which
-  passes through no inline module. It refuses (verdict-corpus rows and the
+  passes through no inline module. Inside the test file each `use` item that
+  spells the import is resolved from its own position (#10279): the inline
+  modules around it extend the file's module before `self`/`super` apply, so
+  the default in-file layout `#[cfg(test)] mod tests { use super::<entry>; }`
+  beside the entry resolves to the entry's module, while `super` from
+  `flat::tests` names `flat`. Every such item in the file must resolve to the
+  entry's module, and one must sit in the same inline module as the test
+  function: an import in a sibling module does not bind the test's bare call. It refuses (verdict-corpus rows and the
   honesty corpus pin each): any `#[path]` in the package, a test file in a
-  workspace member or under `tests/`, an inline module, glob import,
+  workspace member or under `tests/`, a spelling whose inline-module scope
+  resolves elsewhere or past the crate root, a glob import,
   `cfg`-gated `use`, inner `cfg`, macro definition or item-position macro in the
   test file, a renamed or function-local import, a path through `self`/`super`/
   `crate` again or past the crate root, a path that resolves to another module
@@ -377,7 +385,12 @@ can only hint that a caller "may lead here" without changing anything.
   struct of the entry's name). Verdict-corpus row
   `spec0236-seam-private-tier-src-test-chain` (`use super::checkout;` in
   `src/checkout_tests.rs`, declared `#[cfg(test)] mod checkout_tests;`) is the
-  recovered positive. Still refused, tracked in #9971: a test module on a
+  recovered positive; fixture `module_reach_super_import_in_file_tests` is the
+  in-file positive and `module_reach_super_import_in_file_wrong_module` its
+  wrong-scope counterexample. An in-file import that resolves to another module
+  only re-exporting the entry (`mod flat { pub use crate::<entry>; mod tests {
+  use super::<entry>; } }`) is an accepted conservative loss, as is a test function nested inside another
+  function. Still refused, tracked in #9971: a test module on a
   declaration chain that passes through an inline module (the library index
   does not place such a file in a module context either), a test module under
   a `cfg(test)`-gated parent, and the other routes listed above.

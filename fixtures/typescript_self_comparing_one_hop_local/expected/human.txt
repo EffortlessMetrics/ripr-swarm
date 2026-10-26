@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return amount - 20;
-  Missing discriminator (1 of 2): Related test reaches `price` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a…
+  Missing discriminator (1 of 2): Related test reaches `price` but the strongest extracted oracle is
+    `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`)
+    assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/lib.test.ts:3 price (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `return value == amount - 20`; no actionable repair packet is emitted until
@@ -32,6 +34,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related test(s) found for owner `price`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -39,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input --diff <cwd>/fixtures/typescript_self_comparing_one_hop_local/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input --diff <cwd>/fixtures/typescript_self_comparing_one_hop_local/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.ts:typescript_preview:c712a282 --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

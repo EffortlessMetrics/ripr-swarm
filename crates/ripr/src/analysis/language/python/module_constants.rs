@@ -33,6 +33,7 @@ use super::boundary::literal_value;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
+use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,17 +222,20 @@ pub(super) fn function_bound_names(
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct PythonTestRebinding {
     /// Names the test cannot be trusted to hold at their imported value: its
-    /// own parameters and locals, and names its module binds more than once.
+    /// own parameters and locals. Names its module binds more than once are in
+    /// `module_names`; [`Self::rebinds`] reads both.
     pub(super) names: Vec<String>,
     /// Names the test's module binds more than once (an import later replaced
     /// by `fee = ...` or `def fee`) or any function declares `global`. Kept
     /// apart from `names` so a function-local import of an owner is not
     /// mistaken for a module-level replacement (#8247).
-    pub(super) module_names: Vec<String>,
+    /// Shared by every test of the module: a per-test copy made a file with N
+    /// tests hold N copies of N names (quadratic memory and sort time).
+    pub(super) module_names: Arc<Vec<String>>,
     /// Every name the test's module binds at least once (imports, `def`,
     /// `class`, assignments, loop and `with` targets), so a builtin it replaces
     /// is visible even when bound a single time.
-    pub(super) module_bound: Vec<String>,
+    pub(super) module_bound: Arc<Vec<String>>,
     /// The module's bindings cannot be enumerated (a star import, a dynamic
     /// namespace writer, a module-scope `match`): no builtin name is trusted.
     pub(super) module_opaque: bool,
@@ -239,7 +243,7 @@ pub(super) struct PythonTestRebinding {
     /// or `*` when it names a dynamic namespace writer (`setattr`,
     /// `sys.modules`, ...); either can rewrite another module's constant at
     /// runtime.
-    pub(super) attributes: Vec<String>,
+    pub(super) attributes: Arc<Vec<String>>,
     /// The test or its module binds names this walk cannot enumerate, so no
     /// name is trusted.
     pub(super) opaque: bool,
@@ -252,12 +256,17 @@ pub(super) struct PythonTestRebinding {
     /// the directory chain that declares a fixture or hook. Decided by
     /// existence, never by reading what that code calls.
     pub(super) implicit_reach: bool,
+    /// A module `def`/`class` header (decorator, default, annotation, base) or
+    /// a conditional import can run code at import (#10040 `no_call_path`).
+    pub(super) header_reach: bool,
 }
 
 impl PythonTestRebinding {
     /// Whether the test may see `name` at a value other than its import.
     pub(super) fn rebinds(&self, name: &str) -> bool {
-        self.opaque || self.names.iter().any(|bound| bound == name)
+        self.opaque
+            || self.names.iter().any(|bound| bound == name)
+            || self.module_names.iter().any(|bound| bound == name)
     }
 
     /// Whether the test's module rebinds `name` after, or besides, importing it.
@@ -284,12 +293,13 @@ pub(super) fn python_test_rebinding(
     PythonTestRebinding {
         opaque: locals.is_none() || contains_nested_scope(body) || body_text.contains(":="),
         names: locals.unwrap_or_default(),
-        module_names: Vec::new(),
-        module_bound: Vec::new(),
+        module_names: Arc::default(),
+        module_bound: Arc::default(),
         module_opaque: false,
-        attributes: Vec::new(),
+        attributes: Arc::default(),
         edited_in_diff: false,
         implicit_reach: false,
+        header_reach: false,
     }
 }
 
@@ -317,24 +327,25 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     } else {
         assigned_attribute_names(statements)
     };
+    // Built once and shared: these are the same for every test of the module.
+    let mut module_names: Vec<String> = rebound.iter().map(|name| (*name).clone()).collect();
+    module_names.sort();
+    module_names.dedup();
+    let module_names = Arc::new(module_names);
+    let mut module_bound = module.names.clone();
+    module_bound.sort();
+    module_bound.dedup();
+    let module_bound = Arc::new(module_bound);
+    let attributes = Arc::new(attributes);
     for test in tests {
         let rebinding = &mut test.constant_rebinding;
         rebinding.opaque |= module.opaque || dynamic;
-        rebinding
-            .names
-            .extend(rebound.iter().map(|name| (*name).clone()));
         rebinding.names.sort();
         rebinding.names.dedup();
-        rebinding
-            .module_names
-            .extend(rebound.iter().map(|name| (*name).clone()));
-        rebinding.module_names.sort();
-        rebinding.module_names.dedup();
+        rebinding.module_names = Arc::clone(&module_names);
         rebinding.module_opaque = module.opaque || dynamic;
-        rebinding.module_bound.clone_from(&module.names);
-        rebinding.module_bound.sort();
-        rebinding.module_bound.dedup();
-        rebinding.attributes.clone_from(&attributes);
+        rebinding.module_bound = Arc::clone(&module_bound);
+        rebinding.attributes = Arc::clone(&attributes);
     }
 }
 
@@ -414,11 +425,21 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 
 /// Whether `source` names a writer that can bind module names at runtime
 /// without an assignment statement, including `unittest.mock` patching
-/// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`). Textual on
+/// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`), and
+/// `importlib.reload`, which re-executes the module. Textual on
 /// purpose: a false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
     [
-        "exec", "globals", "vars", "locals", "setattr", "__dict__", "patch",
+        "exec",
+        "globals",
+        "vars",
+        "locals",
+        "setattr",
+        "__setattr__",
+        "delattr",
+        "reload",
+        "__dict__",
+        "patch",
     ]
     .into_iter()
     .any(|identifier| mentions_identifier(source, identifier))
