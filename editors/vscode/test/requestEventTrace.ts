@@ -89,6 +89,7 @@ export class RequestEventTrace {
     try {
       const after = this.sequence;
       const dropped = this.dropped;
+      const retainedBefore = this.events.length;
       const target = document && { document_id: this.document(document).document_id,
         document_version: document.version, ...client,
         range_start_line: range.start.line, range_start_character: range.start.character,
@@ -96,9 +97,11 @@ export class RequestEventTrace {
         trigger_kind: 1 }; // CodeActionTriggerKind.Invoke; no runtime vscode import.
       return () => {
         try {
-          // Conservatively refuse even if a drop evicted only pre-window data.
-          // The counter also includes observer failures, not just eviction.
-          if (!target || this.dropped !== dropped) { return { status: 'incomplete' }; }
+          // Evicting old entries does not lose this window. Any other drop
+          // (including an observer failure before sequence allocation) does.
+          const evictedBefore = retainedBefore
+            - this.events.filter(event => Number(event.sequence) <= after).length;
+          if (!target || this.dropped - dropped > evictedBefore) { return { status: 'incomplete' }; }
           const matches = (event: Record<string, unknown>) =>
             Object.entries(target).every(([key, value]) => event[key] === value);
           const begins = this.events.filter(event => event.kind === 'provider.begin'

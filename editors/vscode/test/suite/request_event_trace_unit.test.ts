@@ -112,6 +112,28 @@ suite('Request event trace unit controls', () => {
     assert.strictEqual(observe().status, 'incomplete');
   });
 
+  test('a full ring can evict old entries without crediting lost window events or observer failures', () => {
+    let failClock = false;
+    const trace = new RequestEventTrace(() => {
+      if (failClock) { throw new Error('clock failed after prefill'); }
+      return 0;
+    });
+    const { document, range, context, client, token } = providerFixture(trace);
+    for (let index = 0; index < MAX_REQUEST_TRACE_EVENTS; index++) { trace.record('document.save'); }
+    const observe = trace.observeProviderRequest(document, range, client);
+    trace.record('command.begin');
+    trace.middleware(undefined, client)(document, range, context, token, () => []);
+    trace.record('command.resolve');
+    assert.strictEqual(observe().status, 'observed', 'only pre-window entries have been evicted');
+    const afterPrefill = trace.observeProviderRequest(document, range, client);
+    failClock = true;
+    trace.middleware(undefined, client)(document, range, context, token, () => []);
+    assert.strictEqual(afterPrefill().status, 'incomplete', 'prefill must not hide observer failure');
+    failClock = false;
+    for (let index = 0; index < MAX_REQUEST_TRACE_EVENTS; index++) { trace.record('document.save'); }
+    assert.strictEqual(observe().status, 'incomplete', 'window eviction must remain distinct from absence');
+  });
+
   for (const stimulus of ['model-edit', 'matching-provider-change', 'neither'] as const) {
     test(`${stimulus} retains distinct observations and exactly one original invocation`, async () => {
       let tick = 0;
