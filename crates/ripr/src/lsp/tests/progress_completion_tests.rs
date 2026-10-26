@@ -91,7 +91,9 @@ where
                 let attempt = generation.to_string();
                 let snapshot = format!("snapshot:{generation}");
                 release_matching_begin(&messages, generation, &mut release)?;
-                let status = messages.iter().rposition(|message|
+                // Completion is monotone for this generation. A later duplicate
+                // status must not erase the earlier status/outcome witness.
+                let status = messages.iter().position(|message|
                     message["method"] == "ripr/analysisStatus"
                         && message["params"]["attempt_id"].as_str() == Some(attempt.as_str())
                         && message["params"]["snapshot_id"].as_str() == Some(snapshot.as_str())
@@ -215,6 +217,7 @@ async fn ordered_case(
     ends: &[u64],
     response_first: bool,
     witness_first: bool,
+    repeat_status_after_outcome: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
     let (client, mut peer) = tokio::io::duplex(64 * 1024);
     let (reader, mut writer) = tokio::io::split(client);
@@ -350,6 +353,10 @@ async fn ordered_case(
             )
             .await?;
         }
+        if repeat_status_after_outcome {
+            write_lsp_message(&mut peer, serde_json::json!({"jsonrpc":"2.0","method":"ripr/analysisStatus",
+                "params":{"attempt_id":"7","snapshot_id":"snapshot:7","state":"succeeded","run_status":"limited"}})).await?;
+        }
         if !response_first {
             write_lsp_message(&mut peer, response).await?;
         }
@@ -400,7 +407,7 @@ fn started_refresh_window_keeps_both_response_orders_and_generation() -> Result<
     work_done_progress_runtime()?.block_on(async {
         for response_first in [false, true] {
             for witness_first in [false, true] {
-                let messages = ordered_case(&[7], response_first, witness_first).await?;
+                let messages = ordered_case(&[7], response_first, witness_first, false).await?;
                 assert!(exactly_one_matching_end(&messages));
             }
         }
@@ -412,8 +419,30 @@ fn started_refresh_window_keeps_both_response_orders_and_generation() -> Result<
 fn started_refresh_window_does_not_hide_missing_duplicate_or_wrong_end() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         for ends in [&[][..], &[7, 7][..], &[8][..]] {
-            let messages = ordered_case(ends, true, true).await?;
+            let messages = ordered_case(ends, true, true, false).await?;
             assert!(!exactly_one_matching_end(&messages), "accepted {ends:?}");
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn started_refresh_completion_survives_repeated_committed_status() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        for witness_first in [false, true] {
+            for (ends, expected) in [
+                (&[7][..], true),
+                (&[][..], false),
+                (&[7, 7][..], false),
+                (&[8][..], false),
+            ] {
+                let messages = ordered_case(ends, false, witness_first, true).await?;
+                assert_eq!(
+                    exactly_one_matching_end(&messages),
+                    expected,
+                    "accepted incorrect End window {ends:?}"
+                );
+            }
         }
         Ok(())
     })
