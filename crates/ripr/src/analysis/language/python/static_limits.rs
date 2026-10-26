@@ -329,13 +329,17 @@ pub(super) fn static_limit_for_focused_change(
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
-            evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
-                .to_string(),
+            evidence: LAMBDA_LIMIT_EVIDENCE.to_string(),
             missing: "Static limit `unsupported_syntax`: the changed line uses a Python syntax shape this preview adapter does not model precisely yet.".to_string(),
         });
     }
     None
 }
+
+/// The evidence of the lambda-syntax limit. A module-value credit (#9619) that
+/// reads the edited lambda body lifts exactly this limit.
+pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
+    "static_limit unsupported_syntax: changed line uses lambda syntax";
 
 /// A `lambda` expression: the keyword at an identifier boundary and followed
 /// by a space, `:` or `(`. Text in a string is read as text only when the line
