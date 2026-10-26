@@ -546,7 +546,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// entries keep the indirect-owner limit.
 /// `1.112`: a `=>` between the elements of a local `macro_rules!` test-table
 /// row splits rows like `,`, `;` and `:` (#10298).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.112";
+/// `1.113`: a clean `#[test_case(.. => literal)]` row credits as the
+/// harness-compared return (RIPR-SPEC-0231 rule 9, #9619). Old entries keep
+/// the row unread.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.113";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -705,7 +708,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.112";
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
 /// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.119";
+/// `0.120`: same arrow-row oracle as full `1.113` (#9619).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.120";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -866,7 +870,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.119";
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
 /// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.119";
+/// `0.120`: same arrow-row oracle as full `1.113` (#9619).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.120";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1054,7 +1059,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.46`: call facts retain safe typed function-pointer aliases (#9478).
 /// `1.47`: `#[cfg_attr(<known-true>, test)]` marks a function as a test
 /// (#9442); `1.46` facts leave it a production function.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.47";
+/// `1.48`: a clean `#[test_case(.. => literal)]` row carries the
+/// `assert_eq!` the harness runs (RIPR-SPEC-0231 rule 9, #9619); `1.47`
+/// facts have no oracle for it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.48";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4885,7 +4893,8 @@ mod tests {
         // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
         // 1.45 -> 1.46: typed function-pointer alias facts (#9478).
         // 1.46 -> 1.47: `cfg_attr(<known-true>, test)` marks a test (#9442).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.47");
+        // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.48");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5021,7 +5030,8 @@ mod tests {
         // 1.108 -> 1.109: indirect-owner limit and `cfg_attr` test (RIPR-SPEC-0240).
         // 1.110 -> 1.111: polling-helper owner pin (RIPR-SPEC-0197, #9478).
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.112");
+        // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.113");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5120,8 +5130,9 @@ mod tests {
         // 0.115 -> 0.116: same indirect-owner limit and `cfg_attr` test as full 1.109.
         // 0.117 -> 0.118: same polling-helper owner pin as full 1.111.
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.119");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.119");
+        // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.120");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.120");
     }
 
     #[test]
