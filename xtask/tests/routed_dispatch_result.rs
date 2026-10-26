@@ -158,6 +158,20 @@ esac
         "MOCK_CALLS".to_string(),
         scratch.0.join("calls").to_string_lossy().into_owned(),
     );
+    let run_shell = |script: &PathBuf, bindings: &BTreeMap<String, String>| {
+        Command::new("bash")
+            .arg("-e")
+            .arg(script)
+            .env_clear()
+            .envs(bindings)
+            .env(
+                "PATH",
+                std::env::join_paths(&paths).map_err(|e| e.to_string())?,
+            )
+            .env("GITHUB_STEP_SUMMARY", &summary)
+            .output()
+            .map_err(|e| e.to_string())
+    };
     let mut eligibility = true;
     let mut eligibility_outcome = "skipped";
     if admission == "success"
@@ -176,18 +190,7 @@ esac
             .ok_or("missing summary after eligibility")?;
         let eligibility_script = scratch.0.join("eligibility.sh");
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
-        let output = Command::new("bash")
-            .arg("-e")
-            .arg(&eligibility_script)
-            .env_clear()
-            .envs(&env)
-            .env(
-                "PATH",
-                std::env::join_paths(&paths).map_err(|e| e.to_string())?,
-            )
-            .env("GITHUB_STEP_SUMMARY", &summary)
-            .output()
-            .map_err(|e| e.to_string())?;
+        let output = run_shell(&eligibility_script, &env)?;
         eligibility = output.status.success();
         eligibility_outcome = if eligibility { "success" } else { "failure" };
     }
@@ -195,18 +198,7 @@ esac
         "ELIGIBILITY_RESULT".to_string(),
         eligibility_outcome.to_string(),
     );
-    let output = Command::new("bash")
-        .arg("-e")
-        .arg(&script)
-        .env_clear()
-        .envs(env)
-        .env(
-            "PATH",
-            std::env::join_paths(paths).map_err(|e| e.to_string())?,
-        )
-        .env("GITHUB_STEP_SUMMARY", &summary)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = run_shell(&script, &env)?;
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
     assert!(report.contains("### Ripr Rust Small Result"));
