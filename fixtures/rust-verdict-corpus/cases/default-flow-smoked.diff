@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e3feef1..afc0819 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,7 +17,7 @@ pub fn family_rebound(sku: &str) -> &str {
+ /// Same as `family_unpinned`; its test calls the defaulting input without
+ /// asserting on the result.
+ pub fn family_smoked(sku: &str) -> &str {
+-    let end = sku.find('-').unwrap_or(sku.len());
++    let end = sku.find('-').unwrap_or_else(|| sku.len());
+     &sku[..end]
+ }
+ 

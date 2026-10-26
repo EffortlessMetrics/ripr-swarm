@@ -1,0 +1,57 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_caplog_alias_in_literal/input
+config: <cwd>/fixtures/python_caplog_alias_in_literal/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  File: audit.py:8
+  Language: python
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_msgs_5
+  Changed behavior: log.warning("msgs: 5")
+  Missing discriminator (1 of 2): Related Python test reaches `check_balance` but the strongest
+    extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed
+    output/log/call effect
+  Related test: tests/test_audit.py:6 test_low_balance (assertion too weak to tell the old behavior from the new)
+  Suggested test file: tests/test_audit.py
+  Suggested test: test_low_balance
+  Test node: tests/test_audit.py::test_low_balance
+  Verify command: python -m pytest tests/test_audit.py::test_low_balance (high)
+  Next step — Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes "msgs: 5"`
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
+    - reach yes: 1 related Python test(s) found for owner `check_balance`
+    - infection yes: Changed Python call or output effect can alter observable side effects: `log.warning("msgs: 5")`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:a2e6d4a7
+  ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:a2e6d4a7
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `audit.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

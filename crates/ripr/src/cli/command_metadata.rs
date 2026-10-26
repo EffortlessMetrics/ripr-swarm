@@ -209,6 +209,8 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // An unknown `--seam-id` exits 3 with prose on stderr and empty stdout.
+        "cmd:agent.start" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // Unknown-seam and the other named refusals exit 3; under `--json`
         // the refusal document is on stdout, prose on stderr. If that
         // document cannot be rendered or written, the exit is 2, not 3.
@@ -1844,7 +1846,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent start --root . --seam-id ID",
         next_routes: &["agent brief", "agent packet"],
         stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "writes command templates only; it does not call an LLM API, generate tests, or edit files.",
         not_applicable_reason: None,
     },
@@ -2156,7 +2158,7 @@ const METADATA: &[CommandMetadata] = &[
         },
         state_target: None,
         json_support: false,
-        example: "ripr explain ABC123 --base REV",
+        example: "ripr explain <finding-id|file:line> --base REV",
         next_routes: &["context", "check"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
@@ -3306,6 +3308,27 @@ mod tests {
     }
 
     #[test]
+    fn explain_example_names_selector_forms_not_a_fake_id() -> Result<(), String> {
+        let row = METADATA
+            .iter()
+            .find(|row| row.id == "cmd:explain")
+            .ok_or("cmd:explain row missing")?;
+        if row.example.contains("ABC123") {
+            return Err(format!(
+                "explain example is a literal fake id: {}",
+                row.example
+            ));
+        }
+        if !row.example.contains("<finding-id|file:line>") {
+            return Err(format!(
+                "explain example does not name the selector forms: {}",
+                row.example
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn every_banned_claim_token_is_rejected_in_summary_and_limitations() -> Result<(), String> {
         for token in BANNED_CLAIM_TOKENS {
             let in_summary = with_mutated_row("cmd:check", |row| {
@@ -3374,6 +3397,7 @@ mod tests {
             ("cmd:diff", EXIT_ADVISORY_FINDINGS),
             ("cmd:gate.evaluate", EXIT_GATE_EVALUATE),
             ("cmd:agent.verify", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:agent.start", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
             ("cmd:agent.card", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
