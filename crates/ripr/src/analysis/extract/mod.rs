@@ -6,6 +6,7 @@ mod oracles;
 pub(crate) mod property_macros;
 mod returns;
 mod shadow;
+mod test_case_arrow;
 mod text;
 
 pub(crate) use calls::{
@@ -36,4 +37,5 @@ pub(crate) use shadow::{
     ShadowAuthority, extract_pattern_words, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     test_body_defines_callee_fn, test_body_let_shadow_line,
 };
+pub(crate) use test_case_arrow::{arrow_row_is_read, arrow_row_oracles};
 pub(crate) use text::extract_identifier_tokens;

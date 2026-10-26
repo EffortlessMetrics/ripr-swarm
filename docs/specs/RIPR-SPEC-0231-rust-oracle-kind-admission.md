@@ -604,6 +604,33 @@ Two pattern terms are used below.
    that also holds a reached statement keep every oracle on that line. The
    rule only removes oracles, so it never creates a new path to `exposed`.
 
+9. **A harness-compared return is an `assert_eq!`.** The `test_case`
+   crate turns `#[test_case(10 => 12)] fn rows(x: i64) -> i64 { bump(x) }`
+   into a test that compares the value `rows` returns with `12`. No assertion
+   macro appears in the source, so nothing above reads it. The producer
+   synthesizes `assert_eq!(<returned expression>, <literal>)` once per
+   `=> literal` row, keyed to the function's `fn` line, and the
+   RIPR-SPEC-0197 execution admission accepts exactly that synthesis. Both
+   hold only when all of these are true:
+   - the attribute is a trusted `test_case` (`use test_case::test_case`
+     imported by the test's module, RIPR-SPEC-0197) and every row argument
+     before the arrow is a scalar literal filling one parameter;
+   - the text after the one top-level arrow is a plain literal: an integer
+     (optionally negated), `true`, `false`, or a string or character
+     without escapes. `matches`, `with`, `panics`, `it`, `is`, a call, an
+     operator expression and a constant name all stay unread;
+   - the function body is a single returned expression with no
+     statements, so the compared value is what that expression yields, and
+     the function is neither `#[should_panic]` nor `#[ignore]`.
+
+   The reading adds an oracle and nothing else: the returned expression
+   goes through the same owner-call, hidden-input and observation checks as
+   a written `assert_eq!`. A row whose literal does not match the owner's
+   behavior is a failing test, not an invisible one, so it keeps the credit
+   a written `assert_eq!(.., wrong)` keeps. Any refused row leaves the
+   function exactly as before: unidentified, never a "has no assertion"
+   gap (#9478).
+
 ### Reveal admission of an excluded sibling
 
 Rule 1 sets the kind and strength of an inequality; reveal still decides
@@ -707,6 +734,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    literally, and keeping every guard that contains `==`, which keeps
    `Err(e) if e.len() == 3` as a strong variant pin.
 
+8. **Arrow rows are read, not skipped.** Adopted: synthesize
+   `assert_eq!(returned, literal)` per clean `=> literal` row (rule 9),
+   because the comparison the harness runs is exactly that and the sibling
+   plain-argument form already earns credit through its written
+   `assert_eq!`. Rejected: leaving the form unidentified (the missed credit
+   the `lib-test-case-arrow-expected-value` row records), and reading
+   `=> matches` or `=> with` too, because those run a pattern or a
+   predicate this spec has no reading for.
+
 ## Required Evidence
 
 - Each row of the Problem table, and each overstatement listed after it,
@@ -730,6 +766,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   (`exact_value` / strong in `related_tests[]`): the grade is fixed,
   and the remaining gap is reveal observation confirmation, owned
   outside this spec.
+- Rule 9: acceptance examples 38 to 40 read as stated, through the public
+  API. Every negative control is the credited twin with exactly one thing
+  changed. The verdict-corpus row `lib-test-case-arrow-expected-value`
+  credits, and the whole Rust corpus keeps zero false verdicts.
 
 ## Non-Goals
 
@@ -911,6 +951,16 @@ rejected alternative. Any can be reversed later without touching the rest.
     `let value = score(2); panic!("stop"); assert_eq!(value, 4);`: no oracle
     (rule 8; `exact_value` / strong before #7638), so the finding reads
     its named gap.
+38. `#[test_case(10 => 12)] #[test_case(20 => 22)] fn rows(x: i64) -> i64 {
+    bump(x) }` with `bump(x) = x + 2` (changed from `x + 1`): each row
+    reads `assert_eq!(bump(x), 12)` / `assert_eq!(bump(x), 22)`,
+    `exact_value` / strong, and the finding reads `exposed`.
+39. The same function with `=> matches 12`, `=> with |v| ..`,
+    `=> panics ".."`, a call, an expression or a constant after the arrow:
+    unread, so no oracle and no `exposed`.
+40. The same function with `#[should_panic]` or `#[ignore]`, a body of
+    statements (`let y = bump(x); y`), no `use test_case::test_case`, a
+    non-literal row argument, or fewer row values than parameters: unread.
 
 ## Test Mapping
 
@@ -1029,6 +1079,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   reach filter disabled each still read a gap (other execution admissions
   already refused the assertion), so these cases guard the verdict and the
   unit tests above pin the oracle change itself.
+- Existing: `crates/ripr/tests/test_case_arrow_expected_value.rs` (rule 9,
+  examples 38 to 40, with the corpus case
+  `lib-test-case-arrow-expected-value`).
 
 ## Implementation Mapping
 
@@ -1048,6 +1101,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   exact owner pin needs a strong oracle (decision 4; `pin_strength_admits`).
   `excludes_only_sibling_variant` admits an excluded sibling as
   `relational_check` / weak.
+- `crates/ripr/src/analysis/extract/test_case_arrow.rs`: rule 9's row
+  synthesis (`arrow_row_oracles`, `arrow_row_is_read`), used by
+  `syntax/ra.rs`, `facts/parameterized_tests.rs` and the RIPR-SPEC-0197
+  admission in `syntax/owner_pin.rs` (`test_case_runs_body`).
 
 ## Metrics
 
