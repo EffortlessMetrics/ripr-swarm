@@ -890,6 +890,54 @@ mod tests {
         Ok(())
     }
 
+    /// #10534 review follow-up: an EOL-only run with no findings still emits
+    /// the limitation notice — the empty complete branch must not silently
+    /// drop the advisory either.
+    #[test]
+    fn render_discloses_empty_complete_outcome_advisory_limitations() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                candidate_line_count: 2,
+                finding_count: 0,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::EolOnlyChurn,
+                AnalysisStage::DiffLoad,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Re-run the analysis with the complete diff stream.",
+                )?,
+            )],
+        )?;
+        let mut output = output_with_unknown_finding();
+        output.findings = Vec::new();
+        output.analysis_outcome = Some(outcome);
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("::notice title=ripr analysis limitations::"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("eol_only_churn"), "{rendered}");
+        // Advisory, not scope-reducing: the incomplete warning must not fire.
+        assert!(
+            !rendered.contains("title=ripr analysis incomplete"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn render_scopes_findings_of_an_incomplete_analysis() -> Result<(), String> {
         let mut output = output_with_unknown_finding();
