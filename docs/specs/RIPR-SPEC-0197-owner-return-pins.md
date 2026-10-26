@@ -124,11 +124,15 @@ compound and takes the same gate rather than reading as a plain macro path.
 More generally an effect oracle is ungated only when its text starts with an
 `assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
 `!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
-assertion macro in its tail. A root `loop` with no `break` and a root
-`std::process::exit` / `abort` call end the test like an earlier `return`, for every
-family that reads this admission. Not covered: `process::exit` reached through a
-`use` alias. A boolean `assert!` / `debug_assert!` takes the same admission for
-`return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
+assertion macro in its tail. A root `loop` or `while true` that no `break` leaves, and a
+root `std::process::exit` / `abort` call, end the test like an earlier `return`, for every
+family that reads this admission. A `break` leaves the root loop only when it belongs to
+it: an inner loop's unlabeled `break`, one in a closure or async block, or a labeled
+`break` naming an inner loop or block does not. The process exit may be spelled in full
+(`std::process::exit`), through an imported module under any name (`use std::process;`,
+`use std::process as quit;`) or as an imported leaf (`use std::process::exit;`); a
+file-wide `use` is read, so an over-match only withholds credit. A boolean `assert!` /
+`debug_assert!` takes the same admission for `return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
 context (after `return`, in an uncalled `fn` or closure, `if false`, `loop {}`,
 `cfg!(any())`) no longer credits (#10389). The one exception is an operand that
 nests only a known pure comparison macro (`approx_eq!` from `float_cmp`;
@@ -144,13 +148,11 @@ flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 review of #8934; tracked with #8983 unless a separate issue says
 otherwise):
 
-- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
-  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
-  divergence detection treats any descendant `break` as an exit of the root loop.
-  The return family credits these too.
-- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
-  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
-  is named above; the other two are equally undetected.
+- A non-root divergence before the assertion, such as `{ std::process::exit(0); }`
+  or `if true { loop {} }`. Only the body's own statement list is read.
+- A `loop` whose only `break` sits behind a condition that never holds
+  (`loop { if false { break; } }`): any `break` that belongs to the loop counts as
+  an exit.
 
 Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
 qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root
