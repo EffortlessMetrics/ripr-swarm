@@ -16711,7 +16711,7 @@ fn analyze_diff_scopes_extraction_partial_to_test_files_that_reach_the_diff() ->
         "export * from './pricing';\nexport * from './other';\n",
     )?;
     let dropped =
-        "if (process.env.CI) {\n  it(`adds ${1}`, () => {\n    expect(1).toBe(1);\n  });\n}\n";
+        "for (const n of cases) {\n  it(`adds ${n}`, () => {\n    expect(n).toBe(n);\n  });\n}\n";
     // Reaches only `other.ts`.
     ts_write_file(
         &root.join("tests/unrelated.test.ts"),
