@@ -68,6 +68,12 @@ feeding an equality predicate with two exact related tests. Negative controls
 cover a non-family `len` binding and must not receive this limitation. The
 stable enum wire string and LSP accepted-kind catalog are tested separately.
 
+`crates/ripr/tests/spec_b_binding_contracts.rs` checks the numbered corpus
+programs through typed production findings: negative guards refuse this specific
+limitation, direct predicate retargets carry no limitation kind, and the static
+`LazyLock` initializer has no function owner. The retained macro-guarded adapter
+test is the positive fallback-kind oracle; citation coverage does not replace it.
+
 ## Non-Goals
 
 This slice does not resolve value propagation, prove the equality boundary,

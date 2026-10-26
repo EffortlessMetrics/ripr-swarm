@@ -133,6 +133,11 @@ generic syntax reason.
 `diff_analysis_keeps_value_propagation_limitation_for_macro_guarded_use`;
 fixtures `binding_predicate_{equality_boundary,positions,two_uses,scope_controls}`.
 
+`crates/ripr/tests/spec_b_binding_contracts.rs` separately checks the numbered
+corpus programs for exact relation presence/refusal, use positions and order,
+distinct probe ids, causal initializers and earliest-operation disclosure.
+These semantic assertions supplement the corpus's runtime-label citations.
+
 ## Non-Goals
 
 - No evaluation of `find`/`rfind`, `chars`, `map_or`, slicing, or
