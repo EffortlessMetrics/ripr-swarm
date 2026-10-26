@@ -3,6 +3,7 @@
 //! that notices the edit.
 
 use super::doctest_tests::{collects_doctests, doctest_tests};
+use crate::domain::OracleStrength;
 use std::path::{Path, PathBuf};
 
 const ENABLED: &str = "[tool.pytest.ini_options]\naddopts = \"--doctest-modules\"\n";
@@ -282,5 +283,27 @@ fn a_root_with_more_subdirectories_than_the_scan_cap_is_unknown() -> Result<(), 
     let collected = collects_doctests(&root, Path::new("src/texts.py"));
     let _ = std::fs::remove_dir_all(&root);
     assert!(!collected);
+    Ok(())
+}
+
+#[test]
+fn a_trailing_comment_on_the_example_line_does_not_hide_the_comparison() -> Result<(), String> {
+    let doc = "    >>> clip('abcdef', 3)  # == 'zzz'\n    'abc'\n";
+    let (old, new) = pair("text[:n]", "text[:n + 1]", doc);
+    let root = root("comment", ENABLED)?;
+    let tests = doctest_tests(Path::new("src/texts.py"), &new, &old, &root);
+    let _ = std::fs::remove_dir_all(&root);
+    let [test] = tests.as_slice() else {
+        return Err(format!("expected one test, got {}", tests.len()));
+    };
+    // The comment must not swallow `== 'abc'`: a commented-out comparison is a
+    // bare call assertion, not the exact value the example states.
+    let [assertion] = test.assertions.as_slice() else {
+        return Err("expected one assertion".to_string());
+    };
+    assert!(assertion.text.contains("== 'abc'"), "{}", assertion.text);
+    assert_eq!(assertion.oracle_strength, OracleStrength::Strong);
+    let (old, new) = pair("text[:n]", "text[:n]", doc);
+    assert_eq!(count("comment-same", ENABLED, &old, &new)?, 0);
     Ok(())
 }
