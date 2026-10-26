@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A test that applies an operator (`+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, `>>`, their assigning forms, unary `-` and `!`) to a value syntactically of the type whose standard operator-trait impl changed is now related to that impl by a direct call instead of abstaining as `rust_implicit_call_unresolved`. References, method chains, untyped operands, a second impl of the trait for the type, shadowed types and discarded results stay unrelated (RIPR-SPEC-0240, #9567).

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A `macro_rules!` test generator defined in another file of the same crate now registers its tests, when the invoking file declares `#[macro_use] mod support;` or is a child module declared after the macro's definition. Before, a table invoked from `tests/cases.rs` with its generator in `tests/support/mod.rs` read as `no_static_path`. `#[path]` modules, `use`-imported macros and ambiguous module files still index nothing (#6925).

@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: console.log("audit", amount * 9);
-  Missing discriminator (1 of 2): propagation_unknown: changed value sinks to a non-escaping call effect (`"audit"`); all strong assertions observe the owner return value, not this call effect; propagation unknown
+  Missing discriminator (1 of 2): propagation_unknown: changed value sinks to a non-escaping call
+    effect (`"audit"`); all strong assertions observe the owner return value, not this call effect;
+    propagation unknown
   Related test: tests/receipt.test.ts:4 unchanged return is not the audit event (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `log contains "audit"`; no actionable repair packet is emitted until verify,
@@ -32,6 +34,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related test(s) found for owner `emitReceipt`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -39,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast probe:src_receipt.ts:typescript_preview:eb6f83d9
   ripr context --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast --at probe:src_receipt.ts:typescript_preview:eb6f83d9
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_receipt.ts:typescript_preview:eb6f83d9 --root <cwd>/fixtures/typescript_effect_owner_alias/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

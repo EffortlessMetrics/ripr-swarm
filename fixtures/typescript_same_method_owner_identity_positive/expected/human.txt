@@ -18,7 +18,9 @@ Start here:
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
   Changed behavior: return this.valid.has(token.trim());
-  Discriminator (observed, advisory): Related test reaches `validate` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  Discriminator (observed, advisory): Related test reaches `validate` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant discriminator
   Related test: tests/auth.test.ts:3 validates a trimmed token
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
@@ -29,6 +31,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related test(s) found for owner `validate`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -36,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input --diff <cwd>/fixtures/typescript_same_method_owner_identity_positive/diff.patch --mode fast probe:src_auth.ts:typescript_preview:1091eef0
   ripr context --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input --diff <cwd>/fixtures/typescript_same_method_owner_identity_positive/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:1091eef0
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_auth.ts:typescript_preview:1091eef0 --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

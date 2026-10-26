@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,3 +4,3 @@
+ pub fn fits_imported(width: usize, limit: usize) -> bool {
+-    width <= limit
++    limit >= width
+ }

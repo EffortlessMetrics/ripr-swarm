@@ -1,0 +1,14 @@
+# Registers the fp8-collision ordinal tests (#8838, #10349) under the static
+# exposure loop, the spec whose identity paragraph describes digest-ranked
+# collision ordinals.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::colliding_distinct_expressions_keep_their_ids_under_reorder",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::exact_duplicate_expressions_keep_encounter_order_ordinals",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::colliding_deleted_lines_keep_their_ids_under_reorder",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_line_colliding_with_a_candidate_finding_numbers_after_it",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::candidate_findings_with_a_shared_fingerprint_get_distinct_stable_ids",
+]

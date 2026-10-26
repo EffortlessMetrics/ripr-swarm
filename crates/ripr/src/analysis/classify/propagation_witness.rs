@@ -199,6 +199,7 @@ pub(in crate::analysis) fn current_path_witness_with(
     let sink_identity = normalize_semantic_text(&sink.text);
     let edge_status = if is_question_mark_sink(sink)
         || returns_itself_on_its_line(probe, sink)
+        || accumulates_into_returned_local(probe, sink)
         || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
     {
         EdgeStatus::Established
@@ -354,10 +355,24 @@ pub(in crate::analysis) fn constant_tail_witness(
                 // value; whether the pinned input runs all of `e` is the
                 // owner pin's question.
                 Some(line) => (line, "spawn_join_owner_tail"),
-                None => (
-                    short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
-                    "short_circuit_owner_tail",
-                ),
+                // RIPR-SPEC-0265 rule 5: a closure that is the owner's whole
+                // body is the value the owner returns; whether the pinned
+                // expression applies it on inputs that tell its operators
+                // apart is the owner pin's question.
+                None => {
+                    match super::owner_pin::returned_closure::owner_returned_closure_tail(owner)
+                        .filter(|tail| tail.tail_is(&probe.expression))
+                    {
+                        Some(tail) => (
+                            owner.start_line + tail.tail_line_offset,
+                            "returned_closure_owner_tail",
+                        ),
+                        None => (
+                            short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                            "short_circuit_owner_tail",
+                        ),
+                    }
+                }
             },
         },
     };
@@ -823,6 +838,35 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         && source.strip_prefix("return ").is_some_and(|payload| {
             let payload = payload.trim();
             call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
+}
+
+/// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) the
+/// local that the flow producer named as the owner's returned tail on the
+/// statement's own line. Only `loop_accumulator_at` makes flow emit that
+/// sink for an update statement, so equal names bind the update to the
+/// return. Whether a test observes the sum is reveal's question.
+fn accumulates_into_returned_local(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    if probe.family != ProbeFamily::ReturnValue
+        || sink.kind != FlowSinkKind::ReturnValue
+        || sink.line != probe.location.line
+    {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let local = normalize_semantic_text(&sink.text);
+    ["+=", "-="].iter().any(|op| {
+        source
+            .strip_prefix(local.as_str())
+            .is_some_and(|rest| rest.trim_start().starts_with(op))
+    }) || source
+        .strip_prefix(local.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix('='))
+        .is_some_and(|rest| {
+            rest.trim_start()
+                .strip_prefix(local.as_str())
+                .is_some_and(|rest| rest.trim_start().starts_with(['+', '-']))
         })
 }
 

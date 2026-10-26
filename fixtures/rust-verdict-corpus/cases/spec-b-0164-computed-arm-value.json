@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "Both arm values are calls (pick(kind), pick_second(kind)), so no row reaches a literal arm value. The test pins word to alpha and text to beta, so moving the compared constant to beta fails it. Spec cells: RIPR-SPEC-0164#5.",
+  "reasoning": "Both arm values are calls (pick(kind), pick_second(kind)) to helpers whose whole body is one literal, which the match evaluator resolves since #9637; a callee it cannot evaluate would still refuse. The test pins word to alpha and text to beta, so moving the compared constant to beta fails it. Spec cells: RIPR-SPEC-0164#5.",
   "labeling_observation": {
     "ripr_commit": "7cc4412c",
     "full_checkout_verdict": "limited",

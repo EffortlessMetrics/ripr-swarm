@@ -53,8 +53,8 @@ pub(super) fn validate_agent_receipt_verify_path(
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent receipt --verify-json {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
 
@@ -150,8 +150,8 @@ fn validate_agent_receipt_artifact_path(
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent receipt {role} {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
 
@@ -230,8 +230,8 @@ pub(super) fn validate_agent_verify_snapshot_path(
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent verify {flag} {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
 
@@ -323,8 +323,8 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent brief --diff {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
     Ok(candidate)
@@ -446,8 +446,8 @@ fn confine_agent_brief_file_path(root: &Path, path: &Path) -> Result<PathBuf, St
             | std::path::Component::Prefix(_) => {
                 return Err(format!(
                     "agent brief --files {} must stay under root {}",
-                    path.display(),
-                    root.display()
+                    crate::output::path::human_path(path),
+                    crate::output::path::human_path(root)
                 ));
             }
         }

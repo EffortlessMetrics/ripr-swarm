@@ -41,17 +41,21 @@ mod includes;
 mod index;
 mod local_test_alias;
 mod macro_generated_tests;
+pub(crate) mod macro_visibility;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
 #[cfg(test)]
 pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustIndex) {
-    macro_generated_tests::register_macro_generated_tests(index);
+    // Fixtures install no cancellation token, so the registration cannot
+    // abort here.
+    let _ = macro_generated_tests::register_macro_generated_tests(index);
 }
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
+mod stray_files;
 
 #[cfg(test)]
 pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
@@ -107,7 +111,7 @@ pub fn build_index_with_test_harnesses(
     // bounded shape. After the style normalizer, which rebuilds
     // tests from parsed functions and has none for a generated test.
     index_phase("index_macro_generated_tests", || {
-        macro_generated_tests::register_macro_generated_tests(&mut index);
+        macro_generated_tests::register_macro_generated_tests(&mut index)?;
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -328,7 +332,7 @@ fn post_process_cached_index(
     // bounded shape. After the style normalizer, which rebuilds
     // tests from parsed functions and has none for a generated test.
     index_phase("index_macro_generated_tests", || {
-        macro_generated_tests::register_macro_generated_tests(&mut cached.index);
+        macro_generated_tests::register_macro_generated_tests(&mut cached.index)?;
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {

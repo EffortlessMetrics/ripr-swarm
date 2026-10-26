@@ -1947,6 +1947,176 @@ pub(super) fn module_implicit_reach(
         || module_level_effects(source, statements)
 }
 
+/// Whether module-import-time code can reach the owner through a `def` or
+/// `class` header or a conditional import (#10040 `no_call_path`): the header
+/// runs when the module loads, so a decorator (`@score`, `@m.score`,
+/// `@g(1)`), a default or annotation holding a call, or a class base or
+/// keyword holding a call is a call path the test body never shows. Any
+/// decorator outside a short inert list, any `(` in a parameter list, return
+/// annotation, class base or keyword, and any module-level compound statement
+/// (`try`, `if`, `with`, `for`, `while`, `match`) that holds an import or a
+/// call, is an effect. Nested class bodies are walked like the module.
+/// Subscripted annotations (`Foo[int]`) and attribute reads stay invisible
+/// limits.
+pub(super) fn module_header_effects(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> bool {
+    let names = bound_import_names(imports);
+    header_effects(source, statements, &names)
+}
+
+/// The local names the module's imports bind, except `pytest` and `unittest`
+/// (whose APIs the closed-body readings vouch for) and the `*` of a star
+/// import (withheld elsewhere).
+pub(super) fn bound_import_names(imports: &[PythonImport]) -> Vec<String> {
+    imports
+        .iter()
+        .map(|import| {
+            // `import a.b.c` binds only `a`; its alias field holds the full
+            // dotted spelling. `import a.b as x` and `from m import y`
+            // bind their alias.
+            if import.source_module.is_empty()
+                && (import.alias.is_empty() || import.alias == import.imported)
+            {
+                import.imported.split('.').next().unwrap_or("").to_string()
+            } else {
+                import.alias.clone()
+            }
+        })
+        .filter(|name| !matches!(name.as_str(), "" | "*" | "pytest" | "unittest"))
+        .collect()
+}
+
+/// Whether `text` mentions `word` as a whole identifier.
+pub(super) fn mentions_word(text: &str, word: &str) -> bool {
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(word) {
+        let start = from + rel;
+        let end = start + word.len();
+        if !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[end..].chars().next().is_some_and(is_word)
+        {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// A decorator spelled as one dotted name with at most one flat argument
+/// group, `name` or `name(args)` with no nested parenthesis.
+fn is_flat_decorator(spelled: &str) -> bool {
+    let (head, rest) = match spelled.find('(') {
+        Some(at) => (&spelled[..at], Some(&spelled[at..])),
+        None => (spelled, None),
+    };
+    let name_ok = head
+        .chars()
+        .next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+        && head
+            .chars()
+            .all(|c| c == '_' || c == '.' || c.is_ascii_alphanumeric());
+    name_ok
+        && rest.is_none_or(|group| {
+            group.ends_with(')') && !group[1..group.len() - 1].contains(['(', ')'])
+        })
+}
+
+fn header_effects(source: &str, statements: &[Stmt], names: &[String]) -> bool {
+    use rustpython_parser::text_size::TextRange;
+    let text = |range: TextRange| -> &str {
+        source
+            .get(usize::from(range.start())..usize::from(range.end()))
+            .unwrap_or("(")
+    };
+    let mentions_import = |text: &str| names.iter().any(|name| mentions_word(text, name));
+    let bad_decorator = |decorator: &Expr| {
+        let spelled = text(decorator.range());
+        let head = spelled.split('(').next().unwrap_or(spelled);
+        let inert = head.starts_with("pytest.mark.")
+            || head == "pytest.fixture"
+            || matches!(
+                head,
+                "staticmethod"
+                    | "classmethod"
+                    | "unittest.skip"
+                    | "unittest.skipIf"
+                    | "unittest.skipUnless"
+                    | "unittest.expectedFailure"
+            );
+        !is_flat_decorator(spelled) || !inert || mentions_import(spelled)
+    };
+    let has_call = |range: TextRange| {
+        let spelled = text(range);
+        spelled.contains('(') || mentions_import(spelled)
+    };
+    fn arguments_hold_call(
+        args: &ast::Arguments,
+        has_call: &dyn Fn(rustpython_parser::text_size::TextRange) -> bool,
+    ) -> bool {
+        let annotated = |arg: &ast::Arg| {
+            arg.annotation
+                .as_ref()
+                .is_some_and(|annotation| has_call(annotation.range()))
+        };
+        args.posonlyargs
+            .iter()
+            .chain(&args.args)
+            .chain(&args.kwonlyargs)
+            .any(|param| {
+                annotated(&param.def)
+                    || param
+                        .default
+                        .as_ref()
+                        .is_some_and(|default| has_call(default.range()))
+            })
+            || args.vararg.as_deref().is_some_and(annotated)
+            || args.kwarg.as_deref().is_some_and(annotated)
+    }
+    statements.iter().any(|statement| match statement {
+        Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Pass(_) => false,
+        Stmt::FunctionDef(function) => {
+            function.decorator_list.iter().any(bad_decorator)
+                || arguments_hold_call(&function.args, &has_call)
+                || function
+                    .returns
+                    .as_ref()
+                    .is_some_and(|r| has_call(r.range()))
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            function.decorator_list.iter().any(bad_decorator)
+                || arguments_hold_call(&function.args, &has_call)
+                || function
+                    .returns
+                    .as_ref()
+                    .is_some_and(|r| has_call(r.range()))
+        }
+        Stmt::ClassDef(class) => {
+            class.decorator_list.iter().any(bad_decorator)
+                || class.bases.iter().any(|base| has_call(base.range()))
+                || class
+                    .keywords
+                    .iter()
+                    .any(|keyword| has_call(keyword.range()))
+                || header_effects(source, &class.body, names)
+        }
+        // Everything else runs at import: a call, an import, or any use of an
+        // imported object (`X = OBJ.attr`, `assert OBJ == 1`, `with CTX:`,
+        // `for i in ITEMS:`, `if OBJ:`) can run code through dunders and
+        // properties. A `(` anywhere in the statement (`if (True):` too) is
+        // an accepted recall cost; the shared `module_level_effects` check
+        // enforces it as well and this repeats it as defense in depth.
+        other => {
+            let body = text(other.range());
+            body.contains('(') || mentions_word(body, "import") || mentions_import(body)
+        }
+    })
+}
+
 /// A function defined in the module whose name suggests an assertion helper
 /// (`assert_*`, `check_*`, `verify_*`): a test calling it through `self` hides
 /// the owner call inside it.
