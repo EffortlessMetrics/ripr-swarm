@@ -583,6 +583,10 @@ fn field_collection_observer_confirms(
     // `d.add(..)` compares two values the owner wrote, so a wrong owner
     // moves both sides together. Two bindings that each ran the owner
     // before the read observe nothing independent.
+    // Only equivalent histories are refused: the same number of owner calls
+    // and no setup touching the collection beforehand. A differing call
+    // count or a seeded side (`d.items.push(20); d.add(20)`) makes the
+    // sides diverge when the owner changes, so the comparison can notice.
     let mut owner_fed: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for read in &reads {
         if owner_call_reaches_read_unrewritten(
@@ -600,7 +604,9 @@ fn field_collection_observer_confirms(
             owner_fed.insert(read.binding.as_str());
         }
     }
-    if owner_fed.len() > 1 {
+    if owner_fed.len() > 1
+        && equivalent_owner_histories(test, &owner_fed, owner.name(), path, assertion.line)
+    {
         return false;
     }
     reads.into_iter().any(|read| {
@@ -627,6 +633,35 @@ fn field_collection_observer_confirms(
                     .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
             })
     })
+}
+
+/// #7135: whether every binding in `bindings` ran the owner the same number
+/// of times before the read at `read_line` and none had its collection
+/// touched (`binding.path...`) before the read line. Such sides move
+/// together under a wrong owner.
+fn equivalent_owner_histories(
+    test: &TestSummary,
+    bindings: &std::collections::BTreeSet<&str>,
+    method: &str,
+    path: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let before: String = masked
+        .lines()
+        .take(read_line.saturating_sub(test.start_line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut counts = bindings.iter().map(|binding| {
+        let seeded = before.contains(&format!("{binding}.{path}"));
+        let calls =
+            owner_calls_before_read(&test.body, test.start_line, binding, method, read_line).len();
+        (seeded, calls)
+    });
+    let Some(first) = counts.next() else {
+        return false;
+    };
+    !first.0 && counts.all(|other| !other.0 && other.1 == first.1)
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an

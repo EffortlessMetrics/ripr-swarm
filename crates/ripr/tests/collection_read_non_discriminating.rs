@@ -31,6 +31,11 @@ fn non_discriminating_collection_reads_never_credit_exposed() -> Result<(), Stri
             true,
         ),
         (
+            "asymmetric_twin_histories_keep_credit",
+            "let mut c = Bag::new();\nc.add(20);\nc.add(20);\nlet mut d = Bag::new();\nd.items.push(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            true,
+        ),
+        (
             "owner_on_rhs_of_or",
             "let mut c = Bag::new();\nlet _ = true || { c.add(20); true };\nassert_eq!(c.items, vec![]);",
             false,
