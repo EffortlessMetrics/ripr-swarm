@@ -35,7 +35,7 @@
   },
   "reasoning": "`Bay::dock` returns `self.try_dock(wanted).unwrap_or_else(die)`; `die` only panics, so the Ok value reaches the caller unchanged and the test pins `dock(4)` to false, the boundary row. 1 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, fails it too. Spec cells: RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "PENDING",
+    "ripr_commit": "e382bbc",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

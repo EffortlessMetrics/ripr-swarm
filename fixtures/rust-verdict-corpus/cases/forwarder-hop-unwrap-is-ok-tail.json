@@ -34,7 +34,7 @@
   },
   "reasoning": "`Slip::slip` collapses the owner's result to `is_ok()`, so the exact assertions see `true` whichever side of the boundary the owner chose. 0 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, passes it too. Spec cells: RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "PENDING",
+    "ripr_commit": "e382bbc",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "propagation_unknown"
