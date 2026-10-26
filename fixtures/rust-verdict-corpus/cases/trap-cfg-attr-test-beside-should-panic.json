@@ -1,0 +1,61 @@
+{
+  "case_id": "trap-cfg-attr-test-beside-should-panic",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-cfg-attr-test-beside-should-panic.diff",
+  "anchor": {
+    "file": "src/cfg_attr_should_panic.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "cfg_attr_test_beside_should_panic_pins_owner",
+  "hard_case": "The only test that calls gated_total() is declared `#[cfg_attr(all(), test, should_panic)]` and passes when the assertion fails, so it observes no edit that keeps the result away from 7.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 4",
+        "mutated_line": "base * 4",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `3 * base` with `base * 4`, which changes the result, but the should_panic test still panics and passes"
+      },
+      {
+        "replacement": "base + 3",
+        "mutated_line": "base + 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `3 * base` with `base + 3`, which changes the result, but the should_panic test still panics and passes"
+      },
+      {
+        "replacement": "base * 2",
+        "mutated_line": "base * 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `3 * base` with `base * 2`, which changes the result, but the should_panic test still panics and passes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "gated_total_is_not_seven expects a panic from assert_eq!(gated_total(2), 7); every mutant that leaves the result different from 7 still panics, so the test passes. Adversarial shape (a cfg_attr-introduced should_panic must not be read as an ordinary result pin).",
+  "axes": [
+    "hostile_input"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "e7b5e1d",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

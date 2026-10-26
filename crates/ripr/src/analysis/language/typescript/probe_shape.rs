@@ -838,6 +838,15 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
     for prefix in ["if", "else if", "while", "for", "case", "yield"] {
         if let Some(stripped) = text.strip_prefix(prefix) {
             text = stripped.trim().to_string();
+            // `if (cond) return x;`: the statement after the closing paren is
+            // not part of the condition, so a trailing-paren trim would leave
+            // it in the right operand and the boundary would read as a call.
+            if matches!(prefix, "if" | "else if" | "while")
+                && let Some(condition) = leading_paren_group_before_statement(&text)
+                && is_single_simple_comparison(condition)
+            {
+                text = condition.to_string();
+            }
             break;
         }
     }
@@ -847,6 +856,74 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
         .trim_end_matches(';')
         .trim()
         .to_string()
+}
+
+/// The inside of a leading `( ... )` group that closes before the end of the
+/// line and is followed by a statement (`(total > 100) return total - 10;`).
+/// `None` when the group wraps the whole text, never closes, or holds an
+/// unterminated quote, so those shapes keep the caller's existing trim.
+fn leading_paren_group_before_statement(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix('(')?;
+    let mut depth = 1usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in rest.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let statement = rest.get(idx + 1..)?.trim();
+                    let has_statement = !statement.is_empty()
+                        && statement != "{"
+                        && statement != ";"
+                        && !statement.starts_with("//");
+                    return has_statement.then(|| rest.get(..idx).unwrap_or_default().trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The condition of a one-line guard (`if (total > 100) return total - 10;`),
+/// whitespace-insensitive, when the line carries a statement after a single
+/// simple comparison. `None` for any other shape.
+pub(crate) fn inline_guard_condition(line_text: &str) -> Option<String> {
+    let mut text = line_text.trim().trim_start_matches('}').trim();
+    for prefix in ["else if", "if", "while"] {
+        if let Some(stripped) = text.strip_prefix(prefix) {
+            text = stripped.trim();
+            break;
+        }
+    }
+    let condition = leading_paren_group_before_statement(text)?;
+    is_single_simple_comparison(condition)
+        .then(|| condition.chars().filter(|ch| !ch.is_whitespace()).collect())
+}
+
+/// Exactly one comparison between two simple operands (`total >= 100`): no
+/// `&&` / `||` clause that could skip the branch, and no arithmetic around
+/// either side that would shift the boundary a test must hit.
+fn is_single_simple_comparison(condition: &str) -> bool {
+    COMPARISON_OPERATORS.iter().any(|operator| {
+        condition.split_once(operator).is_some_and(|(left, right)| {
+            is_simple_typescript_discriminator_operand(left.trim())
+                && is_simple_typescript_discriminator_operand(right.trim())
+        })
+    })
 }
 
 /// The comparison operators the boundary discriminator probes, in probe

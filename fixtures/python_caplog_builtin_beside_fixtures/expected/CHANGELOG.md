@@ -16,7 +16,7 @@ Updated:
 ## Pending — python_caplog_builtin_beside_fixtures (2)
 
 Reason:
-RIPR-SPEC-0238 inherited main drift: #10444 fixture predates the #10426 evidence legend
+RIPR-SPEC-0122: grace re-bless; inherited drift from #10444's caplog-override analysis interacting with #10426's legend wording; the match-guard lane cannot affect this fixture
 
 Command:
 `cargo xtask goldens bless python_caplog_builtin_beside_fixtures --reason "..."`

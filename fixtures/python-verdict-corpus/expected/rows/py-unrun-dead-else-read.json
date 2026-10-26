@@ -1,0 +1,22 @@
+{
+  "case_id": "py-unrun-dead-else-read",
+  "subject_id": "authored-py-pytest-unrunnable",
+  "origin": "authored",
+  "anchor": "unrun/core.py:14",
+  "behavior_family": "returned_value",
+  "test_shape": "assert_in_live_else_of_dead_if",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

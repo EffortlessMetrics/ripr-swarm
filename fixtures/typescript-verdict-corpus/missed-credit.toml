@@ -2,7 +2,7 @@
 # accepted, one `[[entry]]` per row, sorted by case with a blank line between
 # blocks so PRs adding rows far apart merge cleanly; adjacent edits can still conflict (#10222). A row that newly
 # misses credit fails `verdict-corpus check` until it is fixed or accepted here
-# with a reason; an entry whose row credits again passes with a note to delete it.
+# with a reason; an entry whose row credits again fails `verdict-corpus check` until the entry is deleted (#10341).
 
 [[entry]]
 case = "deco-decorator-wrapper-value"
