@@ -491,6 +491,11 @@ fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations(
 /// credited as a direct or helper owner call, because a diff finding does not
 /// carry helper-only reach. The diff matrix therefore asserts no credit for
 /// those cases; it does not assert which refusal reason replaces it.
+///
+/// The direct case pins the relation row only, not the finding's class or
+/// reach. Diff-mode class semantics differ from repository evidence, so
+/// promotion to `exposed` is not part of this matrix's claim; the repository
+/// matrix owns the positive grip assertion.
 /// Single-subject workspaces cannot show cross-subject substitution; that is
 /// covered by the multi-subject unit fixtures in `test_grip_evidence`.
 #[test]

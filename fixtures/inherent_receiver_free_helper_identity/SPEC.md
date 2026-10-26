@@ -37,4 +37,6 @@ stacked test slice (#9614), not in this fixture slice.
 report cannot carry helper-only reach, so the diff consumer reads the same field
 as: `direct_owner_call` must be a high-confidence direct row, and every other value
 (`helper_owner_call` or none) must not be credited as a direct or helper owner call.
-It does not assert which refusal reason replaces the credit.
+It does not assert which refusal reason replaces the credit, and the direct
+case does not pin the finding's class or reach in diff mode: the repository
+matrix owns the positive grip assertion.
