@@ -136,6 +136,11 @@ pub(super) fn apply_registrations(
         let Some(facts) = index.files().get(&registration.target) else {
             continue;
         };
+        // A file no Cargo target compiles never runs its tests, whatever
+        // the registration says (#8999).
+        if facts.role_provenance.outside_module_tree {
+            continue;
+        }
         let source = facts.source.clone();
         match (registration.kind, registration.adapter) {
             (TestHarnessKind::CustomHarnessTarget, TestHarnessAdapter::LibtestMimicV1) => {

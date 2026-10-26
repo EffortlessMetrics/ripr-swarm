@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python deleted-line findings whose removed lines share an eight-hex ID fingerprint at one owner now take their `.2`, `.3` suffixes by a full payload digest instead of diff order, matching Rust and TypeScript, so each keeps the same ID whichever the diff lists first. IDs for non-colliding findings and for repeated identical lines are unchanged. Perl IDs are position-based and unaffected (#10417, #8838).

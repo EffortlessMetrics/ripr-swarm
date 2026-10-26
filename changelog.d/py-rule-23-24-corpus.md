@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Python verdict corpus: 16 `py-unrun-*` cases on `authored-py-pytest-unrunnable` covering RIPR-SPEC-0238 rules 23 and 24 (literal-false dead arms, swallowing handlers and collector-skipped tests scored as gaps or abstentions; the live else arm, else/finally blocks, a `fail`-calling handler, `xfail(False, reason)` and `unittest.skipUnless(True)` credited), labelled by real pytest runs; no false verdicts (#9412).

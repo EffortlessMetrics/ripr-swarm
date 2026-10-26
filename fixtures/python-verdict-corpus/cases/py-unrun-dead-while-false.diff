@@ -1,0 +1,12 @@
+diff --git a/unrun/core.py b/unrun/core.py
+--- a/unrun/core.py
++++ b/unrun/core.py
+@@ -7,7 +7,7 @@
+ 
+ 
+ def dead_while(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def dead_else(a, b):

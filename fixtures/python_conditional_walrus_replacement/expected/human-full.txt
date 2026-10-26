@@ -42,9 +42,11 @@ Weakness
 
 Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result.
 
 Static limitation
   missing_import_graph — The import graph could not be resolved (for example a relative or dynamic import), so ripr cannot connect a test to this change.
+  Next: Import the owner in the test by a static, absolute path (not a dynamic, computed or unresolved relative import) so ripr can connect the test to it.
 Drill in:
   ripr explain --root <cwd>/fixtures/python_conditional_walrus_replacement/input --diff <cwd>/fixtures/python_conditional_walrus_replacement/diff.patch --mode fast probe:versioned.py:python_preview:b53f614e
   ripr context --root <cwd>/fixtures/python_conditional_walrus_replacement/input --diff <cwd>/fixtures/python_conditional_walrus_replacement/diff.patch --mode fast --at probe:versioned.py:python_preview:b53f614e

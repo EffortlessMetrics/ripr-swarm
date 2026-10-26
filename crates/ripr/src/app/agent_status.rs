@@ -434,6 +434,9 @@ fn inspect_repair_attempts(
         return Some(Vec::new());
     }
     let current_head = crate::agent::artifact::current_git_head(root).ok();
+    // Finished attempts re-read one worktree; share a capture per policy for
+    // this call only (#9823).
+    let _capture_scope = crate::edit_cage::ReevaluationMemoScope::begin();
     let mut attempts = Vec::new();
     let mut trusted = true;
     for entry in entries {
@@ -1544,10 +1547,30 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
     })
 }
 
-fn pilot_python_repair_card_message(card: &PilotPythonCard, root_display: &str) -> String {
+fn pilot_python_repair_card_message(
+    card: &PilotPythonCard,
+    root_display: &str,
+    gap_start: Option<&str>,
+) -> String {
     let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
         message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+    }
+    // `ripr check` admits a gap-bound start for its selected Python finding
+    // (#10373), so the warning must not say `agent repair` cannot run.
+    if let Some(start) = gap_start {
+        message.push_str(&format!(
+            "; `ripr check --root {root}` prints the gap-bound start `{start}` for its selected finding, which runs the delegated before/after loop for that gap. Run that start, or follow the card from `ripr first-pr --root {root}` by hand",
+            root = shell_arg(root_display)
+        ));
+        if let Some(verify) = &card.verify_command {
+            message.push_str(&format!(" (`{verify}`)"));
+        }
+        message.push_str(&format!(
+            ". If the workspace changed since that run, rerun `{}`",
+            pilot_select_command(root_display)
+        ));
+        return message;
     }
     message.push_str(&format!(
         "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
@@ -1881,7 +1904,8 @@ fn routed_code_phrase(languages: &[String]) -> String {
 /// print, or `None` (#10001). Status consults the same admission check uses
 /// ([`default_check_gap_start`], which ends in the shared agent-packet
 /// validator) rather than assuming the route offers no start; only a
-/// TypeScript-family route can be admitted, and anything undecidable keeps
+/// TypeScript-family or Python route can be admitted (#10373), and anything
+/// undecidable keeps
 /// the "offers no start" wording (fail-closed).
 ///
 /// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
@@ -1896,7 +1920,7 @@ fn pilot_routed_gap_start(
         || !routes
             .enabled_languages
             .iter()
-            .any(|language| language == "typescript" || language == "javascript")
+            .any(|language| matches!(language.as_str(), "typescript" | "javascript" | "python"))
     {
         return None;
     }
@@ -2029,7 +2053,20 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_python_repair_card_no_agent_repair".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_python_repair_card_message(&card, root_display),
+                message: pilot_python_repair_card_message(
+                    &card,
+                    root_display,
+                    crate::app::gap_bound_repair::default_check_gap_start(root)
+                        .map(|route| {
+                            crate::app::gap_bound_repair::gap_bound_start_command(
+                                root_display,
+                                "",
+                                &route.gap_id,
+                                &route.base,
+                            )
+                        })
+                        .as_deref(),
+                ),
             });
             // #5205/#5248 review: a Python card and a Rust exclusion
             // coexist (Python-only workspace with Rust files present).
