@@ -58,6 +58,25 @@ render green. A change to the nextest config, the workflow, or `Cargo.lock`
 changes the blob identities recorded in `run-context.txt`, so an older receipt
 cannot be read as evidence for the new inputs.
 
+Hosted sharded form (#10507). On the GitHub-hosted route the same row runs as
+four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs in
+`rust-test-shards.yml`, started by `routed-rust.yml` only after the hosted
+`rust-gates.yml` job (every other gate, doctests and PR evidence) passed; that
+job is called with `test-shards: 4`, so its own `rust-tests` step is skipped, the
+single `if: inputs.test-shards == 1` condition `product_gate_plan.rs` allows on
+that row. The self-hosted routes keep the unpartitioned step in their gates job.
+A partitioned run selects exactly the tests of the unpartitioned command because
+`rust-test-shards-verify` fails the hosted result unless all four shards exited
+zero with a fresh JUnit report naming a test and their partition lists are
+pairwise disjoint and equal to the full workspace list, and `routed-rust.yml`'s
+`result` job fails unless that job passed (also after a self-hosted tempfail
+fallback). A missing, cancelled or red shard is a failure, never a pass. Each
+shard retains its own `junit.xml` and `run-context.txt` (the context names the
+partition and the blob identities of this workflow too); the unsharded
+`<artifact>-nextest-<attempt>` name now carries `shards-summary.txt`. The
+parallel form that runs the gates and shards at once would save more time but
+removes the gates-first ordering, so it is not the required shape.
+
 Focused tests in `product_gate_plan.rs` read the real workflow, nextest
 config, and this table. Each of these fails `cargo nextest run`:
 

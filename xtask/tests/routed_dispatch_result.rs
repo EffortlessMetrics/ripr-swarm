@@ -343,3 +343,53 @@ fn event_identity_is_wired_from_github_not_candidate_inputs() -> Result<(), Stri
     assert!(!source.contains("    continue-on-error: true"));
     Ok(())
 }
+
+#[test]
+fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result<(), String> {
+    let result = |overrides: &[(&str, &str)]| {
+        run_result(
+            &workflow()?,
+            "pull_request",
+            "refs/pull/10/merge",
+            "success",
+            "admitted",
+            overrides,
+        )
+    };
+    // Hosted route: green gates job alone is not a green result (#10507).
+    assert!(result(&[("TARGET", "github")])?.0);
+    for tests in ["failure", "cancelled", "skipped", ""] {
+        let (success, report) = result(&[("TARGET", "github"), ("GITHUB_TESTS_RESULT", tests)])?;
+        assert!(
+            !success,
+            "hosted tests `{tests}` must fail the result: {report}"
+        );
+        assert!(report.contains("sharded tests result"), "{report}");
+    }
+    // Self-hosted route ran its own nextest step; the skipped hosted shards do not matter.
+    assert!(
+        result(&[
+            ("TARGET", "cx43"),
+            ("CX43_RESULT", "success"),
+            ("GITHUB_RESULT", "skipped"),
+            ("GITHUB_TESTS_RESULT", "skipped"),
+        ])?
+        .0
+    );
+    // A tempfailed self-hosted job falls back to the hosted route, shards included.
+    for (tests, expected) in [("success", true), ("failure", false), ("skipped", false)] {
+        assert_eq!(
+            result(&[
+                ("TARGET", "cx43"),
+                ("CX43_RESULT", "failure"),
+                ("CX43_SCRATCH_STATUS", "tempfail"),
+                ("GITHUB_RESULT", "success"),
+                ("GITHUB_TESTS_RESULT", tests),
+            ])?
+            .0,
+            expected,
+            "fallback with sharded tests `{tests}`"
+        );
+    }
+    Ok(())
+}

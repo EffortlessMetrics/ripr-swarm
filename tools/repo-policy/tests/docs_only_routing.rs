@@ -549,6 +549,9 @@ fn routed_result_admitted(
         ("TARGET", "github"),
         ("ROUTE_RESULT", "success"),
         ("GITHUB_RESULT", heavy),
+        // The hosted route runs its nextest step in the sharded job (#10507); a
+        // green hosted gates job stands for a green sharded job in these fixtures.
+        ("GITHUB_TESTS_RESULT", heavy),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);

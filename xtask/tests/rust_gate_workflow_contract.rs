@@ -2,6 +2,13 @@
 //! The repository workflow gate remains responsible for general YAML policy.
 
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
+const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
+const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
+/// The only condition the required test step may carry: the hosted caller passes
+/// `test-shards: 4` and runs the same tests in `rust-test-shards.yml` instead (#10507).
+const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
+const SHARDED_TEST_COMMAND: &str =
+    "cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/4";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
     ("agent_skills", "cargo policy preflight"),
@@ -63,7 +70,9 @@ fn contract_violations(workflow: &str) -> Vec<String> {
             findings.push(format!("{id}: exact command missing"));
         }
         if block.lines().any(|line| {
-            line.starts_with("        if:") || line.starts_with("        continue-on-error:")
+            (line.starts_with("        if:")
+                && !(id == "rust-tests" && line == SHARDED_TEST_CONDITION))
+                || line.starts_with("        continue-on-error:")
         }) {
             findings.push(format!("{id}: required step must remain unconditional"));
         }
@@ -327,5 +336,142 @@ fn rust_gate_workflow_rejects_missing_unlocked_late_or_suppressed_fixture_prepar
         format!("{WORKFLOW}\n{preparation}"),
     ] {
         assert!(!prepares_locked_owner_return_fixtures(&changed));
+    }
+}
+
+fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let count = |text: &str, needle: &str| {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| line.contains(needle))
+            .count()
+    };
+    if count(shards, SHARDED_TEST_COMMAND) != 1 {
+        findings.push("shards: expected exactly one partitioned nextest invocation".to_owned());
+    }
+    if count(shards, "continue-on-error") != 0 {
+        findings.push("shards: no step may continue on error".to_owned());
+    }
+    if !shards.contains("        shard: [1, 2, 3, 4]\n") {
+        findings.push("shards: the matrix must stay shards 1 to 4".to_owned());
+    }
+    // `verify` is what makes four partitions equal the one command: a missing,
+    // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
+    for required in [
+        "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
+        "[ \"$status\" = 0 ] && [ \"$tests\" -ge 1 ]",
+        "[ \"$dup\" -eq 0 ] && [ \"$missing\" -eq 0 ] && [ \"$extra\" -eq 0 ] && [ \"$fail\" -eq 0 ]",
+        "the full workspace test list is missing",
+    ] {
+        if !shards.contains(required) {
+            findings.push(format!("shards: verify lost `{required}`"));
+        }
+    }
+    // The hosted route must run the shards behind its gates job and may not report
+    // the required result green without them.
+    for required in [
+        "      test-shards: 4\n",
+        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
+        "rust-github, rust-github-tests, docs-gate]",
+        "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
+        "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
+    ] {
+        if !routed.contains(required) {
+            findings.push(format!("routed: lost `{required}`"));
+        }
+    }
+    if count(
+        routed,
+        "[ \"$GITHUB_RESULT\" = \"success\" ] && [ \"$GITHUB_TESTS_RESULT\" = \"success\" ]",
+    ) != 3
+    {
+        findings.push("routed: every tempfail fallback must require the sharded tests".to_owned());
+    }
+    findings
+}
+
+#[test]
+fn sharded_hosted_tests_keep_the_one_command_selection() {
+    let findings = shard_contract_violations(SHARDS, ROUTED);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn rust_gate_workflow_allows_only_the_shard_condition_on_the_test_step() {
+    assert!(WORKFLOW.contains(SHARDED_TEST_CONDITION));
+    for other in [
+        "        if: inputs.test-shards != 4",
+        "        if: always() && inputs.test-shards == 1",
+        "        if: false",
+    ] {
+        let changed = WORKFLOW.replace(SHARDED_TEST_CONDITION, other);
+        assert!(
+            contract_violations(&changed)
+                .contains(&"rust-tests: required step must remain unconditional".to_owned()),
+            "{other}"
+        );
+    }
+    // The shard condition does not excuse any other required gate.
+    let changed = WORKFLOW.replace(
+        "        id: clippy",
+        &format!("        id: clippy\n{SHARDED_TEST_CONDITION}"),
+    );
+    assert!(
+        contract_violations(&changed)
+            .contains(&"clippy: required step must remain unconditional".to_owned())
+    );
+}
+
+#[test]
+fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
+    for (from, to) in [
+        (
+            SHARDED_TEST_COMMAND,
+            "cargo nextest run --workspace --profile ci",
+        ),
+        ("fail-fast: false", "continue-on-error: true"),
+        ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
+        ("[ \"$dup\" -eq 0 ] &&", "true &&"),
+        (
+            "    if: ${{ !cancelled() }}\n    runs-on",
+            "    if: success()\n    runs-on",
+        ),
+    ] {
+        let changed = SHARDS.replace(from, to);
+        assert_ne!(
+            changed, SHARDS,
+            "fixture must change the shard workflow: {from}"
+        );
+        assert!(
+            !shard_contract_violations(&changed, ROUTED).is_empty(),
+            "softening `{from}` was not rejected"
+        );
+    }
+}
+
+#[test]
+fn routed_result_cannot_pass_without_the_hosted_shards() {
+    for (from, to) in [
+        ("test-shards: 4\n", "test-shards: 1\n"),
+        (
+            "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
+            "elif false; then status=fail",
+        ),
+        (
+            "rust-github, rust-github-tests, docs-gate]",
+            "rust-github, docs-gate]",
+        ),
+        (
+            "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+        ),
+    ] {
+        let changed = ROUTED.replace(from, to);
+        assert_ne!(changed, ROUTED, "fixture must change the caller: {from}");
+        assert!(
+            !shard_contract_violations(SHARDS, &changed).is_empty(),
+            "weakening `{from}` was not rejected"
+        );
     }
 }
