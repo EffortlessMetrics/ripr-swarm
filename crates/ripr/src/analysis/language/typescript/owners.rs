@@ -1234,10 +1234,7 @@ pub(crate) fn owner_from_method(
     class_name: Option<&str>,
     imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
-    if method.computed {
-        return None;
-    }
-    let name = method_key_name(&method.key)?;
+    let name = method_key_name(method)?;
     let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
@@ -1280,10 +1277,18 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
 /// A class method's owner name: a plain identifier, or a `#private` name kept
 /// with its `#` so it can never collide with a public member of the same name
 /// and cannot match a test's `receiver.name(` needle (#10440).
-fn method_key_name(key: &PropertyKey<'_>) -> Option<String> {
-    match key {
-        PropertyKey::PrivateIdentifier(identifier) => Some(format!("#{}", identifier.name)),
-        _ => property_key_name(key),
+fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
+    if method.computed {
+        return None;
+    }
+    match &method.key {
+        PropertyKey::PrivateIdentifier(identifier)
+            if method.kind == oxc_ast::ast::MethodDefinitionKind::Method =>
+        {
+            Some(format!("#{}", identifier.name))
+        }
+        PropertyKey::PrivateIdentifier(_) => None,
+        key => property_key_name(key),
     }
 }
 
@@ -1867,6 +1872,9 @@ pub(crate) struct PhaseTwoFacts {
     /// first entry whose line range intersects a changed line reproduces the
     /// previous first-hit short-circuit exactly.
     pub(crate) gap_shapes: Vec<GapShape>,
+    /// Sorted, disjoint unsupported private-member spans. A changed line in
+    /// one must not inherit an enclosing public owner's test relations.
+    pub(crate) private_member_boundaries: Vec<(usize, usize)>,
     /// Non-declare enum members with `EnumName::member_name` identities (the
     /// names, not the lines, identify a member so finding ids survive line
     /// shifts).
@@ -1905,9 +1913,134 @@ pub(crate) fn phase_two_facts_from_program(
     let text = SourceText::new(source);
     let mut facts = PhaseTwoFacts::default();
     collect_gap_shapes(&program.body, &text, &mut facts.gap_shapes);
+    if source.contains('#') {
+        collect_private_member_boundaries(program, &text, &mut facts);
+    }
     collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
     collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
     facts
+}
+
+/// The ordinary owner extractor is shallow. Walk private members separately
+/// to disclose unsupported nested members without inventing nested ownership
+/// or changing the extraction-order priority of existing public owners.
+fn collect_private_member_boundaries(
+    program: &oxc_ast::ast::Program<'_>,
+    source: &SourceText<'_>,
+    facts: &mut PhaseTwoFacts,
+) {
+    let mut admitted = std::collections::BTreeSet::new();
+    for statement in &program.body {
+        let class = match statement {
+            Statement::ClassDeclaration(class) => Some(class.as_ref()),
+            Statement::ExportNamedDeclaration(export) => match export.declaration.as_ref() {
+                Some(Declaration::ClassDeclaration(class)) => Some(class.as_ref()),
+                _ => None,
+            },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(class) = class {
+            for element in &class.body.body {
+                if let ClassElement::MethodDefinition(method) = element
+                    && matches!(method.key, PropertyKey::PrivateIdentifier(_))
+                    && method_key_name(method).is_some()
+                {
+                    admitted.insert((method.span.start, method.span.end));
+                }
+            }
+        }
+    }
+    struct Boundaries {
+        admitted: std::collections::BTreeSet<(u32, u32)>,
+        spans: Vec<oxc_span::Span>,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Boundaries {
+        fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
+            if matches!(method.key, PropertyKey::PrivateIdentifier(_))
+                && !self
+                    .admitted
+                    .contains(&(method.span.start, method.span.end))
+            {
+                self.spans.push(method.span);
+            }
+            oxc_ast_visit::walk::walk_method_definition(self, method);
+        }
+
+        fn visit_property_definition(&mut self, property: &oxc_ast::ast::PropertyDefinition<'a>) {
+            if matches!(property.key, PropertyKey::PrivateIdentifier(_))
+                && property.value.as_ref().is_some_and(is_function_value)
+            {
+                self.spans.push(property.span);
+            }
+            oxc_ast_visit::walk::walk_property_definition(self, property);
+        }
+
+        fn visit_accessor_property(&mut self, property: &oxc_ast::ast::AccessorProperty<'a>) {
+            if matches!(property.key, PropertyKey::PrivateIdentifier(_)) {
+                self.spans.push(property.span);
+            }
+            oxc_ast_visit::walk::walk_accessor_property(self, property);
+        }
+    }
+    let mut boundaries = Boundaries {
+        admitted,
+        spans: Vec::new(),
+    };
+    oxc_ast_visit::walk::walk_program(&mut boundaries, program);
+    let mut disclosed: std::collections::BTreeSet<_> =
+        facts.gap_shapes.iter().map(|shape| shape.span).collect();
+    for span in boundaries.spans {
+        let lines = (
+            source.line_for_offset(span.start as usize),
+            source.line_for_offset(span.end as usize),
+        );
+        facts.private_member_boundaries.push(lines);
+        if disclosed.insert((span.start as usize, span.end as usize)) {
+            facts.gap_shapes.push(GapShape {
+                shape: "unextracted private class member",
+                span: (span.start as usize, span.end as usize),
+                lines,
+            });
+        }
+    }
+    facts.private_member_boundaries.sort_unstable();
+    let mut disjoint: Vec<(usize, usize)> = Vec::new();
+    for &(start, end) in &facts.private_member_boundaries {
+        if let Some(last) = disjoint.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+        } else {
+            disjoint.push((start, end));
+        }
+    }
+    facts.private_member_boundaries = disjoint;
+}
+
+pub(crate) fn unsupported_private_member_ranges(
+    file: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&super::tsconfig::TsAliasMap>,
+) -> Vec<(usize, usize)> {
+    if !source.contains('#') {
+        return Vec::new();
+    }
+    super::extraction_cache::phase_two_facts_cached(file, source, workspace_root, alias_map)
+        .map(|facts| facts.private_member_boundaries)
+        .unwrap_or_default()
+}
+
+pub(crate) fn inside_private_member_boundary(ranges: &[(usize, usize)], line: usize) -> bool {
+    ranges
+        .partition_point(|(start, _)| *start <= line)
+        .checked_sub(1)
+        .and_then(|index| ranges.get(index))
+        .is_some_and(|(_, end)| line <= *end)
 }
 
 /// Walk top-level statements for unsupported owner shapes, collecting every
@@ -2075,7 +2208,7 @@ fn collect_class_element_shapes(
                 // String-literal, numeric, and computed keys are skipped by
                 // `method_key_name`; changed lines inside them are silent
                 // today (#4104-A F2b). `#private` names are owners (#10440).
-                if method_key_name(&method.key).is_some() {
+                if method_key_name(method).is_some() {
                     continue;
                 }
                 ("class method with unsupported key", method.span)

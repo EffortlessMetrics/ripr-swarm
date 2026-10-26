@@ -6853,6 +6853,7 @@ pub(crate) fn classify_resolved_owner(
         has_owner_call_evidence,
         &missing_discriminators,
         observed_evidence_label(&related),
+        private_member_unknown,
     );
     missing.push(actionability.missing_summary());
 

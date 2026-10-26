@@ -249,15 +249,21 @@ loop variable or callback parameter named `test`, `it` or `describe` is not
 descended. The dropped-registration disclosure no longer fires for these shapes.
 
 **Rule 21a. A `#private` class method is an owner whose reach is unknown (#10440).**
-A method declared with a `#name` key is extracted as an owner named with its
+A direct ordinary method of a top-level class declared with a `#name` key is extracted as an owner named with its
 `#` (`#calculateDelay`), so a change inside it no longer reads as a
 `typescript_owner_extraction_partial` gap with no finding. No test can call it
 by name, and reach through a public method of the class (`this.#name(...)`) is
 not modeled, so an empty relation set says nothing either way: the finding reads
 `static_unknown` with reach, observation and discrimination unknown, never the
 confident `no_static_path`, and a public caller's assertion earns it no credit.
-String-literal, numeric and computed method keys keep the partial-extraction
-disclosure. Resolving the call chain from the tests' public entry is future work.
+String-literal, numeric and computed method keys, private accessors and
+function-valued private fields keep the partial-extraction disclosure. Private
+methods, accessors and function-valued fields nested inside an enclosing owner also keep that disclosure, and their
+changed lines must not borrow the enclosing public owner's test credit. The
+disclosure counts affected files, not methods or changed lines. Human stop
+reasons, actionability and preview cards must not invent a candidate test path
+or prescribe an assertion for this unknown. Resolving the call chain from the
+tests' public entry and extracting nested private owners are future work.
 
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body

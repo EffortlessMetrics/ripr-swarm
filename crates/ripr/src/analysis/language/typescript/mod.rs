@@ -773,12 +773,35 @@ impl TypeScriptAdapter {
                 continue;
             }
 
+            let private_boundaries = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    unsupported_private_member_ranges(
+                        &changed.path,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                    )
+                })
+                .unwrap_or_default();
             // Owner-extraction gap detection (#4104-A): a changed line inside
             // an owner shape the extractor does not index produces NO finding
             // below, so this bounded disclosure is the only honest signal.
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
-                let changed_lines: Vec<usize> =
-                    changed.added_lines.iter().map(|added| added.line).collect();
+                let changed_lines: Vec<usize> = changed
+                    .added_lines
+                    .iter()
+                    .map(|added| added.line)
+                    .chain(
+                        changed
+                            .removed_lines
+                            .iter()
+                            .map(|removed| removed.new_side_line)
+                            .filter(|line| {
+                                inside_private_member_boundary(&private_boundaries, *line)
+                            }),
+                    )
+                    .collect();
                 if let Some(gap) = detect_owner_extraction_gap(
                     &changed.path,
                     source,
@@ -894,6 +917,9 @@ impl TypeScriptAdapter {
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
             for added in &changed.added_lines {
+                if inside_private_member_boundary(&private_boundaries, added.line) {
+                    continue;
+                }
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
@@ -1038,6 +1064,9 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
+                    if inside_private_member_boundary(&private_boundaries, line) {
+                        return None;
+                    }
                     // The wrapper's owner lookup is the span check only: the
                     // caller already resolved the sole owner this closure
                     // receives (its file matched by normalized path), so a
