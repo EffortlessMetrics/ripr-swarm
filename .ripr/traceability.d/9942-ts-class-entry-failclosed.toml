@@ -8,4 +8,5 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::an_unused_function_expression_does_not_drop_a_real_call",
   "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_test_that_replaces_the_helper_does_not_run_the_real_code",
   "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_second_class_with_the_same_name_does_not_lend_its_methods",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_default_parameter_with_an_arrow_type_does_not_make_a_method_a_generator",
 ]

@@ -524,6 +524,11 @@ fn a_test_that_replaces_the_helper_does_not_run_the_real_code() -> Result<(), St
             "prototype-assigned",
             "  Command.prototype._collect = jest.fn();\n",
         ),
+        ("deleted", "  delete program._collect;\n"),
+        (
+            "prototype-deleted",
+            "  delete Command.prototype._collect;\n",
+        ),
         (
             "define-property",
             "  Object.defineProperty(program, '_collect', { value: () => [] });\n",
@@ -559,4 +564,15 @@ fn a_second_class_with_the_same_name_does_not_lend_its_methods() {
         "function other() {{\n  class Command {{\n    run(value: string) {{\n      return this._collect(value, []);\n    }}\n  }}\n  return Command;\n}}\n\n{COMMAND}"
     );
     assert!(entry_names(&nested_first, "_collect").is_empty());
+}
+
+#[test]
+fn a_default_parameter_with_an_arrow_type_does_not_make_a_method_a_generator() {
+    // `=>` inside the parameter list must not close the parenthesis early and
+    // expose a later `*` (a multiplication default) to the generator check.
+    let source = COMMAND.replace(
+        "  add(value: string): this {",
+        "  add(value: string, done: () => void = () => {}, scale = 2 * 3): this {",
+    );
+    assert_eq!(entry_names(&source, "_collect"), ["add"]);
 }

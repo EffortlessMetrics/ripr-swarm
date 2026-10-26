@@ -235,8 +235,8 @@ fn is_plain_method(source: &str) -> bool {
     let mut depth = 0usize;
     for ch in code[..body_start].chars() {
         match ch {
-            '(' | '[' | '<' => depth += 1,
-            ')' | ']' | '>' => depth = depth.saturating_sub(1),
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
             '*' if depth == 0 => return false,
             _ => {}
         }
@@ -628,7 +628,7 @@ pub(crate) fn assigns_member_named(text: &str, name: &str) -> bool {
         let plain = rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>");
         plain
             || COMPOUND.iter().any(|op| rest.starts_with(op))
-            || text[..idx].trim_end().ends_with("delete")
+            || deletes_expression_ending_at(text, idx)
     });
     assigned
         || ["defineProperty(", "defineProperties("].iter().any(|call| {
@@ -640,4 +640,16 @@ pub(crate) fn assigns_member_named(text: &str, name: &str) -> bool {
                     || window.contains(&format!("{{ {name}:"))
             })
         })
+}
+
+/// `true` when the member expression that ends just before byte `dot` (the
+/// receiver chain `program` or `Command.prototype`) is the operand of `delete`.
+fn deletes_expression_ending_at(text: &str, dot: usize) -> bool {
+    let chain: usize = text[..dot]
+        .chars()
+        .rev()
+        .take_while(|ch| is_javascript_identifier_char(*ch) || *ch == '.')
+        .map(char::len_utf8)
+        .sum();
+    text[..dot - chain].trim_end().ends_with("delete")
 }
