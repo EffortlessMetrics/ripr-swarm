@@ -97,6 +97,26 @@ The default contract is:
 - Actionable weak, missing, reachable, and unknown seam classes remain visible
   with conservative severities.
 
+### CLI value diagnostics and option help
+
+`ripr diff --format` accepts `human`, `text`, `md`, `markdown`, and `json`.
+The first four retain human output; `json` retains JSON output. Unknown values
+use the shared enum-value diagnostic: `xml` produces
+`unknown diff format "xml". Accepted: human, text, md, markdown, json.`;
+the near miss `jsonn` produces
+``unknown diff format "jsonn". Did you mean `json`? Accepted: human, text, md, markdown, json.``.
+These are argv refusals: exit 2, empty stdout, and the diagnostic prefixed
+with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
+Omitting the value retains `missing value for --format` with the same exit
+and streams. This does not replace `check`'s common-format/help-pointer contract.
+
+The rendered `pilot` usage line names `[--format FORMAT]`; its option line
+names `human` as the default and `json` as the alternative. Both spellings
+remain accepted by the parser. The rendered `doctor` option line names
+`--profile NAME`, `analysis` as the default, and `source-build` as the
+alternative. Both profiles remain accepted. Help exits 0 with empty stderr;
+invalid or missing option values remain usage errors with exit 2.
+
 ## Surface Defaults
 
 | Surface | Default should do | Default should not do |
@@ -430,6 +450,10 @@ blocking by default.
 
 Defaults-first adoption evidence should cover:
 
+- `cli_smoke/cli_value_contracts.rs` exercises actual process output and exit
+  status for diff's distant/near-miss/missing values, accepted aliases reaching
+  revision validation, and the rendered pilot/doctor option contracts paired
+  with parser acceptance and refusal controls;
 - documentation for every default surface listed above;
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
