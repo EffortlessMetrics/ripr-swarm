@@ -1085,15 +1085,10 @@ pub(super) fn parse_agent_verify_execute_options(
             "--cancel-after-ms" => {
                 i += 1;
                 let value = expect_value(args, i, "--cancel-after-ms")?;
-                let parsed = value.parse::<u64>().map_err(|error| {
-                    format!("invalid --cancel-after-ms: expected a positive integer: {error}")
-                })?;
-                if parsed == 0 {
-                    return Err(
-                        "invalid --cancel-after-ms: expected a positive integer".to_string()
-                    );
-                }
-                cancel_after_ms = Some(parsed);
+                cancel_after_ms = Some(super::commands_numeric::parse_positive_u64(
+                    value,
+                    "--cancel-after-ms",
+                )?);
             }
             "--json" => json = true,
             other => return Err(unknown_argument("agent verify-execute", other)),
@@ -1318,12 +1313,7 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
 }
 
 fn parse_max_seams(value: &str) -> Result<usize, String> {
-    let parsed = value
-        .parse::<usize>()
-        .map_err(|err| format!("invalid --max-seams: expected a positive integer: {err}"))?;
-    if parsed == 0 {
-        return Err("invalid --max-seams: expected a positive integer".to_string());
-    }
+    let parsed = super::commands_numeric::parse_positive_usize(value, "--max-seams")?;
     if parsed > AGENT_BRIEF_HARD_MAX_SEAMS {
         return Err(format!(
             "invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}"
@@ -2223,10 +2213,7 @@ mod tests {
                 "--max-seams",
                 "many",
             ])),
-            Err(
-                "invalid --max-seams: expected a positive integer: invalid digit found in string"
-                    .to_string()
-            )
+            Err("--max-seams requires a positive integer; got \"many\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[
@@ -2236,7 +2223,7 @@ mod tests {
                 "--max-seams",
                 "0",
             ])),
-            Err("invalid --max-seams: expected a positive integer".to_string())
+            Err("--max-seams requires a positive integer; got \"0\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[

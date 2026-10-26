@@ -67,8 +67,8 @@ impl TestStubSelector {
         let (file, line) = value
             .rsplit_once(':')
             .ok_or_else(|| format!("--at expects FILE:LINE, got {value:?}"))?;
-        let line = line.parse::<usize>().map_err(|error| {
-            format!("--at expects FILE:LINE with a line number, got {value:?}: {error}")
+        let line = line.parse::<usize>().map_err(|_parse_err| {
+            format!("--at expects FILE:LINE with a line number, got {value:?}")
         })?;
         if file.trim().is_empty() || line == 0 {
             return Err(format!("--at expects FILE:LINE, got {value:?}"));
