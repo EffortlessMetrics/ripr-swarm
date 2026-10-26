@@ -413,6 +413,88 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     decoy_untouched(&decoy)
 }
 
+/// #10432: the refused-variant control for the Python gap-bound start. With
+/// the fixture's tests removed, no Python test reaches the changed predicate,
+/// so the finding is static-limited (`no_static_path`): `ripr check` offers no
+/// gap-bound start, starting one by hand is refused as not ready, and the
+/// refusal leaves no attempt and no workflow artifact behind.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_refused_variant_is_offered_no_gap_bound_start() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "pyr", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    fixture_git_ok(&root, &["rm", "-q", "-r", "tests"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "drop the tests"])?;
+
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~2"])?;
+    expect_exit(ok, true, "check of the test-free variant")?;
+    decoy_untouched(&decoy)?;
+    need(
+        &check,
+        "1 no path",
+        "the variant's finding has no static path",
+    )?;
+    let gap = check
+        .split(|c: char| c.is_whitespace() || c == '`')
+        .find(|token| token.starts_with("gap:python:pricing/core.py:bulk_discount_rate:"))
+        .ok_or_else(|| format!("check printed no Python gap:\n{check}"))?
+        .to_string();
+    if check.contains("ripr agent repair --gap-id") {
+        return Err(format!(
+            "the refused variant was offered a gap-bound start:\n{check}"
+        ));
+    }
+
+    let (start_ok, start) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(start_ok, false, "gap-bound start of the refused variant")?;
+    need(
+        &start,
+        "the repair packet is not ready",
+        "refusal names the packet",
+    )?;
+    need(
+        &start,
+        "no repair attempt was started",
+        "refusal states no attempt",
+    )?;
+    // Pin the reason: the static-limited guard refuses it, not a later step
+    // that happens to share the "not ready" prefix.
+    need(
+        &start,
+        "the finding is static-limited",
+        "refusal names the static limit",
+    )?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "the refused start left an attempt behind:\n{start}"
+        ));
+    }
+    decoy_untouched(&decoy)?;
+
+    // Positive control: the same fixture with its tests kept is offered the
+    // start, so the refusal above is the variant's, not the route's.
+    let (_kept_guard, kept, kept_decoy) =
+        materialize("blind_journey_installed_python", "head", "pyk", None)?;
+    let kept_arg = kept.to_string_lossy().into_owned();
+    let (kept_ok, kept_check) = ripr(
+        &kept_decoy,
+        &["check", "--root", &kept_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(kept_ok, true, "check of the tested fixture")?;
+    if gap_start_tokens(&kept_check).map(|(start_gap, _)| start_gap) != Some(gap) {
+        return Err(format!(
+            "control: the tested fixture must offer the start:\n{kept_check}"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(feature = "lang-python")]
 #[test]
 fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {

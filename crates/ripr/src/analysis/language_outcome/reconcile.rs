@@ -9,7 +9,7 @@
 //! `AnalysisOutcome.kind`. An adapter that is not compiled in is recorded as an
 //! aggregate-only disposition by design (#6468), with no top-level limitation.
 
-use super::{LanguageAggregate, LanguageOutcomeStatus};
+use super::{LanguageAggregate, LanguageOutcomeStatus, OutcomeMode};
 use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisOutcome};
 use crate::domain::{Finding, LanguageId};
 
@@ -35,22 +35,38 @@ pub(crate) fn reconcile(
     aggregate.validate()?;
     aggregate.validate_selected(selected)?;
 
-    let child_findings: usize = aggregate
+    let mut child_findings: usize = aggregate
         .outcomes
         .values()
         .map(|child| child.finding_count())
         .sum();
-    // When both TypeScript ids are selected the pipeline runs the one adapter
-    // per id and retains both runs' findings, while the aggregate keeps one
-    // child per label (#6468). That pre-existing duplication makes the
-    // retained list longer, never shorter, so only that case is relaxed.
-    let both_typescript_ids =
-        selected.contains(&LanguageId::TypeScript) && selected.contains(&LanguageId::JavaScript);
-    let counts_agree = if both_typescript_ids {
-        findings.len() >= child_findings
-    } else {
-        findings.len() == child_findings
-    };
+    // When both TypeScript ids are selected the one adapter runs per id and
+    // the aggregate keeps one child per label (#6468). Repo mode retains the
+    // adapter's findings once, while each label's child carries the adapter's
+    // whole count, so the family counts once there (#10013). Both passes see
+    // the same result, so the two children agree; the only legitimate
+    // difference is a pass that errored (a zero-finding failed child). Two
+    // different non-zero counts are a contradiction. Diff mode attributes
+    // findings to a label by the finding's own language, so its children
+    // already sum to the retained findings.
+    if selected.contains(&LanguageId::TypeScript)
+        && selected.contains(&LanguageId::JavaScript)
+        && aggregate.mode == OutcomeMode::Repo
+    {
+        let [typescript, javascript] = ["typescript", "javascript"].map(|label| {
+            aggregate
+                .outcomes
+                .get(label)
+                .map_or(0, |child| child.finding_count())
+        });
+        if typescript != 0 && javascript != 0 && typescript != javascript {
+            return Err(format!(
+                "language reconcile: the shared TypeScript adapter family carries {typescript} and {javascript} finding(s) in its two children"
+            ));
+        }
+        child_findings -= typescript.min(javascript);
+    }
+    let counts_agree = findings.len() == child_findings;
     if !counts_agree {
         return Err(format!(
             "language reconcile: children carry {child_findings} finding(s), retained findings are {}",

@@ -55,7 +55,10 @@ struct ScannerShape {
 }
 
 struct TransitionArm {
-    state: String,
+    /// `None` is the bare `_` state pattern, the catch-all Rust needs for
+    /// an exhaustive match over `&str` states. A quoted `"_"` is a literal
+    /// state and stays `Some`.
+    state: Option<String>,
     /// `None` is the `_` wildcard arm; `Some(ch)` is an exact char
     /// literal. A quoted `'_'` is a literal underscore, never the
     /// wildcard.
@@ -170,7 +173,15 @@ fn parse_arm(line: &str) -> Option<TransitionArm> {
     let stripped = trimmed.strip_prefix('(')?;
     let (patterns, next) = stripped.split_once(") => ")?;
     let mut parts = patterns.splitn(2, ',');
-    let state = normalize_state_token(parts.next()?)?;
+    let raw_state = parts.next()?.trim();
+    // A bare `_` state pattern is the catch-all Rust requires for an
+    // exhaustive match over `&str` states; it matches any current
+    // state, in source order like every other arm.
+    let state = if raw_state == "_" {
+        None
+    } else {
+        Some(normalize_state_token(raw_state)?)
+    };
     let raw_symbol = parts.next()?.trim();
     let symbol = if raw_symbol == "_" {
         None
@@ -257,7 +268,11 @@ fn resolve_symbols(iterable: &str, inputs: &ExactInputs) -> Option<Vec<char>> {
 /// substituting the current state).
 fn transition(arms: &[TransitionArm], state: &str, symbol: char) -> Option<String> {
     for arm in arms {
-        if arm.state != state {
+        if arm
+            .state
+            .as_deref()
+            .is_some_and(|expected| expected != state)
+        {
             continue;
         }
         if arm.symbol.is_none_or(|expected| expected == symbol) {
@@ -403,6 +418,49 @@ mod tests {
         let helper = scanner_fn("scan", BODY);
         assert_eq!(final_state(&helper, "\" \"")?, "State::Text");
         assert_eq!(final_state(&helper, "\"x\"")?, "State::Word");
+        Ok(())
+    }
+
+    #[test]
+    fn wildcard_state_arm_matches_any_state_in_source_order() -> Result<(), String> {
+        // `(_, _)` is the final catch-all an exhaustive `&str` match
+        // needs. It takes every state no earlier arm took, and an
+        // earlier explicit arm still wins.
+        let catch_all = BODY.replace(
+            "            (State::Word, _) => State::Word,",
+            "            (_, _) => State::Word,",
+        );
+        assert_ne!(catch_all, BODY, "the catch-all substitution must apply");
+        let helper = scanner_fn("scan", &catch_all);
+        assert_eq!(final_state(&helper, "\"ab\"")?, "State::Word");
+        assert_eq!(final_state(&helper, "\"ab \"")?, "State::Text");
+        let early = BODY.replace(
+            "            (State::Text, ' ') => State::Text,",
+            "            (_, _) => State::Text,\n            (State::Text, ' ') => State::Text,",
+        );
+        assert_ne!(early, BODY, "the early catch-all substitution must apply");
+        let early_helper = scanner_fn("scan", &early);
+        assert_eq!(final_state(&early_helper, "\"ab\"")?, "State::Text");
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_underscore_state_is_a_literal_not_the_catch_all() -> Result<(), String> {
+        // `("_", ' ')` matches only the literal state `_`; it must not
+        // take the `"text"` state the way a bare `_` pattern would.
+        let body = "pub fn scan(input: &str) -> &'static str {
+    let mut state = \"text\";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            (\"_\", ' ') => \"word\",
+            (\"text\", _) => \"text\",
+            (_, _) => \"text\",
+        };
+    }
+    state
+}";
+        let helper = scanner_fn("scan", body);
+        assert_eq!(final_state(&helper, "\" \"")?, "text");
         Ok(())
     }
 

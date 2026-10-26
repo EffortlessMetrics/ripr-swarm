@@ -285,6 +285,15 @@ fn mixed_rows_keep_their_own_miss() -> Result<(), String> {
     Ok(())
 }
 
+fn support_of(finding: &Finding, test: &str) -> Option<String> {
+    finding
+        .related_tests
+        .iter()
+        .find(|row| row.name == test)
+        .and_then(|row| row.miss_support.as_ref())
+        .map(|support| support.value.clone())
+}
+
 /// A strong assertion whose own closed-body input misses the boundary the
 /// owner pins carries `missing_input` (#10040), the row-owned fact the
 /// hedged TypeScript wording stands behind.
@@ -298,6 +307,9 @@ fn strong_row_off_the_boundary_is_missing_input() -> Result<(), String> {
         miss_of(&finding, "below")?,
         Some(RelatedTestMiss::MissingInput)
     );
+    // The row carries the finding's boundary as its row-owned support.
+    let support = support_of(&finding, "below");
+    assert_eq!(support.as_deref(), Some("total == 100"));
     Ok(())
 }
 
@@ -546,6 +558,7 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
                     pin_facts: &pin_facts,
                     changed_field: None,
                 },
+                boundary_fact: None,
             },
             &candidates,
             &[TypeScriptPredicateActivation::NotApplicable],
@@ -561,6 +574,58 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
     assert_eq!(run(ExposureClass::Exposed, false), vec![None]);
     assert_eq!(run(ExposureClass::StaticUnknown, false), vec![None]);
     assert_eq!(run(ExposureClass::NoStaticPath, false), vec![None]);
+    Ok(())
+}
+
+/// A `missing_input` row whose finding has no boundary fact keeps its reason
+/// and carries no support: the renderer then words it without a value.
+#[test]
+fn missing_input_without_a_boundary_fact_carries_no_support() -> Result<(), String> {
+    let source =
+        format!("{IMPORT}test('below', () => {{\n  expect(applyDiscount(50)).toBe(50);\n}});\n");
+    let root = ts_unique_tempdir("row-miss-no-fact")?;
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    let owner = extract_owners(Path::new(OWNER_FILE), OWNER_SOURCE)
+        .into_iter()
+        .find(|owner| owner.name == "applyDiscount")
+        .ok_or("owner not extracted")?;
+    let tests = extract_tests(Path::new(TEST_FILE), &source);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(candidates.len(), 1);
+    let shape = classify_probe_shape_detail(RETURN_CHANGE.text);
+    let mock_facts = MockCallFacts::read(RETURN_CHANGE.text, None, &owner.name, &owner.params);
+    let pin_facts = PinFacts::default();
+    let mut rows = related_tests_for_candidates(&candidates, Some(&shape.family));
+    assign_row_misses(
+        &TsRowMissContext {
+            class: &ExposureClass::WeaklyExposed,
+            static_limited: false,
+            probe_shape: &shape,
+            line_text: RETURN_CHANGE.text,
+            owner: &owner,
+            alias_map: None,
+            workspace_root: None,
+            credits: CreditFacts {
+                mock_facts: &mock_facts,
+                pin_facts: &pin_facts,
+                changed_field: None,
+            },
+            boundary_fact: None,
+        },
+        &candidates,
+        &[TypeScriptPredicateActivation::MissedBoundary],
+        &mut rows,
+    );
+    assert_eq!(rows[0].miss, Some(RelatedTestMiss::MissingInput));
+    assert!(rows[0].miss_support.is_none());
     Ok(())
 }
 

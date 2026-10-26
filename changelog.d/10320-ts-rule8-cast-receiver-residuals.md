@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: rule 8's receiver reading now unwraps a grouped cast receiver in the remaining spellings: a keyword glued to the paren (`return(svc as any)`), a comparison before the group (`a > (svc as any)`), `if(a)(svc as any)`, nested groups, multi-space or multi-line `as`, `satisfies`, `<T>x` and `(svc!)`. The loop-bound abstention therefore still fires when the counted mock reaches the method owner through these receivers (#10320).
