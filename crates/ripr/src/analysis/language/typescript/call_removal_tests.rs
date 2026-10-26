@@ -526,3 +526,20 @@ fn counted_removal_refuses_multiple_old_calls() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn counted_removal_refuses_concurrent_receiver_edits() -> Result<(), String> {
+    let test = format!(
+        "import {{ mock, test }} from 'node:test';\nimport assert from 'node:assert/strict';\n{MODULE_IMPORT}\ntest('writes once', () => {{ {SPY} record('a'); {PIN} }});\n"
+    );
+    let diff = "diff --git a/src/audit.ts b/src/audit.ts\n--- a/src/audit.ts\n+++ b/src/audit.ts\n@@ -1,1 +1,1 @@\n-export const sink = { write(event: string) { throw new Error('boom'); } };\n+export const sink = { write(event: string) { void event; } };\n@@ -3,1 +3,1 @@\n-  sink.write(event);\n+  void event;\n";
+    let finding = finding_for(
+        "receiver-and-call-edited",
+        NODE_TEST,
+        &[("src/audit.ts", MODULE), ("test/audit.test.ts", &test)],
+        diff,
+        3,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
