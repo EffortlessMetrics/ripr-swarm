@@ -1383,6 +1383,34 @@ pub(crate) fn ava_assertion_from_expression(
     };
     let has_dynamic_matcher_arg = expected_arg.is_some() && !expected_is_literal;
 
+    // RIPR-SPEC-0243 rule 10 (AVA): `t.throws` / `t.throwsAsync` whose
+    // expectation is an all-literal object with a string `message` compares
+    // the message by equality, as `node:assert` does. Only that object form
+    // credits: AVA's other expectation fields (`instanceOf`, `is`) are
+    // non-literal and fail the all-literal gate, and `notThrows*` keep their
+    // broad reading.
+    let error_payload = match method {
+        "throws" | "throwsAsync" => call
+            .arguments
+            .get(1)
+            .filter(|arg| matches!(arg, Argument::ObjectExpression(_)))
+            .and_then(|arg| node_assert_error_payload(method == "throwsAsync", arg, source))
+            .map(|payload| TypeScriptErrorPayload {
+                kind: if method == "throwsAsync" {
+                    TypeScriptErrorPayloadKind::AvaThrowsAsyncObject
+                } else {
+                    TypeScriptErrorPayloadKind::AvaThrowsObject
+                },
+                ..payload
+            }),
+        _ => None,
+    };
+    let (oracle_kind, oracle_strength) = if error_payload.is_some() {
+        (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else {
+        (oracle_kind, oracle_strength)
+    };
+
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
 
@@ -1393,7 +1421,7 @@ pub(crate) fn ava_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,

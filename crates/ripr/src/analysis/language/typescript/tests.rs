@@ -18430,6 +18430,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod ava_throws_message_tests;
 mod boolean_pin_tests;
 mod catch_arm_tests;
 mod changed_field_tests;

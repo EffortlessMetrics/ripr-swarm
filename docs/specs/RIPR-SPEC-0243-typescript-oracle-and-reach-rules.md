@@ -580,6 +580,13 @@ strong:
   no repeated wildcard (`.`, a character class, an escaped class such as
   `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
   whose top-level `message` is a string literal.
+- AVA `t.throws` or `t.throwsAsync` (the test callback's first parameter,
+  as for the other AVA assertions) whose second argument is an all-literal
+  object whose top-level `message` is a string literal. AVA compares
+  `message` by equality, as `node:assert` does. An object with a non-literal
+  field (`instanceOf`, `is`), a spread, a regex or non-literal `message`, a
+  missing expectation and `t.notThrows` / `t.notThrowsAsync` stay
+  `broad_error` / weak. (Amended 2026-10-26, #10400.)
 
 Rule 4's message-only guard applies to all of them: on a message-only
 change, a chai string (also the message of a chai class and message
