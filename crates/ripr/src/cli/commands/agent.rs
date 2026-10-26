@@ -1103,6 +1103,18 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
                 default_dir.display()
             ));
         }
+        // Lexical equality is unsound when a `..` follows a symlink: the
+        // filesystem resolves `..` after the symlink target, not after the
+        // spelled component, so the accepted spelling can name a different
+        // real directory than the default (#10624 review). Refuse unless
+        // lexical resolution provably matches filesystem resolution.
+        if crate::agent::loop_commands::parent_dir_follows_symlink(&requested) {
+            return Err(format!(
+                "agent status --out {} is not supported: a symlink before `..` resolves to a different directory than its spelling; agent status reads the workflow artifacts under {}",
+                dir.display(),
+                default_dir.display()
+            ));
+        }
     }
     if let Some(attempt) = options.attempt_id.as_deref() {
         return run_agent_attempt_status(&options, attempt);

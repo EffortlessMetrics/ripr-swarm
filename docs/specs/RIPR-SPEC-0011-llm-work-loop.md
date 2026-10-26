@@ -45,6 +45,17 @@ The status report should:
   snapshot or `agent receipt` is older than `agent verify`;
 - keep all language advisory and static.
 
+`--out` names the directory status reads, and only the default workflow
+directory is accepted: spellings that are lexically equivalent to
+`target/ripr/workflow` (for example `./target/ripr/workflow`, a trailing
+slash, or a `..` that pops only real directories) run exactly like the default
+spelling, while any genuinely different directory is refused with exit 2 and
+`agent status --out <dir> is not supported` on stderr instead of being
+silently ignored (#10542). Lexical equivalence is not trusted when a `..`
+follows a symlink: the filesystem resolves `..` after the symlink target, so
+such a spelling is refused even when lexical cleaning would make it match
+(#10624 review).
+
 General inventory continuation and missing-artifact commands bind the selected
 root from its native filesystem spelling. UTF-8 Unix directory names containing
 a literal backslash must select that directory when pasted from another working
