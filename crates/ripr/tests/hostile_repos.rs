@@ -581,7 +581,10 @@ fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), St
     let inner = plain(&scratch, "inner")?;
     let outer = plain(&scratch, "outer")?;
     let inner_arg = inner.to_string_lossy().into_owned();
-    git(&outer, &["submodule", "add", "-q", &inner_arg, "vendor/dep"])?;
+    git(
+        &outer,
+        &["submodule", "add", "-q", &inner_arg, "vendor/dep"],
+    )?;
     git(&outer, &["commit", "-q", "-m", "add submodule"])?;
     git(&outer, &["branch", "-f", "main", "HEAD"])?;
     let inner_lib = outer.join("vendor/dep/src/lib.rs");
