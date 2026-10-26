@@ -1,7 +1,8 @@
 //! Statement-order controls shared by instance and module effect observers.
 use super::classify::classify_change_with_source;
 use super::helper_assertions::apply_helper_assertions;
-use super::owners_tests::{apply_class_facts, extract_owners};
+use super::owners_tests::extract_owners;
+use super::related_tests::apply_class_facts;
 use super::source_facts::extract_source_facts;
 use crate::domain::{ExposureClass, Finding};
 use std::{collections::BTreeMap, path::Path};
