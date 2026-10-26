@@ -6,4 +6,6 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_skip_if_on_another_root_is_not_descended_and_a_dynamic_title_still_is",
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_skip_if_accepts_an_options_argument_before_the_callback",
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_skip_if_on_a_local_or_unrelated_describe_is_not_a_runner_suite",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::describe_skip_if_with_an_inactive_options_object_is_not_descended",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::describe_skip_if_reads_use_strict_from_the_callback_not_the_title",
 ]

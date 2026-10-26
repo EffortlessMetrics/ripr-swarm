@@ -255,7 +255,9 @@ does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
 factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
 join with `&&`). Its tests keep no assertion, their admission stays
 unresolved, and findings read as under Rule 20. A non-literal title is named
-as for any suite; another root (`runner.skipIf`) is not descended.
+as for any suite; another root (`runner.skipIf`) is not descended. An options
+object that skips the suite (`{ skip: true }`) is honored as for `describe`, and
+strict mode is read from the callback, not the title.
 
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body

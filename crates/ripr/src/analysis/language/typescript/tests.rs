@@ -19054,6 +19054,22 @@ fn describe_skip_if_on_another_root_is_not_descended_and_a_dynamic_title_still_i
 }
 
 #[test]
+fn describe_skip_if_with_an_inactive_options_object_is_not_descended() {
+    let source = "describe.skipIf(c)('a', { skip: true }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\ndescribe.runIf(c)('b', { skip: false }, () => {\n  it('y', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+}
+
+#[test]
+fn describe_skip_if_reads_use_strict_from_the_callback_not_the_title() {
+    let source = "describe.skipIf(c)('s', () => {\n  'use strict';\n  { function describe() {} }\n  describe('inner', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+}
+
+#[test]
 fn unguarded_registration_keeps_assertion_credit() {
     let source = "test('a', () => {\n  expect(f(1)).toBe(2);\n});\n";
     let tests = extract_tests(Path::new("tests/a.test.ts"), source);

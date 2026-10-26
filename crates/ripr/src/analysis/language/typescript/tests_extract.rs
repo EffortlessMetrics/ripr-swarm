@@ -1020,7 +1020,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
             && !declaration_options_are_active_with_undefined(call, false)
         {
             continue;
@@ -3064,6 +3065,9 @@ fn conditional_describe_body<'a>(
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>, String)> {
     let call = statement_call(stmt)?;
     let factory = conditional_describe_factory(call)?;
+    if !declaration_options_are_active(call) {
+        return None;
+    }
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let body = function_body_statements_from_argument(
         call.arguments.get(declaration_callback_index(call))?,
@@ -4396,6 +4400,7 @@ fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
     };
     let index = if call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+        || conditional_describe_factory(call).is_some()
     {
         declaration_callback_index(call)
     } else {
