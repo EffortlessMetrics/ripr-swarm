@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (6)
+
+Reason:
+RIPR-SPEC-0158: retain accepted main terminology legend (#10426) and repair recovery guidance (#10382) in this owned compact-human fixture; JSON, human-full and predicate unknown states remain unchanged
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
