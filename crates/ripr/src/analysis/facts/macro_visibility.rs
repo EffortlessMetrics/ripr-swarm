@@ -29,6 +29,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+#[cfg(test)]
+mod prefilter_tests;
+
 /// Child modules followed through `#[macro_use]` and parents followed
 /// upward. A deeper chain is refused.
 const MAX_DEPTH: usize = 4;
