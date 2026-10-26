@@ -132,7 +132,10 @@ jobs:
         timeout-minutes: 40
         run: |
           mkdir -p target/nextest/ci
-          archive=(--archive-file nextest-archive.tar.zst --workspace-remap "$PWD" --profile ci)
+          # Extract on the workspace disk: the default /tmp extraction hit "Disk
+          # quota exceeded" ten seconds in, with the SDK cleanup having no effect.
+          mkdir -p "$RUNNER_TEMP/nextest-extract"
+          archive=(--archive-file nextest-archive.tar.zst --extract-to "$RUNNER_TEMP/nextest-extract" --extract-overwrite --workspace-remap "$PWD" --profile ci)
           cargo nextest list "${archive[@]}" --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
           [ "${{ matrix.shard }}" = 1 ] && cargo nextest list "${archive[@]}" --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
           t0=$(date +%s)
