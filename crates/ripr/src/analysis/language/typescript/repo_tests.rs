@@ -309,23 +309,31 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn a_link_to_a_non_source_file_does_not_make_repo_mode_partial() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-links-nonsource")?;
     ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
     ts_write_file(&root.join("README.md"), "# docs\n")?;
-    let linked = std::os::unix::fs::symlink(root.join("README.md"), root.join("docs.md"));
-    let result = if linked.is_ok() {
-        Some(run(&root, 800))
-    } else {
-        None
-    };
+    // A generated-named link is a name the walk would not index either.
+    for name in ["docs.md", "bundle.generated.ts"] {
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(root.join("README.md"), root.join(name));
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(root.join("README.md"), root.join(name));
+        #[cfg(not(any(unix, windows)))]
+        let linked: std::io::Result<()> = Err(std::io::ErrorKind::Unsupported.into());
+        if linked.is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(()); // platform or privilege refused; nothing to assert here
+        }
+    }
+    let result = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
-    let Some(result) = result else {
-        return Ok(()); // platform refused; nothing to assert here
-    };
     let result = result?;
+    assert!(
+        !result.findings.is_empty(),
+        "the real production file still seeds findings"
+    );
     assert!(
         result
             .partial_reason
