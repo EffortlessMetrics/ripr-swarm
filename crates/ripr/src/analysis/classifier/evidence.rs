@@ -1,9 +1,10 @@
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
-    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
+    activation_and_boundary_input, assertion_compares_hand_built_field,
+    assertion_observes_collection_argument, assertion_out_parameter, body_contains_owner_call,
+    call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
@@ -12,9 +13,10 @@ use crate::analysis::classify::{
     helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
     observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
     outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
+    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
+    reach_evidence, reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes,
+    signature_parameters, unconditional_owner_insert_field, unexercised_mask_bits,
+    wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -170,7 +172,7 @@ impl ClassifiedProbeEvidence {
         } else {
             const_reader_reach(context)
         };
-        let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -278,6 +280,12 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &flow_sinks,
         );
+        crate::analysis::classify::refine_literal_length_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &mut flow_sinks,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -368,7 +376,10 @@ impl ClassifiedProbeEvidence {
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
-            context.owner_fn,
+            OwnerInputs {
+                owner: context.owner_fn,
+                literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+            },
             owner_has_other_callers,
             assertion_macros_rebound,
         );
@@ -646,6 +657,7 @@ impl ClassifiedProbeEvidence {
         // (#6778). Keep this owner walk local to the probe; unused proximity
         // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
+        let pushed_path = std::cell::OnceCell::<Option<String>>::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -939,6 +951,31 @@ impl ClassifiedProbeEvidence {
                             )
                         })
                 },
+                pushed_literal_observed: &|test, assertion| {
+                    // The path depends only on the owner and probe, so it is
+                    // computed once per probe, not per test and assertion.
+                    context.owner_fn.is_some_and(|owner| {
+                        pushed_path
+                            .get_or_init(|| {
+                                pushed_literal_path(owner, context.probe, context.index)
+                            })
+                            .as_deref()
+                            .is_some_and(|path| {
+                                assertion_compares_hand_built_field(
+                                    &test.body,
+                                    &assertion.text,
+                                    path,
+                                    &owner.name,
+                                ) && pushed_collection_compared_whole(
+                                    owner,
+                                    path,
+                                    test,
+                                    assertion,
+                                    context.index,
+                                )
+                            })
+                    })
+                },
                 out_parameter_read: &|test, assertion| {
                     context.owner_fn.and_then(|owner| {
                         assertion_out_parameter(owner, context.index, test, assertion, pin_syntax)
@@ -1084,6 +1121,21 @@ impl ClassifiedProbeEvidence {
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired
+            && !gathered
+                .literal_length_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    context.owner_fn.is_some_and(|owner| {
+                        boundary.pairs(
+                            context.probe,
+                            owner,
+                            &test_summaries,
+                            context.index,
+                            &assertion_admitted,
+                            &owner_pin_admits,
+                        )
+                    })
+                })
             && !has_same_test_boundary_oracle_pairing(
                 context.probe,
                 context.owner_fn,

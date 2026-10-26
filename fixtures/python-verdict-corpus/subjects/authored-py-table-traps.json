@@ -1,0 +1,57 @@
+{
+  "subject_id": "authored-py-table-traps",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "0cc610aa297d212fedd7bee6d3f0cde6a1ee388ab84ea02df877d085292006e0"
+    },
+    {
+      "path": "tablekit/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tablekit/rates_bool.py",
+      "sha256": "6e17ef8c751820e9530011c2ebbbd6db26b5af5967b219101ef647cacd0f2879"
+    },
+    {
+      "path": "tablekit/rates_missing.py",
+      "sha256": "0a209d658d28c7abcb4bb2bbef14f7da89f4e36dbf616a01aa719201bf59e1d7"
+    },
+    {
+      "path": "tablekit/rates_paren.py",
+      "sha256": "dce00030ce484eeb25b84c39fcd608ab336f0cdc230b594ca8b516f884dd319f"
+    },
+    {
+      "path": "tablekit/rates_plain.py",
+      "sha256": "1d4bedd1e927f469c116ff876e4a4ce636e5206d2b66d3f94e24f21412e7dd2d"
+    },
+    {
+      "path": "tablekit/rates_store.py",
+      "sha256": "1f669f34011f0bf5875d5ef07b69bae5a525e36d2b8da30c8e27eab05a73d1f4"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_rates_bool.py",
+      "sha256": "8dfefb7a793d0f94bd9e272e3ba0d9571b8510dc293934be5db925dca6d0a38d"
+    },
+    {
+      "path": "tests/test_rates_missing.py",
+      "sha256": "1901554676775e66709c67422e5dde3d760ccb0174a53f902425749bbc836532"
+    },
+    {
+      "path": "tests/test_rates_paren.py",
+      "sha256": "d5370907e2fc2a97b0783edc3d4b098c489c55e3f127bb9d2ea8c878f7d4de7d"
+    },
+    {
+      "path": "tests/test_rates_plain.py",
+      "sha256": "e54f180aa85a70fa15031ac1d596ffd115138b105f28d490ac1733dbfd657ce2"
+    }
+  ]
+}

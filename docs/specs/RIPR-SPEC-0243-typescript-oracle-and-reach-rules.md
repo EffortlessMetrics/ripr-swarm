@@ -235,6 +235,19 @@ change. An unguarded related test decides the finding as before. The finding and
 outcome name `typescript_conditional_registration` with the guard and its line.
 A constant condition keeps its existing reading.
 
+**Rule 21. A test registered in a loop over data static analysis cannot enumerate is reached, never credited (#10501).**
+A `test` / `it` call (or a `describe` holding them) inside a `for...of`,
+`for...in` or `.forEach` callback whose iterable is not a known non-empty
+literal (a file listing, a parameter, a call result) is indexed for reach under
+the loop head as its guard (`for (... of data)`, `data.forEach(...)`; a nesting
+`if` joins with `&&`). The loop may run zero times or many, with titles and
+counts unknown, so the test keeps no assertion, its admission stays unresolved,
+and the finding reads as under Rule 20: `static_unknown` when every
+oracle-eligible related test is guarded, otherwise decided by the unguarded
+tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
+loop variable or callback parameter named `test`, `it` or `describe` is not
+descended. The dropped-registration disclosure no longer fires for these shapes.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.
@@ -580,6 +593,21 @@ strong:
   no repeated wildcard (`.`, a character class, an escaped class such as
   `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
   whose top-level `message` is a string literal.
+- AVA `t.throws` or `t.throwsAsync` (the test callback's first parameter of
+  a test registered through AVA's own `test` import, `import test from "ava"`
+  or `import { test } from "ava"`; tape and uvu give `t.throws` a different
+  expectation contract) whose second argument is an object holding exactly
+  one property, a plain `message` with a string literal value (a duplicate
+  key keeps the last value in JavaScript, so a second `message` is refused).
+  AVA compares `message` by equality, as `node:assert` does. The first
+  argument must be a plain function for `t.throws` and an async function for
+  `t.throwsAsync`, a `t.throwsAsync` credits only when awaited or returned to
+  the runner (a bare call can outlive the test), and every mention of the receiver in the test body must be
+  a `t.method(...)` call, so a shadowed receiver or a replaced matcher never
+  credits. Any other field (`instanceOf`, `is`, `name`, `code`), a spread, a
+  computed, shorthand or method `message`, a regex or non-literal `message`,
+  a missing expectation, a promise argument and `t.notThrows` /
+  `t.notThrowsAsync` stay `broad_error` / weak. (Amended 2026-10-26, #10400.)
 
 Rule 4's message-only guard applies to all of them: on a message-only
 change, a chai string (also the message of a chai class and message
@@ -1071,7 +1099,8 @@ or `static_unknown`, never `exposed`):
    conditional expression, or a second call keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
-   in a class whose methods the owner relation can name. A decorator
+   in a class whose methods the owner relation can name, including
+   `export default class Name` (#10314). A decorator
    factory (`@D(3)`), a stacked decorator, a class, property, accessor or
    parameter decorator, a static method, and a decorator that also assigns
    `descriptor.get`, `descriptor.set` or `descriptor.writable` keep the old
@@ -1084,7 +1113,10 @@ or `static_unknown`, never `exposed`):
    result, so the same exactness rules as a direct return-value owner apply.
    The asserted call must be on a receiver of the decorated class
    (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
-   in the test): an assertion on another class's same-named method sees
+   in the test), spelled with any constructor name the test legitimately
+   has for it: the class name in the same file, a named-import alias
+   (`import { Ledger as Book }`), or a default import's local name; a name
+   the test body or an enclosing scope rebinds constructs something else: an assertion on another class's same-named method sees
    nothing of the decorator; a callback parameter that reuses the receiver's
    name (`(l: Other) => ...`, `l => ...`) is a different binding and refuses.
    On the return line only decorated-method tests lend reach: an ordinary
@@ -1123,6 +1155,17 @@ imported name must be the owner's name, a shadow or a mock blocks it), and a
 member read off a function export (rule 19) is a property of the function, not
 the owner.
 
+A member picked off a `const` namespace binding is the same import (#10447):
+after `const lib = require("<module>")`, `const f = lib.f`, `const f = lib["f"]`
+and `const { f } = lib` record source `<module>`, imported `f`. The namespace
+must be a `const` declared earlier; a `let`/`var` namespace, an alias of the
+namespace (`const again = lib`), a call on the member, an optional chain and a
+deeper member record nothing. A namespace whose members the file may replace
+(`lib.f = stub`, `lib["f"] = stub`, `delete lib.f`, or any use of `lib` beyond
+reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
+`const alias = lib` or `{ lib }`) no longer holds the module's export
+there, so members read off it record nothing.
+
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
 `function require() {}`, also a block-level function, which hoists in sloppy
@@ -1132,6 +1175,34 @@ sits. A
 `let` or `var` binding that the file assigns to again
 (`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
 records no import. A `const` binding cannot be reassigned and is unchanged.
+
+A test registration picked off a whole-module `require()` namespace is a named
+runner import too (#10477): `const runner = require("node:test"); const test =
+runner.test;`, `const { test } = runner;` and the single-declaration form
+`const runner = require("node:test"), test = runner.test;` record the import
+`const { test } = require("node:test")` records. Declarations are extracted one
+at a time, so a separate pass carries the namespace across them. It requires
+exactly one top-level declaration of the namespace, a `const` pick declared
+after it, and that every other use of the namespace in the file is one of the
+qualifying picks: `runner.test = stub`, `runner = other`, an escaped `runner`, an
+alias (`const again = runner`), an optional chain, a computed key, a default or
+nested pattern, and a pick whose local the file writes refuse every pick. The
+runner-source and shadowing gates of rule 5 still decide whether the resulting
+import is a known registration, so a non-runner module's `helpers.test` stays
+unrelated.
+
+The pick is conservative on purpose (#10477 review). `.default`, computed,
+nested, defaulted and rest picks are not read, and neither is a member that is
+not an active registration root: `runner.xit` or `{ xdescribe: describe }`
+renamed into an active-looking local would pass the local-spelling extraction
+guards, so inactive members never become a pick. The namespace must be declared
+once and every other use must be a pick declared after it (a forward pick, a
+direct call, an alias, an escape, a tagged or interpolated use, `delete`,
+`Object.assign`/`defineProperty` or a call through it refuses every pick). The
+picked local must be declared before any use, never written (wrapped targets,
+member assignment, update, compound and loop targets included) and only called,
+optionally through a member chain. A file that can reach a name without
+spelling it (`eval`, `with`, an identifier escape) reads nothing.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -1696,6 +1767,13 @@ keys); do not take the next number.
     owner: `broad_error` / weak.
 
 ## Test Mapping
+
+- #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
+  pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
+  such as `import { Ledger as Book }`) and
+  `default_exported_class_credits_the_return_edit_under_any_local_name` (an
+  `export default class` imported under any local name), beside the existing
+  shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row

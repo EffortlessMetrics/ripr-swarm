@@ -706,17 +706,46 @@ against `Money(..)` operands, a destructured result), reveal reads the
 observation as unconfirmed and the finding would read `weakly_exposed`, a "add
 a test" signal for code the test pins. `withhold_implicit_call_gap` therefore
 also applies to a finding whose reach is established, when every test related
-by a direct call reaches the owner only through syntax (none spells the
-method's name) and the finding is `weakly_exposed` or `reachable_unrevealed`:
-it stays `static_unknown` under `rust_implicit_call_unresolved`. A confirmed
+by a direct call reaches the owner only through syntax (none calls the
+method as `.name(`, matched to the related test by name, file and line) and the
+finding is `weakly_exposed` or `reachable_unrevealed` with infection read
+and propagation read or weak, so only the discriminator is unconfirmed (stage
+states decide this, with the same infection and propagation test as
+`withhold_pinned_shape_gap`, which also requires the summary token this rule
+does not; the discriminate summary
+differs between "an assertion matched but cannot confirm" and "no assertion
+matched", and both leave the credit unconfirmed): it stays `static_unknown`
+under `rust_implicit_call_unresolved`. A finding whose infection or propagation
+is not read, such as a changed line behind a branch the test never takes,
+keeps its class. A call that names the owner decides reach itself and is
+judged by its own evidence: `.name(`, `<Money as Trait>::name(` where the
+qualifier is exactly the impl type and `Trait` is the owner's trait, spelled bare
+or under `std::ops`/`core::ops` and implemented once for the type (`Add<f64>`
+beside `Add<Money>` is ambiguous), or
+`Money::name(` when the type has no other method of that name (an inherent
+`name` wins the path, and a second trait's `name` makes it ambiguous). Another
+type's `name`, another trait's, a type that only ends in the impl type, a
+longer method name, text inside `stringify!` (never evaluated), and a
+module-qualified path (`crate::Money::name(`, which may name another module's
+`Money`) do not count and leave the test syntax-only, as does a test body that
+brings its own `Money` in by `use` or declares one (`type`, `struct`, `enum`,
+`trait`, `union`). A `Money` or trait imported or aliased outside the test body (file or
+enclosing module scope) is not resolved and still matches; the test must also reach this impl directly to be
+judged this way. The related rows are capped for display; a finding whose
+rows were cut stays withheld, because a naming test may be among the cut rows
+and which rows survive depends on test names. The cap counts rows, so one
+test with more than eight assertion rows also stays withheld. The call only lifts the withholding: the finding is then
+classified from its own stages, and an assertion-free path call leaves it an
+unconfirmed `weakly_exposed` rather than borrowing evidence.
+A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
 `Index`, `Drop` and the iterator traits keep the abstention until their own
-readings are added. `Drop` and `Iterator::next` need more than a relation:
-the observed value (a counter behind a shared cell, a `collect`ed vector) shares
-no token with the changed line, so relating the test alone reads
-`weakly_exposed` on a test that pins the effect (#9567).
+readings are added. `Drop` and `Iterator::next` need more than a relation: the
+observed value (a counter behind a shared cell, a `collect`ed vector) shares no
+token with the changed line, so a relation without observation confirmation
+would read `weakly_exposed` on a test that pins the effect (#9567).
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.

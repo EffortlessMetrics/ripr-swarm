@@ -8,10 +8,11 @@
 //!
 //! - a cap on the number of discovered `.py` files
 //!   ([`DEFAULT_PYTHON_MAX_WORKSPACE_FILES`], env
-//!   `RIPR_PYTHON_MAX_WORKSPACE_FILES`), defaulting to 800 to align with the
-//!   repo-mode working-set default (`RIPR_MAX_REPO_INDEX_FILES`,
-//!   `repo/discovery.rs`): one default bounds Python analysis the same way in
-//!   both modes instead of inventing a second, divergent ceiling;
+//!   `RIPR_PYTHON_MAX_WORKSPACE_FILES`), defaulting to 4000 so a Django-sized
+//!   workspace (2,937 `.py` files) is analyzed completely in diff mode
+//!   (#10441). Diff mode reads the workspace only to resolve the changed
+//!   lines, unlike the repo-mode working set (`RIPR_MAX_REPO_INDEX_FILES`,
+//!   800, `repo/discovery.rs`) that analyzes every file;
 //! - a per-file read cap ([`DEFAULT_PYTHON_MAX_FILE_READ_BYTES`], env
 //!   `RIPR_PYTHON_MAX_FILE_READ_BYTES`), mirroring the TypeScript 16 MiB knob;
 //! - an aggregate per-run byte budget
@@ -33,10 +34,14 @@ use std::path::Path;
 
 /// Env override for [`DEFAULT_PYTHON_MAX_WORKSPACE_FILES`].
 pub(crate) const PYTHON_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_PYTHON_MAX_WORKSPACE_FILES";
-/// Default cap on discovered `.py` files for one diff-mode walk, aligned with
-/// the repo-mode working-set default (`repo/discovery.rs`,
-/// `RIPR_MAX_REPO_INDEX_FILES`, default 800).
-pub(crate) const DEFAULT_PYTHON_MAX_WORKSPACE_FILES: usize = 800;
+/// Default cap on discovered `.py` files for one diff-mode walk.
+///
+/// Measured on 4 cores (#10441): Django at 6de4b35a (2,937 files, 18.6 MiB)
+/// completes in about 5.5 s at 290 MiB peak RSS, where 800 left it partial.
+/// Cost grows faster than the file count past that point (a 5,855-file
+/// synthetic workspace took 13.7 s at 500 MiB), so larger workspaces keep the
+/// named `diff_scope_oversized` limitation and raise the bound explicitly.
+pub(crate) const DEFAULT_PYTHON_MAX_WORKSPACE_FILES: usize = 4000;
 /// Env override for [`DEFAULT_PYTHON_MAX_FILE_READ_BYTES`].
 pub(crate) const PYTHON_MAX_FILE_READ_BYTES_ENV: &str = "RIPR_PYTHON_MAX_FILE_READ_BYTES";
 /// Per-file read cap, mirroring `typescript/bounded_read.rs`
@@ -187,19 +192,39 @@ pub(crate) fn python_workspace_file_limit() -> usize {
 
 /// Truncate an already-sorted discovered-file list to the walk cap.
 ///
-/// Returns the retained prefix and the number of refused files. Truncating
-/// the sorted list (rather than stopping the directory walk early) keeps the
-/// retained set deterministic: identical workspace content yields an
-/// identical analyzed set on every run.
+/// Files for which `is_changed` holds are always retained, even past the cap:
+/// they are the subject of the diff, so the cap may only cut context around
+/// them (#10461). The rest of the cap is filled from the sorted remainder.
+/// Returns the retained files in sorted order and the number of refused
+/// files. Truncating the sorted list (rather than stopping the directory walk
+/// early) keeps the retained set deterministic: identical workspace content
+/// and diff yield an identical analyzed set on every run.
 pub(crate) fn truncate_workspace_files(
     sorted_files: Vec<std::path::PathBuf>,
     max_files: usize,
+    is_changed: impl Fn(&Path) -> bool,
 ) -> (Vec<std::path::PathBuf>, usize) {
     if sorted_files.len() <= max_files {
         return (sorted_files, 0);
     }
-    let refused = sorted_files.len() - max_files;
-    (sorted_files.into_iter().take(max_files).collect(), refused)
+    let changed = sorted_files.iter().filter(|file| is_changed(file)).count();
+    let mut context_budget = max_files.saturating_sub(changed);
+    let total = sorted_files.len();
+    let kept: Vec<std::path::PathBuf> = sorted_files
+        .into_iter()
+        .filter(|file| {
+            if is_changed(file) {
+                return true;
+            }
+            if context_budget == 0 {
+                return false;
+            }
+            context_budget -= 1;
+            true
+        })
+        .collect();
+    let refused = total - kept.len();
+    (kept, refused)
 }
 
 /// Result of reading every retained workspace source under the caps.
@@ -655,7 +680,7 @@ mod tests {
         assert_eq!(
             python_workspace_file_limit_from_env(Err(std::env::VarError::NotPresent)),
             Ok(DEFAULT_PYTHON_MAX_WORKSPACE_FILES),
-            "default must align with the repo-mode 800-file working-set default"
+            "default admits a Django-sized workspace (#10441)"
         );
         assert_eq!(
             python_workspace_file_limit_from_env(Ok(" 1200 ".to_string())),
@@ -676,17 +701,43 @@ mod tests {
         let files: Vec<PathBuf> = (0..5)
             .map(|index| PathBuf::from(format!("f{index}.py")))
             .collect();
-        let (kept, refused) = truncate_workspace_files(files.clone(), 3);
+        let unchanged = |_: &Path| false;
+        let (kept, refused) = truncate_workspace_files(files.clone(), 3, unchanged);
         assert_eq!(kept, files[..3], "sorted prefix is retained");
         assert_eq!(refused, 2, "refused count is disclosed");
 
-        let (kept, refused) = truncate_workspace_files(files.clone(), 5);
+        let (kept, refused) = truncate_workspace_files(files.clone(), 5, unchanged);
         assert_eq!(kept, files, "at-cap list is untouched");
         assert_eq!(refused, 0);
 
-        let (kept, refused) = truncate_workspace_files(Vec::new(), 3);
+        let (kept, refused) = truncate_workspace_files(Vec::new(), 3, unchanged);
         assert!(kept.is_empty());
         assert_eq!(refused, 0);
+    }
+
+    #[test]
+    fn truncate_workspace_files_always_keeps_changed_files() {
+        let files: Vec<PathBuf> = (0..5)
+            .map(|index| PathBuf::from(format!("f{index}.py")))
+            .collect();
+        let last = Path::new("f4.py");
+        let (kept, refused) = truncate_workspace_files(files.clone(), 3, |file| file == last);
+        assert_eq!(
+            kept,
+            vec![files[0].clone(), files[1].clone(), files[4].clone()],
+            "a late-sorting changed file displaces context, not itself"
+        );
+        assert_eq!(refused, 2, "refused count is disclosed");
+
+        let (kept, refused) = truncate_workspace_files(files.clone(), 1, |file| {
+            file == Path::new("f3.py") || file == last
+        });
+        assert_eq!(
+            kept,
+            vec![files[3].clone(), files[4].clone()],
+            "changed files are kept even when they alone exceed the cap"
+        );
+        assert_eq!(refused, 3);
     }
 
     #[test]

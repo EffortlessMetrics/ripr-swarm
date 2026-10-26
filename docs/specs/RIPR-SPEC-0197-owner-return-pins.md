@@ -378,6 +378,15 @@ wrong credits.
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
+   A function of the test's own file whose body names the owner, directly or
+   through another such function, computes its value from the owner: an
+   expected operand that calls it, or names a `let` or constant whose
+   initializer does, is the owner's own value and withholds the pin
+   (`fn expected() -> i32 { f(4) }` with `assert_eq!(f(4), expected())`,
+   #7714). Helpers are free, non-test `fn`s matched by name, so a same-named
+   free `fn` withholds the pin; methods, sibling tests, helpers in other
+   files and owner imports renamed with `as` are not followed. A helper that
+   never reaches the owner keeps the pin.
    An `unsafe { .. }` block whose only content is that complete call (no
    statement, nothing chained after the call or the block; comments around
    the call are ignored) is the call:
@@ -1381,6 +1390,33 @@ the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
 `fahrenheit::snap`, or calls a bare `snap` that nothing in scope binds, pins
 neither. A rival in another package, or one whose container is unknown,
 still refuses the pin outright.
+
+### Unwrapped `Ok`/`Some` pins (#9619)
+
+Beside a changed `Ok(..)` or `Some(..)` tail whose other exits build only
+`Err(..)` or `None` (the `Head`/`EarlyHead` exit gate), a test may compare
+`owner(..).unwrap()` or `owner(..).expect("..")` with the bare value, directly
+or through a local bound once from that call, as RIPR-SPEC-0225 decision 6
+already allows beside a whole-value field. The comparison reads as
+`assert_eq!(owner(..), Ok(value))` (`Some(value)`): a passing test cannot have
+taken any other exit, because the unwrap panics on `Err`/`None`.
+
+1. The wrapper is the changed constructor itself. A changed early
+   `return Err(..)` (`Head("Err")`) takes only `unwrap_err` (#7063).
+2. The owner's file must not bind the wrapper name (`Ok` or `Some`) or its
+   opposite (`Err` or `None`) as a value, since the exit reasoning is by
+   spelling and a rebound name could build the same payload through another
+   exit, or an opposite exit that returns the pinned value would pass the
+   unwrap without reaching the changed tail. The file is refused for this reading
+   only, so direct `Ok(value)` pins keep their existing admission.
+3. A bound local follows RIPR-SPEC-0225 rule 1: a plain name bound once by an
+   immutable `let` and mentioned only by that `let` and the pinned comparison.
+   A `mut` binding, a second binding, a method call or argument use, or an
+   initializer around the unwrap (`.unwrap_or(..)`, `.ok()`) does not pin.
+4. Every existing expected-operand gate applies to the synthesized `Ok(value)`:
+   a value computed from the owner, a test helper reaching the owner, or a
+   written file refuses. `assert_ne!`, a different owner and a discarded
+   unwrap do not pin.
 
 ### Bool-owner pins
 
@@ -2454,6 +2490,12 @@ assertions. This repair shares the existing callback without that larger migrati
    receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- Unwrapped `Ok`/`Some` pins (#9619):
+  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  bound and `Option` positives; `mut`, shadowing, method use, owner-derived
+  expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
+  discarded unwrap and wrapper- or opposite-exit-binding negatives).
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic

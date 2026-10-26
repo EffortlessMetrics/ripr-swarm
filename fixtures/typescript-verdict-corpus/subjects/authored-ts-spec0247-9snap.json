@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-spec0247-9snap",
+  "origin": "authored",
+  "version_label": "authored@2026-10-26",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "b9ac36beb841293348a6ff28057d841a39ef13d3dd8f7d647f8d0afab2071108"
+    },
+    {
+      "path": "package.json",
+      "sha256": "ab6063618980a22fac724861f79513a08010d427f723030420f6b80e2f2b1a18"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "7a283b58801cad2a97a42946da481f0ef505de406375d670b1a595587690a7a4"
+    },
+    {
+      "path": "src/summary.ts",
+      "sha256": "e18fd49ec5c0324f9702a97b8b0abecd0dbcd3f29b5b1c17e87306c336720a0e"
+    },
+    {
+      "path": "tests/summary.test.ts",
+      "sha256": "e9168ce549f29c255324087b68e328140a8580359753b1760eb5d45a4a6bd8d9"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "2cc44b4f7a7e604b331f2782b8343dd922543ed2b34c067261e7fb8bd09d4839"
+    }
+  ]
+}

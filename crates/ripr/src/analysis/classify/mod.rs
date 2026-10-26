@@ -21,6 +21,7 @@ mod facade_reach;
 mod implicit_call;
 mod indirect_owner;
 mod infection;
+mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;
 mod match_transfer;
@@ -44,7 +45,8 @@ mod variant_field_pattern;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, macro_names_rebound, signature_parameters, sort_value_facts,
+    local_boundary, macro_names_rebound, pushed_collection_compared_whole, pushed_literal_path,
+    signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -91,8 +93,9 @@ pub(in crate::analysis) use helper_transfer::{
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
 pub(in crate::analysis) use infection::{
-    exercised_bool_chain_return_sink, infection_evidence_for_owner,
+    OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
+pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
 pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
@@ -110,10 +113,10 @@ pub(in crate::analysis) use pinned_shape::{
     withhold_pinned_shape_gap, withhold_result_collect_err_pin,
 };
 pub(in crate::analysis) use propagation_witness::{
-    PropagationWitnessV1, assertion_observes_collection_argument,
-    assertion_observes_direct_collection_for_probe, current_path_witness_with,
-    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
-    retain_returned_ledger, returned_ledger_witness,
+    PropagationWitnessV1, assertion_compares_hand_built_field,
+    assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
+    current_path_witness_with, direct_collection_mutation_receiver, field_assignment_target,
+    owner_may_exit_before_line, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness,

@@ -329,13 +329,17 @@ pub(super) fn static_limit_for_focused_change(
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
-            evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
-                .to_string(),
+            evidence: LAMBDA_LIMIT_EVIDENCE.to_string(),
             missing: "Static limit `unsupported_syntax`: the changed line uses a Python syntax shape this preview adapter does not model precisely yet.".to_string(),
         });
     }
     None
 }
+
+/// The evidence of the lambda-syntax limit. A module-value credit (#9619) that
+/// reads the edited lambda body lifts exactly this limit.
+pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
+    "static_limit unsupported_syntax: changed line uses lambda syntax";
 
 /// A `lambda` expression: the keyword at an identifier boundary and followed
 /// by a space, `:` or `(`. Text in a string is read as text only when the line
@@ -388,7 +392,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
 }
 
 pub(super) fn contains_dynamic_dispatch(text: &str) -> bool {
-    text.contains("getattr(") || (text.contains('[') && text.contains("]("))
+    contains_call_at_name_boundary(text, "getattr") || (text.contains('[') && text.contains("]("))
 }
 
 pub(super) fn contains_dynamic_import(text: &str) -> bool {
@@ -460,21 +464,23 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
     text.contains("__getattr__")
-        || contains_call_at_name_boundary(text, "type(")
-        || contains_call_at_name_boundary(text, "setattr(")
+        || contains_call_at_name_boundary(text, "type")
+        || contains_call_at_name_boundary(text, "setattr")
         || contains_metaclass_declaration(text)
 }
 
-/// `call` (`type(`) where the name starts at an identifier boundary:
-/// `type(x)` and `builtins.type(x)`, not `content_type(x)`. Text in a string
+/// A call of `name` (`type`) where the name starts at an identifier boundary
+/// and `(` follows after optional spaces: `type(x)`, `type (x)` and
+/// `builtins.type(x)`, not `content_type(x)`. Text in a string
 /// still counts: a boundary is the only thing read, so an f-string expression
 /// or a multi-line string can never hide a real call.
-fn contains_call_at_name_boundary(text: &str, call: &str) -> bool {
-    text.match_indices(call).any(|(idx, _)| {
+fn contains_call_at_name_boundary(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
         !text[..idx]
             .chars()
             .next_back()
             .is_some_and(is_python_identifier_char)
+            && text[idx + name.len()..].trim_start().starts_with('(')
     })
 }
 
@@ -1338,9 +1344,20 @@ pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) ->
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
             && !line_uses_known_static_cli_symbol(text, import)
-            && (text.contains(&format!("{}(", import.alias))
-                || text.contains(&format!("{}.", import.alias)))
+            && (names_imported_alias(text, &import.alias, '(')
+                || names_imported_alias(text, &import.alias, '.'))
     })
+}
+
+/// Whether `text` uses `alias` as a whole name followed by `next`. A substring
+/// match read `pos.x` as a use of `os` (RIPR-SPEC-0238 rule 8 requires tokens).
+/// Only an identifier character or a dot before the alias rules it out, so
+/// `x.os.getcwd()` (an attribute of another object) is not the import either;
+/// a string or comment prefix is not consulted, since f-string fields are code.
+fn names_imported_alias(text: &str, alias: &str, next: char) -> bool {
+    let needle = format!("{alias}{next}");
+    text.match_indices(&needle)
+        .any(|(idx, _)| python_callee_start_has_boundary(text, idx))
 }
 
 pub(super) fn is_known_mock_constructor_import(import: &PythonImport) -> bool {

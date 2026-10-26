@@ -1072,7 +1072,7 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
         "{ todo: true }",
     ] {
         let source = format!(
-            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  const rows = load();\n  for (const row of rows) {{\n    it(\"awards\", () => {{ expect(medal(row)).toBe(\"bronze\"); }});\n  }}\n}});\n"
+            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  for (let i = 0; i < n; i++) {{\n    it(\"awards\", () => {{ expect(medal(i)).toBe(\"bronze\"); }});\n  }}\n}});\n"
         );
         let tests = extract_tests(file, &source);
         assert!(
