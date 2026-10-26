@@ -419,18 +419,55 @@ fn macro_call_nested_in_a_multiline_helper_call_is_not_credited() -> Result<(), 
 }
 
 #[test]
-fn view_expands_several_calls_on_one_line_beside_non_ascii_text() {
+fn view_expands_several_calls_on_one_line_beside_non_ascii_text() -> Result<(), Box<dyn Error>> {
     use super::super::expanded_assertion_view;
     let source = module_with(
         "macro_rules! assert_gate {\n        ($x:expr, $want:expr) => {{ assert_eq!(gate($x), $want); }};\n    }",
         "assert_gate!(11, true); assert_gate!(2, false); // héllo ✓",
     );
-    let view = expanded_assertion_view(&source);
+    let index = index_for(&source)?;
+    let view = expanded_assertion_view(&source, index.tests().iter());
     assert!(
         view.contains("assert_eq!(gate(11), true); assert_eq!(gate(2), false); // héllo ✓"),
         "{view}"
     );
     assert_eq!(view.matches('\n').count(), source.matches('\n').count());
+    Ok(())
+}
+
+#[test]
+fn view_leaves_a_call_the_credit_path_declined_unexpanded() -> Result<(), Box<dyn Error>> {
+    use super::super::expanded_assertion_view;
+    let definition = "macro_rules! assert_gate {\n        ($x:expr) => {{ assert_eq!(gate($x), true); }};\n    }";
+    for (shape, body) in [
+        (
+            "the same call twice in one body",
+            "assert_gate!(11);\n        assert_gate!(11);",
+        ),
+        (
+            "the call text echoed in a comment",
+            "assert_gate!(11);\n        // assert_gate!(11);",
+        ),
+        (
+            "a use item in the test body",
+            "use std::cmp::max;\n        assert_gate!(11);",
+        ),
+    ] {
+        let source = module_with(definition, body);
+        let index = index_for(&source)?;
+        let test = test_named(&index, "probe")?;
+        assert!(
+            test.body.contains("assert_gate!(11)"),
+            "{shape}: the credit path rewrote the body"
+        );
+        let view = expanded_assertion_view(&source, index.tests().iter());
+        assert_eq!(
+            view.as_ref(),
+            source,
+            "{shape}: the view expanded a declined call"
+        );
+    }
+    Ok(())
 }
 
 #[test]

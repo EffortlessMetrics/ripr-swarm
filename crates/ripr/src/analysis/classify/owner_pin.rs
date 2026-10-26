@@ -1508,7 +1508,7 @@ impl OwnerPinSyntax {
         self.by_file
             .get_or_build(&test.file, || {
                 owner_pin_assertions(
-                    &expanded_assertion_view(&facts.source),
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
                     &assertion_context_macros(),
                 )
             })
@@ -1592,7 +1592,7 @@ impl OwnerPinSyntax {
             .by_file
             .get_or_build(&test.file, || {
                 owner_pin_assertions(
-                    &expanded_assertion_view(&facts.source),
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
                     &assertion_context_macros(),
                 )
             })

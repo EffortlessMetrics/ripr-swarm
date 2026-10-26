@@ -143,22 +143,31 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
     });
 }
 
-/// `source` with every exactly-expandable same-file assertion macro call
+/// `source` with every call the credit path rewrote in its test's body
 /// replaced by the assertion it stands for, line count preserved. The
-/// owner-pin admission scans this view, so an expanded statement is found
-/// at the call's line the way a hand-written one is (#10650). Borrowed when
-/// nothing expands.
-pub(crate) fn expanded_assertion_view(source: &str) -> Cow<'_, str> {
+/// owner-pin admission scans this view, so an expanded statement is found at
+/// the call's line the way a hand-written one is (#10650).
+///
+/// The view expands a call only when its test's current body no longer holds
+/// the call text but holds the expansion. That is the credit path's own
+/// decision (use items, control flow, unreached statements, duplicate call
+/// text and the rest are all decided there), so the function slice the scan
+/// fingerprints equals the test body exactly and a declined call can never
+/// make the two differ. Borrowed when nothing expands.
+pub(crate) fn expanded_assertion_view<'a, 't>(
+    source: &'a str,
+    tests: impl IntoIterator<Item = &'t TestFact>,
+) -> Cow<'a, str> {
     if !source.contains("macro_rules") {
         return Cow::Borrowed(source);
     }
+    let tests = tests.into_iter().collect::<Vec<_>>();
     let mut calls = local_macro_calls(source);
     calls.sort_by_key(|call| std::cmp::Reverse(call.start_line));
     let line_starts = std::iter::once(0)
         .chain(source.match_indices('\n').map(|(index, _)| index + 1))
         .collect::<Vec<_>>();
-    let mut view = source.to_string();
-    let mut changed = false;
+    let mut view: Option<String> = None;
     for call in &calls {
         if !extract_assertions(&call.text, 1).is_empty() {
             continue;
@@ -166,39 +175,46 @@ pub(crate) fn expanded_assertion_view(source: &str) -> Cow<'_, str> {
         let Some(expanded) = expand_call(call) else {
             continue;
         };
+        let text = call.text.trim();
+        let rewritten = tests.iter().any(|test| {
+            call.function == test.name
+                && test.start_line <= call.start_line
+                && call.end_line <= test.end_line
+                && !test.body.contains(text)
+                && test.body.contains(expanded.statement.as_str())
+        });
+        if !rewritten {
+            continue;
+        }
         let Some(&start) = line_starts.get(call.start_line.saturating_sub(1)) else {
             continue;
         };
+        let current = view.as_deref().unwrap_or(source);
         // The region's end comes from the current view: an earlier edit on
         // the same line changed its byte length, and expansions keep the
         // newline count, so the call's lines end after this many newlines.
         let mut end = start;
         for _ in call.start_line..=call.end_line.max(call.start_line) {
-            match view.get(end..).and_then(|rest| rest.find('\n')) {
+            match current.get(end..).and_then(|rest| rest.find('\n')) {
                 Some(offset) => end += offset + 1,
                 None => {
-                    end = view.len();
+                    end = current.len();
                     break;
                 }
             }
         }
-        if start > end || !view.is_char_boundary(start) || !view.is_char_boundary(end) {
+        if start > end || !current.is_char_boundary(start) || !current.is_char_boundary(end) {
             continue;
         }
-        let region = &view[start..end];
-        let text = call.text.trim();
+        let region = &current[start..end];
         if region.matches(text).count() != 1 {
             continue;
         }
         let replaced = region.replacen(text, &expanded.statement, 1);
-        view.replace_range(start..end, &replaced);
-        changed = true;
+        view.get_or_insert_with(|| source.to_string())
+            .replace_range(start..end, &replaced);
     }
-    if changed {
-        Cow::Owned(view)
-    } else {
-        Cow::Borrowed(source)
-    }
+    view.map_or(Cow::Borrowed(source), Cow::Owned)
 }
 
 /// What one test earns from its same-file assertion macro calls.
