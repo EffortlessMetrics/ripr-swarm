@@ -46,6 +46,13 @@ on:
         required: false
         default: ''
         type: string
+      test-shards:
+        description: >-
+          1 runs the required nextest step in this job. 4 leaves it to
+          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+        required: false
+        default: 1
+        type: number
     outputs:
       scratch_status:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
@@ -308,8 +315,12 @@ jobs:
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
 
+      # Skipped only when the caller passes `test-shards: 4`; it then owns running
+      # the same tests as four partitions in rust-test-shards.yml and must fail
+      # the required result unless that workflow passes (routed-rust.yml `result`).
       - name: Required Rust tests
         id: rust-tests
+        if: inputs.test-shards == 1
         run: |
           mkdir -p target/nextest/ci
           rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt

@@ -1,0 +1,54 @@
+{
+  "case_id": "spec-b-0150-no-related-test",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0150-no-related-test.diff",
+  "anchor": {
+    "file": "src/b_unreached.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_without_related_test",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let start = path.rfind('.').map_or(1, |dot| dot + 1);",
+        "mutated_line": "let start = path.rfind('.').map_or(1, |dot| dot + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "no test calls ext_starts_at_unreached, so this mutant survives; it is not equivalent because the function returns a different flag for a path without a dot"
+      },
+      {
+        "replacement": "let start = path.rfind('.').map_or(0, |dot| dot);",
+        "mutated_line": "let start = path.rfind('.').map_or(0, |dot| dot);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "no test calls ext_starts_at_unreached, so this mutant survives; it is not equivalent because the function returns a different flag for a path with a dot"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test exercises path_len_unreached, so nothing reaches the changed binding. Spec cells: RIPR-SPEC-0150#9.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0150#9"
+  ]
+}

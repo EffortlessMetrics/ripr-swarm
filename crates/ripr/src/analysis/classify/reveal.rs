@@ -4821,8 +4821,17 @@ fn finalize_related_tests_with_owner_calls(
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
-    related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
-    related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
+    related.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.line.cmp(&b.line))
+    });
+    // One test is its name, file and start line (#9567): a same-named test
+    // elsewhere is another test whose assertions must still be read.
+    related.dedup_by(|a, b| {
+        a.name == b.name && a.file == b.file && a.line == b.line && a.oracle == b.oracle
+    });
     // Renderers present the first entry as the primary related test, so the
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.

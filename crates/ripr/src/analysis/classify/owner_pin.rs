@@ -72,7 +72,7 @@ use crate::analysis::facts::{
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
+    AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
@@ -82,7 +82,7 @@ use crate::analysis::syntax::{
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
-    AstNode, SyntaxNode, TextRange,
+    AstNode, SyntaxNode,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
@@ -391,11 +391,6 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: SyncMemo<PathCallMemo>,
-    /// #7097: per-file module scopes (direct `use`s and value-taking
-    /// items), parsed once per run; `None` when the file does not parse.
-    /// `Arc` so the run-scoped instance stays `Send` behind the seam
-    /// walk's shared `Mutex` (#8282); the table is immutable once built.
-    file_scopes: SyncMemo<BTreeMap<PathBuf, Option<Arc<FileScopes>>>>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: SyncMemo<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -672,7 +667,7 @@ impl OwnerPinSyntax {
             return false;
         }
         let (Some(owner_scope), Some(test_scope)) = (
-            item_nesting_with_impl(&facts.source, &owner.name, owner.start_line, true),
+            indexed_item_nesting(index, &owner.file, &owner.name, owner.start_line, true),
             self.item_nesting(index, &test.file, &test.name, test.start_line),
         ) else {
             return false;
@@ -711,10 +706,7 @@ impl OwnerPinSyntax {
         if let Some(known) = self.path_memo.borrow().nesting.get(&key) {
             return known.clone();
         }
-        let nesting = index
-            .files()
-            .get(file)
-            .and_then(|facts| item_nesting(&facts.source, name, line));
+        let nesting = indexed_item_nesting(index, file, name, line, false);
         self.path_memo
             .borrow_mut()
             .nesting
@@ -4364,6 +4356,25 @@ impl OwnerReturnPin {
         {
             return false;
         }
+        // #7714: a test-file helper that computes its value from the owner
+        // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
+        // expected operand the owner's own value, however it is bound.
+        if test_file_helpers_reaching_owner(index, test, expected, &self.name)
+            .iter()
+            .any(|helper| {
+                expected_reaches_owner(test, &assertion.text, expected, helper)
+                    || expected_constant_reaches_owner(
+                        index,
+                        test,
+                        expected,
+                        helper,
+                        &PinCall::Bare,
+                        &self.owner_file,
+                    )
+            })
+        {
+            return false;
+        }
         match (&self.path, call) {
             // #6692: the clone must be compared with its own receiver, and
             // the test's file must not import some other `Clone`.
@@ -4635,18 +4646,14 @@ impl OwnerReturnPin {
             (PinCall::Associated { type_name }, CallShape::Associated(named)) => {
                 helper.is_none()
                     && named == type_name
-                    && index
-                        .files()
-                        .get(&self.owner_file)
-                        .and_then(|facts| {
-                            item_nesting_with_impl(
-                                &facts.source,
-                                &self.name,
-                                self.owner_start_line,
-                                true,
-                            )
-                        })
-                        .is_some_and(|owner| !owner.cfg_gated)
+                    && indexed_item_nesting(
+                        index,
+                        &self.owner_file,
+                        &self.name,
+                        self.owner_start_line,
+                        true,
+                    )
+                    .is_some_and(|owner| !owner.cfg_gated)
                     && !syntax.file_cfg_gated(index, &self.owner_file)
                     && !bound_by_macro(&masked_body, type_name)
                     && !body_rebinds_type(&masked_body, type_name)
@@ -5470,43 +5477,20 @@ enum CallShape<'a> {
 /// line. No parse, or no single match, reads as sync: an async owner then
 /// gets no `.await` credit, and its bare call (a future) does not compile.
 pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
-    let Some(facts) = index.files().get(&owner.file) else {
-        return false;
-    };
-    let source: &str = &facts.source;
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
-    let line_of = |offset: ra_ap_syntax::TextSize| {
-        let at = (u32::from(offset) as usize).min(source.len());
-        source.as_bytes()[..at]
-            .iter()
-            .filter(|byte| **byte == b'\n')
-            .count()
-            + 1
-    };
-    let mut matches = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(|function| {
-            function
-                .name()
-                .is_some_and(|name| name.text() == owner.name.as_str())
-        })
-        .filter(|function| {
-            let Some(fn_token) = function.fn_token() else {
-                return false;
-            };
-            (line_of(function.syntax().text_range().start())
-                ..=line_of(fn_token.text_range().start()))
-                .contains(&owner.start_line)
-        });
-    match (matches.next(), matches.next()) {
-        (Some(function), None) => function.async_token().is_some(),
-        _ => false,
-    }
+    function_declaration_is_async(owner, index).unwrap_or(false)
+}
+
+/// Read the complete source declaration: indexed body slices start at `fn`
+/// and omit qualifiers such as `async`. Unknown/ambiguous declarations stay
+/// distinct from a synchronous declaration for execution admission.
+pub(in crate::analysis) fn function_declaration_is_async(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<bool> {
+    index
+        .source_syntax
+        .get(index, &owner.file)?
+        .declaration_is_async(owner)
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
@@ -5767,90 +5751,19 @@ fn source_may_bind_root(source: &str, root: &str) -> bool {
         })
 }
 
-/// #6974: the inline modules enclosing the one `fn name` item that starts
-/// on `line` (1-based) in `source`, outermost first, with `r#` dropped.
-/// `None` when the file does not parse, no single such item is found, or
-/// it sits anywhere but directly in a module (a fn body, an `impl`).
-/// Where a `fn` sits among its file's inline modules (#6974).
-#[derive(Clone, Debug)]
-struct ItemNesting {
-    /// The inline modules enclosing the `fn`, outermost first.
-    modules: Vec<String>,
-    /// Whether the `fn` or an enclosing inline module carries a `cfg` or
-    /// `cfg_attr` attribute. A complementary cfg may then compile a
-    /// same-named `static`, `const`, `use` or module in its place, so a path
-    /// to the module no longer has to reach the `fn` (#7061 review).
-    cfg_gated: bool,
-}
+pub(super) use crate::analysis::syntax::has_cfg_attr;
 
-fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
-    item_nesting_with_impl(source, name, line, false)
-}
-
-fn item_nesting_with_impl(
-    source: &str,
+fn indexed_item_nesting(
+    index: &RustIndex,
+    file: &Path,
     name: &str,
     line: usize,
     allow_impl: bool,
 ) -> Option<ItemNesting> {
-    let parse = parse_clean_source_file(source)?;
-    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
-    let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
-    let wanted = name.strip_prefix("r#").unwrap_or(name);
-    let mut found = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(|function| {
-            function
-                .name()
-                .is_some_and(|ident| base(ident.text().to_string()) == wanted)
-                && {
-                    let range = function.syntax().text_range();
-                    let start = line_of(range.start().into());
-                    let end = line_of(range.end().into());
-                    start <= line && line <= end
-                }
-        });
-    let function = found.next()?;
-    if found.next().is_some() {
-        return None;
-    }
-    let mut modules = Vec::new();
-    // An inner `#![cfg]` in the body gates the whole fn too.
-    let mut cfg_gated = has_cfg_attr(&function)
-        || function
-            .body()
-            .and_then(|body| body.stmt_list())
-            .is_some_and(|statements| has_cfg_attr(&statements));
-    for ancestor in function.syntax().ancestors().skip(1) {
-        if let Some(module) = ast::Module::cast(ancestor.clone()) {
-            cfg_gated |= has_cfg_attr(&module)
-                || module.item_list().is_some_and(|items| has_cfg_attr(&items));
-            modules.push(base(module.name()?.text().to_string()));
-        } else if allow_impl && let Some(implementation) = ast::Impl::cast(ancestor.clone()) {
-            cfg_gated |= has_cfg_attr(&implementation);
-        } else if !(ast::ItemList::can_cast(ancestor.kind())
-            || ast::SourceFile::can_cast(ancestor.kind())
-            || allow_impl && ast::AssocItemList::can_cast(ancestor.kind()))
-        {
-            return None;
-        }
-    }
-    modules.reverse();
-    Some(ItemNesting { modules, cfg_gated })
-}
-
-/// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-pub(super) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
-    // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
-    node.attrs().any(|attr| {
-        matches!(
-            attr.meta(),
-            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
-        )
-    })
+    index
+        .source_syntax
+        .get(index, file)?
+        .item_nesting(name, line, allow_impl)
 }
 
 /// #7082: whether the out-of-line `mod <name>;` that `declaration` names,
@@ -9171,7 +9084,7 @@ fn file_aliases_type(source: &str, name: &str) -> bool {
 /// can take a value call. A bare call resolves through the test's own
 /// scope only, so ancestor scopes are consulted solely as glob targets.
 #[derive(Clone, Debug, Default)]
-struct FileScopes {
+pub(super) struct FileScopes {
     scopes: Vec<ModuleScope>,
     /// Every `fn` in the file, at any depth, for test-fn ancestry.
     fns: Vec<ScopeFn>,
@@ -9231,28 +9144,34 @@ impl OwnerPinSyntax {
         })
     }
 
-    /// #7097: `file`'s scope table, parsed once per run and shared:
-    /// lookups clone the `Arc`, never the table (#7176 review).
+    /// Complete-source lexical facts are shared across short-lived syntax
+    /// owners too. Source identity is checked before serving any stored table.
     fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Arc<FileScopes>> {
-        if let Some(known) = self.file_scopes.borrow().get(file) {
-            return known.clone();
+        let facts = index.files().get(file)?;
+        let source = &facts.data().source;
+        let compute = || {
+            Some(Arc::new(build_file_scopes(
+                &index.source_syntax.get(index, file)?.tree()?,
+            )))
+        };
+        match index.call_identity_memos.owner_file_scopes.lock() {
+            Ok(mut memo) => {
+                if let Some((known_source, scopes)) = memo.get(file)
+                    && Arc::ptr_eq(known_source, source)
+                {
+                    return scopes.clone();
+                }
+                let scopes = compute();
+                memo.insert(file.to_path_buf(), (Arc::clone(source), scopes.clone()));
+                scopes
+            }
+            Err(_) => compute(),
         }
-        let scopes = index
-            .files()
-            .get(file)
-            .and_then(|facts| build_file_scopes(&facts.source))
-            .map(Arc::new);
-        self.file_scopes
-            .borrow_mut()
-            .insert(file.to_path_buf(), scopes.clone());
-        scopes
     }
 }
 
 /// #7097: the scope table of `source`, or `None` when it does not parse.
-fn build_file_scopes(source: &str) -> Option<FileScopes> {
-    let parse = parse_clean_source_file(source)?;
-    let tree = parse.tree();
+fn build_file_scopes(tree: &ast::SourceFile) -> FileScopes {
     let end: u32 = tree.syntax().text_range().end().into();
     let mut scopes = FileScopes::default();
     scopes.push_scope(tree.syntax(), Vec::new(), 0, end);
@@ -9269,7 +9188,7 @@ fn build_file_scopes(source: &str) -> Option<FileScopes> {
             });
         }
     }
-    Some(scopes)
+    scopes
 }
 
 impl FileScopes {
@@ -10166,6 +10085,27 @@ fn type_declared_in_workspace(name: &str, index: &RustIndex) -> bool {
             && declares(&facts.source)
             && declares(&mask_comments_and_strings(&facts.source))
     })
+}
+
+/// A bounded intrinsic operand must name the primitive, including through
+/// enclosing imports and macro output. Reuse the pin's declaration/binding
+/// authorities; an unresolved shadow refuses the new evidence.
+pub(super) fn builtin_type_unshadowed(
+    name: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    [name.to_string(), format!("r#{name}")]
+        .iter()
+        .all(|spelling| {
+            !type_declared_in_workspace(spelling, index)
+                && !workspace_declares_trait(index, spelling)
+                && !syntax.macro_may_declare(spelling, index)
+                && index.files().values().all(|facts| {
+                    !facts.used_lexical_fallback
+                        && !declaring_file_rebinds(&facts.source, spelling, false, index)
+                })
+        })
 }
 
 /// The type the test binds `receiver` to: every `let` that binds the name
@@ -11215,8 +11155,8 @@ fn constant_scope(
 /// one, `.name(..)` or `T::name(..)` for a method), so a constant built
 /// with some other type's `new` or `len` keeps the pin. A test-file `use ..
 /// as` rename of a constant and a constant file's rename of the owner are
-/// followed. A constant computed through a helper that calls the owner is
-/// not.
+/// followed. A constant computed through a test-file helper that calls the
+/// owner is refused by the caller (#7714).
 fn expected_constant_reaches_owner(
     index: &RustIndex,
     test: &TestSummary,
@@ -11282,6 +11222,61 @@ fn expected_constant_reaches_owner(
         }
     }
     false
+}
+
+/// #7714: names of the functions in the test's own file, other than the
+/// test, whose body names the owner `name` or, transitively, another such
+/// function. An expected value such a helper returns is computed from the
+/// owner, so comparing the owner with it compares the owner with itself.
+/// Matching a same-named item in another module only withholds the pin.
+fn test_file_helpers_reaching_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    expected: &str,
+    name: &str,
+) -> Vec<String> {
+    // A literal or an operand with no name in it cannot reach a helper.
+    let masked_expected = mask_comments_and_strings(expected);
+    if !masked_expected
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|word| is_plain_identifier(word) && word != name)
+    {
+        return Vec::new();
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return Vec::new();
+    };
+    // Free non-test functions only: a method or a sibling test sharing a
+    // common name (`new`, `len`) would otherwise withhold unrelated pins.
+    let candidates: Vec<(&str, String)> = facts
+        .functions
+        .iter()
+        .filter(|function| {
+            function.start_line != test.start_line
+                && function.name != name
+                && matches!(
+                    function.impl_context,
+                    crate::analysis::facts::FunctionImplContext::Free
+                )
+                && !function
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.contains("test") || attr.contains("rstest"))
+        })
+        .map(|function| (function.name.as_str(), function.body.as_str()))
+        .map(|(helper, body)| (helper, mask_comments_and_strings(body)))
+        .collect();
+    let mut reaching: BTreeSet<String> = BTreeSet::new();
+    let mut frontier = vec![name.to_string()];
+    while let Some(target) = frontier.pop() {
+        for (helper, body) in &candidates {
+            if !reaching.contains(*helper) && contains_as_whole_word(body, &target) {
+                reaching.insert((*helper).to_string());
+                frontier.push((*helper).to_string());
+            }
+        }
+    }
+    reaching.into_iter().collect()
 }
 
 /// Names `file` imports the owner `name` under (`use crate::quota as q;`).
@@ -13388,7 +13383,7 @@ fn named_or_slice(
         || file_renames_to(source, base)
         || file_renames_to(source, raw.as_str())
         || file_aliases_type(source, base)
-        || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
+        || test_module_shadows_type(test, source, base, Some(owner), index)
         || parent_chain_shadows_type(test, base, owner, index)
     {
         return None;
@@ -13450,8 +13445,9 @@ pub(in crate::analysis) fn test_module_shadows_type(
     source: &str,
     base: &str,
     owner: Option<OwnerScope<'_>>,
+    index: &RustIndex,
 ) -> bool {
-    test_module_shadows_item(test, source, base, owner, ShadowKind::Type)
+    test_module_shadows_item(test, source, base, owner, ShadowKind::Type, index)
 }
 
 /// Whether the test's own inline-module scope declares a `trait` named like
@@ -13464,8 +13460,9 @@ pub(in crate::analysis) fn test_module_shadows_trait(
     source: &str,
     trait_name: &str,
     owner: Option<OwnerScope<'_>>,
+    index: &RustIndex,
 ) -> bool {
-    test_module_shadows_item(test, source, trait_name, owner, ShadowKind::Trait)
+    test_module_shadows_item(test, source, trait_name, owner, ShadowKind::Trait, index)
 }
 
 /// The kind of declaration a test-module shadow check looks for.
@@ -13481,79 +13478,85 @@ fn test_module_shadows_item(
     base: &str,
     owner: Option<OwnerScope<'_>>,
     kind: ShadowKind,
+    index: &RustIndex,
 ) -> bool {
-    let masked = mask_comments_and_strings(source);
-    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
-    let raw = format!("r#{base}");
-    let declared = match kind {
-        ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
-        ShadowKind::Trait => declares_trait(&masked, base),
-    };
-    if !declared && !masked.contains(raw.as_str()) {
-        return false;
-    }
-    let Some(parse) = parse_clean_source_file(source) else {
-        return true;
-    };
-    // 1-based file lines, matching `TestSummary`.
-    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
-    let root = parse.tree().syntax().clone();
-    let owner_module = owner.and_then(|owner| owner_enclosing_module(&root, source, owner));
-    // The owner's own module is the production declaration's scope, never a
-    // shadow; every other enclosing module still counts.
-    let counts = |module: &ast::Module| {
-        owner_module.is_none_or(|exempt| module.syntax().text_range() != exempt)
-    };
-    // Exact scope first: the test fn's own ancestor modules. Line spans can
-    // coincide for same-line siblings (`mod s { struct W; } #[test] fn t()
-    // {...}`), where byte-exact ancestry refuses nothing, so ancestry
-    // decides whenever the test fn resolves. Macro-shaped tests whose fn
-    // has no matching node keep the line-span fallback below.
-    let test_name = test.name.strip_prefix("r#").unwrap_or(&test.name);
-    let test_fns: Vec<_> = root
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(|func| {
-            func.name().is_some_and(|name| {
-                let text = name.text().to_string();
-                text.strip_prefix("r#").unwrap_or(&text) == test_name
-            }) && {
-                let range = func.syntax().text_range();
-                let start: u32 = range.start().into();
-                let end: u32 = range.end().into();
-                line_of(start) <= test.end_line && test.start_line <= line_of(end)
-            }
-        })
-        .collect();
-    if !test_fns.is_empty() {
-        return test_fns.iter().any(|func| {
-            func.syntax()
-                .ancestors()
-                .filter_map(ast::Module::cast)
-                .filter(|module| counts(module))
-                .any(|module| {
-                    module.item_list().is_some_and(|items| {
-                        items
-                            .items()
-                            .any(|item| module_item_names(&item, base, kind))
-                    })
-                })
+    // A caller supplying different source bytes must never borrow the indexed
+    // snapshot. Standalone/macro-shaped inputs retain the same fallback logic.
+    let snapshot = index
+        .files()
+        .get(&test.file)
+        .filter(|facts| std::ptr::eq(facts.source.as_ref(), source))
+        .and_then(|_| index.source_syntax.get(index, &test.file))
+        .unwrap_or_else(|| Arc::new(crate::analysis::syntax::SourceSnapshot::new(source)));
+    let key = (
+        test.name.clone(),
+        test.start_line,
+        test.end_line,
+        base.to_string(),
+        kind == ShadowKind::Trait,
+        owner.map(|o| (o.file.to_path_buf(), o.name.to_string(), o.start_line)),
+    );
+    snapshot.shadow_answer(key, || {
+        let masked = mask_comments_and_strings(source);
+        let raw = format!("r#{base}");
+        let declared = match kind {
+            ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
+            ShadowKind::Trait => declares_trait(&masked, base),
+        };
+        if !declared && !masked.contains(raw.as_str()) {
+            return false;
+        }
+        let Some(scopes) = snapshot.lexical_items() else {
+            return true;
+        };
+        let Some(tree) = snapshot.tree() else {
+            return true;
+        };
+        let root = tree.syntax();
+        let owner_module = owner.and_then(|o| o.in_file(&test.file)).and_then(|o| {
+            let name = o.name.strip_prefix("r#").unwrap_or(o.name);
+            let mut found = scopes.functions.iter().filter(|f| {
+                f.name == name && f.start_line <= o.start_line && o.start_line <= f.end_line
+            });
+            let first = found.next()?;
+            found
+                .next()
+                .is_none()
+                .then(|| first.modules.first().copied())
+                .flatten()
         });
-    }
-    root.descendants()
-        .filter_map(ast::Module::cast)
-        .filter_map(|module| module.item_list().map(|items| (module, items)))
-        .any(|(module, items)| {
-            let range = module.syntax().text_range();
-            let start: u32 = range.start().into();
-            let end: u32 = range.end().into();
-            line_of(start) <= test.start_line
-                && test.end_line <= line_of(end)
-                && counts(&module)
-                && items
+        let counts = |range| owner_module != Some(range);
+        let names = |module: ast::Module| {
+            module.item_list().is_some_and(|items| {
+                items
                     .items()
                     .any(|item| module_item_names(&item, base, kind))
+            })
+        };
+        let name = test.name.strip_prefix("r#").unwrap_or(&test.name);
+        let mut found = scopes
+            .functions
+            .iter()
+            .filter(|f| {
+                f.name == name && f.start_line <= test.end_line && test.start_line <= f.end_line
+            })
+            .peekable();
+        // Keep all ambiguous same-line matches, never choose the first one.
+        if found.peek().is_some() {
+            return found.any(|f| {
+                scopes.modules.iter().any(|m| {
+                    f.modules.contains(&m.range) && counts(m.range) && names(m.item.to_node(root))
+                })
+            });
+        }
+        // Macro-shaped tests retain inclusive-line fallback, including end lines.
+        scopes.modules.iter().any(|m| {
+            m.start_line <= test.start_line
+                && test.end_line <= m.end_line
+                && counts(m.range)
+                && names(m.item.to_node(root))
         })
+    })
 }
 
 /// Whether an out-of-line parent module of the test file declares the
@@ -13733,27 +13736,6 @@ fn owner_module_ancestors(owner: OwnerScope<'_>, index: &RustIndex) -> Vec<PathB
                 .map(|edge| edge.parent.clone()),
         )
         .collect()
-}
-
-/// The text range of the inline module directly enclosing the owner
-/// (#6957): for inline code the owner's own nearest enclosing `mod`
-/// is the `impl`'s module, and a same-name type declared there is the
-/// production declaration, not a shadow. `None` keeps the fail-closed
-/// shadow check: a root-level owner has no enclosing module, and an owner
-/// whose `fn` node does not resolve exactly once (macro-shaped, out-of-line
-/// or ambiguous) resolves to no scope. Byte-exact ancestry, not line spans,
-/// decides, so a same-line sibling module is never the owner's scope.
-fn owner_enclosing_module(
-    root: &SyntaxNode,
-    source: &str,
-    owner: OwnerScope<'_>,
-) -> Option<TextRange> {
-    resolve_owner_fn(root, source, owner)?
-        .syntax()
-        .ancestors()
-        .filter_map(ast::Module::cast)
-        .next()
-        .map(|module| module.syntax().text_range())
 }
 
 /// Whether the owner fn resolves in `source` at the file root: exactly one

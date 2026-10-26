@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-spec0246-ex19b-plural-zero-row",
+  "subject_id": "authored-ts-spec0246-19b",
+  "diff": "cases/jest-spec0246-ex19b-plural-zero-row.diff",
+  "anchor": {
+    "file": "src/plural.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_plural_ternary_rows_zero_one_three",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.15, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return `${n} item${n <= 1 ? \"\" : \"s\"}`;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "zero items",
+        "equivalence_review": "the edit itself: plural(0) turns \"0 item\" instead of \"0 items\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The same `n <= 1` edit, now with an added `expect(plural(0)).toBe(\"0 items\")` row. Zero is the one input where `===` and `<=` differ, so the row fails under the edit and the finding reads exposed. Spec cells: RIPR-SPEC-0246 example 19.",
+  "labeling_observation": {
+    "ripr_commit": "345ec05",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0246#19"
+  ]
+}

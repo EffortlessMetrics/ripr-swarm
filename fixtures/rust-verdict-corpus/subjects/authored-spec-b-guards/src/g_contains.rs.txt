@@ -1,0 +1,19 @@
+//! A broad contains guard where the owner's exact text matters.
+
+pub fn banner(name: &str) -> String {
+    format!("hello, {name}!")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_banner_names_the_user_g_contains() -> Result<(), String> {
+        let text = banner("ada");
+        if !text.contains("ada") {
+            return Err(format!("missing name in {text}"));
+        }
+        Ok(())
+    }
+}

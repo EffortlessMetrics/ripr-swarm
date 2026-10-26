@@ -2371,6 +2371,60 @@ fn check_from_a_directory_without_a_workspace_does_not_disclose_resolution() -> 
 }
 
 #[test]
+fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<(), String> {
+    let root = unique_external_workspace("config-validate-hint-source")?;
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let result = (|| {
+        for (source, expected_hint) in [
+            (
+                "mode = \"fast\"\n",
+                Some("`mode` is a valid key, but it belongs under [analysis]"),
+            ),
+            (
+                "mode = \"fast\" # unknown field `max_related_tests`\n",
+                Some("`mode` is a valid key, but it belongs under [analysis]"),
+            ),
+            ("typo = 'unknown field `mode`'\n", None),
+            ("\"mode`extra\" = \"draft\"\n", None),
+            ("\"mode`, expected bogus\" = \"draft\"\n", None),
+            ("broken = [ # unknown field `mode`\n", None),
+            (
+                "[reports]\nmax_related_tests = 'unknown field `mode`'\n",
+                None,
+            ),
+            (
+                "[analysis]\ninclude_unchanged_tests = false # unknown field `mode`\ninclude_unchanged_tests = true\n",
+                None,
+            ),
+        ] {
+            std::fs::write(root.join("ripr.toml"), source).map_err(|error| error.to_string())?;
+            // A relative root still invokes discovery and the production TOML parser.
+            let output = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&root),
+                &["config", "validate", "--root", "."],
+            )
+            .map_err(|error| error.to_string())?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(2), "{source:?}: {stderr}");
+            assert!(output.stdout.is_empty(), "{source:?}: {output:?}");
+            let hints = stderr
+                .lines()
+                .filter(|line| line.contains("is a valid key, but it belongs under"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                hints,
+                expected_hint.into_iter().collect::<Vec<_>>(),
+                "{source:?}: {stderr}"
+            );
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    result
+}
+
+#[test]
 fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("config-validate-parent")?;
@@ -7849,6 +7903,134 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
     assert!(agent_brief_json.contains(seam_id));
 
     std::fs::remove_dir_all(out_dir)?;
+    Ok(())
+}
+
+/// #10537: an unknown `--seam-id` on `agent start` is a typed refusal (exit
+/// 3), like `agent card`, `agent stub` and `agent packet`. The controls pin
+/// that the mapping is cause-specific: the known seam still succeeds and an
+/// unusable root still exits 2.
+#[test]
+fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
+-> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = unique_temp_workspace("agent-start-unknown-seam");
+    let out = out_dir
+        .to_str()
+        .ok_or("workflow output path should be utf-8")?;
+
+    let unknown = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "no-such-seam",
+        "--out",
+        out,
+    ])?;
+    assert_eq!(
+        unknown.status.code(),
+        Some(3),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+    assert!(unknown.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("agent start seam_id no-such-seam was not found"),
+        "{stderr}"
+    );
+    assert!(!out_dir.join("workflow.json").exists());
+
+    // Control: the known seam still succeeds on the same root.
+    let known = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_success(&known);
+
+    // Control: an operational failure (missing root) stays exit 2.
+    let missing_root = out_dir.join("does-not-exist");
+    let missing_root = missing_root.to_str().ok_or("path should be utf-8")?;
+    let failed = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        missing_root,
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_eq!(failed.status.code(), Some(2));
+
+    std::fs::remove_dir_all(out_dir)?;
+    Ok(())
+}
+
+/// #10537 review: a KNOWN seam withheld by agent policy is not an unknown
+/// seam. `agent start` keeps the plain failure (exit 2), as `agent packet`
+/// does for the same case; only an id absent from the inventory exits 3.
+#[test]
+fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, diff) = agent_brief_sample_workspace("agent-start-config-hidden")?;
+    let root_path = root.display().to_string();
+    let diff = diff.display().to_string();
+    let brief = run_ripr(&[
+        "agent", "brief", "--root", &root_path, "--diff", &diff, "--json",
+    ]);
+    assert_success(&brief);
+    let seam_id = json_string_field(&String::from_utf8_lossy(&brief.stdout), "seam_id")
+        .ok_or("expected brief output to include a seam_id")?;
+
+    // Control: before the policy hides it, the seam starts successfully.
+    let visible = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        &seam_id,
+    ]);
+    assert_success(&visible);
+
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )?;
+    let hidden = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        &seam_id,
+    ]);
+    assert_eq!(
+        hidden.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&hidden.stderr)
+    );
+    assert!(String::from_utf8_lossy(&hidden.stderr).contains("hidden by config"));
+
+    // Discriminator: a truly absent id under the same config exits 3.
+    let absent = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "no-such-seam",
+    ]);
+    assert_eq!(absent.status.code(), Some(3));
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -29378,39 +29560,142 @@ fn pr_evidence_help_exits_cleanly() {
     );
 }
 
-#[test]
-fn pr_evidence_with_missing_artifacts_writes_error_packet() -> Result<(), String> {
-    // pr-evidence runs a live check; in a bare workspace the result is either
-    // an error packet (if git revisions resolve in the parent repo) or a
-    // revision error. Both are honest — the key is that it does not silently
-    // produce a misleading clean packet. Assert that the output mentions the
-    // evidence artifact or an error, not that it succeeds or fails.
-    let root = unique_temp_workspace("pr-evidence-missing");
-    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"pr-evidence-missing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| err.to_string())?;
+fn run_pr_evidence_in_fixture(root: &Path, args: &[&str]) -> Result<Output, String> {
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
         .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
-    let output = std::process::Command::new(&bin)
-        .current_dir(&root)
-        .arg("pr-evidence")
+    // Match fixture_git's isolation: no inherited GIT_* variable (repository
+    // selectors, injected config, object paths) may reach the CLI's own Git
+    // calls. Cleared on the child, never on the multithreaded test process.
+    let mut command = std::process::Command::new(&bin);
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(key);
+        }
+    }
+    command
+        .current_dir(root)
+        .args(args)
         .output()
-        .map_err(|err| err.to_string())?;
-    // The command either writes evidence (Ok) or surfaces an error (Err).
-    // Both are acceptable. What's NOT acceptable: a silent hang or crash.
-    let stdout = String::from_utf8_lossy(&output.stdout);
+        .map_err(|err| err.to_string())
+}
+
+#[test]
+fn pr_evidence_with_missing_artifacts_writes_packet() -> Result<(), String> {
+    // Cargo places temporary directories beneath the checkout's target/.
+    // Own the Git history rather than borrowing the harness's refs: a PR's
+    // shallow merge-only checkout need not have a default base (#9646).
+    let root = no_origin_master_repo("pr-evidence-missing", "main")?;
+    let artifacts = [
+        "target/ripr/pr/repo-exposure.json",
+        "target/ripr/pr/repo-exposure.md",
+        "target/ripr/pr/pr.diff",
+    ];
+    for artifact in artifacts {
+        assert!(
+            !root.join(artifact).exists(),
+            "fixture already has {artifact}"
+        );
+    }
+    let output = run_pr_evidence_in_fixture(&root, &["pr-evidence"])?;
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}\n{stderr}");
+    assert!(output.status.success(), "pr-evidence failed: {stderr}");
+    for artifact in artifacts {
+        assert!(root.join(artifact).is_file(), "missing {artifact}");
+    }
+    let packet: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join(artifacts[0])).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    assert_eq!(packet["status"], "advisory", "{packet}");
+    assert_eq!(packet["base"], "main", "{packet}");
+    assert_eq!(packet["head"], "HEAD", "{packet}");
+    assert_eq!(packet["summary"]["changed_files"], 1, "{packet}");
+    // The fixture has no tests, so analysis must have scored the changed
+    // predicate; a packet that only carries the diff would read zero here.
     assert!(
-        combined.contains("repo-exposure")
-            || combined.contains("bad base/head")
-            || combined.contains("error"),
-        "pr-evidence must either write evidence or surface a named error:\n{combined}"
+        packet["summary"]["no_static_path"].as_u64().unwrap_or(0) >= 1,
+        "packet must carry analyzed findings, not only the diff: {packet}"
     );
+    let diff = std::fs::read_to_string(root.join(artifacts[2])).map_err(|err| err.to_string())?;
+    assert!(
+        diff.contains("src/lib.rs")
+            && diff.contains("-    amount >= 10")
+            && diff.contains("+    amount > 10"),
+        "packet must analyze the fixture's nonempty diff: {diff}"
+    );
+    let markdown =
+        std::fs::read_to_string(root.join(artifacts[1])).map_err(|err| err.to_string())?;
+    assert!(markdown.contains("# PR Evidence Summary"), "{markdown}");
+    let checked = run_pr_evidence_in_fixture(&root, &["pr-evidence", "--check"])?;
+    assert!(
+        checked.status.success(),
+        "packet contract failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(String::from_utf8_lossy(&checked.stdout).contains("PR evidence contract ok"));
     ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn pr_evidence_without_default_base_in_shallow_checkout_writes_nothing() -> Result<(), String> {
+    let source = no_origin_master_repo("pr-evidence-shallow-source", "trunk")?;
+    let root = unique_temp_workspace("pr-evidence-shallow");
+    // --no-local makes depth effective for a local path on every platform.
+    run_git(
+        &source,
+        &[
+            "clone",
+            "--no-local",
+            "--depth=1",
+            "--single-branch",
+            "--branch=work",
+            &source.to_string_lossy(),
+            &root.to_string_lossy(),
+        ],
+    )?;
+    // A clone may advertise origin/work as origin/HEAD, which is a valid
+    // default base. Model the merge-only CI checkout without that pointer.
+    run_git(
+        &root,
+        &["update-ref", "--no-deref", "-d", "refs/remotes/origin/HEAD"],
+    )?;
+    run_git(&root, &["checkout", "--detach"])?;
+    assert_eq!(
+        common::fixture_git::fixture_git_output(&root, &["rev-parse", "--is-shallow-repository"])?
+            .trim(),
+        "true"
+    );
+    // Use the same isolated Git route as setup: inherited GIT_DIR or
+    // GIT_WORK_TREE must not make this precondition inspect the harness.
+    let refs =
+        common::fixture_git::fixture_git_output(&root, &["for-each-ref", "--format=%(refname)"])?;
+    assert_eq!(
+        refs.lines().collect::<Vec<_>>(),
+        ["refs/heads/work", "refs/remotes/origin/work"],
+        "fixture must have only non-default work refs"
+    );
+    let output = run_pr_evidence_in_fixture(&root, &["pr-evidence"])?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("could not resolve a default base"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("shallow clone"), "{stderr}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    for artifact in ["repo-exposure.json", "repo-exposure.md", "pr.diff"] {
+        assert!(
+            !root.join("target/ripr/pr").join(artifact).exists(),
+            "base refusal wrote {artifact}"
+        );
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&source);
     Ok(())
 }
 

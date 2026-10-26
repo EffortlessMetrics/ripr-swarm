@@ -1,0 +1,12 @@
+diff --git a/src/b_accept.rs b/src/b_accept.rs
+--- a/src/b_accept.rs
++++ b/src/b_accept.rs
+@@ -1,7 +1,7 @@
+ //! The accept shape: a changed rfind/map_or binding and a later equality on it.
+ 
+ pub fn cut_matches(input: &str, delim: char, start: usize) -> bool {
+-    let end = input.rfind(delim).map_or(0, |idx| idx);
++    let end = input.rfind(delim).map_or(0, |at| at);
+     end == start
+ }
+ 
