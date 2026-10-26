@@ -405,8 +405,36 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
     {
         return None;
     }
+    // A later `name = ..`, `name += ..` or `&mut name` changes the compared
+    // value after the initializer, so the initializer alone is not it.
+    let mutated = body.match_indices(name).any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + name.len()..].trim_start();
+        let whole = !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_');
+        whole
+            && (body[..at].trim_end().ends_with("&mut")
+                || (after.starts_with('=')
+                    && !after.starts_with("==")
+                    && !body[..at].trim_end().ends_with("let")
+                    && !body[..at].trim_end().ends_with("mut"))
+                || after.starts_with("+=")
+                || after.starts_with("-=")
+                || after.starts_with("*=")
+                || after.starts_with("/="))
+    });
+    if mutated {
+        return None;
+    }
     let mut found = None;
     for (at, _) in body.match_indices("let ") {
+        if body[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            continue;
+        }
         let rest = body[at + 4..].trim_start();
         let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
         let Some(after) = rest.strip_prefix(name) else {

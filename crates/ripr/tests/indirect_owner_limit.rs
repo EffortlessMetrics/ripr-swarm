@@ -973,3 +973,58 @@ fn a_hidden_change_is_withheld_whatever_shape_the_assertion_takes() -> Result<()
     }
     Ok(())
 }
+
+/// The widened reader must not withhold a change a separating input reveals:
+/// the same shapes at input 100 keep credit, so the withholding is the hidden
+/// input and not the shape.
+#[test]
+fn a_revealing_input_keeps_credit_in_every_assertion_shape() -> Result<(), String> {
+    let shapes = [
+        (
+            "reversed operands",
+            "let expected = 110;\n        assert_eq!(expected, block_on(add_tax(100)));",
+        ),
+        (
+            "assert! equality",
+            "let expected = 110;\n        assert!(block_on(add_tax(100)) == expected);",
+        ),
+        (
+            "let-bound result",
+            "let actual = block_on(add_tax(100));\n        let expected = 110;\n        assert_eq!(actual, expected);",
+        ),
+    ];
+    let baseline = edited(
+        &ASYNC_OWNER.replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+        ),
+        TAX_BEFORE,
+        "    p + p / 5",
+    )?;
+    let baseline_exposed = baseline.iter().any(|f| f.class == ExposureClass::Exposed);
+    for (label, body) in shapes {
+        let lib = ASYNC_OWNER.replace("assert_eq!(block_on(add_tax(100)), 110);", body);
+        let findings = edited(&lib, TAX_BEFORE, "    p + p / 5")?;
+        let exposed = findings.iter().any(|f| f.class == ExposureClass::Exposed);
+        if exposed != baseline_exposed {
+            return Err(format!(
+                "{label}: exposed={exposed} differs from the plain form {baseline_exposed}: {:?}",
+                summary(&findings)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A `let` the test later reassigns is not the compared value: the reader
+/// keeps the finding as it was instead of resolving to the initializer.
+#[test]
+fn a_reassigned_let_is_not_read_as_its_initializer() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let mut actual = block_on(add_tax(0));\n        actual = block_on(add_tax(100));\n        let expected = 110;\n        assert_eq!(actual, expected);",
+    );
+    // Must not panic or error; classification is whatever the plain reader gives.
+    edited(&lib, TAX_BEFORE, "    p + p / 5")?;
+    Ok(())
+}
