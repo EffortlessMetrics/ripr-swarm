@@ -35,3 +35,14 @@ Manually reconcile the independently reviewed compact Missing discriminator bloc
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_factor_reorder (4)
+
+Reason:
+RIPR-SPEC-0238 #9815 with landed #10426: include the renderer's unconditional Summary terms glossary additions. The weak verdict, order-sensitive remedy, JSON and human-full are unchanged.
+
+Command:
+Reconcile the source-reviewed glossary lines and compare all three surfaces using the frozen Rust+Python CLI produced on `0d024367`.
+
+Updated:
+- `expected/human.txt`
