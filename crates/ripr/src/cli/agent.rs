@@ -778,6 +778,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     let mut working_set: Option<WorkingSetCandidate> = None;
     let mut json = false;
     let mut max_seams = DEFAULT_AGENT_BRIEF_MAX_SEAMS;
+    let mut max_seams_explicit = false;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -819,8 +820,10 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
             }
             "--json" => json = true,
             "--max-seams" => {
+                refuse_repeated_flag(max_seams_explicit, "agent brief", "--max-seams")?;
                 i += 1;
                 max_seams = parse_max_seams(expect_value(args, i, "--max-seams")?)?;
+                max_seams_explicit = true;
             }
             other => return Err(unknown_argument("agent brief", other)),
         }
@@ -1529,6 +1532,11 @@ mod tests {
                 "status",
                 vec!["--attempt", "t", "--attempt", "u"],
                 "agent status takes --attempt once",
+            ),
+            (
+                "brief",
+                vec!["--seam-id", "s", "--max-seams", "1", "--max-seams", "10"],
+                "agent brief takes --max-seams once",
             ),
         ];
         for (subcommand, rest, needle) in refused {
