@@ -23,7 +23,7 @@ pub struct DiagnosticWitness {
     pub suggested_assertion: Option<String>,
     pub explain_command: String,
     pub confidence: DiagnosticConfidence,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<DiagnosticWitnessLimitation>,
 }
 
