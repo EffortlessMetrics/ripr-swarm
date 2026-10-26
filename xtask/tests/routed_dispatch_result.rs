@@ -484,6 +484,7 @@ fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result
         "{}".to_string(),
         r#"{"errors":[{"message":"refused"}]}"#.to_string(),
         LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED"),
+        LIVE_GRAPHQL.replace(r#""reviewDecision":"APPROVED","#, ""),
         LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]"),
         LIVE_GRAPHQL.replace("\"hasNextPage\":false", "\"hasNextPage\":null"),
     ];
@@ -525,6 +526,19 @@ fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result
             "a head change during final review must refuse"
         );
     }
+    let no_required_review = LIVE_GRAPHQL.replace("\"APPROVED\"", "null");
+    assert!(
+        run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &no_required_review)]
+        )?
+        .0,
+        "a present nullable decision remains valid"
+    );
     let withdrawn = LIVE_PR.replace(r#"[{"name":"merge-ready"}]"#, "[]");
     assert!(
         !run_result(

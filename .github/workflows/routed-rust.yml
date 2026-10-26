@@ -455,7 +455,7 @@ jobs:
               frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
               jq -e --arg head "$EXPECTED_HEAD" --arg event "$EVENT_NAME" --arg entry "$EXPECTED_QUEUE_ENTRY" '
                 .errors == null and (.data.repository.pullRequest |
-                  .headRefOid == $head and
+                  has("reviewDecision") and .headRefOid == $head and
                   (.reviewDecision as $decision | [null,"APPROVED","REVIEW_REQUIRED"] | index($decision) != null) and
                   ($event != "merge_group" or ($entry != "" and .mergeQueueEntry.id == $entry)) and
                   (.reviewThreads.nodes | type == "array" and all(.isResolved == true)) and
