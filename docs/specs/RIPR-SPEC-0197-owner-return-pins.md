@@ -383,7 +383,10 @@ wrong credits.
    expected operand that calls it, or names a `let` or constant whose
    initializer does, is the owner's own value and withholds the pin
    (`fn expected() -> i32 { f(4) }` with `assert_eq!(f(4), expected())`,
-   #7714). A helper that never reaches the owner keeps the pin.
+   #7714). Helpers are free, non-test `fn`s matched by name, so a same-named
+   free `fn` withholds the pin; methods, sibling tests, helpers in other
+   files and owner imports renamed with `as` are not followed. A helper that
+   never reaches the owner keeps the pin.
    An `unsafe { .. }` block whose only content is that complete call (no
    statement, nothing chained after the call or the block; comments around
    the call are ignored) is the call:

@@ -55,6 +55,18 @@ fn helper_computed_expected_values_do_not_credit_the_owner_pin() -> Result<(), S
             false,
         ),
         (
+            "same_named_method_keeps_credit",
+            "struct Fixture;\nimpl Fixture { fn spare() -> i32 { compute_score(4) } }",
+            "let spare = 8;\nassert_eq!(compute_score(4), spare);",
+            true,
+        ),
+        (
+            "sibling_test_is_not_a_helper",
+            "#[test]\nfn other_test() { assert_eq!(compute_score(1), 2); }",
+            "let other_test = 8;\nassert_eq!(compute_score(4), other_test);",
+            true,
+        ),
+        (
             "unrelated_helper_constant_keeps_credit",
             "fn normalize(v: i32) -> i32 { v }\nconst EXPECTED: i32 = normalize(8);",
             "assert_eq!(compute_score(4), EXPECTED);",

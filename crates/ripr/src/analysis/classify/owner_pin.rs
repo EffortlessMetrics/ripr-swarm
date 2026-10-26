@@ -4266,7 +4266,7 @@ impl OwnerReturnPin {
         // #7714: a test-file helper that computes its value from the owner
         // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
         // expected operand the owner's own value, however it is bound.
-        if test_file_helpers_reaching_owner(index, test, &self.name)
+        if test_file_helpers_reaching_owner(index, test, expected, &self.name)
             .iter()
             .any(|helper| {
                 expected_reaches_owner(test, &assertion.text, expected, helper)
@@ -11120,8 +11120,8 @@ fn constant_scope(
 /// one, `.name(..)` or `T::name(..)` for a method), so a constant built
 /// with some other type's `new` or `len` keeps the pin. A test-file `use ..
 /// as` rename of a constant and a constant file's rename of the owner are
-/// followed. A constant computed through a helper that calls the owner is
-/// not.
+/// followed. A constant computed through a test-file helper that calls the
+/// owner is refused by the caller (#7714).
 fn expected_constant_reaches_owner(
     index: &RustIndex,
     test: &TestSummary,
@@ -11197,37 +11197,51 @@ fn expected_constant_reaches_owner(
 fn test_file_helpers_reaching_owner(
     index: &RustIndex,
     test: &TestSummary,
+    expected: &str,
     name: &str,
 ) -> Vec<String> {
+    // A literal or an operand with no name in it cannot reach a helper.
+    let masked_expected = mask_comments_and_strings(expected);
+    if !masked_expected
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|word| is_plain_identifier(word) && word != name)
+    {
+        return Vec::new();
+    }
     let Some(facts) = index.files().get(&test.file) else {
         return Vec::new();
     };
+    // Free non-test functions only: a method or a sibling test sharing a
+    // common name (`new`, `len`) would otherwise withhold unrelated pins.
     let candidates: Vec<(&str, String)> = facts
         .functions
         .iter()
-        .filter(|function| function.start_line != test.start_line)
-        .filter(|function| function.name != name)
-        .map(|function| {
-            (
-                function.name.as_str(),
-                mask_comments_and_strings(function.body.as_str()),
-            )
+        .filter(|function| {
+            function.start_line != test.start_line
+                && function.name != name
+                && matches!(
+                    function.impl_context,
+                    crate::analysis::facts::FunctionImplContext::Free
+                )
+                && !function
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.contains("test") || attr.contains("rstest"))
         })
+        .map(|function| (function.name.as_str(), function.body.as_str()))
+        .map(|(helper, body)| (helper, mask_comments_and_strings(body)))
         .collect();
-    let mut reaching: Vec<String> = Vec::new();
+    let mut reaching: BTreeSet<String> = BTreeSet::new();
     let mut frontier = vec![name.to_string()];
     while let Some(target) = frontier.pop() {
         for (helper, body) in &candidates {
-            if reaching.iter().any(|known| known == helper) || *helper == name {
-                continue;
-            }
-            if contains_as_whole_word(body, &target) {
-                reaching.push((*helper).to_string());
+            if !reaching.contains(*helper) && contains_as_whole_word(body, &target) {
+                reaching.insert((*helper).to_string());
                 frontier.push((*helper).to_string());
             }
         }
     }
-    reaching
+    reaching.into_iter().collect()
 }
 
 /// Names `file` imports the owner `name` under (`use crate::quota as q;`).
