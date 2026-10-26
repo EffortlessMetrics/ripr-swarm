@@ -668,3 +668,58 @@ fn given_an_alias_rebound_by_a_later_import_then_it_is_not_a_fixture_decorator()
     );
     Ok(())
 }
+
+#[test]
+fn given_an_alias_rebound_by_an_assignment_or_def_then_it_is_not_a_fixture_decorator()
+-> Result<(), String> {
+    // #10473: `fx` no longer names pytest's decorator once a statement before
+    // `@fx` rebinds it, so `caplog` here is not an override.
+    let head = "from pytest import fixture as fx\n";
+    let tail = "\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    for rebinding in [
+        "fx = make_decorator()\n",
+        "fx: object = make_decorator()\n",
+        "fx, other = make_decorator(), None\n",
+        "def fx(function):\n    return function\n",
+        "class fx:\n    pass\n",
+        "import tools as fx\n",
+    ] {
+        let conftest = format!("{head}{rebinding}{tail}");
+        assert_eq!(
+            log_edit(&[
+                ("src/audit.py", AUDIT_PY),
+                ("tests/conftest.py", &conftest),
+                ("tests/test_audit.py", PINNED),
+            ])?,
+            (ExposureClass::Exposed, None),
+            "{rebinding}"
+        );
+    }
+    // A bare annotation binds nothing, so the alias is still pytest's.
+    let annotated = format!("{head}fx: object\n{tail}");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &annotated),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // Rebinding the alias after the decorated def does not undo the fixture,
+    // and a later pytest import binds it again.
+    for kept in [
+        format!("{head}{tail}fx = make_decorator()\n"),
+        format!("{head}fx = make_decorator()\n{head}{tail}"),
+    ] {
+        assert_eq!(
+            log_edit(&[
+                ("src/audit.py", AUDIT_PY),
+                ("tests/conftest.py", &kept),
+                ("tests/test_audit.py", PINNED),
+            ])?,
+            ABSTAINS,
+            "{kept}"
+        );
+    }
+    Ok(())
+}

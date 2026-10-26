@@ -1166,6 +1166,9 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
+        if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+            return true;
+        }
         let compact = attr
             .syntax()
             .text()
