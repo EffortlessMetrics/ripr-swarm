@@ -762,6 +762,7 @@ struct MethodEntryHop<'a> {
     /// The caller's impl self type, for receiver binding and the
     /// entity-identity refusals.
     self_type: String,
+    identity: super::call_identity::OwnerCallIdentity,
 }
 
 fn find_related_tests_with_candidates<'a>(
@@ -1081,6 +1082,9 @@ fn find_related_tests_with_candidates<'a>(
                     Some(MethodEntryHop {
                         caller,
                         self_type: impl_self_type_name(&caller.id.0)?,
+                        identity: super::call_identity::inherent_entry_type_identity(
+                            index, caller,
+                        )?,
                     })
                 })
                 .collect()
@@ -1431,7 +1435,14 @@ fn find_related_tests_with_candidates<'a>(
                 .as_ref()
                 .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
             && method_entry_hops.iter().any(|entry| {
-                method_call_resolves_to_impl(test, &entry.caller.name, &entry.self_type, None)
+                method_entry_uses_plain_receiver(test, &entry.self_type)
+                    && entry.identity.binds_inherent_entry_type(test, index)
+                    && method_call_resolves_to_impl(
+                        test,
+                        &entry.caller.name,
+                        &entry.self_type,
+                        None,
+                    )
                     && !impl_identity_is_shadowed(
                         test,
                         entry.caller,
@@ -4480,6 +4491,18 @@ fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> O
         }
     }
     None
+}
+
+/// This new reach route accepts literal/annotated receivers only. The shared
+/// legacy reader also accepts conventionally named constructors and UFCS by
+/// their final type segment; neither establishes this entry's type identity.
+fn method_entry_uses_plain_receiver(test: &TestSummary, self_type: &str) -> bool {
+    let body = mask_comments_and_strings(&test.body);
+    body.match_indices(self_type).all(|(at, _)| {
+        let before = body[..at].trim_end();
+        let after = body[at + self_type.len()..].trim_start();
+        !before.ends_with("::") && !after.starts_with("::")
+    })
 }
 
 /// Whether a test invokes `method` on a receiver bound to `impl_type`

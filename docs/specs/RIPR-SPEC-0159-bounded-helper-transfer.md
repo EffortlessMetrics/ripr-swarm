@@ -465,28 +465,30 @@ close that gap, both reach-only and both fail-closed:
   root package's library (composing under `src/lib.rs`, no `#[path]` remap,
   every module segment declared once), the caller mentions the name exactly
   once, and the qualifier (`crate::`, `self::`, `super::` or a child module of
-  the caller's module; no `use` item anywhere in the caller's file, grouped, multi-line or
-  restricted-visibility included, mentions the first named segment) resolves to the callee's module path. Anything else keeps the
+  the caller's module; no import, crate alias, type alias, generic parameter,
+  local declaration or item expansion can rebind a bare first segment) resolves to the callee's module path. Anything else keeps the
   "not statically splittable" stop. The bound hop carries the same positional
   arguments as a direct call.
 - **Inherent method entry.** A test relates to the helper as
   `helper_owner_call` when it calls a hop caller that is a plain inherent
   method taking `self` (not a `fmt` owner, which keeps its own route) on a
   receiver the established receiver rules bind to the impl's self type (a
-  struct literal, a constructor call, a `let` annotated with the type or a
-  `Type::method(..)` path; a factory without an annotation is unbound). The
+  struct literal or a `let` annotated with the type). Constructor calls and
+  `Type::method(..)` paths remain unbound on this route. The
   method's name must be defined exactly once in the index, every hop from the
   helper up through that method must be a direct call (a macro-argument hop
   carries reach only), the test must be in the owner's package, and the test
   must not rebind the type (a same-named type in its module scope or an
   out-of-line parent module, or a `use .. as Type` rename).
 
-Named limit on receiver typing: the receiver is bound to the impl's self type
-by name, as the direct owner route does. An unrenamed foreign type of the same
-name (`use other_crate::VersionReq;` beside a local `VersionReq` literal) is
-still related, because the identity refusals read renames and in-scope
-declarations, not which crate an unrenamed import comes from. The result is
-reach only, so the class stays below `exposed`.
+The receiver name must resolve through the shared call-identity authority to
+one declared struct, enum or union in the method impl's own module. The
+root-package library declaration path and the test's import must be established;
+foreign unrenamed imports, sibling namesakes, aliases, generic self types and
+unreadable or generated bindings decline. Qualified type references and
+constructor calls in the test decline even beside a genuine unused import.
+This bounded route intentionally does not infer factory return types or re-export
+chains. Non-ASCII qualified helper paths decline without slicing inside UTF-8.
 
 This is reach only. The helper's result is not shown to be forwarded to the
 test's assertion, so the finding reads `infection_unknown` with
@@ -608,8 +610,9 @@ unselected `match_arm` control);
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
 `crates/ripr/tests/pub_api_method_entry_reach.rs` (#8999 public inherent
 method entry through a module-qualified hop: typed-receiver positives, and the
-untyped-factory, `str::matches`, second-method, renamed-import and
-imported-module-name refusals; the class stays below `exposed`);
+untyped/constructor-factory, `str::matches`, second-method, foreign/renamed
+imports, foreign UFCS, sibling namesakes, crate/type aliases and Unicode
+qualifier refusals; the class stays below `exposed`);
 `analysis/classify/helper_transfer/qualified_hop.rs` `tests` (the qualifier
 resolution and each decline); corpus cases `spec-b-0159-path-qualified-call-site` (accept shape of
 example 5) and `spec-b-0159-path-qualified-imported-module` (reject shape).

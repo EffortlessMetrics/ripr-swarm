@@ -16,8 +16,8 @@
 //! - the caller mentions the callee name exactly once in one call fact, as
 //!   `<qualifier>::<callee>(..)` with a plain-identifier qualifier;
 //! - the qualifier is `crate::..`, `self::..`, `super::..` or a child module
-//!   of the caller's module, and the file does not `use`-import the first
-//!   named segment (an import may bind it to another module);
+//!   of the caller's module, and no import, alias, generic parameter or
+//!   local declaration may rebind a bare first segment;
 //! - the resolved module path equals the callee's module path.
 
 use super::{HelperHop, split_call_arguments_at_paren};
@@ -86,7 +86,7 @@ fn in_root_library(index: &RustIndex, function: &FunctionSummary) -> bool {
 /// qualified call (`a::b::callee(`). `None` for a bare, method, generic or
 /// repeated mention.
 fn sole_qualified_call(masked: &str, callee: &str) -> Option<(Vec<String>, usize)> {
-    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_' || !ch.is_ascii();
     let mut found = None;
     for (at, _) in masked.match_indices(callee) {
         if masked[..at].chars().next_back().is_some_and(is_word)
@@ -115,7 +115,10 @@ fn sole_qualified_call(masked: &str, callee: &str) -> Option<(Vec<String>, usize
             .rfind(|ch: char| !is_word(ch))
             .map_or(0, |index| index + 1);
         let segment = &head[start..];
-        if segment.is_empty() || segment.starts_with(|ch: char| ch.is_ascii_digit()) {
+        if segment.is_empty()
+            || !segment.is_ascii()
+            || segment.starts_with(|ch: char| ch.is_ascii_digit())
+        {
             return None;
         }
         segments.push(segment.to_string());
@@ -156,7 +159,7 @@ fn resolve_qualifier(
         first => {
             // A bare first segment names a child module of this module only
             // when no import may bind the name to something else.
-            if first.starts_with("r#") || use_item_mentions(caller_source, first) {
+            if first.starts_with("r#") || namespace_may_rebind(caller_source, first) {
                 return None;
             }
         }
@@ -170,27 +173,44 @@ fn resolve_qualifier(
     Some(base)
 }
 
-/// Whether any `use` item of the file (at any depth, grouped over several
-/// lines, with any visibility) mentions `name` as an identifier. An
-/// unparseable file answers `true`, so the caller declines.
-fn use_item_mentions(source: &str, name: &str) -> bool {
-    use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+/// Conservatively refuse imports, aliases, generic parameters and block-local
+/// declarations that can give a bare module segment a different identity.
+fn namespace_may_rebind(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
+    if call_identity::source_may_splice_items(source, true) {
+        return true;
+    }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
         return true;
     };
-    parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter(|node| ast::Use::can_cast(node.kind()))
-        .any(|item| {
-            item.descendants_with_tokens().any(|element| {
-                element.kind() == SyntaxKind::IDENT
-                    && element
-                        .as_token()
-                        .is_some_and(|token| token.text().trim_start_matches("r#") == name)
+    parse.tree().syntax().descendants().any(|item| {
+        if ast::Use::can_cast(item.kind()) || ast::ExternCrate::can_cast(item.kind()) {
+            return item.descendants_with_tokens().any(|element| {
+                element.kind() == SyntaxKind::STAR
+                    || element.kind() == SyntaxKind::IDENT
+                        && element
+                            .as_token()
+                            .is_some_and(|token| token.text().trim_start_matches("r#") == name)
+            });
+        }
+        if ast::Module::can_cast(item.kind())
+            && !item
+                .ancestors()
+                .any(|node| ast::BlockExpr::can_cast(node.kind()))
+        {
+            return false;
+        }
+        ast::AnyHasName::cast(item)
+            .and_then(|item| item.name())
+            .is_some_and(|ident| {
+                ident.syntax().descendants_with_tokens().any(|element| {
+                    element.kind() == SyntaxKind::IDENT
+                        && element
+                            .as_token()
+                            .is_some_and(|token| token.text().trim_start_matches("r#") == name)
+                })
             })
-        })
+    })
 }
 
 #[cfg(test)]
@@ -333,6 +353,28 @@ mod tests {
             hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
             None
         );
+    }
+
+    #[test]
+    fn generic_and_glob_bound_qualifiers_decline() {
+        let generic =
+            lib("eval::matches_req(&self.0, v)", "").replace("fn matches(", "fn matches<eval>(");
+        let glob = lib("use other::*;\n        eval::matches_req(&self.0, v)", "");
+        for source in [generic, glob] {
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn an_explicit_crate_path_ignores_a_local_alias() {
+        let source = lib(
+            "extern crate other as eval;\n        crate::eval::matches_req(&self.0, v)",
+            "",
+        );
+        assert!(hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]).is_some());
     }
 
     #[test]

@@ -1051,6 +1051,109 @@ pub(super) fn root_library_member_module_path(
     Some(module)
 }
 
+/// Bind a method-entry receiver's plain type name using the same lexical
+/// import/module authority as free-call identity. This grants reach only;
+/// the caller must separately establish the receiver expression's type.
+pub(super) fn inherent_entry_type_identity(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<OwnerCallIdentity> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+        return None;
+    };
+    if !super::helper_transfer::is_identifier(self_ty)
+        || package_key(&owner.file).is_some()
+        || package_remaps_module_paths(index, None)
+        || super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())?
+            != Path::new("src/lib.rs")
+    {
+        return None;
+    }
+    let module = root_library_member_module_path(index, owner)?;
+    if !library_module_path_is_bound(index, owner, &module) {
+        return None;
+    }
+    // A unique spelling alone is insufficient: find the declared type in the
+    // impl's own module. Aliases, generics and namesakes remain unestablished.
+    let mut declarations = 0;
+    for (file, facts) in index.files().iter() {
+        if !facts.source.contains(self_ty) {
+            continue;
+        }
+        let parsed = crate::analysis::syntax::parse_clean_source_file(&facts.source)?;
+        for node in parsed.tree().syntax().descendants() {
+            let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name())
+            else {
+                continue;
+            };
+            if name.text().trim_start_matches("r#") != self_ty {
+                continue;
+            }
+            if file != &owner.file
+                || !(ast::Struct::can_cast(node.kind())
+                    || ast::Enum::can_cast(node.kind())
+                    || ast::Union::can_cast(node.kind()))
+                || node
+                    .ancestors()
+                    .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
+            {
+                return None;
+            }
+            let mut inline: Vec<String> = node
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .filter_map(|item| item.name().map(|name| name.text().to_string()))
+                .collect();
+            inline.reverse();
+            if join(&file_module_segments(file)?, &inline) != module {
+                return None;
+            }
+            declarations += 1;
+        }
+    }
+    if declarations != 1 {
+        return None;
+    }
+    Some(OwnerCallIdentity {
+        name: self_ty.clone(),
+        owner_crate: Some("lib".to_string()),
+        layout: CrateLayout::new(index, None),
+        owner_file: owner.file.clone(),
+        owner_package: None,
+        definitions: vec![Some(module)],
+        memo: Mutex::new(BTreeMap::new()),
+    })
+}
+
+impl OwnerCallIdentity {
+    pub(super) fn binds_inherent_entry_type(&self, test: &TestSummary, index: &RustIndex) -> bool {
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        if source_may_splice_items(&facts.source, true) {
+            return false;
+        }
+        let context = self.test_scope(test, index);
+        let Some(scopes) = context.scopes.as_deref() else {
+            return false;
+        };
+        if context.crate_names.iter().any(|name| {
+            scopes
+                .scopes
+                .iter()
+                .any(|scope| crate_name_rebound(scope, name))
+        }) {
+            return false;
+        }
+        self.target_of(&self.resolve_bare(
+            context.file_segments.as_deref(),
+            scopes,
+            &context.crate_names,
+        )) == CallTarget::Owner
+    }
+}
+
 /// The module path of a root-package library item that an integration test
 /// may spell as `<lib>::<module>::..::item` (#8999): `definition_module_path`
 /// when each module segment is declared exactly once across the package's

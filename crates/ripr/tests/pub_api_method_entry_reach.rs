@@ -368,3 +368,84 @@ fn a_call_spelled_through_an_imported_module_name_fails_closed() -> Result<(), S
     assert_no_exposed(&findings);
     Ok(())
 }
+
+fn assert_unrelated(repo: &TempRepo) -> Result<(), String> {
+    let findings = repo.findings()?;
+    assert!(call_related(&findings).is_empty(), "{findings:?}");
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn an_unrenamed_foreign_receiver_import_never_borrows_the_owner() -> Result<(), String> {
+    let tests = format!(
+        "use other_crate::VersionReq;\nuse verreq::{{Comparator, Version}};\n{LITERAL_RECEIVER}"
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_foreign_ufcs_call_does_not_borrow_a_genuine_unused_import() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn foreign_call() {\n    assert!(other_crate::VersionReq::matches(&other_crate::VersionReq::default(), &Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_factory_named_new_does_not_establish_the_returned_receiver() -> Result<(), String> {
+    let lib = format!(
+        "{LIB}\nimpl VersionReq {{\n    pub fn new() -> other_crate::VersionReq {{ other_crate::VersionReq::default() }}\n}}\n"
+    );
+    let tests = api_tests(
+        "#[test]\nfn foreign_factory() {\n    let req = VersionReq::new();\n    assert!(req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn a_block_local_crate_alias_does_not_borrow_the_library_module() -> Result<(), String> {
+    let lib = LIB.replace(
+        "        eval::matches_req",
+        "        extern crate other_crate as eval;\n        eval::matches_req",
+    );
+    assert_unrelated(&TempRepo::create(&lib, &api_tests(LITERAL_RECEIVER))?)
+}
+
+#[test]
+fn a_block_local_type_alias_does_not_borrow_the_library_module() -> Result<(), String> {
+    let lib = LIB.replace(
+        "        eval::matches_req",
+        "        type eval = other_crate::Eval;\n        eval::matches_req",
+    );
+    assert_unrelated(&TempRepo::create(&lib, &api_tests(LITERAL_RECEIVER))?)
+}
+
+#[test]
+fn a_unicode_qualifier_neither_panics_nor_borrows_an_ascii_namesake() -> Result<(), String> {
+    let lib = LIB.replace("eval::matches_req", "óeval::matches_req");
+    assert_unrelated(&TempRepo::create(&lib, &api_tests(LITERAL_RECEIVER))?)
+}
+
+#[test]
+fn a_sibling_type_namesake_does_not_borrow_the_owner_method() -> Result<(), String> {
+    let lib = format!(
+        "{LIB}\npub mod sibling {{\n    pub struct VersionReq {{ pub comparators: Vec<super::Comparator> }}\n}}\n"
+    );
+    let tests = format!(
+        "use verreq::sibling::VersionReq;\nuse verreq::{{Comparator, Version}};\n{LITERAL_RECEIVER}"
+    );
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn a_nested_test_module_keeps_its_explicit_owner_import() -> Result<(), String> {
+    let tests = format!("mod nested {{\n{}\n}}\n", api_tests(LITERAL_RECEIVER));
+    let findings = TempRepo::create(LIB, &tests)?.findings()?;
+    assert_eq!(
+        tests_by(&findings, RelationReason::HelperOwnerCall),
+        ["caret_matches_a_newer_version"]
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}

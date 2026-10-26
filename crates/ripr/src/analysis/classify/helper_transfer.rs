@@ -3066,7 +3066,7 @@ fn matching_close(text: &str, open: usize) -> Option<usize> {
     None
 }
 
-fn is_identifier(text: &str) -> bool {
+pub(super) fn is_identifier(text: &str) -> bool {
     text.chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
