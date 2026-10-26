@@ -1,0 +1,12 @@
+diff --git a/src/s_next.rs b/src/s_next.rs
+--- a/src/s_next.rs
++++ b/src/s_next.rs
+@@ -23,7 +23,7 @@
+ 
+ pub fn classify_next(input: &str) -> &'static str {
+     let final_state = scan_next(input);
+-    if final_state == "word" {
++    if final_state == "text" {
+         "word"
+     } else {
+         "blank"
