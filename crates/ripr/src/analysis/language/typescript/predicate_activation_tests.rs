@@ -194,8 +194,14 @@ fn evaluate_in(
     if tests.is_empty() {
         return Err(format!("fixture parsed to no tests: {test_source}"));
     }
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let shape = classify_probe_shape_detail(change.text);
     let boundary = ts_predicate_boundary(&shape, change.text);
     let fact = ts_boundary_fact_for_change(&shape, change.line, change.text, &owner, Some(root));

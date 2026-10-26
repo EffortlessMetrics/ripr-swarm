@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A TypeScript edit to a runtime enum member (`High = 2,` -> `High = 3,`) is no longer silent. The syntax-first extractor indexes no enum, so the line produced no finding beyond the file-level `typescript_owner_extraction_partial` disclosure; each changed member now also yields a `static_unknown` (limited) finding that names the limit, never `exposed` and never actionable. Ambient `declare enum` stays unprobed (#9436).

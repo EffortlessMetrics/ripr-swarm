@@ -317,7 +317,7 @@ fn an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence() 
         finding
             .recommended_next_step
             .as_deref()
-            .is_none_or(|step| !step.contains("Trace the related test input")),
+            .is_none_or(|step| !step.contains("Open the related test and trace its input")),
         "{:?}",
         finding.recommended_next_step
     );

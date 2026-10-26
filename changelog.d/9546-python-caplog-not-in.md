@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python: `not in caplog.text`, `not in caplog.messages`, `not in [r.message for r in caplog.records]` and `not any(... for r in caplog.records)` assertions on a changed logging call are evaluated like their presence forms, so an edit that puts the asserted-absent text into the message is credited and one that leaves it out reads as a weak gap instead of abstaining (#9546).

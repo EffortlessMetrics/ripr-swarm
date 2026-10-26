@@ -1234,13 +1234,15 @@ mod tests {
         };
         let mut entry = weakly_gripped_entry();
         entry.evidence.discriminate = stage(StageState::Weak);
-        entry.evidence.observed_values = vec![ValueFact {
-            file: None,
-            line: 120,
-            text: "discounted_total(50, 100)".to_string(),
-            value: "50".to_string(),
-            context: ValueContext::FunctionArgument,
-        }];
+        entry.evidence.observed_values = vec![
+            ValueFact {
+                line: 120,
+                text: "discounted_total(50, 100)".to_string(),
+                value: "50".to_string(),
+                context: ValueContext::FunctionArgument,
+            }
+            .into(),
+        ];
         entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
@@ -1648,6 +1650,7 @@ mod tests {
         // Weakly exposed with an oracle row, so a (wrong) id match would
         // actually produce a witness and fail this control.
         let finding = crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
@@ -1698,6 +1701,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(crate::domain::LanguageId::Rust),
@@ -1741,6 +1746,7 @@ mod tests {
             Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
         };
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: id.to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: gap_id.to_string(),
@@ -1790,6 +1796,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(crate::domain::LanguageId::Rust),
@@ -2217,6 +2225,7 @@ mod tests {
             repository_head: repository_head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam_id.to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),

@@ -1,0 +1,11 @@
+diff --git a/util/src/stream/take.rs b/util/src/stream/take.rs
+index 0000000..1111111 100644
+--- a/util/src/stream/take.rs
++++ b/util/src/stream/take.rs
+@@ -13,5 +13,5 @@ impl Stream for Take {
+     fn size_hint(&self, upper: Option<usize>) -> Option<usize> {
+         match upper {
+-            Some(x) if x < self.remaining => Some(x),
++            Some(x) if x <= self.remaining => Some(x),
+             _ => Some(self.remaining),
+         }

@@ -140,6 +140,22 @@ pub(super) fn extract_parser_probe_shapes(
                 bin_expr.syntax().text_range().end(),
             );
         }
+        // RIPR-SPEC-0360: the update of a zero-initialized accumulator that
+        // the owner returns is the returned value's change, probed as
+        // `return_value`.
+        if crate::analysis::syntax::loop_accumulator::loop_accumulator(function, &bin_expr)
+            .is_some()
+        {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ReturnValue,
+                bin_expr.syntax().text_range().start(),
+                bin_expr.syntax().text_range().end(),
+            );
+        }
     }
 
     let body = function.body();

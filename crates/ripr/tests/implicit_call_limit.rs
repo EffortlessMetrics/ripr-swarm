@@ -6,6 +6,7 @@
 //! `static_unknown` under `rust_implicit_call_unresolved`. Each control below
 //! changes one thing about the shape and keeps the gap.
 
+use ripr::domain::RelationReason;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -130,6 +131,48 @@ fn kept(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A test is related to the owner by a direct call, and no finding carries the
+/// limit: the operator was credited to the impl instead of abstained on.
+fn credited(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
+    let findings = findings_on(lib, diff, line)?;
+    let direct = findings
+        .iter()
+        .flat_map(|finding| &finding.related_tests)
+        .any(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall));
+    if findings.iter().any(limited) || !direct {
+        return Err(format!(
+            "{label}: expected the operator credited to the impl, got {:?}",
+            findings
+                .iter()
+                .map(|f| (f.class.as_str(), f.static_limit_kind, f.related_tests.len()))
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
+/// No finding carries the limit and every finding has no static path: the
+/// method belongs to a trait this workspace declares and nothing names it, so
+/// nothing reaches it unseen (#9169), which is also not an implicit call.
+fn unreached(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
+    let findings = findings_on(lib, diff, line)?;
+    if findings.iter().any(limited)
+        || findings.is_empty()
+        || findings
+            .iter()
+            .any(|f| f.class != ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "{label}: expected no_static_path without the limit, got {:?}",
+            findings
+                .iter()
+                .map(|f| (f.class.as_str(), f.static_limit_kind))
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
 /// 1-based line of the first line of `lib` containing `needle`.
 fn line_of(lib: &str, needle: &str) -> Result<usize, String> {
     lib.lines()
@@ -176,7 +219,7 @@ mod tests {{
 }
 
 #[test]
-fn an_operator_impl_reached_through_the_operator_is_withheld() -> Result<(), String> {
+fn an_operator_impl_reached_through_the_operator_is_credited() -> Result<(), String> {
     let lib = add_source("assert_eq!(Money(2) + Money(3), Money(5));");
     let line = line_of(&lib, "Money(other.0 + self.0)")?;
     let edit = diff(
@@ -184,11 +227,11 @@ fn an_operator_impl_reached_through_the_operator_is_withheld() -> Result<(), Str
         "        Money(self.0 + other.0)",
         "        Money(other.0 + self.0)",
     );
-    withheld(&lib, &edit, line, "Add through +")
+    credited(&lib, &edit, line, "Add through +")
 }
 
 #[test]
-fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
+fn an_operator_bound_through_lets_is_credited_when_typed() -> Result<(), String> {
     let edit = |lib: &str| -> Result<(usize, String), String> {
         let line = line_of(lib, "Money(other.0 + self.0)")?;
         let edit = diff(
@@ -198,47 +241,65 @@ fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
         );
         Ok((line, edit))
     };
-    for (label, body) in [
+    // Operands ripr types are credited to the impl; the one it cannot type (a
+    // helper's return value) still abstains.
+    for (label, body, typed) in [
         (
             "result bound then asserted",
             "let total = Money(2) + Money(3);\n        assert_eq!(total, Money(5));",
+            true,
         ),
         (
             "operand from a helper",
             "fn money(v: i64) -> Money {\n            Money(v)\n        }\n        assert_eq!(money(2) + Money(3), Money(5));",
+            false,
         ),
         (
             "associated call returning Money",
             "struct Factory;\n        impl Factory {\n            fn new() -> Money {\n                Money(1)\n            }\n        }\n        let value = Factory::new();\n        assert_eq!(value + Money(1), Money(2));",
+            false,
         ),
         (
             "closed block shadowing the operand",
             "let m = Money(1);\n        {\n            let m = Tile(1);\n            let _ = m;\n        }\n        assert_eq!(m + Money(2), Money(3));",
+            false,
         ),
+        // The operator is typed and runs the impl, but `v` shares no token with
+        // the changed expression, so no assertion confirms the credit and the
+        // gap stays withheld (#9567) instead of reading `weakly_exposed`.
         (
             "destructured result",
             "let Money(v) = Money(2) + Money(3);\n        assert_eq!(v, 5);",
+            false,
         ),
         (
             "reassigned accumulator",
             "let mut acc = Money(0);\n        acc = acc + Money(1);\n        assert_eq!(acc, Money(1));",
+            true,
         ),
         (
             "operand rebound by a for loop",
             "let t = Tile(1);\n        let _ = t;\n        for t in [Money(1)] {\n            assert_eq!(t + Money(2), Money(3));\n        }",
+            false,
         ),
         (
             "operand rebound by a match arm",
             "let t = Tile(1);\n        let _ = t;\n        match Some(Money(1)) {\n            Some(t) if true => assert_eq!(t + Money(2), Money(3)),\n            _ => {}\n        }",
+            false,
         ),
         (
             "operands bound",
             "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
+            true,
         ),
     ] {
         let lib = add_source(body);
         let (line, patch) = edit(&lib)?;
-        withheld(&lib, &patch, line, label)?;
+        if typed {
+            credited(&lib, &patch, line, label)?;
+        } else {
+            withheld(&lib, &patch, line, label)?;
+        }
     }
     Ok(())
 }
@@ -425,10 +486,12 @@ fn a_dispatch_shape_that_differs_keeps_its_class() -> Result<(), String> {
             diff(line, "        self.0 + self.0", "        self.0 * self.0"),
         ))
     };
-    // The test names the type but never calls a method named `area`.
+    // The test names the type but never calls a method named `area`. `Shape` is
+    // declared in this workspace, so nothing reaches `area` unseen (#9169): no
+    // static path, and certainly not the implicit-call limit.
     let lib = dispatch_source("let _square = Square(3);\n        assert_eq!(9, 9);");
     let (line, patch) = edit(&lib)?;
-    kept(&lib, &patch, line, "never calls area")?;
+    unreached(&lib, &patch, line, "never calls area")?;
     // The test calls `area` but never names `Square`.
     let lib = dispatch_source("let tile = Tile(3);\n        assert_eq!(tile.area(), 9);");
     let (line, patch) = edit(&lib)?;
@@ -514,5 +577,75 @@ mod tests {
 ";
     let line = line_of(lib, "self.0 + 1")?;
     let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
-    kept(lib, &edit, line, "local trait named Add")
+    unreached(lib, &edit, line, "local trait named Add")
+}
+
+#[test]
+fn an_affinity_linked_implicit_dispatch_row_is_not_an_inspection_only_pointer() -> Result<(), String>
+{
+    // #10053: `PartialEq` is owned elsewhere, so the gap is not withheld, and the
+    // only related test is linked by name (`eq_...`) yet reaches `eq` through `==`.
+    // It must not be told it "does not establish a call to the changed owner".
+    let lib = "use std::sync::atomic::{AtomicU32, Ordering};
+
+pub static COMPARISONS: AtomicU32 = AtomicU32::new(0);
+
+pub struct Tag(pub u32);
+
+impl PartialEq for Tag {
+    fn eq(&self, other: &Tag) -> bool {
+        COMPARISONS.fetch_add(2 - 1, Ordering::SeqCst);
+        self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eq_runs_when_two_tags_are_compared() {
+        let same = Tag(7) == Tag(7);
+        assert!(same || !same);
+    }
+}
+";
+    let line = line_of(lib, "COMPARISONS.fetch_add(")?;
+    let edit = diff(
+        line,
+        "        COMPARISONS.fetch_add(1, Ordering::SeqCst);",
+        "        COMPARISONS.fetch_add(2 - 1, Ordering::SeqCst);",
+    );
+    let findings = findings_on(lib, &edit, line)?;
+    let gaps: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.class == ExposureClass::WeaklyExposed)
+        .collect();
+    if gaps.is_empty() {
+        return Err(format!(
+            "premise: a weakly_exposed finding, got {findings:?}"
+        ));
+    }
+    for finding in gaps {
+        let rows: Vec<_> = finding
+            .related_tests
+            .iter()
+            .map(|test| (test.name.as_str(), test.relation_reason))
+            .collect();
+        if rows
+            != [(
+                "eq_runs_when_two_tags_are_compared",
+                Some(ripr::domain::RelationReason::OwnerNamedTest),
+            )]
+        {
+            return Err(format!("premise: one owner-named row, got {rows:?}"));
+        }
+        let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+        if step.contains("do not establish a call") {
+            return Err(format!(
+                "implicit-dispatch row told it never calls the owner: {step}"
+            ));
+        }
+    }
+    Ok(())
 }

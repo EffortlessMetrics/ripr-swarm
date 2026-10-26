@@ -1,0 +1,10 @@
+# RIPR-SPEC-0028: assigning a reader's code slots withholds scalar module-value credit (#10626).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::replacing_a_scalar_readers_code_withholds_credit",
+]
+fixtures = [
+  "fixtures/python_scalar_code_replacement",
+  "fixtures/python_scalar_code_replacement_removed",
+]

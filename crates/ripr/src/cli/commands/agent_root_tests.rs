@@ -733,7 +733,9 @@ fn cli_unborn_git_patch_brief_and_snapshot_disclose_missing_revision() -> Result
     let artifact: serde_json::Value =
         serde_json::from_str(&raw).map_err(|error| error.to_string())?;
     assert_eq!(artifact["artifact"]["repository"]["head"], "unavailable");
-    assert_eq!(artifact["artifact"]["analysis"]["worktree"], "clean");
+    // Every source is untracked in an unborn repository, so the producer
+    // honestly discloses a dirty worktree rather than "clean".
+    assert_eq!(artifact["artifact"]["analysis"]["worktree"], "dirty");
     let refusal = crate::agent::artifact::validate_repo_exposure_artifact(root, &raw, "unborn")
         .err()
         .ok_or("unborn snapshot was admitted")?;

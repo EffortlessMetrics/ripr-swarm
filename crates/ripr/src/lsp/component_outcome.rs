@@ -21,6 +21,17 @@
 //!   findings remain usable evidence under the degradation; nothing about a
 //!   degraded optional component downgrades the findings themselves.
 
+use super::client_features::ClientFeatureProfile;
+
+/// The VS Code palette command the stored recovery routes name. It exists
+/// only when the client explicitly advertised it in `riprEditor.commands`
+/// (#9895, RIPR-SPEC-0129/0143: absence never implies support).
+const EDITOR_REFRESH_COMMAND: &str = "ripr.refreshDiagnostics";
+
+/// The route every other client can act on: the server-executed refresh
+/// command registered in `executeCommandProvider` for all clients.
+const SERVER_REFRESH_ROUTE: &str = "ripr.refresh (workspace/executeCommand)";
+
 /// One optional analysis component whose outcome is recorded per refresh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum AnalysisComponent {
@@ -191,7 +202,7 @@ impl ComponentOutcome {
 
     /// One concise, single-line client-facing summary of the degraded
     /// outcome, naming the recovery route without overclaiming.
-    pub(super) fn log_summary(&self) -> String {
+    pub(super) fn log_summary(&self, client: &ClientFeatureProfile) -> String {
         let kind = self.kind.unwrap_or(self.state.as_str());
         let detail = self
             .message
@@ -199,7 +210,7 @@ impl ComponentOutcome {
             .map(|message| format!(": {message}"))
             .unwrap_or_default();
         let recovery = self
-            .recovery
+            .recovery_for_client(client)
             .map(|recovery| format!(" — recovery: {recovery}"))
             .unwrap_or_default();
         format!(
@@ -209,17 +220,38 @@ impl ComponentOutcome {
         )
     }
 
+    /// The recovery route as this client can act on it (#9895). The stored
+    /// route names the VS Code palette command `ripr.refreshDiagnostics`,
+    /// which only exists when the client explicitly advertised it in its
+    /// `riprEditor.commands` list. A version-only, empty-commands or
+    /// unrelated-commands block does not qualify. Every other LSP client is
+    /// pointed at the server-executed `ripr.refresh` command instead, which
+    /// the server registers for all clients. Capability absence never implies
+    /// support, so a pre-initialize or malformed-block profile gets the
+    /// generic route.
+    fn recovery_for_client(&self, client: &ClientFeatureProfile) -> Option<String> {
+        let recovery = self.recovery?;
+        if client.supports_client_command(EDITOR_REFRESH_COMMAND) {
+            return Some(recovery.to_string());
+        }
+        Some(recovery.replace(EDITOR_REFRESH_COMMAND, SERVER_REFRESH_ROUTE))
+    }
+
     /// The typed payload exposed through `ripr/analysisStatus` (and embedded
     /// in workspace status). `snapshot_identity` binds the record to the
     /// snapshot/input identity that produced it.
-    pub(super) fn status_payload(&self, snapshot_identity: Option<&str>) -> serde_json::Value {
+    pub(super) fn status_payload(
+        &self,
+        snapshot_identity: Option<&str>,
+        client: &ClientFeatureProfile,
+    ) -> serde_json::Value {
         serde_json::json!({
             "component": self.component.as_str(),
             "state": self.state.as_str(),
             "kind": self.kind,
             "message": self.message,
             "findings_trustworthy": self.findings_trustworthy,
-            "recovery": self.recovery,
+            "recovery": self.recovery_for_client(client),
             "snapshot_identity": snapshot_identity,
         })
     }
@@ -265,11 +297,14 @@ pub(super) fn degradation_signature(outcomes: &[ComponentOutcome]) -> Option<Str
 
 /// The concise warning text for one distinct degradation signature, naming
 /// each degraded component and its recovery route.
-pub(super) fn degradation_log_message(outcomes: &[ComponentOutcome]) -> Option<String> {
+pub(super) fn degradation_log_message(
+    outcomes: &[ComponentOutcome],
+    client: &ClientFeatureProfile,
+) -> Option<String> {
     let degraded = outcomes
         .iter()
         .filter(|outcome| outcome.is_degraded())
-        .map(ComponentOutcome::log_summary)
+        .map(|outcome| outcome.log_summary(client))
         .collect::<Vec<_>>();
     if degraded.is_empty() {
         return None;
@@ -362,7 +397,12 @@ fn is_absolute_path_token(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisComponent, ComponentOutcome, ComponentState, degradation_signature};
+    use super::{
+        AnalysisComponent, ComponentOutcome, ComponentState, EDITOR_REFRESH_COMMAND,
+        degradation_signature,
+    };
+    use crate::lsp::client_features::{ClientFeatureProfile, RiprEditorClientCapabilities};
+    use tower_lsp_server::ls_types::InitializeParams;
 
     /// #4350: the editor bounds failure text, and the long-root failure
     /// reaches it behind the workspace-analysis and diff prefixes. The
@@ -578,7 +618,8 @@ mod tests {
             true,
             "run ripr check to regenerate the causal delta artifact",
         );
-        let payload = outcome.status_payload(Some("snapshot:7"));
+        let payload =
+            outcome.status_payload(Some("snapshot:7"), &ClientFeatureProfile::unsupported());
         if payload["component"].as_str() != Some("causal_projection")
             || payload["state"].as_str() != Some("failed")
             || payload["kind"].as_str() != Some("causal_projection_unusable")
@@ -606,7 +647,8 @@ mod tests {
         if outcome.is_degraded() {
             return Err("an unavailable outcome must never degrade the run".to_string());
         }
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload =
+            outcome.status_payload(Some("snapshot:1"), &ClientFeatureProfile::unsupported());
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
             || payload["findings_trustworthy"].as_bool() != Some(true)
@@ -690,14 +732,167 @@ mod tests {
             true,
             "retry ripr.refreshDiagnostics",
         )];
-        let message = super::degradation_log_message(&outcomes)
-            .ok_or_else(|| "degraded outcomes must produce a log message".to_string())?;
+        let message =
+            super::degradation_log_message(&outcomes, &ClientFeatureProfile::unsupported())
+                .ok_or_else(|| "degraded outcomes must produce a log message".to_string())?;
         if !message.contains("seam_inventory failed")
-            || !message.contains("retry ripr.refreshDiagnostics")
+            || !message.contains("retry ripr.refresh (workspace/executeCommand)")
         {
             return Err(format!(
                 "log message must name component and recovery: {message}"
             ));
+        }
+        Ok(())
+    }
+
+    fn editor_profile() -> ClientFeatureProfile {
+        let mut profile = ClientFeatureProfile::unsupported();
+        profile.ripr_editor = Some(RiprEditorClientCapabilities {
+            version: "0.10.0".to_string(),
+            commands: vec![EDITOR_REFRESH_COMMAND.to_string()],
+            guarded_test_edit: false,
+        });
+        profile
+    }
+
+    /// #9895: `ripr.refreshDiagnostics` is a VS Code palette command. A
+    /// generic client (no `riprEditor` block) must be pointed at the
+    /// server-executed `ripr.refresh`; the editor client keeps the palette
+    /// command. Covers the status payload and the degradation log line.
+    #[test]
+    fn editor_only_refresh_command_is_not_named_to_generic_clients() -> Result<(), String> {
+        let deferred = ComponentOutcome::deferred(
+            AnalysisComponent::SeamInventory,
+            "interactive_refresh_deferral",
+            "run ripr.refreshDiagnostics for the full seam inventory",
+        );
+        let failed = ComponentOutcome::failed(
+            AnalysisComponent::SeamInventory,
+            "seam_inventory_failed",
+            "walk failed",
+            true,
+            "retry ripr.refreshDiagnostics",
+        );
+        let generic = ClientFeatureProfile::unsupported();
+        let editor = editor_profile();
+
+        let generic_recovery = deferred.status_payload(Some("s:1"), &generic)["recovery"]
+            .as_str()
+            .map(str::to_string);
+        if generic_recovery.as_deref()
+            != Some("run ripr.refresh (workspace/executeCommand) for the full seam inventory")
+        {
+            return Err(format!("generic deferred recovery: {generic_recovery:?}"));
+        }
+        let editor_recovery = deferred.status_payload(Some("s:1"), &editor)["recovery"]
+            .as_str()
+            .map(str::to_string);
+        if editor_recovery.as_deref()
+            != Some("run ripr.refreshDiagnostics for the full seam inventory")
+        {
+            return Err(format!("editor deferred recovery: {editor_recovery:?}"));
+        }
+
+        let outcomes = vec![failed];
+        let generic_log = super::degradation_log_message(&outcomes, &generic)
+            .ok_or_else(|| "failed outcome must log".to_string())?;
+        if generic_log.contains("refreshDiagnostics")
+            || !generic_log.contains("retry ripr.refresh (workspace/executeCommand)")
+        {
+            return Err(format!(
+                "generic log names the editor command: {generic_log}"
+            ));
+        }
+        let editor_log = super::degradation_log_message(&outcomes, &editor)
+            .ok_or_else(|| "failed outcome must log".to_string())?;
+        if !editor_log.contains("retry ripr.refreshDiagnostics") {
+            return Err(format!("editor log lost the palette command: {editor_log}"));
+        }
+        Ok(())
+    }
+
+    /// #9895: the palette route is selected only by an explicit
+    /// `riprEditor.commands` advertisement (RIPR-SPEC-0129/0143). Every
+    /// block shape that does not list the command gets the universal route,
+    /// parsed through the real initialize-params owner.
+    #[test]
+    fn palette_route_requires_explicit_refresh_command_advertisement() -> Result<(), String> {
+        let outcome = ComponentOutcome::failed(
+            AnalysisComponent::SeamInventory,
+            "seam_inventory_failed",
+            "walk failed",
+            true,
+            "retry ripr.refreshDiagnostics",
+        );
+        let generic = Some("retry ripr.refresh (workspace/executeCommand)");
+        let editor = Some("retry ripr.refreshDiagnostics");
+        let cases = [
+            ("absent experimental", serde_json::json!({}), generic),
+            (
+                "empty experimental",
+                serde_json::json!({"experimental": {}}),
+                generic,
+            ),
+            (
+                "null block",
+                serde_json::json!({"experimental": {"riprEditor": null}}),
+                generic,
+            ),
+            (
+                "scalar block",
+                serde_json::json!({"experimental": {"riprEditor": 1}}),
+                generic,
+            ),
+            (
+                "empty object block",
+                serde_json::json!({"experimental": {"riprEditor": {}}}),
+                generic,
+            ),
+            (
+                "missing version",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"commands": ["ripr.refreshDiagnostics"]}}}),
+                generic,
+            ),
+            (
+                "malformed commands",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": "ripr.refreshDiagnostics"}}}),
+                generic,
+            ),
+            (
+                "version only",
+                serde_json::json!({"experimental": {"riprEditor": {"version": "0.1"}}}),
+                generic,
+            ),
+            (
+                "empty commands",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": []}}}),
+                generic,
+            ),
+            (
+                "unrelated commands only",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": ["ripr.copyContext"]}}}),
+                generic,
+            ),
+            (
+                "explicitly advertised",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": ["ripr.copyContext", "ripr.refreshDiagnostics"]}}}),
+                editor,
+            ),
+        ];
+        for (name, capabilities, expected) in cases {
+            let params: InitializeParams =
+                serde_json::from_value(serde_json::json!({"capabilities": capabilities}))
+                    .map_err(|error| format!("{name}: {error}"))?;
+            let profile = ClientFeatureProfile::from_initialize_params(&params);
+            let payload = outcome.status_payload(Some("s:1"), &profile);
+            if payload["recovery"].as_str() != expected {
+                return Err(format!("{name}: got {}", payload["recovery"]));
+            }
         }
         Ok(())
     }

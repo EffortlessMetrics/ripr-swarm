@@ -240,7 +240,27 @@ fn newline_prefixed_file_names_keep_their_tree_effect() -> Result<(), String> {
     let root = new_repo("newline")?;
     let result = (|| {
         let base = commit(&root, &[("keep.txt", Some("k\n"))], "base")?;
-        let writer = commit(&root, &[("\nnotes.txt", Some("n\n"))], "feat: notes (#31)")?;
+        // Stage the name through the index, not the worktree: Windows cannot
+        // create a file whose name holds a newline (os error 123), and the
+        // capture reads only Git's tree, which stores the name byte for byte.
+        fs::write(root.join("notes.blob"), "n\n").map_err(|error| error.to_string())?;
+        let blob = git(&root, &["hash-object", "-w", "notes.blob"])?;
+        fs::remove_file(root.join("notes.blob")).map_err(|error| error.to_string())?;
+        git(
+            &root,
+            &[
+                // Git for Windows' default `core.protectNTFS` refuses a
+                // control character in an index path.
+                "-c",
+                "core.protectNTFS=false",
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{blob},\nnotes.txt"),
+            ],
+        )?;
+        git(&root, &["commit", "--quiet", "-m", "feat: notes (#31)"])?;
+        let writer = git(&root, &["rev-parse", "HEAD"])?;
         let facts = capture(&CaptureArgs {
             repo: &root,
             repository: "example/ledger",

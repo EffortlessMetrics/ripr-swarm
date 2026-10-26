@@ -1,3 +1,0 @@
-case = "pw-expect-soft-second-term"
-issue = 9651
-reason = "Changed field of a multi-field object literal is judged by the first field (#9651)."

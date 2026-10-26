@@ -21,6 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+mod observation_tail_return;
 mod preparation;
 
 /// Result of a single fixture run: violation lines + optional run output.
@@ -1050,6 +1051,9 @@ fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
 
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
     let name = fixture_name(path)?;
+    if name == observation_tail_return::FIXTURE {
+        observation_tail_return::validate(path)?;
+    }
     let diff = path.join("diff.patch");
     let input = path.join("input");
     if !diff.exists() {
@@ -2487,6 +2491,9 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
             println!(
                 "       cargo xtask fixtures new <name> — scaffold a new fixture directory with a seeded golden (#2445)"
             );
+            println!(
+                "       cargo xtask fixtures refresh-identity <typescript|python> — re-derive installed-journey digests, snapshot ids and corpus bindings after a dependency bump (#9261)"
+            );
             println!();
             println!("Without a name, runs all fixtures. With a name, runs only that fixture.");
             println!("Use `new <name>` to scaffold a new fixture directory.");
@@ -2497,6 +2504,9 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
                 .get(1)
                 .ok_or_else(|| "fixtures new requires a <name> argument".to_string())?;
             return fixtures_new(name);
+        }
+        if sub == "refresh-identity" {
+            return crate::fixture_contracts::fixtures_refresh_identity(&args[1..]);
         }
     }
     // Fall through to the existing runner (pass the first arg as the optional fixture name).

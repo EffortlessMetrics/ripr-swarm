@@ -99,7 +99,7 @@ pub(crate) const INSTALLED_PYTHON_CONTRACT: InstalledJourneyFixtureContract =
         rebuild_from_recipe: true,
     };
 
-fn installed_journey_sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn installed_journey_sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher
@@ -305,7 +305,7 @@ pub(crate) fn installed_journey_manifest_violations(
 /// Fail-closed inventory of one retained snapshot directory: every regular
 /// file is reported with its manifest-relative `/`-separated path so a
 /// behavior-affecting snapshot file cannot stay unbound from the manifest.
-fn installed_journey_collect_snapshot_files(
+pub(crate) fn installed_journey_collect_snapshot_files(
     contract: &InstalledJourneyFixtureContract,
     dir: &Path,
     prefix: &Path,

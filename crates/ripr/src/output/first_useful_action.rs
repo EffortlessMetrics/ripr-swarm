@@ -64,6 +64,13 @@ pub(crate) fn build_first_useful_action_report(
 
 pub(crate) use crate::output::path::display_path;
 
+/// Advisory warnings the report also carries in its JSON/Markdown bodies; the
+/// CLI echoes them to stderr (#9856) so a run that routed from missing inputs
+/// is visible in terminals and `2>&1` CI logs.
+pub(crate) fn first_useful_action_warnings(report: &FirstUsefulActionReport) -> &[String] {
+    &report.warnings
+}
+
 fn stale_report(
     input: &FirstUsefulActionInput,
     parsed: &ParsedSources,

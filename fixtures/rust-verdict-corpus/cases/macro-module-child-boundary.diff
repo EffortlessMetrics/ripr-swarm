@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,3 +8,3 @@
+ pub fn fits_child(width: usize, limit: usize) -> bool {
+-    width <= limit
++    limit >= width
+ }

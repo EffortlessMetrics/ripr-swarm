@@ -119,7 +119,11 @@ credits nothing, because its assertion may not run. An unrelated assertion on
 the same line as the call does not suppress the credit. When every recognized
 oracle of a `weakly_exposed` finding is such an unknown-grade macro credit, the
 finding keeps this limit (it is not reported as a gap), since the macro's
-discrimination remains unresolved. The call then earns one oracle of kind `unknown`
+discrimination remains unresolved. Only the oracles of directly related tests
+count: a recognized oracle in a test related by file or module proximity alone
+(a strong `assert_eq!` on another function) neither hides the limit nor makes
+the finding a gap (#7089). The credited macro need not be spelled `assert_*`
+(`check_eq!`); its own spelling is the witness the limit names. The call then earns one oracle of kind `unknown`
 and strength `unknown`, never `weak` or stronger, so it records that an
 assertion exists without grading what it pins. A hand-rolled
 `if bad { panic!() }` body, a macro that only logs, a macro with one arm that
@@ -176,6 +180,10 @@ arguments (`!x`, `a != b`) do not change this grade.
    `weakly_exposed` and emits
    `static_limit_kind: rust_macro_wrapped_assertion_unresolved`. With
    `let flag = bulk(100); assert_flag!(flag, true);` the gap stays.
+   A same-file `macro_rules!` wrapper such as `check_eq!` that expands to
+   `assert_eq!` takes the same limit when the only other oracle is a
+   proximity test (corpus: `idiom-assert-macro-wrapper`; test:
+   `crates/ripr/tests/local_macro_assertion_limit.rs`).
    Corpus: `checkout-bulk-custom-assert-macro`. `strsim-sorensen-dice-equal`
    keeps its gap: its related-test window is truncated, so a hidden direct
    test's oracle cannot be ruled out.

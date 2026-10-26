@@ -822,6 +822,13 @@ pub(crate) fn baseline_delta_item_count(report: &BaselineDeltaReport) -> usize {
     report.items.len()
 }
 
+/// Advisory warnings the report also carries in its JSON/Markdown bodies; the
+/// CLI echoes them to stderr (#9856) so a run that routed from missing inputs
+/// is visible in terminals and `2>&1` CI logs.
+pub(crate) fn baseline_delta_warnings(report: &BaselineDeltaReport) -> &[String] {
+    &report.warnings
+}
+
 fn parse_baseline_records(path: &str, json_text: Result<String, String>) -> BaselineParse {
     let value = match parse_required_json_input(path, "baseline", json_text) {
         Ok(value) => value,
@@ -1011,8 +1018,13 @@ fn baseline_record_from_value(value: &Value) -> Option<BaselineRecord> {
         id: string_field(identity_value.get("id")).or_else(|| string_field(value.get("id"))),
         dedupe_key: string_field(identity_value.get("dedupe_key"))
             .or_else(|| string_field(value.get("dedupe_key"))),
-        fallback: string_field(identity_value.get("fallback"))
-            .or_else(|| fallback_identity(path.as_deref(), line, static_class.as_deref())),
+        fallback: string_field(identity_value.get("fallback")).or_else(|| {
+            crate::output::baseline::fallback_identity(
+                path.as_deref(),
+                line,
+                static_class.as_deref(),
+            )
+        }),
         matched_by: None,
     };
     if !identity.has_stable_value() {
@@ -1041,7 +1053,11 @@ fn current_decision_from_value(value: &Value) -> Option<CurrentDecision> {
         source_id: string_field(value.get("source_id")),
         id: string_field(value.get("id")),
         dedupe_key: string_field(value.get("dedupe_key")),
-        fallback: fallback_identity(path.as_deref(), line, static_class.as_deref()),
+        fallback: crate::output::baseline::fallback_identity(
+            path.as_deref(),
+            line,
+            static_class.as_deref(),
+        ),
         matched_by: None,
     };
     if !identity.has_stable_value() {
@@ -1971,20 +1987,6 @@ fn item_headline(item: &DeltaItem) -> String {
         (Some(path), None, Some(class)) => format!("{path} {class}"),
         (Some(path), None, None) => path.to_string(),
         _ => item.identity.sort_key(),
-    }
-}
-
-fn fallback_identity(
-    path: Option<&str>,
-    line: Option<u64>,
-    static_class: Option<&str>,
-) -> Option<String> {
-    match (path, line, static_class) {
-        (Some(path), Some(line), Some(static_class)) => Some(format!(
-            "{}:{line}:{static_class}",
-            path.replace('\\', "/").trim_start_matches("./")
-        )),
-        _ => None,
     }
 }
 

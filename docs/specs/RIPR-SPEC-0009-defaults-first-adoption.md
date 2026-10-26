@@ -68,6 +68,10 @@ The default contract is:
   when needed. Commands remain byte-preserving after terminal sanitization,
   including roots with literal line breaks or tabs. If no lossless command root exists, retain the advisory but omit
   the refresh command with the same UTF-8-parent/alias remedy.
+- Every root `init` prints in a command or advisory (success follow-ups,
+  existing-file retries and the workflow refresh note) names the directory
+  without the trailing `/.` that joining the default `.` root onto the working
+  directory leaves behind. A bare filesystem or drive root keeps its spelling.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -92,6 +96,26 @@ The default contract is:
   attention.
 - Actionable weak, missing, reachable, and unknown seam classes remain visible
   with conservative severities.
+
+### CLI value diagnostics and option help
+
+`ripr diff --format` accepts `human`, `text`, `md`, `markdown`, and `json`.
+The first four retain human output; `json` retains JSON output. Unknown values
+use the shared enum-value diagnostic: `xml` produces
+`unknown diff format "xml". Accepted: human, text, md, markdown, json.`;
+the near miss `jsonn` produces
+``unknown diff format "jsonn". Did you mean `json`? Accepted: human, text, md, markdown, json.``.
+These are argv refusals: exit 2, empty stdout, and the diagnostic prefixed
+with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
+Omitting the value retains `missing value for --format` with the same exit
+and streams. This does not replace `check`'s common-format/help-pointer contract.
+
+The rendered `pilot` usage line names `[--format FORMAT]`; its option line
+names `human` as the default and `json` as the alternative. Both spellings
+remain accepted by the parser. The rendered `doctor` option line names
+`--profile NAME`, `analysis` as the default, and `source-build` as the
+alternative. Both profiles remain accepted. Help exits 0 with empty stderr;
+invalid or missing option values remain usage errors with exit 2.
 
 ## Surface Defaults
 
@@ -426,6 +450,10 @@ blocking by default.
 
 Defaults-first adoption evidence should cover:
 
+- `cli_smoke/cli_value_contracts.rs` exercises actual process output and exit
+  status for diff's distant/near-miss/missing values, accepted aliases reaching
+  revision validation, and the rendered pilot/doctor option contracts paired
+  with parser acceptance and refusal controls;
 - documentation for every default surface listed above;
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
@@ -691,6 +719,16 @@ repository as pilot's scope, and pilot-summary.json records current_change
 state no_change or unavailable.
 ```
 
+### Pilot labels an assertion with placeholders as a shape
+
+A suggested assertion that carries `/* ... */` placeholders for values only the
+developer knows (for example `assert_eq!(total(/* boundary input where a >= b
+*/), /* expected */)`) is printed in the pilot human output as
+`assertion shape: ...`, followed by a note to replace each `/* ... */` comment
+with a real value from the developer's test before using it. Any other
+assertion text keeps its `assertion:` label and gets no note. The structured
+pilot packets keep their existing fields and values unchanged (#9244).
+
 ### Outcome is public CLI
 
 ```text
@@ -774,6 +812,8 @@ baseline failure policy.
 
 Current tests and reports that support the contract:
 
+- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
+- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note`
 - `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`

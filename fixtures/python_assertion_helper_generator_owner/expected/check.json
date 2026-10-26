@@ -1,0 +1,111 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_assertion_helper_generator_owner/input",
+  "config_path": "<cwd>/fixtures/python_assertion_helper_generator_owner/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:de2a1eb0051ea28b73ead8091cd68b1473b66406c39e8fc96187525462b47e8f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_stats.py:python_preview:1fd9a5f2",
+      "canonical_gap_id": "gap:python:src/stats.py:Stats.record_write:predicate_boundary:predicate:self.writes+=1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/stats.py:Stats.record_write:predicate_boundary:predicate:self.writes+=1",
+        "language": "python",
+        "file": "src/stats.py",
+        "owner": "Stats.record_write",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "self.writes+=1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_stats.py:python_preview:1fd9a5f2",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/stats.py",
+        "line": 7,
+        "expression": "        self.writes += 1",
+        "owner": "python:src/stats.py::Stats.record_write"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `record_write`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `record_write`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: self.writes += 1 (line 7)", "related test tests/test_stats.py:9 test_writes uses strong exact value oracle: check_writes(stats, 0)"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"self.writes += 1","line":7}
+      ],
+      "evidence": ["owner: Stats.record_write", "owner_kind: method", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_stats.py", "suggested_test_name: test_writes", "suggested_test_node_id: tests/test_stats.py::test_writes", "suggested_verify_command: python -m pytest tests/test_stats.py::test_writes", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_writes)", "test_verify_command: python -m pytest tests/test_stats.py::test_writes (test_writes)", "related_test_relation: syntactic_call (test_writes)", "test_oracle: exact_value strong (test_writes)", "test_oracle_shape: field_assertion (test_writes)"],
+      "missing": ["A strong Python oracle reaches `record_write`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_writes",
+          "file": "tests/test_stats.py",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "check_writes(stats, 0)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_stats.py",
+        "suggested_test_name": "test_writes",
+        "suggested_test_node_id": "tests/test_stats.py::test_writes",
+        "verify_command": "python -m pytest tests/test_stats.py::test_writes",
+        "verify_command_confidence": "high"
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "changed_sink": "writes",
+      "observed_sink": "check_writes(stats, 0)",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/stats.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/stats.py","digest":"sha256:86f6e3ab479dbd2b8b37d6b68e4ce5921d0a3dbb03cd9643c1353720d9289999"}]}
+}

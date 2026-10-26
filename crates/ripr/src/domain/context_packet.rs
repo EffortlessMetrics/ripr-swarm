@@ -178,7 +178,6 @@ mod tests {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 11,
             text: "assert_eq!(x, 1)".to_string(),
             value: "1".to_string(),
@@ -317,6 +316,7 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -373,6 +373,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

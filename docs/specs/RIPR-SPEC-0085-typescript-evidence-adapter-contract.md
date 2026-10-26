@@ -51,7 +51,7 @@ Policy impact:
 
 RIPR already ships a TypeScript adapter. It is **not** greenfield and it is
 **not** a regex pile: it is built on the `oxc` AST (`oxc_parser` / `oxc_ast`
-/ `oxc_span`, gated behind the `lang-typescript` feature, blessed by ADR
+/ `oxc_span` / `oxc_ast_visit`, gated behind the `lang-typescript` feature, blessed by ADR
 0008), and it already performs *preview-grade* test discovery, oracle
 extraction (`toBe` / `toEqual` / `toThrow` / `rejects.toThrow`), owner and
 related-test inference, a Bun cross-language bridge, static limits, and
@@ -231,7 +231,7 @@ t.notEqual / t.notStrictEqual       -> relational_check (weak)   # tape / node:t
 t.deepEqual                         -> exact_value (strong)      # shared
 t.notDeepEqual                      -> relational_check (weak)   # shared
 t.truthy / t.falsy / t.pass / t.fail / t.assert / t.ok / t.notOk -> smoke_only (smoke)
-t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)
+t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)  # except RIPR-SPEC-0243 rule 10 (AVA message object)
 t.regex / t.notRegex / t.like / t.notLike -> relational_check (weak)
 <any other t.method>                -> not an oracle (fail-closed)
 ```

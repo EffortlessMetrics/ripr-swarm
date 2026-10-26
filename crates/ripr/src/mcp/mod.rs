@@ -76,7 +76,7 @@ Options:
 
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
-`ripr_get_repair_attempt`, `ripr_get_receipt_status`, and
+`ripr_get_repair_attempt`, `ripr_get_receipt_status`,
 `ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
@@ -121,12 +121,25 @@ fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
+    // #9867: startup dispatches this route directly, bypassing
+    // `CliCommand::from_parts`, so the extended-help rejection owned there
+    // must be mirrored here: `mcp --help --all` is a usage error naming the
+    // supported routes, not ordinary help that silently discards `--all`.
+    if args.iter().any(|arg| arg == "--help" || arg == "-h")
+        && args.iter().any(|arg| arg == "--all")
+    {
+        return Err(
+            "`ripr mcp --help --all` is not supported; extended help is available via \
+             `ripr help --all` (or `ripr check --help --all` for check)"
+                .to_string(),
+        );
+    }
     let mut explicit_root = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--help" | "-h" => {
-                println!("{MCP_HELP}");
+                println!("{}", crate::cli::help::render_command_help(MCP_HELP, &[]));
                 return Ok(());
             }
             "--version" | "-V" => {
@@ -190,6 +203,20 @@ mod tests {
     }
 
     #[test]
+    fn help_tool_list_has_a_single_conjunction() {
+        // The tool sentence joins its last two names with one "and"; a second
+        // "and" before the final tool reads as a doubled conjunction.
+        assert!(
+            MCP_HELP.contains("`ripr_get_repair_card`, and `ripr_list_repair_attempts`"),
+            "{MCP_HELP}"
+        );
+        assert!(
+            !MCP_HELP.contains("`ripr_get_receipt_status`, and"),
+            "{MCP_HELP}"
+        );
+    }
+
+    #[test]
     fn terminal_hint_is_written_only_for_terminal_stdin() {
         let mut shown = Vec::new();
         write_terminal_hint(true, &mut shown);
@@ -199,6 +226,25 @@ mod tests {
         let mut piped = Vec::new();
         write_terminal_hint(false, &mut piped);
         assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn extended_help_pair_is_rejected_on_the_direct_route() -> Result<(), String> {
+        // #9867: startup dispatches `ripr mcp` straight here, bypassing
+        // `CliCommand::from_parts`; the pair must be a usage error naming
+        // the supported routes, not ordinary help discarding `--all`.
+        for argv in [
+            ["--help", "--all"].as_slice(),
+            ["--all", "--help"].as_slice(),
+            ["-h", "--all"].as_slice(),
+        ] {
+            let err = run(&args(argv))
+                .err()
+                .ok_or_else(|| format!("{argv:?} must be rejected on the direct MCP route"))?;
+            assert!(err.contains("not supported"), "{err}");
+            assert!(err.contains("ripr help --all"), "{err}");
+        }
+        Ok(())
     }
 
     #[test]

@@ -1,0 +1,12 @@
+diff --git a/src/s_bare.rs b/src/s_bare.rs
+--- a/src/s_bare.rs
++++ b/src/s_bare.rs
+@@ -16,7 +16,7 @@
+ 
+ pub fn classify_bare(input: &'static str) -> &'static str {
+     let final_state = scan_bare(input);
+-    if final_state == "word" {
++    if final_state == "text" {
+         "word"
+     } else {
+         "blank"

@@ -83,7 +83,9 @@ pub(crate) fn posix_words(command: &str) -> Result<Vec<String>, String> {
 /// here instead of decoding to a different argument: `$` or backtick outside
 /// a single-quoted run, a double quote inside a single-quote token (the
 /// control-character `"$(printf …)"` form is bash source), cmd.exe operators
-/// (`&`, `|`, `<`, `^`) outside quotes, and an unterminated quote. `%` and
+/// (`&`, `|`, `^`) outside quotes, and an unterminated quote. `<` and `>`
+/// decode as word bytes, as `posix_words` reads them, so a recovery hint's
+/// `<ref>` placeholder stays one word on both hosts. `%` and
 /// `!` decode literally, as PowerShell, Git Bash and the native argv parser
 /// read them; cmd.exe `%NAME%` expansion is the documented limit of the
 /// console form (`shell_arg`, #9659).
@@ -150,7 +152,7 @@ pub(crate) fn windows_console_words(command: &str) -> Result<Vec<String>, String
                         "`{ch}` outside single quotes expands in Git Bash and PowerShell: `{command}`"
                     ));
                 }
-                '&' | '|' | '<' | '^' if !quoted => {
+                '&' | '|' | '^' if !quoted => {
                     return Err(format!("unquoted cmd.exe operator `{ch}` in `{command}`"));
                 }
                 other => word.push(other),

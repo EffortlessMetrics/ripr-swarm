@@ -37,7 +37,7 @@ Evidence
   - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: return total > 100 (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_pricing.py:4 test_large_order uses strong exact value oracle: assert is_large(500) == True
+  - related test tests/test_pricing.py:4 test_large_order uses strong exact value oracle: assert is_large(500) == True; misses: no test input reaches `total == 100`
   - source function argument value total = 500 at line 5
 
 Weakness

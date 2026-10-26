@@ -118,6 +118,14 @@ at production time does not participate in that classification, so a
 historical artifact produced on a dirty worktree still renders a
 `historical_*` pair token (#3229).
 
+Worktree dirtiness (#6817): the producer's `worktree` fact and the verifier's
+live check share one probe. A worktree is dirty when Git reports a tracked
+change or when an untracked, non-ignored `*.rs` file exists, because the static
+analysis reads those sources and a clean claim would otherwise hide analyzed
+input. Untracked non-Rust files and gitignored Rust files do not count.
+`untracked_rust_sources_make_the_worktree_dirty` covers both sides with those
+controls.
+
 Reachability (#3229): a fully current pair (both artifacts current at the
 same clean revision) fails the movement gate before output, so `current`
 closes the vocabulary without being a reachable successful verify outcome.
@@ -279,6 +287,9 @@ an unsupported schema fails before movement calculation.
 
 ## Test Mapping
 
+- `untracked_rust_sources_make_the_worktree_dirty` pins the shared worktree
+  probe (#6817): an untracked Rust source is dirty for producer and verifier;
+  untracked non-Rust and gitignored Rust files stay clean.
 - `crates/ripr/src/agent/artifact.rs` tests the fixed commitment protocol and
   duplicate-field rejection, plus the closed pair-currentness vocabulary
   (`pair_currentness_label`, #3027) and the portable input-identity contract (#2823):

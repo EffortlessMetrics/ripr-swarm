@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -61,7 +61,7 @@
+ /// Reads the status byte of a frame; an empty frame has none.
+ pub fn read_status(frame: &[u8]) -> Result<u8, StatusError> {
+     if frame.is_empty() {
+-        return Err(StatusError::Empty);
++        return Err::<u8, StatusError>(StatusError::Empty);
+     }
+     if frame[0] == 0xff {
+         return Err(StatusError::Reserved);

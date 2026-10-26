@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A closure tail pinned to a literal on a receiver a test helper builds, and a changed call on a `&mut dyn Trait` parameter whose test compares a field of a hand-written recording double, no longer read as a certain `weakly_exposed` gap. They read as `static_unknown` under `rust_framework_oracle_unresolved` (RIPR-SPEC-0240, #9609, #9610). Corpus rows `idiom-fixture-builder-total` and `idiom-hand-mock-exact-line` move from `gap` to `limited`.

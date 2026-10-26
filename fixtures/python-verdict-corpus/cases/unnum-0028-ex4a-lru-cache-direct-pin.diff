@@ -1,0 +1,9 @@
+diff --git a/unnum/year_format.py b/unnum/year_format.py
+--- a/unnum/year_format.py
++++ b/unnum/year_format.py
+@@ -3,4 +3,4 @@ from functools import lru_cache
+ 
+ @lru_cache
+ def format_year(year):
+-    return "%03d" % (year % 100)
++    return "%03d" % (year % 10)

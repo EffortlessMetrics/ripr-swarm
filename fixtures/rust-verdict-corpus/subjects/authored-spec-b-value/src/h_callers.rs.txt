@@ -1,0 +1,33 @@
+//! The helper has two callers.
+
+fn wide_c(input: &str) -> bool {
+    input.len() > 3
+}
+
+pub fn classify_shared(input: &str) -> &'static str {
+    if wide_c(input) {
+        "wide"
+    } else {
+        "narrow"
+    }
+}
+
+pub fn label_shared(input: &str) -> String {
+    format!("{}:{}", input, wide_c(input))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_straddle_four_callers_h_callers() {
+        assert_eq!(classify_shared("abcd"), "wide");
+        assert_eq!(classify_shared("abc"), "narrow");
+    }
+
+    #[test]
+    fn the_label_carries_the_flag_h_callers() {
+        assert_eq!(label_shared("abcde"), "abcde:true");
+    }
+}

@@ -43,13 +43,20 @@ What are you trying to do?
                         # edit one focused test
                         ripr continue
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
-  Work in an editor     ripr lsp --stdio
+  Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
 
 More:
   ripr help <command>    Options for one command.
   ripr help --all        Every command, grouped by area.
   ripr help --json       Versioned machine-readable command catalog.
+
+Exit codes: 0 completed, 2 could not complete (usage, configuration, or
+operational error), 3 blocking decision or typed refusal, 130 interrupted
+standalone check. Full contract: docs/EXIT_CODES.md.
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
+languages, mode, and probe/finding counts (any position, except on
+`ripr help --json`).
 
 ripr is static and advisory. It reads changed code, builds mutation-shaped
 probes, and estimates whether tests reach, infect, propagate, and reveal the
@@ -85,7 +92,7 @@ Task map:
 
 Setup:
   ripr doctor
-  ripr capabilities [--language NAME] [--json]
+  ripr capabilities [--language NAME] [--json | --markdown]
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]

@@ -161,7 +161,8 @@ language run.
 For each change, the first match wins:
 
 1. a class-capping static limit (rule 1) gives `static_unknown`;
-2. no bound relation (rule 3) gives `no_static_path`;
+2. no bound relation (rule 3) gives `no_static_path`, or `static_unknown` on a
+   `partial` packet whose only relations are `file_proximity` (rule 10, #8352);
 3. established sink alignment (rule 9) gives `exposed`;
 4. otherwise the aggregate of the per-relation classes (rule 8).
 
@@ -182,7 +183,7 @@ For each change, the first match wins:
    `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
    pins.
 2. **No relations.** A change with no bound relation is `no_static_path`,
-   reach `no`.
+   reach `no`, except on a `partial` packet (rule 10).
 3. **Relation binding.** A relation binds to a change only when
    `relation.change_id` is the change id and `relation.owner_id` is the
    change owner, compared as exact strings. A relation whose change id is
@@ -242,7 +243,11 @@ For each change, the first match wins:
    `perl_already_discriminated:` and
    no gap, suggested location, suggested assertion or missing
    discriminator.
-10. **Partial packets.** `packet_status: partial` does not cap the class.
+10. **Partial packets.** `packet_status: partial` does not cap the class,
+    except that a partial packet with no relation other than
+    `file_proximity` (including none) is `static_unknown` with no gap and
+    no location, because the run may not have emitted the link (#8352;
+    example 16).
     A sink-aligned change in a partial packet is `exposed`. A partial
     packet records a partial language run and gets no canonical gap. It
     keeps `perl_suggested_test_location` under rule 13.
@@ -354,6 +359,42 @@ For each change, the first match wins:
     packet that omits the field (an older packet) and a change with an
     observable but no matching `observed_sink` are unchanged: both stay
     `weakly_exposed`, because there the packet states something to compare.
+19. **A changed pattern is not observed by equal sink text (#9418).** Rule 9
+    never aligns a change whose `changed_observable` applies a pattern: a
+    `=~` or `!~` binding, or a `qr`, `m`, `s`, `tr`, `y` or `split` word
+    that opens a delimited pattern (one of `/ { [ ( < | ! # ' " ,`, after
+    optional whitespace for `split` only; a word after `$ @ % &` or `>`, or
+    before `=>`, is a name, not an operator). An exact oracle on one input
+    observes what the pattern does with that input, not which inputs it
+    accepts, so the change reads as rule 8 gives it (`weakly_exposed` for a
+    bound strong oracle) with the usual repair-shaped output. The test errs
+    toward true: a false positive keeps a sink at `weakly_exposed` rather
+    than `exposed`. Example 17's sinks set to `$s =~ /^v?[0-9]+$/ ? 1 : 0`
+    read `weakly_exposed` with a gap; a sink that only names `s`, `m` or `y`
+    as a variable, method or hash key stays `exposed`.
+20. **A code reference beside an unlinked call is unknown (#9416).** A
+    `direct_owner_call` / `reachable` relation with `oracle_id: null` reads
+    `static_unknown`, not `reachable_unrevealed`, when an oracle of the same
+    test has an `expression` that calls through a code reference
+    (`->(`, `&$` or `&{`) and the change is otherwise a gap. The test may
+    run the owner and assert on a closure it returned (`is($c->(), 5)`
+    after `my $c = make_counter(5)`), and the packet links no oracle to the
+    owner, so ripr cannot tell. The finding carries static limit
+    `dynamic_dispatch`, rule 13 withholds the gap and location, and the next
+    step says why. A relation with a linked oracle, and a test with no code
+    reference, are unchanged.
+21. **Unowned top-level change beside file boundaries is a stated limit
+    (#9420).** An added line of a `source` file that no packet change covers
+    and no non-`package` owner covers (each range read one- or zero-based),
+    that is not blank or a `#` comment, reads `static_unknown` with the
+    strongest static limit that any of the file's owner-less
+    `dynamic_boundaries` maps to (generated subs, symbol-table writes and
+    string eval among them), and no gap or repair target; the next step
+    only says to check whether a test calls what the line defines. The producer emits no
+    change for top-level code, such as a table a glob assignment turns into
+    subs, so the line was silent and silence reads as "nothing to check". A
+    file with no owner-less boundary that names a limit, and a line a
+    change or owner covers, are unchanged.
 
 ### Decisions
 
@@ -543,7 +584,11 @@ cases.
     / medium. Neither has a location (class unchanged; today location
     emitted).
 16. `relations: []`: `no_static_path`, reach `no`, gap, no location
-    (unchanged).
+    (unchanged). On a `partial` packet, the real producer's status, the
+    same facts, or relations that are only `file_proximity`, read
+    `static_unknown`, no gap, no location (#8352): a
+    partial run may simply not have emitted the link, so neither "no
+    static path" nor "reachable" is an assessed result.
 17. `changed_observable: "return $amount * 0.9"`, `observed_sink:
     "$amount * 0.9"`: `exposed`, `perl_already_discriminated:`, no gap, no
     location (unchanged).
@@ -602,6 +647,11 @@ cases.
   `h2_token_substring_coincidence_does_not_align` (rule 9, assert only
   `!= Exposed` today), `h2_sink_whitespace_aligns_outside_literals_only`
   (rule 9 whitespace clause, example 19),
+  `h2_changed_pattern_is_not_observed_by_equal_sink_text` (rule 19, which
+  adds no numbered example: the corpus counts those),
+  `closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap` (rule 20)
+  and `uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit`
+  (rule 21), which add no numbered examples either,
   `h2_producer_declared_absent_observable_is_unknown_not_a_gap` (rule 18,
   example 32), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
   (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
@@ -636,7 +686,10 @@ cases.
   - `PerlFactPacket::related_test_evidence_for_change`: rule 3;
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
-  - `sink_aligned_observation`: rules 5 and 9;
+  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`);
+  - `packet_to_findings_with_currentness` (`coderef_unresolved`) and
+    `PerlFactPacket::test_asserts_through_code_reference`: rule 20;
+  - `unowned_change_findings` and `static_limit::file_scope_kind`: rule 21;
   - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16; `effective_strength`: rule 17;
   - `RelationKind::supports_positive_reachability`: rule 7;
   - `perl_oracle_kind_to_domain`, `perl_oracle_strength_to_domain`,

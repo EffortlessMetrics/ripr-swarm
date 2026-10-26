@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0172-ex03-owner-call-only-in-comment-and-string",
+  "subject_id": "authored-spec0172-3",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "import_present_call_only_in_comment_and_string",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,18 @@
+//! The compared use sits inside a closure.
+
+pub fn fits_in_closure(text: &str, width: usize) -> bool {
+    let end = text.len();
+    let check = |w: usize| end <= w;
+    check(width)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fits_is_inclusive_b_closure() {
+        assert!(fits_in_closure("abc", 3));
+        assert!(!fits_in_closure("abcd", 3));
+    }
+}

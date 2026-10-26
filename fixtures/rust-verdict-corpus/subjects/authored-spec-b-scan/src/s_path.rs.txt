@@ -1,0 +1,40 @@
+//! The same scanner over path-qualified enum states.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Scan {
+    Text,
+    Word,
+}
+
+pub fn scan_path(input: &str) -> Scan {
+    let mut state = Scan::Text;
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            (Scan::Text, ' ') => Scan::Text,
+            (Scan::Text, _) => Scan::Word,
+            (Scan::Word, ' ') => Scan::Text,
+            (Scan::Word, _) => Scan::Word,
+        };
+    }
+    state
+}
+
+pub fn classify_path(input: &str) -> &'static str {
+    let final_state = scan_path(input);
+    if final_state == Scan::Word {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_path() {
+        assert_eq!(classify_path("ab"), "word");
+        assert_eq!(classify_path("ab "), "blank");
+    }
+}

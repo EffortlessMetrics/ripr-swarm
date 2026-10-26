@@ -28,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: self.sink.set(1)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches call effect: self.sink.set(1) (line 8)
   - related test src/lib.rs:15 direct_smoke uses no oracle; misses: has no assertion
   - related test src/lib.rs:20 implicit_observer uses strong whole object equality oracle: assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior

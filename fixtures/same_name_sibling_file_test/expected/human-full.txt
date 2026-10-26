@@ -13,6 +13,7 @@ WARNING ./src/heaters.rs:9
 Changed
   before: Mode::Warm => 5,
   after:  Mode::Warm =>
+          (arm head only; open the arm at ./src/heaters.rs:9 to read its new body)
 
 Probe
   family: match_arm
@@ -28,7 +29,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: Mode::Warm =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: Mode::Warm => (line 9)
   - related test src/heaters.rs:19 cold_delay uses strong exact value oracle: assert_eq!(delay(Mode::Cold), 50); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 50 at line 20

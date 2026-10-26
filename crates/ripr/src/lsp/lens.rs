@@ -308,6 +308,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -320,6 +322,7 @@ mod tests {
     ) -> Finding {
         let related_tests = (0..related_test_count).map(make_related_test).collect();
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: format!("probe:{file}:{line}:test_family:aabbccdd"),
             canonical_gap: None,
             probe: Probe {
@@ -428,6 +431,7 @@ mod tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 

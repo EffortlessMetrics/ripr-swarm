@@ -68,17 +68,24 @@ pub(crate) fn bound_root(root: &str) -> String {
 /// Windows `\` is a separator and renders as `/`, like every other command
 /// path. On Unix `\` is an ordinary filename character, so rewriting it would
 /// name a different directory; the root renders exactly as the filesystem
-/// spells it.
+/// spells it. Literal percent signs are never identity-encoded (#10116).
+/// Reducible Windows verbatim roots fold through the existing command-path rule.
 pub(crate) fn root_path_display(path: &Path) -> String {
-    if cfg!(windows) {
-        return display_path(path);
-    }
-    let text = path.to_string_lossy();
+    root_path_text_for_host(&path.to_string_lossy(), cfg!(windows))
+}
+
+/// Executable command arguments preserve literal `%`, unlike encoded path
+/// identities. Keep the host explicit so Windows rendering is tested on Unix.
+/// This module is dependency-free because xtask includes it without the
+/// product crate; the verbatim fold has one local owner.
+fn root_path_text_for_host(text: &str, windows: bool) -> String {
     if text.is_empty() {
-        ".".to_string()
-    } else {
-        text.into_owned()
+        return ".".to_string();
     }
+    if !windows {
+        return text.to_string();
+    }
+    fold_verbatim_for_host(text.replace('\\', "/"), true)
 }
 
 /// [`bound_root`] as a path: the one resolution rule shared by redirect
@@ -227,6 +234,44 @@ pub(crate) fn lexically_clean(path: &Path) -> PathBuf {
     } else {
         cleaned
     }
+}
+
+/// Whether lexical `..` resolution can disagree with the filesystem: true
+/// when a component that [`lexically_clean`] would pop is itself a symlink
+/// the kernel follows before the later `..` (or when a relative path keeps
+/// a leading `..` that cannot be checked at all). Callers that accepted a
+/// path on a lexical comparison must refuse in that case — the spelled path
+/// and the cleaned path can then name different real directories (#10624
+/// review).
+pub(crate) fn parent_dir_follows_symlink(path: &Path) -> bool {
+    let mut walked = PathBuf::new();
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if stack.pop().is_some() {
+                    // `walked` currently ends at the popped component, so it
+                    // is exactly the path the kernel would follow first.
+                    if is_symlink(&walked) {
+                        return true;
+                    }
+                    walked.pop();
+                } else if !is_absolute {
+                    // lexically_clean preserves a leading relative `..`;
+                    // there is nothing on disk to prove it against.
+                    return true;
+                }
+            }
+            Component::Normal(name) => {
+                walked.push(name);
+                stack.push(name.to_owned());
+            }
+            Component::RootDir | Component::Prefix(_) => walked.push(component.as_os_str()),
+        }
+    }
+    false
 }
 
 pub(crate) fn check_repo_exposure_command(root: &str, mode: &str, out_path: &str) -> String {
@@ -472,8 +517,33 @@ pub(crate) fn outcome_command(
     }
 }
 
+/// The `output::path::fold_verbatim_on_host` rule, restated because xtask
+/// includes this file by path without the rest of the crate (#9660): on
+/// Windows a slash-unified `//?/<drive>:` or `//?/UNC/` root prints in its
+/// plain spelling.
+fn fold_verbatim(unified: String) -> String {
+    fold_verbatim_for_host(unified, cfg!(windows))
+}
+
+fn fold_verbatim_for_host(unified: String, windows: bool) -> String {
+    if !windows {
+        return unified;
+    }
+    let Some(rest) = unified.strip_prefix("//?/") else {
+        return unified;
+    };
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return rest.to_string();
+    }
+    if bytes.len() > 4 && bytes[..4].eq_ignore_ascii_case(b"UNC/") {
+        return format!("//{}", &rest[4..]);
+    }
+    unified
+}
+
 pub(crate) fn display_path(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
+    let text = fold_verbatim(path.to_string_lossy().replace('\\', "/"));
     if text.is_empty() {
         ".".to_string()
     } else {
@@ -523,9 +593,14 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   expands `$VAR`, `$(cmd)`, and `` `cmd` `` inside double quotes, and so
 ///   does PowerShell — pasting `"$(...)"` into either executes the embedded
 ///   expression (#8152 review, security), while single quotes stay literal
-///   in both. cmd.exe passes single quotes through as literal characters
-///   (the argument arrives quoted and fails closed), so those values paste
-///   in Git Bash or PowerShell, not cmd.exe. PowerShell would escape an
+///   in both. cmd.exe does not treat `'` as a quote: the quotes arrive as
+///   literal characters, a space inside the value still splits it, and a
+///   `>`, `<`, `&`, `|` or `^` inside it still acts as a cmd.exe operator,
+///   so those values paste in Git Bash or
+///   PowerShell, not cmd.exe (#9738; the editor refuses such a span on
+///   Windows). No form is literal in all three shells for a value holding
+///   both `$` and a cmd.exe operator, so PowerShell, the VS Code and Windows
+///   Terminal default, decides. PowerShell would escape an
 ///   interior quote with a backtick instead of doubling, and Git Bash drops
 ///   an interior quote in the `""` form; an interior `"` cannot occur in a
 ///   Windows filename, so the `""` doubling is the conservative choice for
@@ -533,8 +608,14 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   encoded (#9659): cmd.exe expands `%NAME%` inside double quotes (and
 ///   `!NAME!` when delayed expansion is on), and no quoting form prevents
 ///   that on an interactive cmd.exe line, so a value carrying `%` or `!`
-///   pastes literally in PowerShell and Git Bash but not in cmd.exe. The
-///   VS Code terminal and Windows Terminal default to PowerShell.
+///   pastes literally in PowerShell and Git Bash but not in cmd.exe. An
+///   interactive Git Bash likewise rewrites a `!` event designator inside
+///   double quotes (`"!!"`, `"a!-1"`), and Windows PowerShell 5.1 (and 7.3+
+///   when the target is a `.bat`/`.cmd` file) re-splits a value holding `"`
+///   (printed as `""`) when it passes it to a native program;
+///   both alter the argument without starting another command, so they are
+///   accepted limits too (#9738). The VS Code terminal and Windows Terminal
+///   default to PowerShell.
 ///
 /// The empty string must be quoted (`''` or `""`), or the argument disappears
 /// from the command line entirely.
@@ -664,6 +745,87 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restated fold must keep `output::path::fold_verbatim_for_host`'s
+    /// cases (#9660): `cfg!(windows)` alone would leave the Windows arm
+    /// unchecked on every Linux run.
+    #[test]
+    fn fold_verbatim_matches_the_output_path_rule_on_both_hosts() {
+        // The drive is spliced in so the local-context policy never sees a
+        // machine path literal.
+        let drive = "F:";
+        let cases = [
+            (
+                format!("//?/{drive}/work/repo"),
+                format!("{drive}/work/repo"),
+            ),
+            (
+                "//?/UNC/server/share/repo".to_string(),
+                "//server/share/repo".to_string(),
+            ),
+            (
+                "//?/Volume{0}/repo".to_string(),
+                "//?/Volume{0}/repo".to_string(),
+            ),
+            ("tests/test_x.py".to_string(), "tests/test_x.py".to_string()),
+        ];
+        for (unified, windows_text) in &cases {
+            let unified = unified.as_str();
+            assert_eq!(
+                fold_verbatim_for_host(unified.to_string(), true),
+                *windows_text,
+                "windows fold of {unified}"
+            );
+            assert_eq!(
+                fold_verbatim_for_host(unified.to_string(), false),
+                unified,
+                "unix keeps {unified}"
+            );
+        }
+    }
+
+    #[test]
+    fn root_path_rendering_preserves_percent_and_normalizes_only_windows() {
+        let drive = "F:";
+        for (input, expected) in [
+            (
+                format!(r"{drive}\a%b/with space\%25"),
+                format!("{drive}/a%b/with space/%25"),
+            ),
+            (format!(r"\\?\{drive}\a%b\%25"), format!("{drive}/a%b/%25")),
+            (
+                r"\\?\UNC\server\share 100%\%25".to_string(),
+                "//server/share 100%/%25".to_string(),
+            ),
+            (
+                r"\\?\unc\server\share\%COMSPEC%".to_string(),
+                "//server/share/%COMSPEC%".to_string(),
+            ),
+        ] {
+            assert_eq!(root_path_text_for_host(&input, true), expected);
+            assert_eq!(root_path_text_for_host(&input, false), input);
+            assert_eq!(
+                root_path_display(Path::new(&input)),
+                root_path_text_for_host(&input, cfg!(windows))
+            );
+        }
+        assert_eq!(
+            root_path_text_for_host(r"/repo 100%\%25", false),
+            r"/repo 100%\%25"
+        );
+        assert_eq!(root_path_text_for_host("", true), ".");
+        assert_eq!(root_path_text_for_host("", false), ".");
+    }
+
+    #[test]
+    fn root_path_rendering_keeps_the_existing_unfoldable_verbatim_policy() {
+        let root = r"\\?\Volume{1}\repo 100%\%25";
+        assert_eq!(
+            root_path_text_for_host(root, true),
+            "//?/Volume{1}/repo 100%/%25"
+        );
+        assert_eq!(root_path_text_for_host(root, false), root);
+    }
 
     /// Hold a stable process CWD across one render-and-compare (#7034).
     ///

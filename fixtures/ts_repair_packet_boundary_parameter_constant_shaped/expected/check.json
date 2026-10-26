@@ -68,7 +68,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "discounts far above limit",
@@ -78,7 +80,9 @@
           "oracle_kind": "relational_check",
           "oracle": "expect(...).toBeGreaterThan(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {

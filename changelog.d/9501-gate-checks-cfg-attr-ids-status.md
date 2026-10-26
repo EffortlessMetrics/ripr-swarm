@@ -1,3 +1,0 @@
-<!-- section: Fixed -->
-- `ripr agent status` no longer prints `Currentness: current` for a finished repair attempt whose worktree drifted after the verdict was bound (for example an uncommitted production edit); it applies the same delta binding `ripr agent receipt` refuses on (receipt also checks the trusted head surface and packet binding, which status does not). Unreadable evidence reads `unknown` (#9501).
-- `cargo xtask check-allow-attributes` counts guarded `allow`/`expect` lints wrapped in `#[cfg_attr(.., allow(..))]` (including nested wrappers) against the same `.ripr/allow-attributes.txt` budget as plain attributes, and `cargo xtask check-no-panic-family` treats schema 0.3 allowlist ids that differ only by case or whitespace as duplicates (#9501).

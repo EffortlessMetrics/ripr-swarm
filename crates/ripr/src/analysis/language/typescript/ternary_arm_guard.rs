@@ -19,7 +19,7 @@ pub(crate) enum ArmConstant {
     Boolean(bool),
     Null,
     Undefined,
-    /// `Level.High`: a dotted member path, compared by its text only.
+    /// `Level.High`: a member path requiring declaration-backed enum identity.
     Member(String),
 }
 
@@ -50,9 +50,25 @@ pub(crate) struct TernaryArmChange {
 
 impl TernaryArmChange {
     /// Whether a call passing `argument` provably runs the changed arm.
-    pub(crate) fn selects_changed_arm(&self, argument: &str) -> bool {
+    pub(crate) fn selects_changed_arm(
+        &self,
+        argument: &str,
+        same_member: impl FnOnce(&str, &str) -> bool,
+    ) -> bool {
         parse_arm_constant(argument)
-            .and_then(|argument| evaluate(self.comparison, &argument, &self.operand))
+            .and_then(|argument| match (&argument, &self.operand) {
+                (ArmConstant::Member(argument), ArmConstant::Member(operand)) => {
+                    if !same_member(argument, operand) {
+                        return None;
+                    }
+                    match self.comparison {
+                        ArmComparison::Equal => Some(true),
+                        ArmComparison::NotEqual => Some(false),
+                        _ => None,
+                    }
+                }
+                _ => evaluate(self.comparison, &argument, &self.operand),
+            })
             .is_some_and(|holds| holds == self.arm_runs_when)
     }
 
@@ -66,15 +82,6 @@ impl TernaryArmChange {
         };
         evaluate(ArmComparison::Equal, &expected, old) == Some(false)
             && evaluate(ArmComparison::Equal, &expected, new) == Some(false)
-    }
-
-    /// The first segment of a member-path operand (`Level` of `Level.High`),
-    /// whose binding a test could shadow with a different value.
-    pub(crate) fn member_root(&self) -> Option<&str> {
-        match &self.operand {
-            ArmConstant::Member(path) => path.split('.').next(),
-            _ => None,
-        }
     }
 }
 
@@ -398,11 +405,6 @@ fn evaluate(
         },
         (ArmConstant::Null, ArmConstant::Null)
         | (ArmConstant::Undefined, ArmConstant::Undefined) => match comparison {
-            Equal => Some(true),
-            NotEqual => Some(false),
-            _ => None,
-        },
-        (ArmConstant::Member(a), ArmConstant::Member(b)) if a == b => match comparison {
             Equal => Some(true),
             NotEqual => Some(false),
             _ => None,

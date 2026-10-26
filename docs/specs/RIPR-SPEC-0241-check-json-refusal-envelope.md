@@ -193,8 +193,9 @@ machine-readable `check` formats carry their own refusal documents:
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
   stderr, and argv usage errors stay prose-only with empty stdout.
-- The closed identity vocabulary includes these members, all with no claim that
-  analysis ran:
+- The closed identity vocabulary includes five members. The first four make no
+  claim that analysis ran; `analysis_timeout` (#5369) means the wall-clock
+  budget expired before the budgeted check analysis returned:
 
 | Identity | Repair route | Meaning |
 |---|---|---|
@@ -248,7 +249,8 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, DiffInputUnsupported}`
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, DiffInputUnsupported, AnalysisTimeout}`
+- `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
 - `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
 - `crates/ripr/src/core_error.rs::RefusalNotice`
 - `crates/ripr/src/core_error.rs::refusal_notice`

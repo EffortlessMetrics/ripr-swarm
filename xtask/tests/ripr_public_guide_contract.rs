@@ -386,9 +386,12 @@ fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), St
         ["help"].as_slice(),
     ] {
         let stdout = rendered_help(args)?;
-        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+        // Keep this constant in sync with `help_overview_fits_one_screen` in
+        // crates/ripr/src/cli/help.rs: #9865's exit-code/global-flag block
+        // owns six of the budget's lines, so the envelope is 48, not 40.
+        if stdout.replace("\r\n", "\n").lines().count() > 48 {
             return Err(format!(
-                "default help {args:?} exceeded the 40-line screen budget"
+                "default help {args:?} exceeded the 48-line screen budget"
             ));
         }
         canonical_first_run_command(&stdout)?;
@@ -723,6 +726,10 @@ const PORTABLE_TESTS: &[&str] = &[
     "check_help_is_one_screen_and_all_is_the_full_reference",
     "check_help_all_is_a_parsed_flag_not_a_raw_scan",
     "check_help_wins_over_later_option_values",
+    "default_help_discloses_exit_codes_and_global_verbose",
+    "per_command_help_renders_the_catalog_example",
+    "help_all_rejects_trailing_arguments",
+    "help_all_flag_pair_is_rejected_outside_check",
 ];
 
 #[test]

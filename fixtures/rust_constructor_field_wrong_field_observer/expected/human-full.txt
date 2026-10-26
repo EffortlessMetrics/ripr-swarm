@@ -28,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches unknown sink (line 15) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test tests/lower.rs:4 lower_ast_only_checks_name uses strong exact value oracle: assert_eq!(statement.name, "item");
   - source assertion argument value "item" at line 6
@@ -39,6 +39,7 @@ Weakness
 
 Stop reasons:
   - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+    Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 
 Next step
   Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown

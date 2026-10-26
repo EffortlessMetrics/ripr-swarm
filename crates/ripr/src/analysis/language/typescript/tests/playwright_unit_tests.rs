@@ -6,7 +6,7 @@
 use super::*;
 
 /// Analyzes one edited line of `src/<module>.ts` against `test/<module>.test.ts`.
-fn finding_for_edit(
+pub(super) fn finding_for_edit(
     label: &str,
     module: &str,
     new_source: &str,

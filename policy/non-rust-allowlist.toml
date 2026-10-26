@@ -373,6 +373,15 @@ reason = "Traceability metadata."
 covered_by = ["cargo xtask check-traceability"]
 
 [[allow]]
+glob = ".ripr/traceability.d/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR traceability fragments folded into .ripr/traceability.toml so parallel PRs do not append to the same arrays."
+covered_by = ["cargo xtask check-traceability"]
+
+[[allow]]
 glob = ".ripr/*.txt"
 kind = "policy_metadata"
 owner = "repo-policy"
@@ -973,7 +982,11 @@ owner = "ci"
 surface = "ci"
 classification = "tooling"
 reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
-covered_by = ["cargo test -p xtask --test contabo_result_policy"]
+# The result-policy test target is cfg(target_os = "linux"); on Windows it
+# enumerates zero tests, which the covered-by check rejects, so the shared
+# product proof covers every host and the policy test covers Unix.
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+covered_by_unix = ["cargo test -p xtask --test contabo_result_policy"]
 
 [[allow]]
 glob = ".ci/contabo-product-contract.json"
@@ -992,3 +1005,21 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Stub quality corpus crates are analyzed inputs for judging suggested tests (#8361)."
 covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/doc-artifacts.d/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR document-artifact fragments merged into policy/doc-artifacts.toml so parallel spec PRs do not append to the same ledger tail."
+covered_by = ["cargo xtask check-doc-artifacts"]
+
+[[allow]]
+glob = "policy/*_allowlist.d/*.txt"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR count-policy allowlist rows merged into policy/process_allowlist.txt and policy/network_allowlist.txt so parallel PRs do not append to the same list tail."
+covered_by = ["cargo xtask check-process-policy", "cargo xtask check-network-policy"]

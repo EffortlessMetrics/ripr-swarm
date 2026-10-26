@@ -8,6 +8,14 @@ A test may already exercise it through macros, helper-call chains, or integratio
 ripr's static model does not yet trace. If none does, add a co-located test that reaches and \
 observes the changed behavior so a discriminator exists.";
 
+/// #9173: a root build script runs under Cargo before the package compiles and
+/// no package source mounts it, so "add a co-located test" cannot close the
+/// gap; point at what can.
+pub(crate) const BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP: &str = "ripr found no static test path to this change \u{2014} this is not a coverage assessment. \
+A Cargo build script runs before the package compiles and no package source includes it, so no package test can call it. \
+Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), \
+or move the logic into a library function that a test can call.";
+
 /// RIPR-SPEC-0133: shared one-sentence reason an owner counts as an
 /// assertion-shaped oracle. Kept in `domain/` so the detector
 /// (`analysis::classify::owner_shape`), the `Finding.evidence` disclosure line,

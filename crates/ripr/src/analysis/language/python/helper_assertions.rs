@@ -253,13 +253,16 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
         };
         assertion.text = text_for_range(&source, call.range).trim().to_string();
         assertion.line = call_line;
+        assertion.source_range = Some(call.range);
+        assertion.observed_operands.clear();
+        assertion.helper_derived = true;
         let recognized = assertion.oracle_shape != PythonOracleShape::UnknownCustomHelper;
         // An `assert_*` helper name already reads as an unknown custom helper
         // at this line; the resolved body replaces that reading.
         let existing = test
             .assertions
             .iter()
-            .position(|existing| existing.line == call_line);
+            .position(|existing| existing.source_range == Some(call.range));
         match existing {
             Some(position)
                 if test.assertions[position].oracle_shape
