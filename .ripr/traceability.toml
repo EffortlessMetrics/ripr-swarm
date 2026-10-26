@@ -6720,6 +6720,7 @@ spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
   "crates/ripr/tests/diagnostic_witness_envelope.rs::given_public_packet_when_decoded_then_producer_limitations_and_wire_are_retained",
   "crates/ripr/tests/diagnostic_witness_envelope.rs::given_omitted_or_empty_packet_limitations_then_full_consumer_defaults_to_empty",
+  "crates/ripr/tests/diagnostic_witness_envelope.rs::given_absent_or_null_fix_site_facts_then_full_consumer_omits_unavailable_values",
   "crates/ripr/tests/diagnostic_witness_envelope.rs::given_null_or_malformed_packet_limitations_then_full_consumer_refuses",
   "crates/ripr/tests/diagnostic_witness_envelope.rs::given_unknown_optional_packet_properties_then_known_facts_and_opaque_wire_survive",
   "crates/ripr/tests/diagnostic_witness_envelope.rs::given_future_limitation_kind_then_full_consumer_preserves_its_kind_and_detail",

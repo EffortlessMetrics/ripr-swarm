@@ -145,6 +145,36 @@ fn given_omitted_or_empty_packet_limitations_then_full_consumer_defaults_to_empt
 }
 
 #[test]
+fn given_absent_or_null_fix_site_facts_then_full_consumer_omits_unavailable_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut absent = envelope()?;
+    absent["witness"]["fix_site"] = json!({
+        "file": "tests/pricing.rs",
+        "line": 42,
+        "test_name": "equality_boundary",
+        "oracle_kind": "exact_equality",
+        "oracle_strength": "strong"
+    });
+    let mut explicit_null = absent.clone();
+    explicit_null["witness"]["fix_site"]["current_oracle"] = Value::Null;
+    explicit_null["witness"]["fix_site"]["oracle_location"] = Value::Null;
+    let expected = read_packet(absent)?
+        .witness
+        .ok_or("absent witness missing")?;
+    let actual = read_packet(explicit_null)?
+        .witness
+        .ok_or("null witness missing")?;
+    assert_eq!(actual, expected);
+    let site = actual.fix_site.as_ref().ok_or("fix site missing")?;
+    assert_eq!(site.current_oracle, None);
+    assert_eq!(site.oracle_location, None);
+    let encoded = serde_json::to_value(actual)?;
+    assert!(encoded["fix_site"].get("current_oracle").is_none());
+    assert!(encoded["fix_site"].get("oracle_location").is_none());
+    Ok(())
+}
+
+#[test]
 fn given_null_or_malformed_packet_limitations_then_full_consumer_refuses()
 -> Result<(), Box<dyn std::error::Error>> {
     for invalid in [Value::Null, json!(false), json!(""), json!({}), json!([{}])] {
