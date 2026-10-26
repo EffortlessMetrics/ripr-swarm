@@ -2277,3 +2277,39 @@ fn reflection_only_withholds_credit_for_modules_it_can_reach() -> Check {
     assert_not_credited(&classify_table(&source, &[loader], &test, TABLE_NEW)?);
     Ok(())
 }
+
+#[test]
+fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    // The bridge names the owner only on the continuation line of a
+    // parenthesized import.
+    let bridge = (
+        "hostile/bridge.py",
+        "from hostile import (\n    settings as hub,\n)\n",
+    );
+    let touch = (
+        "hostile/touch.py",
+        "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
+    );
+    assert_not_credited(&classify_table(
+        &source,
+        &[bridge, touch],
+        &test,
+        TABLE_NEW,
+    )?);
+    // Evaluated code can import any module, whatever the file names.
+    for evaluated in [
+        "import math\n\nexec(input())\n",
+        "import math\n\neval(input())\n",
+        "import math\n\ncompile(input(), \"x\", \"exec\")\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &source,
+            &[("hostile/util.py", evaluated)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    Ok(())
+}

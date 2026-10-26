@@ -103,7 +103,8 @@ const DYNAMIC_LOADERS: [&str; 13] = [
 ];
 
 /// Spellings that reach a module's objects without writing their names.
-const REFLECTIVE_SPELLINGS: [&str; 15] = [
+const REFLECTIVE_SPELLINGS: [&str; 16] = [
+    "exec",
     "getattr",
     "dir",
     "getmembers",
@@ -401,7 +402,11 @@ impl ForeignWrites {
 }
 
 /// Spellings that load a module chosen at runtime.
-const MODULE_LOADERS: [&str; 8] = [
+const MODULE_LOADERS: [&str; 11] = [
+    // Evaluated code can import any module and mutate its tables.
+    "eval",
+    "exec",
+    "compile",
     "importlib",
     "__import__",
     "import_module",
@@ -412,13 +417,26 @@ const MODULE_LOADERS: [&str; 8] = [
     "__builtins__",
 ];
 
-/// Every word of the lines that mention `import`, whatever else they hold.
+/// Every word of the statements that mention `import`, whatever else they
+/// hold. A statement runs on through an open parenthesis or a trailing
+/// backslash, so `from . import (\n    settings as hub,\n)` is read whole.
 fn import_words(source: &str) -> Vec<&str> {
-    source
-        .lines()
-        .filter(|line| mentions_identifier(line, "import"))
-        .flat_map(source_words)
-        .collect()
+    let mut words = Vec::new();
+    let mut open = 0i32;
+    let mut continued = false;
+    for line in source.lines() {
+        let in_statement = open > 0 || continued;
+        if in_statement || mentions_identifier(line, "import") {
+            words.extend(source_words(line));
+            open += line.matches('(').count() as i32 - line.matches(')').count() as i32;
+            open = open.max(0);
+            continued = line.trim_end().ends_with('\\');
+        } else {
+            open = 0;
+            continued = false;
+        }
+    }
+    words
 }
 
 /// For each reflective file, the names of the modules in its import

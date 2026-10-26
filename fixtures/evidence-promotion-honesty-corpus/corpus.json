@@ -14268,6 +14268,32 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" }
       ]
+    },
+    {
+      "id": "python_table_reflection_multiline_import",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_multiline_import",
+      "vector": "parenthesized_import_continuation_links_the_reexported_module",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_exec",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_exec",
+      "vector": "evaluated_code_makes_reach_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
     }
   ]
 }

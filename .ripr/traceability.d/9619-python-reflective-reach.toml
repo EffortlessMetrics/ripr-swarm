@@ -3,9 +3,12 @@
 id = "RIPR-SPEC-0028"
 tests = [
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::reflection_only_withholds_credit_for_modules_it_can_reach",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::multiline_imports_and_evaluated_code_withhold_credit",
 ]
 fixtures = [
   "fixtures/python_table_reflection_unconnected",
   "fixtures/python_table_reflection_helper_argument",
   "fixtures/python_table_reflection_dynamic_import",
+  "fixtures/python_table_reflection_multiline_import",
+  "fixtures/python_table_reflection_exec",
 ]
