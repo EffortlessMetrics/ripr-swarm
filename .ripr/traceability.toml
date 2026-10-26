@@ -7879,7 +7879,8 @@ tests = [
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_counts_and_skips_ignored_dirs",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_reports_cancellation_instead_of_a_partial_count",
   "crates/ripr/src/app/tests/python_test_note.rs::python_test_note_gate_matches_the_renderer_eligibility",
-  "crates/ripr/src/app/tests/python_test_note.rs::python_tests_are_discovered_only_for_human_output"
+  "crates/ripr/src/app/tests/python_test_note.rs::python_tests_are_discovered_only_for_human_output",
+  "crates/ripr/src/app/tests/python_test_note.rs::python_test_note_preserves_literal_backslashes_on_unix"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -12549,6 +12550,7 @@ tests = [
   "crates/ripr/tests/python_repair_attempt.rs::tampered_retained_binding_fails_closed",
   "crates/ripr/tests/python_repair_attempt.rs::distinct_prepared_attempts_bind_their_exact_packet_inputs",
   "crates/ripr/src/app/python_repair_binding.rs::tests::identical_record_inputs_serialize_identically",
+  "crates/ripr/src/app/python_repair_binding/tests/driver_image.rs::binding_retains_original_image_when_its_path_is_replaced",
   "crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults",
   "crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults",
   "crates/ripr/tests/python_repair_attempt.rs::driver_claims_no_verification_movement_or_closure",
@@ -12585,6 +12587,7 @@ code = [
   "xtask/src/reports/python_repair_verification.rs",
   "crates/ripr/src/app/python_repair_binding.rs",
   "crates/ripr/src/app/python_repair_verification.rs",
+  "crates/ripr/src/app/running_binary.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs",
 ]
 outputs = [
@@ -17254,6 +17257,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::repository_tracking_nothing_under_root_is_unknown",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::computed_and_member_spellings_of_delegating_keys_stay_medium",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::json_escaped_whitespace_before_the_update_flag_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::unicode_json_update_flags_stay_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::unicode_json_config_flag_separators_stay_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::unicode_json_literal_escapes_keep_snapshot_credit",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::submodule_git_file_does_not_end_the_walk",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::submodule_named_worktrees_still_reads_the_superproject",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::spaced_bracket_keys_are_still_seen",

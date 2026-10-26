@@ -31,7 +31,7 @@ Start here:
       candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach add: records_into_the_bag
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 10 more detail line(s) in --format human-full
+    - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/collection_argument_ambiguous/input --diff <cwd>/fixtures/collection_argument_ambiguous/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
