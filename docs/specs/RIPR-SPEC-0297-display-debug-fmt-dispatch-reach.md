@@ -105,14 +105,16 @@ all are required:
   `use std::fmt;` does not defeat the pin, because a test never calls `fmt` by
   that bare name.
 
-- Stimulus. The change must be to string-literal text only (the probe's before
-  and after differ only inside string literals). A literal fragment is written
-  whatever the test passes in, so an exact pin sees it. A changed argument
-  (`self.0 * 2`) can leave the output equal for the one value the test chose, so
-  it keeps its prior verdict.
-  A changed placeholder (`{}` to `{:?}` or `{0}`) is an argument edit in
-  disguise, so the ordered `{..}` groups inside the literals must match as well
-  (#9836).
+- Stimulus (#9836). The original lexical literal-edit boundary remains an
+  upper bound. Ordinary string tokens must validate and decode. The template
+  retains identical ordered placeholder groups after Unicode/ASCII decoding;
+  doubled braces form fixed output. Exactly one fixed fragment differs and all
+  other source tokens, including arguments, stay unchanged. Equivalent decoded
+  spellings, cancelling edits across multiple fragments, argument-string edits
+  that precision can hide, malformed literals/groups and raw strings withhold
+  credit. This is withhold-only and does not interpret the full format-specifier
+  grammar. Public API controls and the real-producer honesty fixture discriminate
+  the original placeholder false-credit case.
 
 A `format!` or `{}` side, a computed expected string, a weaker assertion such as
 `ends_with`, and `Debug` owners are not read here and keep their prior verdict.

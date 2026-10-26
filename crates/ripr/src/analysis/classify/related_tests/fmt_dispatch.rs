@@ -309,13 +309,10 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
     )
 }
 
-/// Whether the changed expression differs from its prior text only inside
-/// string literals. A literal fragment of a `write!` is written whatever the
-/// test passes in, so an exact pin sees it; a changed argument may leave the
-/// output equal for the one value the test chose (`self.0 * 2` at `0`). A
-/// changed placeholder (`{}` to `{:?}`, `{0}`) is an argument edit in
-/// disguise: the same value may print the same, so the ordered `{..}` groups
-/// inside the literals must match too (#9836).
+/// Whether one fixed output fragment of an ordinary format template changed.
+/// Keep the original lexical admission as an upper bound: this repair only
+/// withholds display-pin credit. Token validation then prevents quotes in raw
+/// strings, characters or comments from hiding argument or placeholder edits.
 pub(in crate::analysis) fn changes_only_string_literals(
     before: Option<&str>,
     after: Option<&str>,
@@ -323,68 +320,117 @@ pub(in crate::analysis) fn changes_only_string_literals(
     let (Some(before), Some(after)) = (before, after) else {
         return false;
     };
-    let (Some((kept_before, placeholders_before)), Some((kept_after, placeholders_after))) =
+    let (Some(outside_before), Some(outside_after)) =
         (outside_strings(before), outside_strings(after))
     else {
         return false;
     };
-    kept_before == kept_after && placeholders_before == placeholders_after && before != after
+    if before == after || outside_before != outside_after {
+        return false;
+    }
+    let (Some((kept_before, template_before)), Some((kept_after, template_after))) =
+        (format_template(before), format_template(after))
+    else {
+        return false;
+    };
+    let (Some((groups_before, text_before)), Some((groups_after, text_after))) = (
+        format_fragments(&template_before),
+        format_fragments(&template_after),
+    ) else {
+        return false;
+    };
+    kept_before == kept_after
+        && groups_before == groups_after
+        && text_before
+            .iter()
+            .zip(&text_after)
+            .filter(|(a, b)| a != b)
+            .count()
+            == 1
 }
 
-/// The text outside string literals and the ordered `{..}` placeholder groups
-/// of the first literal (the format template), with `{{` and `}}` read as
-/// escapes. `None` for an unterminated literal or a lone brace, which ripr
-/// cannot read as format text.
-fn outside_strings(text: &str) -> Option<(String, Vec<String>)> {
+/// Original literal-only lexical boundary, retained as an admission ceiling.
+fn outside_strings(text: &str) -> Option<String> {
     let mut kept = String::new();
-    let mut placeholders = Vec::new();
-    let mut literal = String::new();
-    let mut seen_template = false;
     let mut in_string = false;
     let mut escaped = false;
     for c in text.chars() {
         if in_string {
             if escaped {
                 escaped = false;
-                literal.push(c);
             } else if c == '\\' {
                 escaped = true;
-                literal.push(c);
             } else if c == '"' {
                 in_string = false;
                 kept.push('"');
-                // Only the first literal is the format template; a later one
-                // is an argument, whose braces print as they are.
-                if !seen_template {
-                    seen_template = true;
-                    placeholders.extend(format_placeholders(&literal)?);
-                }
-                literal.clear();
-            } else {
-                literal.push(c);
             }
         } else {
             kept.push(c);
             in_string = c == '"';
         }
     }
-    (!in_string).then_some((kept, placeholders))
+    (!in_string).then_some(kept)
 }
 
-/// The `{..}` groups of a format string in order, `{{` / `}}` being escapes.
-/// `None` for a brace that opens no group or closes none.
-fn format_placeholders(literal: &str) -> Option<Vec<String>> {
+/// Decode the first ordinary string token (the eligible tail's template),
+/// validating every string literal and preserving all other source bytes. In
+/// particular, argument-string edits are not a fixed-output witness: precision
+/// can suppress their change. Raw strings stay outside this bounded reading.
+fn format_template(text: &str) -> Option<(String, String)> {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, AstToken},
+    };
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn ripr_format_edit() {{ {text}; }}"
+    ))?;
+    let mut kept = String::new();
+    let mut template = None;
+    for element in parsed.tree().syntax().descendants_with_tokens() {
+        let Some(token) = element.into_token() else {
+            continue;
+        };
+        if let Some(string) = ast::String::cast(token.clone()) {
+            // Token-tree literals need explicit escape validation even when
+            // the outer macro parses cleanly. Reject suffixes and raw forms.
+            if !token.text().starts_with('"') || !token.text().ends_with('"') {
+                return None;
+            }
+            let value = string.value().ok()?;
+            if template.is_none() {
+                template = Some(value.into_owned());
+                kept.push_str("\"\"");
+                continue;
+            }
+        }
+        kept.push_str(token.text());
+    }
+    Some((kept, template?))
+}
+
+/// Ordered groups and decoded fixed fragments, with doubled braces rendered
+/// as single literal braces. Comparing one changed fragment avoids cancellation
+/// across placeholders (e.g. `1{}` to `{}1` for the value 1). This compares groups
+/// textually; it does not interpret the full Rust format-specifier grammar.
+fn format_fragments(literal: &str) -> Option<(Vec<String>, Vec<String>)> {
     let mut groups = Vec::new();
+    let mut fragments = Vec::new();
+    let mut fragment = String::new();
     let mut chars = literal.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
             '{' if chars.peek() == Some(&'{') => {
                 chars.next();
+                fragment.push('{');
             }
             '{' => {
+                fragments.push(std::mem::take(&mut fragment));
                 let mut group = String::from("{");
                 loop {
                     let next = chars.next()?;
+                    if next == '{' {
+                        return None;
+                    }
                     group.push(next);
                     if next == '}' {
                         break;
@@ -394,26 +440,14 @@ fn format_placeholders(literal: &str) -> Option<Vec<String>> {
             }
             '}' if chars.peek() == Some(&'}') => {
                 chars.next();
+                fragment.push('}');
             }
             '}' => return None,
-            // `\u{b0}` is an escape, not a placeholder.
-            '\\' if chars.peek() == Some(&'u') => {
-                chars.next();
-                if chars.peek() == Some(&'{') {
-                    for next in chars.by_ref() {
-                        if next == '}' {
-                            break;
-                        }
-                    }
-                }
-            }
-            '\\' => {
-                chars.next();
-            }
-            _ => {}
+            _ => fragment.push(c),
         }
     }
-    Some(groups)
+    fragments.push(fragment);
+    Some((groups, fragments))
 }
 
 /// RIPR-SPEC-0297: `assert_eq!(value.to_string(), "literal")` pins the whole
@@ -1600,23 +1634,28 @@ mod tests {
         // An added or removed group, and an escape traded for a group.
         assert!(!same("write!(f, \"C\")", "write!(f, \"{}C\", self.0)"));
         assert!(!same("write!(f, \"{{}}\")", "write!(f, \"{}\", self.0)"));
-        // Text beside identical groups, and an edit inside an escape, stay text.
+        // Text beside identical groups stays text; multiple changed fragments refuse.
         assert!(same(
             "write!(f, \"{} C\", self.0)",
             "write!(f, \"{} F\", self.0)"
         ));
-        assert!(same(
+        assert!(!same(
             "write!(f, \"{{{}}}\", self.0)",
             "write!(f, \"[{}]\", self.0)"
         ));
-        // A brace in an argument string prints as it is; only the template is parsed.
-        assert!(same(
+        // Argument-string edits conservatively refuse: precision may hide them.
+        assert!(!same(
             "write!(f, \"{}\", \"a}\")",
             "write!(f, \"{}\", \"b}\")"
         ));
         assert!(!same(
             "write!(f, \"{}\", \"a}\")",
             "write!(f, \"{:?}\", \"a}\")"
+        ));
+        // Unchanged argument braces cannot hide a real template-fragment edit.
+        assert!(same(
+            r#"write!(f, "{} C", "a}")"#,
+            r#"write!(f, "{} F", "a}")"#
         ));
         // A lone brace is not format text ripr reads.
         assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));
@@ -1628,6 +1667,62 @@ mod tests {
         ));
         // An unterminated literal is not read.
         assert!(!same("write!(f, \"x)", "write!(f, \"y)"));
+    }
+
+    #[test]
+    fn literal_only_credit_refuses_hidden_or_unchanged_runtime_edits() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        for (before, after) in [
+            (
+                r#"write!(f, "\u{7b}\u{7d}C", self.0)"#,
+                r#"write!(f, "\u{7b}:?\u{7d}C", self.0)"#,
+            ),
+            (
+                r#"write!(f, "\x7b\x7dC", self.0)"#,
+                r#"write!(f, "\x7b0\x7dC", self.0)"#,
+            ),
+            (
+                r##"write!(f, r#"quoted"marker"{}C"#, self.0)"##,
+                r##"write!(f, r#"quoted"marker"{:?}C"#, self.0)"##,
+            ),
+            (
+                r#"write!(f, "{}°C", self.0)"#,
+                r#"write!(f, "{}\u{b0}C", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\qC", self.0)"#,
+                r#"write!(f, "{}\qF", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{zz}C", self.0)"#,
+                r#"write!(f, "{}\u{zz}F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{110000}C", self.0)"#,
+                r#"write!(f, "{}\u{110000}F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{C", self.0)"#,
+                r#"write!(f, "{}\u{F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}{}{}", '"', self.0, '"')"#,
+                r#"write!(f, "{}{}{}", '"', self.1, '"')"#,
+            ),
+            (
+                r#"write!(f, "{}x{}", "", "")"#,
+                r#"write!(f, "{}{}x", "", "")"#,
+            ),
+            (r#"write!(f, "{:.0}", "a}")"#, r#"write!(f, "{:.0}", "b}")"#),
+        ] {
+            assert!(!same(before, after), "{before} -> {after}");
+        }
+        assert!(same(
+            r#"write!(f, "{}°C", self.0)"#,
+            r#"write!(f, "{}\u{b0}F", self.0)"#
+        ));
     }
 
     #[test]
