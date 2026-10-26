@@ -226,7 +226,10 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     resolve_agent_command_root(&mut command)?;
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        // #10537: an unknown `--seam-id` is a typed refusal (exit 3), like
+        // `agent card`, `agent stub`, and `agent packet` for the same cause;
+        // operational failures of the command stay exit 2.
+        AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
         AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
@@ -277,13 +280,13 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
-fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
-    let written = write_agent_start(options)?;
+    let written = write_agent_start(options).map_err(agent_start_command_error)?;
     if json {
         // Machine-readable mode: one JSON document with the same information
         // the prose lines carry. The prose output remains the default.
-        let rendered = render_agent_start_json(&written)?;
+        let rendered = render_agent_start_json(&written).map_err(CommandError::Failure)?;
         print!("{rendered}");
         return Ok(());
     }
@@ -291,6 +294,17 @@ fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
         println!("{line}");
     }
     Ok(())
+}
+
+/// Map `agent start`'s write failures to the family contract (#10537): the
+/// unknown-seam refusal is a decision (exit 3), like `agent card`, `agent
+/// stub`, and `agent packet` for the same cause; every other write failure
+/// is operational (exit 2).
+fn agent_start_command_error(error: AgentStartError) -> CommandError {
+    match error {
+        AgentStartError::UnknownSeam(message) => CommandError::Decision(message),
+        AgentStartError::Failure(message) => CommandError::Failure(message),
+    }
 }
 
 /// The default human output of `agent start`: one `Wrote <path>` line per
@@ -348,10 +362,31 @@ struct AgentStartWritten {
     next_command: Option<String>,
 }
 
-fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
-    ensure_command_root(&options.root, "agent start")?;
-    let (input, config) = load_root_input_and_config(&options.root)?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
+/// A failure to write the `agent start` artifacts. `UnknownSeam` is a typed
+/// refusal (the command ran and declined the requested seam), distinct from
+/// operational failures; the dispatch maps it to the decision exit code 3
+/// like the sibling subcommands (#10537). The message is what reaches stderr
+/// either way, so callers that only propagate prose can flatten through
+/// `From<AgentStartError> for String`.
+enum AgentStartError {
+    UnknownSeam(String),
+    Failure(String),
+}
+
+impl From<AgentStartError> for String {
+    fn from(error: AgentStartError) -> String {
+        match error {
+            AgentStartError::UnknownSeam(message) | AgentStartError::Failure(message) => message,
+        }
+    }
+}
+
+fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, AgentStartError> {
+    ensure_command_root(&options.root, "agent start").map_err(AgentStartError::Failure)?;
+    let (input, config) =
+        load_root_input_and_config(&options.root).map_err(AgentStartError::Failure)?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)
+        .map_err(AgentStartError::Failure)?;
     write_agent_start_with_report(&options, &input, &config, &report)
 }
 
@@ -365,7 +400,7 @@ fn write_agent_start_with_report(
     input: &app::CheckInput,
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
-) -> Result<AgentStartWritten, String> {
+) -> Result<AgentStartWritten, AgentStartError> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let mut selection = select_agent_brief_seams(
         &report.classified,
@@ -374,17 +409,18 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        return Err(format!(
+        return Err(AgentStartError::UnknownSeam(format!(
             "agent start seam_id {} was not found or is hidden by config. {}",
             options.seam_id,
             unknown_seam_id_hint(&options.root, &options.seam_id)
-        ));
+        )));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
     let out_dir = resolve_agent_start_out_dir(&input.root, &options.out_dir);
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|err| format!("create {} failed: {err}", out_dir.display()))?;
+    std::fs::create_dir_all(&out_dir).map_err(|err| {
+        AgentStartError::Failure(format!("create {} failed: {err}", out_dir.display()))
+    })?;
 
     let agent_brief_json = output::agent_brief::render_agent_brief_json(
         &input.root,
@@ -392,9 +428,10 @@ fn write_agent_start_with_report(
         config,
         &working_set,
         &selection,
-    )?;
+    )
+    .map_err(AgentStartError::Failure)?;
     let agent_brief_path = out_dir.join("agent-brief.json");
-    write_text_file(&agent_brief_path, &agent_brief_json)?;
+    write_text_file(&agent_brief_path, &agent_brief_json).map_err(AgentStartError::Failure)?;
 
     let manifest = app::agent_workflow::build_agent_workflow_manifest(
         &input.root,
@@ -403,13 +440,15 @@ fn write_agent_start_with_report(
         &out_dir,
         &options.seam_id,
         &agent_brief_json,
-    )?;
-    let workflow_json = output::agent_workflow::render_agent_workflow_json(&manifest)?;
+    )
+    .map_err(AgentStartError::Failure)?;
+    let workflow_json = output::agent_workflow::render_agent_workflow_json(&manifest)
+        .map_err(AgentStartError::Failure)?;
     let commands_md = output::agent_workflow::render_agent_workflow_commands_md(&manifest);
     let workflow_path = out_dir.join("workflow.json");
     let commands_path = out_dir.join("commands.md");
-    write_text_file(&workflow_path, &workflow_json)?;
-    write_text_file(&commands_path, &commands_md)?;
+    write_text_file(&workflow_path, &workflow_json).map_err(AgentStartError::Failure)?;
+    write_text_file(&commands_path, &commands_md).map_err(AgentStartError::Failure)?;
 
     Ok(AgentStartWritten {
         paths: vec![workflow_path, commands_path, agent_brief_path],
@@ -4165,6 +4204,49 @@ mod tests {
                     .to_string()
             ))
         );
+    }
+
+    #[test]
+    fn agent_start_unknown_seam_is_a_decision_exit_3() -> Result<(), String> {
+        let root = unique_command_test_dir("agent-start-unknown-seam");
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        let result = (|| -> Result<(), String> {
+            init_sample_repo(&root)?;
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|error| format!("create src dir failed: {error}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"agent_start_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )
+            .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+            )
+            .map_err(|error| format!("write lib.rs failed: {error}"))?;
+            // The unknown-seam selection runs on the working-tree inventory,
+            // so the fixture file stays uncommitted.
+            let outcome = agent(&args(&[
+                "start",
+                "--root",
+                &root.display().to_string(),
+                "--seam-id",
+                "seam:definitely-not-present",
+            ]));
+            match outcome {
+                Err(CommandError::Decision(message))
+                    if message.contains("was not found or is hidden by config") =>
+                {
+                    Ok(())
+                }
+                other => Err(format!(
+                    "an unknown --seam-id must refuse as a decision (exit 3), got {other:?}"
+                )),
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     #[test]

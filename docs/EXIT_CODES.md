@@ -181,6 +181,13 @@ reached the caller.
   nearest one before it. The named reason is on stderr; under `--json` a
   `rust_test_stub` schema `0.3` `state: refused` envelope is the stdout
   document. A failed read, analysis, or `--write` stays exit `2`.
+- **Agent start refusal**: `ripr agent start` refused the requested seam —
+  the `--seam-id` names no seam under the root or one hidden by config
+  (`agent start seam_id ... was not found or is hidden by config`, with the
+  same recovery hint the sibling commands print). This is a typed refusal
+  (exit `3`), matching `agent card`, `agent stub`, and `agent packet` for
+  the identical cause (#10537); operational failures of the command (an
+  unusable root, a failed artifact write) stay exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
   (`seam_not_found`: re-list seams or correct the id), the seam's grip class
