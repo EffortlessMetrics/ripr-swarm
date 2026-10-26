@@ -14,6 +14,14 @@
       "sha256": "de21ca533024513d465820e151e05f994ecd78bb146219d47b71e4f2a95b2771"
     },
     {
+      "path": "src/cfg_attr_ignored.rs",
+      "sha256": "1339f1daf6d0c92e6c2666fbd22e2555dffbd193c2e91a887f52eaeede08d969"
+    },
+    {
+      "path": "src/cfg_attr_should_panic.rs",
+      "sha256": "2a26cb0edbfd8ffd813d12e04516c070079171884a5fa6ea31c4cb5fdafe3202"
+    },
+    {
       "path": "src/coolers.rs",
       "sha256": "78c9d6fa5d46eb3c562ecf4cc15065dced6744c265ac33ee873411a8518c0eaa"
     },
@@ -47,7 +55,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "0e81b6aad42c08cd8758fc6b05396556235ee5e617574c72c98e484cdfdcf9d9"
+      "sha256": "acf93df74ef4811812b778c38b6f16b8400abe39695215f034c0ab7cde02d73e"
     },
     {
       "path": "src/modes.rs",

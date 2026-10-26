@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -20,3 +20,3 @@
+ pub fn fits_exported(width: usize, limit: usize) -> bool {
+-    width <= limit
++    limit >= width
+ }

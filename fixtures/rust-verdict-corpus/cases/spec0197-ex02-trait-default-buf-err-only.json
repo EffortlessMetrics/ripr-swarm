@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0197-ex02-trait-default-buf-err-only",
+  "subject_id": "authored-spec0197-2",
+  "diff": "cases/spec0197-ex02-trait-default-buf-err-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_payload_value",
+  "test_shape": "trait_default_slice_impl_err_exit_only",
+  "hard_case": "Spec example 2: the same default tested only through its Err exit.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(sign_extend(self.try_get_uint(nbytes)? + 1, nbytes * 1))",
+        "mutated_line": "Ok(sign_extend(self.try_get_uint(nbytes)? + 1, nbytes * 1))",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the Ok tail is never reached by the test"
+      },
+      {
+        "replacement": "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes * 2))",
+        "mutated_line": "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes * 2))",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the Ok tail is never reached by the test"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "short_input_is_refused leaves through the Err exit before the edited tail runs, so no mutant of it fails. Spec cells: RIPR-SPEC-0197 example 2.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0197#2"
+  ]
+}

@@ -21,6 +21,9 @@ use super::slice_boundary::literal_slice_length;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
+#[cfg(test)]
+use crate::value_origins::LocatedValueFact as ValueFact;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
@@ -49,6 +52,87 @@ pub(in crate::analysis) struct WrapperEntryPairing<'a> {
     /// asserting entry (#9329) reaches the owner through the method, so the
     /// helper never names the owner. See [`entry_loan_pairs_boundary_call`].
     pub(in crate::analysis) entry_loan: &'a dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+}
+
+/// #9849: confirmation for the return-value twin of a whole boolean tail.
+/// The caller establishes that owner shape and assertion execution. Keep the
+/// legacy predicate's broader subject matcher out of this new credit path:
+/// the wrapper call must be one whole compared operand, and the expectation
+/// an independent numeric or boolean literal. In particular `entry(10) * 0`
+/// and a name bound from `entry(10)` do not observe the helper's result.
+pub(in crate::analysis) fn wrapper_return_boundary_pinned(
+    owner: &FunctionSummary,
+    assertion: &OracleFact,
+    chain: &HelperChain,
+    activation: &ActivationEvidence,
+) -> bool {
+    let Some(hop) = chain.hops.last() else {
+        return false;
+    };
+    let name = hop.caller.name.as_str();
+    let literal = |text: &str| {
+        matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
+    };
+    let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
+        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
+            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+    });
+    assertion.text.trim_start().starts_with("assert_eq!")
+        && assertion.kind == OracleKind::ExactValue
+        && assertion.strength == OracleStrength::Strong
+        && whole_call
+        && chain_forwards_owner_result(&owner.name, chain)
+        && chain_hops_are_transparent(&owner.name, chain)
+        && assertion_names_one_entry_call(owner, name, assertion)
+        && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
+}
+
+/// #10284: the return twin's credit must not widen two holes the shared
+/// forwarding rule still has. A caller that binds its callee's name
+/// (`let is_bulk = |_| true;`) calls the binding, not the owner; a macro
+/// statement may expand to an early `return` that bypasses the forwarded
+/// call. Either shape in any hop's caller refuses this path.
+fn chain_hops_are_transparent(owner_name: &str, chain: &HelperChain) -> bool {
+    let mut callee = owner_name;
+    chain.hops.iter().all(|hop| {
+        let body = crate::analysis::extract::mask_comments_and_strings(&hop.caller.body);
+        let transparent = !binds_name(&body, callee) && !invokes_macro(&body);
+        callee = hop.caller.name.as_str();
+        transparent
+    })
+}
+
+/// Whether `body` introduces a local `name` with `let` (or `let mut`).
+fn binds_name(body: &str, name: &str) -> bool {
+    body.match_indices("let ").any(|(at, _)| {
+        let starts_word = body
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        let rest = body.get(at + 4..).unwrap_or_default().trim_start();
+        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        starts_word
+            && rest.strip_prefix(name).is_some_and(|tail| {
+                tail.chars()
+                    .next()
+                    .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+            })
+    })
+}
+
+/// Whether `body` holds a macro invocation (`name!(`, `name![`, `name!{`).
+fn invokes_macro(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    bytes.iter().enumerate().any(|(at, &byte)| {
+        byte == b'!'
+            && at
+                .checked_sub(1)
+                .and_then(|before| bytes.get(before))
+                .is_some_and(|&before| before.is_ascii_alphanumeric() || before == b'_')
+            && body
+                .get(at + 1..)
+                .is_some_and(|rest| rest.trim_start().starts_with(['(', '[', '{']))
+    })
 }
 
 /// True when some related test both feeds a boundary input to the owner and

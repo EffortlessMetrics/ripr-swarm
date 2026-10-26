@@ -1,0 +1,14 @@
+//! A boundary call whose result is discarded in the same test that asserts far from the edge.
+
+pub fn gate(input: u32) -> bool { input >= 10 }
+
+#[cfg(test)]
+mod tests {
+    use super::gate;
+
+    #[test]
+    fn discards_the_boundary_result() {
+        let _ = gate(10);
+        assert_eq!(gate(100), true);
+    }
+}

@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -1,7 +1,7 @@
+ def server_config():
+     return {
+         "host": "localhost",
+-        "retries": 3,
++        "retries": 4,
+     }
+ 
+ 

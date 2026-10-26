@@ -1,5 +1,6 @@
 use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
+use super::conditional_defs::live_conditional_functions;
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
@@ -36,41 +37,28 @@ pub(super) fn collect_owners_from_statements(
     module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
+    let function_context = PythonOwnerContext {
+        file,
+        source,
+        class_context,
+        imports,
+        module_constants,
+    };
+    // A definition under a statically decided module-level `if` runs on every
+    // interpreter, so it is an owner like a top-level one (#9423).
+    if class_context.is_none() {
+        for stmt in live_conditional_functions(source, statements) {
+            let first = out.len();
+            push_function_owner(stmt, function_context, out);
+            for owner in &mut out[first..] {
+                owner.version_conditional = true;
+            }
+        }
+    }
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(function) => {
-                out.push(owner_from_function(
-                    PythonOwnerContext {
-                        file,
-                        source,
-                        class_context,
-                        imports,
-                        module_constants,
-                    },
-                    function.name.as_str(),
-                    function.range,
-                    &function.decorator_list,
-                    &function.args,
-                    &function.body,
-                    false,
-                ));
-            }
-            Stmt::AsyncFunctionDef(function) => {
-                out.push(owner_from_function(
-                    PythonOwnerContext {
-                        file,
-                        source,
-                        class_context,
-                        imports,
-                        module_constants,
-                    },
-                    function.name.as_str(),
-                    function.range,
-                    &function.decorator_list,
-                    &function.args,
-                    &function.body,
-                    true,
-                ));
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => {
+                push_function_owner(stmt, function_context, out);
             }
             Stmt::ClassDef(class) => {
                 let class_path = class_context.map_or_else(
@@ -121,6 +109,30 @@ pub(super) fn collect_owners_from_statements(
             }
             _ => {}
         }
+    }
+}
+
+fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut Vec<PythonOwner>) {
+    match stmt {
+        Stmt::FunctionDef(function) => out.push(owner_from_function(
+            context,
+            function.name.as_str(),
+            function.range,
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            false,
+        )),
+        Stmt::AsyncFunctionDef(function) => out.push(owner_from_function(
+            context,
+            function.name.as_str(),
+            function.range,
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            true,
+        )),
+        _ => {}
     }
 }
 
@@ -257,6 +269,8 @@ fn owner_from_function(
             ),
             ..Default::default()
         },
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -358,6 +372,8 @@ fn owner_from_class(
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -394,6 +410,8 @@ pub(super) fn module_owner(
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 

@@ -235,9 +235,7 @@ mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{
-        Confidence, MissingDiscriminatorFact, StageEvidence, StageState, ValueFact,
-    };
+    use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
 
     fn sample_seam() -> RepoSeam {
         RepoSeam::new(
@@ -274,7 +272,7 @@ mod tests {
             propagate: stage(propagate),
             observe: stage(observe),
             discriminate: stage(discriminate),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: missing,
             statically_contradicted_related_tests: 0,
             new_test_target: None,
@@ -610,7 +608,7 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: no_missing(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,
@@ -623,7 +621,7 @@ mod tests {
             propagate: stage(StageState::No),
             observe: stage(StageState::No),
             discriminate: stage(StageState::No),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: no_missing(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,
@@ -674,7 +672,7 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: no_missing(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,
@@ -708,7 +706,7 @@ mod tests {
             propagate: stage(StageState::No),
             observe: stage(StageState::No),
             discriminate: stage(StageState::No),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: no_missing(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,

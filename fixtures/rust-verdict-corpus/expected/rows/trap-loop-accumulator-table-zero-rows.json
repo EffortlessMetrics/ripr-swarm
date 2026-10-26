@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-loop-accumulator-table-zero-rows",
+  "subject_id": "authored-trap-loop-accumulator-table",
+  "origin": "authored",
+  "anchor": "src/lib.rs:6",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "table_driven_loop",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
