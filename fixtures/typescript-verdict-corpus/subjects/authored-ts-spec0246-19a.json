@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-spec0246-19a",
+  "origin": "authored",
+  "version_label": "authored@2026-10-26",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "b9ac36beb841293348a6ff28057d841a39ef13d3dd8f7d647f8d0afab2071108"
+    },
+    {
+      "path": "package.json",
+      "sha256": "8e6c9177a44514ab63b056f0fd4bedb1a0d0eb815472cce4a8bef96806fdc9ca"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "7a283b58801cad2a97a42946da481f0ef505de406375d670b1a595587690a7a4"
+    },
+    {
+      "path": "src/plural.ts",
+      "sha256": "e5c698666e87d7f214159be5f80d3d515d4a81bfa5bbdbe76db1d86df9d25314"
+    },
+    {
+      "path": "tests/plural.test.ts",
+      "sha256": "0fcf5e01c186b505403f76eaf3ab5ca7ff911651918d6296c6f7d58ce1c1646a"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "2cc44b4f7a7e604b331f2782b8343dd922543ed2b34c067261e7fb8bd09d4839"
+    }
+  ]
+}

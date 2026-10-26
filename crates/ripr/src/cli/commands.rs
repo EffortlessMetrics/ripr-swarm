@@ -3070,8 +3070,12 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        _ => Err(format!(
-            "unknown diff format {value:?}; expected `human`, `text`, `md`, `markdown`, or `json`"
+        // Share the enum-value diagnostic and near-miss suggestion with
+        // pilot and outcome without changing diff's accepted aliases.
+        _ => Err(unknown_value(
+            "diff format",
+            value,
+            &["human", "text", "md", "markdown", "json"],
         )),
     }
 }

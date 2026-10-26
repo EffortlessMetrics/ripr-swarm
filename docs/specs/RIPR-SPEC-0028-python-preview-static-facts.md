@@ -462,7 +462,16 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A value no
+nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
+the parameters are unchanged positional ones without defaults, `*args` or
+keywords, `NAME` is bound once in the old and new module, no file writes or
+patches it, and the bound expression over the parameters and literals is inside
+the same evaluator; a test that calls `NAME` with literal arguments in a
+straight-line `assert` that holds with the old body and fails with the new one
+is the oracle, and only then is the lambda-syntax limit lifted. A changed
+parameter list, a default, a body outside the evaluator, a second binding or a
+test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
 assertion distinguishes is never graded as a gap. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
@@ -719,12 +728,35 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
+  edit that deletes the leading `isinstance(other, <own class>) and` from the
+  method's only `return`, when the remaining expression is exactly
+  `self.<a> == other.<b>` (no call, boolean operator or conditional that could
+  skip the read) and `<b>` is an attribute the class stores itself
+  (`self.<b> = ..`) that no builtin literal has, the class defines neither
+  `__ne__` nor `__getattr__` and, read from the parsed class, names no base and
+  is plain (a builtin base answers `!=` itself), and a protocol-entry test with
+  no `try`, `with` or `raises` that could catch the error asserts
+  `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
+  Calling the edited method with such a literal raises `AttributeError`, so the
+  assertion fails after the edit. A literal on the left, a list or custom
+  operand, an early exit before the `return` or an `==` read that expects a
+  match keep the `dynamic_dispatch` abstention. The builtin-attribute list is
+  a finite catalogue of the Python 3.14 literal types, not a general claim
+  about Python semantics (#9619, #9421).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
   reaches: captured output, the file read back, a mock call pinned with
   arguments, or the field read through a bound receiver (RIPR-SPEC-0238
   rule 17).
+
+Effect-channel observations use native assertion and compared-operand spans.
+The owner call must finish before the operand is read, including statements at
+different columns on one line. Failure messages and weaker, discarded conjuncts
+cannot supply a later read for an earlier comparison. Resolved assertion helpers
+retain their call-site identity and require the owner to complete before their
+arguments are evaluated.
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the

@@ -1,0 +1,430 @@
+//! End-to-end witness for the emptiness-guard rule (RIPR-SPEC-0158, #9619): a
+//! `text.len() == 0` guard has no literal boundary operand, so its infection
+//! is read from the empty and non-empty rows the related tests feed it,
+//! whether the rows are direct calls or a literal table loop. Rows on one side
+//! only, other literals and unreadable rows keep the unknown reading.
+
+use ripr::domain::StageState;
+use ripr::{CheckInput, CheckOutput, Finding, Mode, OutputFormat, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl TempRepo {
+    /// `lib` is the new `src/lib.rs` and `files` the other sources by path;
+    /// `diff` changes one line of one of them.
+    fn create(lib: &str, files: &[(&str, &str)], test: &str, diff: &str) -> Result<Self, String> {
+        // A process-wide sequence, not the clock: parallel tests share one
+        // `SystemTime` on some platforms.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-empty-guard-{}-{sequence}",
+            std::process::id()
+        ));
+        // Exclusive create, so `Drop` never removes a directory this run did
+        // not make; the guard owns the root before any other write.
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("create root directory failed: {error}"))?;
+        let repo = Self { root };
+        let root = &repo.root;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create source directory failed: {error}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create test directory failed: {error}"))?;
+        let write = |path: &str, text: &str| {
+            if let Some(parent) = root.join(path).parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {path} directory failed: {error}"))?;
+            }
+            std::fs::write(root.join(path), text)
+                .map_err(|error| format!("write {path} failed: {error}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"empty_guard\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        write("src/lib.rs", lib)?;
+        for (path, text) in files {
+            write(path, text)?;
+        }
+        write("tests/it.rs", test)?;
+        write("diff.patch", diff)?;
+        Ok(repo)
+    }
+
+    fn check(&self) -> Result<CheckOutput, String> {
+        check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn diff_at(path: &str, text: &str, new: &str, old: &str) -> Result<(String, usize), String> {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut matches = lines.iter().enumerate().filter(|(_, line)| **line == new);
+    let (index, _) = matches
+        .next()
+        .ok_or_else(|| format!("{path} has no line {new:?}"))?;
+    if matches.next().is_some() || index < 3 || index + 3 > lines.len() {
+        return Err(format!(
+            "{path} needs one {new:?} with three lines before and two after"
+        ));
+    }
+    let context = |range: std::ops::Range<usize>| {
+        lines[range]
+            .iter()
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>()
+    };
+    let start = index - 2;
+    Ok((
+        format!(
+            "diff --git a/{path} b/{path}\nindex 0000000..1111111 100644\n--- a/{path}\n+++ b/{path}\n@@ -{start},6 +{start},6 @@\n{}-{old}\n+{new}\n{}",
+            context(index - 3..index),
+            context(index + 1..index + 3)
+        ),
+        index + 1,
+    ))
+}
+
+/// The findings on the changed line of `src/lib.rs` after applying `old` -> `new`.
+fn findings_on_changed_line(
+    lib: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<Vec<Finding>, String> {
+    let (diff, line) = diff_at("src/lib.rs", lib, new, old)?;
+    let repo = TempRepo::create(lib, &[], test, &diff)?;
+    let output = repo.check()?;
+    Ok(output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == line)
+        .collect())
+}
+
+fn lib_with(guard: &str) -> String {
+    format!(
+        "/// First letter.\n///\n/// Question mark for no name.\npub fn initial(name: &str) -> char {{\n{guard}        return '?';\n    }}\n    name.chars().next().unwrap_or('?').to_ascii_uppercase()\n}}\n\npub fn tail() {{}}\n"
+    )
+}
+
+const OLD: &str = "    if name.is_empty() {";
+const NEW: &str = "    if name.len() == 0 {";
+
+fn guard_findings(new: &str, test: &str) -> Result<Vec<Finding>, String> {
+    let findings = findings_on_changed_line(&lib_with(&format!("{new}\n")), new, OLD, test)?;
+    let predicates = findings
+        .into_iter()
+        .filter(|finding| finding.probe.family.as_str() == "predicate")
+        .collect::<Vec<_>>();
+    assert!(!predicates.is_empty(), "no predicate finding");
+    Ok(predicates)
+}
+
+fn infection_credited(findings: &[Finding]) -> bool {
+    findings
+        .iter()
+        .any(|finding| finding.ripr.infect.state == StageState::Yes)
+}
+
+fn direct(calls: &[(&str, char)]) -> String {
+    let body = calls
+        .iter()
+        .map(|(name, want)| format!("    assert_eq!(initial({name}), {want:?});\n"))
+        .collect::<String>();
+    format!("use empty_guard::initial;\n\n#[test]\nfn initials() {{\n{body}}}\n")
+}
+
+fn table(rows: &[(&str, char)], body: &str) -> String {
+    let rows = rows
+        .iter()
+        .map(|(name, want)| format!("({name}, {want:?})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "use empty_guard::initial;\n\n#[test]\nfn initials() {{\n    let cases = [{rows}];\n    for (name, want) in cases {{\n{body}    }}\n}}\n"
+    )
+}
+
+const ASSERT_ROW: &str = "        assert_eq!(initial(name), want, \"{name:?}\");\n";
+const BOTH_SIDES: &[(&str, char)] = &[("\"\"", '?'), ("\"ada\"", 'A'), ("\"Bob\"", 'B')];
+
+#[test]
+fn a_table_loop_with_an_empty_and_a_non_empty_row_credits_infection() -> Result<(), String> {
+    let findings = guard_findings(NEW, &table(BOTH_SIDES, ASSERT_ROW))?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn direct_calls_with_an_empty_and_a_non_empty_input_credit_infection() -> Result<(), String> {
+    let findings = guard_findings(NEW, &direct(&[("\"\"", '?'), ("\"ada\"", 'A')]))?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_not_empty_guard_with_both_kinds_of_row_credits_infection() -> Result<(), String> {
+    let findings = guard_findings("    if name.len() != 0 {", &table(BOTH_SIDES, ASSERT_ROW))?;
+    // `!= 0` with the same rows: the empty row and a non-empty row both sit on
+    // the guard's two sides.
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn rows_that_are_all_empty_stay_unknown() -> Result<(), String> {
+    let findings = guard_findings(NEW, &table(&[("\"\"", '?'), ("\"\"", '?')], ASSERT_ROW))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn rows_that_are_all_non_empty_stay_unknown() -> Result<(), String> {
+    let findings = guard_findings(
+        NEW,
+        &table(&[("\"ada\"", 'A'), ("\"Bob\"", 'B')], ASSERT_ROW),
+    )?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_computed_cell_hides_the_rows_and_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(
+        NEW,
+        &table(
+            &[("String::new().as_str()", '?'), ("\"ada\"", 'A')],
+            ASSERT_ROW,
+        ),
+    )?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_char_cell_is_no_text_row_and_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(NEW, &table(&[("'a'", 'A'), ("\"ada\"", 'A')], ASSERT_ROW))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_loop_that_skips_rows_stays_unknown() -> Result<(), String> {
+    let body = "        if want == 'B' {\n            continue;\n        }\n        assert_eq!(initial(name), want, \"{name:?}\");\n";
+    let findings = guard_findings(NEW, &table(BOTH_SIDES, body))?;
+    // A loop that can leave a row early does not run every row, so the table
+    // is unreadable and the guard keeps its unknown reading.
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_length_other_than_zero_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings("    if name.len() == 1 {", &table(BOTH_SIDES, ASSERT_ROW))?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_weakly_asserted_call_of_the_owner_stays_unknown() -> Result<(), String> {
+    // A weakly asserted call of the owner is not read as pinning the guard
+    // (`idiom-result-empty-guard`), even when the table rows are strong.
+    let test = format!(
+        "{}\n#[test]\nfn one_letter() {{\n    assert!(initial(\"a\") == 'A' || true);\n    let _ = initial(\"b\");\n}}\n",
+        table(BOTH_SIDES, ASSERT_ROW)
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_compound_condition_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(
+        "    if name.len() == 0 || name == \"x\" {",
+        &table(BOTH_SIDES, ASSERT_ROW),
+    )?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn one_unreadable_row_among_readable_ones_stays_unknown() -> Result<(), String> {
+    let findings = guard_findings(
+        NEW,
+        &direct(&[("\"\"", '?'), ("\"ada\"", 'A'), ("unknown_name", 'X')]),
+    )?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_beside_an_unread_direct_call_stays_unknown() -> Result<(), String> {
+    let test = format!(
+        "{}\n#[test]\nfn other() {{\n    assert_eq!(initial(unknown_name), 'X');\n}}\n",
+        table(BOTH_SIDES, ASSERT_ROW)
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+/// The two-row table of `BOTH_SIDES` plus one extra line after the loop, in the
+/// SAME test: two table rows and two owner calls would pass a bare count check.
+fn two_row_table_then(extra: &str) -> String {
+    let mut test = table(&BOTH_SIDES[..2], ASSERT_ROW);
+    let end = test.rfind("}\n").unwrap_or(test.len());
+    test.insert_str(end, extra);
+    test
+}
+
+#[test]
+fn a_table_and_an_unread_direct_call_in_the_same_test_stay_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&make_name()), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_and_a_call_chain_holding_a_literal_stay_unknown() -> Result<(), String> {
+    // `std::env::var("WHO")` is a runtime input; the cell reader takes the
+    // literal inside it for the argument (#10484), so the row must not count.
+    let test = two_row_table_then(
+        "    assert_eq!(initial(&std::env::var(\"WHO\").unwrap_or_default()), 'B');\n",
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_call_chain_holding_a_literal_stays_unknown_when_spaced_before_its_parentheses()
+-> Result<(), String> {
+    let test = two_row_table_then(
+        "    assert_eq!(initial(&std::env::var (\"WHO\").unwrap_or_default ()), 'B');\n",
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_in_one_test_and_a_call_chain_in_another_stay_unknown() -> Result<(), String> {
+    let mut test = table(&BOTH_SIDES[..2], ASSERT_ROW);
+    test.push_str(
+        "\n#[test]\nfn from_env() {\n    assert_eq!(initial(&std::env::var(\"WHO\").unwrap_or_default()), 'B');\n}\n",
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_and_a_converted_literal_call_still_credit() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&\"Bob\".to_string()), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_and_a_read_direct_call_in_the_same_test_still_credit() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(\"Bob\"), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn an_unasserted_empty_call_is_no_input_row() -> Result<(), String> {
+    let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    let _ = initial(\"\");\n    assert_eq!(initial(\"ada\"), 'A');\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
+    let findings = guard_findings(NEW, test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_grouped_callee_holding_a_literal_stays_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&(make_name)(\"Bob\")), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_turbofish_call_holding_a_literal_stays_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&make_name::<u8>(\"Bob\")), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_macro_call_holding_a_literal_stays_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&format!(\"{}\", \"Bob\")), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_discarded_empty_call_on_the_assertion_line_is_no_input_row() -> Result<(), String> {
+    let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    let _ = initial(\"\"); assert_eq!(initial(\"ada\"), 'A');\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
+    let findings = guard_findings(NEW, test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_loop_that_breaks_returns_or_propagates_stays_unknown() -> Result<(), String> {
+    for exit in ["break;", "return;"] {
+        let body = format!(
+            "        if want == 'B' {{\n            {exit}\n        }}\n        assert_eq!(initial(name), want, \"{{name:?}}\");\n"
+        );
+        let findings = guard_findings(NEW, &table(BOTH_SIDES, &body))?;
+        assert!(!infection_credited(&findings), "{exit}: {findings:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_weak_assertion_alone_is_no_input_row() -> Result<(), String> {
+    // No discarded call: only the weak `|| true` assertion separates the rows.
+    let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    assert!(initial(\"\") == ' ' || true);\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
+    let findings = guard_findings(NEW, test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_loop_that_propagates_an_error_stays_unknown() -> Result<(), String> {
+    // `?` can leave the test before later rows run, like `return`.
+    let fallible = "use empty_guard::initial;\n\n#[test]\nfn initials() -> Result<(), ()> {\n    let cases = [(\"\", '?'), (\"ada\", 'A'), (\"Bob\", 'B')];\n    for (name, want) in cases {\n        might_fail()?;\n        assert_eq!(initial(name), want);\n    }\n    Ok(())\n}\n\nfn might_fail() -> Result<(), ()> {\n    Ok(())\n}\n";
+    let findings = guard_findings(NEW, fallible)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    // The same fallible table without the `?` statement still credits.
+    let plain = fallible.replace("        might_fail()?;\n", "");
+    let findings = guard_findings(NEW, &plain)?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
