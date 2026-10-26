@@ -1,0 +1,11 @@
+# Registers the arrow-row input controls (#10797) under RIPR-SPEC-0231.
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::a_row_whose_input_cannot_tell_the_edit_apart_is_not_credited",
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::one_discriminating_row_among_coincident_rows_is_credited",
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::a_parameter_the_body_may_rebind_or_read_through_a_field_is_not_read",
+]
+code = [
+  "crates/ripr/src/analysis/extract/test_case_arrow.rs",
+]
