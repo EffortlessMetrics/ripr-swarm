@@ -349,6 +349,11 @@ fn twin_history_edges_getter_chain_guard_and_same_line() -> Result<(), String> {
             true,
         ),
         (
+            "chained_let_after_the_read_is_not_evidence",
+            "let mut c = Bag::new();\nc.add(20);\nlet d = Bag { items: vec![20] };\nassert_eq!(c.items, d.items);\nlet d = Bag::new().add(20).clone();",
+            true,
+        ),
+        (
             "same_guard_twins_stay_refused",
             "let mut c = Bag::new();\nlet mut d = Bag::new();\nif ready() {\nc.items.push(1);\n}\nif ready() {\nd.items.push(1);\n}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
             false,

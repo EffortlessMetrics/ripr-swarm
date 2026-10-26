@@ -620,7 +620,7 @@ fn field_collection_observer_confirms(
     // statement: refuse rather than credit a side the owner may have written.
     let chain_built = reads.iter().any(|read| {
         !owner_fed.contains_key(read.binding.as_str())
-            && binding_built_through_owner(test, &read.binding, owner.name())
+            && binding_built_through_owner(test, &read.binding, owner.name(), assertion.line)
     });
     if !owner_fed.is_empty() && chain_built {
         return false;
@@ -718,6 +718,23 @@ fn tighten_dots(code: &str) -> String {
     out
 }
 
+/// Byte offset where the history window for a read on `read_line` ends: the
+/// `assert` on that line, so a statement earlier on the same line still counts
+/// (`d.items.clear(); assert_eq!(..)`), as the unrewritten-read guard does.
+fn read_window_end(masked: &str, start_line: usize, read_line: usize) -> usize {
+    let skipped = read_line.saturating_sub(start_line);
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(skipped)
+        .map(str::len)
+        .sum();
+    masked
+        .get(line_start..)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|line| line.rfind("assert"))
+        .map_or(line_start, |found| line_start + found)
+}
+
 /// #7135: whether every binding in `bindings` was built and driven the same
 /// way before the read at `read_line`, so a wrong owner moves every compared
 /// side together. The history of a binding is its constructor and, in order,
@@ -734,20 +751,7 @@ fn equivalent_owner_histories(
     read_line: usize,
 ) -> bool {
     let masked = mask_comments_and_strings(&test.body);
-    let skipped = read_line.saturating_sub(test.start_line);
-    let line_start: usize = masked
-        .split_inclusive('\n')
-        .take(skipped)
-        .map(str::len)
-        .sum();
-    // The window also covers the part of the read line before the assertion
-    // macro (`d.items.clear(); assert_eq!(..)`), as the unrewritten-read guard
-    // does.
-    let offset = masked
-        .get(line_start..)
-        .and_then(|rest| rest.lines().next())
-        .and_then(|line| line.rfind("assert"))
-        .map_or(line_start, |found| line_start + found);
+    let offset = read_window_end(&masked, test.start_line, read_line);
     let (Some(before_masked), Some(before)) = (masked.get(..offset), test.body.get(..offset))
     else {
         return true;
@@ -857,27 +861,41 @@ fn equivalent_owner_histories(
 /// #7135: whether `binding` is declared with a right-hand side that calls the
 /// owner `method` (`let d = Bag::new().add(20);`), so the owner wrote it
 /// without a bare `binding.method(..)` statement.
-fn binding_built_through_owner(test: &TestSummary, binding: &str, method: &str) -> bool {
+fn binding_built_through_owner(
+    test: &TestSummary,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
     let masked = mask_comments_and_strings(&test.body);
+    let end = read_window_end(&masked, test.start_line, read_line);
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let call = format!(".{method}(");
-    masked.match_indices("let ").any(|(at, keyword)| {
-        if masked[..at].chars().next_back().is_some_and(ident) {
-            return false;
-        }
-        let rest = masked[at + keyword.len()..].trim_start();
-        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
-        let Some(after) = rest.strip_prefix(binding) else {
-            return false;
-        };
-        if after.starts_with(ident) {
-            return false;
-        }
-        after
-            .split(';')
-            .next()
-            .is_some_and(|statement| statement.contains(&call))
-    })
+    // Only the declaration live at the read counts: a later `let` is not
+    // evidence about it, and a shadowing `let` replaces an earlier one.
+    masked
+        .get(..end)
+        .unwrap_or_default()
+        .match_indices("let ")
+        .filter_map(|(at, keyword)| {
+            if masked[..at].chars().next_back().is_some_and(ident) {
+                return None;
+            }
+            let rest = masked[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let after = rest.strip_prefix(binding)?;
+            if after.starts_with(ident) {
+                return None;
+            }
+            Some(
+                after
+                    .split(';')
+                    .next()
+                    .is_some_and(|stmt| stmt.contains(&call)),
+            )
+        })
+        .last()
+        .unwrap_or(false)
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an
