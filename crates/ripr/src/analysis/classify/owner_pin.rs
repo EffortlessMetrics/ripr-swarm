@@ -4263,6 +4263,25 @@ impl OwnerReturnPin {
         {
             return false;
         }
+        // #7714: a test-file helper that computes its value from the owner
+        // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
+        // expected operand the owner's own value, however it is bound.
+        if test_file_helpers_reaching_owner(index, test, &self.name)
+            .iter()
+            .any(|helper| {
+                expected_reaches_owner(test, &assertion.text, expected, helper)
+                    || expected_constant_reaches_owner(
+                        index,
+                        test,
+                        expected,
+                        helper,
+                        &PinCall::Bare,
+                        &self.owner_file,
+                    )
+            })
+        {
+            return false;
+        }
         match (&self.path, call) {
             // #6692: the clone must be compared with its own receiver, and
             // the test's file must not import some other `Clone`.
@@ -11168,6 +11187,47 @@ fn expected_constant_reaches_owner(
         }
     }
     false
+}
+
+/// #7714: names of the functions in the test's own file, other than the
+/// test, whose body names the owner `name` or, transitively, another such
+/// function. An expected value such a helper returns is computed from the
+/// owner, so comparing the owner with it compares the owner with itself.
+/// Matching a same-named item in another module only withholds the pin.
+fn test_file_helpers_reaching_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    name: &str,
+) -> Vec<String> {
+    let Some(facts) = index.files().get(&test.file) else {
+        return Vec::new();
+    };
+    let candidates: Vec<(&str, String)> = facts
+        .functions
+        .iter()
+        .filter(|function| function.start_line != test.start_line)
+        .filter(|function| function.name != name)
+        .map(|function| {
+            (
+                function.name.as_str(),
+                mask_comments_and_strings(function.body.as_str()),
+            )
+        })
+        .collect();
+    let mut reaching: Vec<String> = Vec::new();
+    let mut frontier = vec![name.to_string()];
+    while let Some(target) = frontier.pop() {
+        for (helper, body) in &candidates {
+            if reaching.iter().any(|known| known == helper) || *helper == name {
+                continue;
+            }
+            if contains_as_whole_word(body, &target) {
+                reaching.push((*helper).to_string());
+                frontier.push((*helper).to_string());
+            }
+        }
+    }
+    reaching
 }
 
 /// Names `file` imports the owner `name` under (`use crate::quota as q;`).

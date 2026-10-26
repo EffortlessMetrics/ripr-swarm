@@ -378,6 +378,12 @@ wrong credits.
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
+   A function of the test's own file whose body names the owner, directly or
+   through another such function, computes its value from the owner: an
+   expected operand that calls it, or names a `let` or constant whose
+   initializer does, is the owner's own value and withholds the pin
+   (`fn expected() -> i32 { f(4) }` with `assert_eq!(f(4), expected())`,
+   #7714). A helper that never reaches the owner keeps the pin.
    An `unsafe { .. }` block whose only content is that complete call (no
    statement, nothing chained after the call or the block; comments around
    the call are ignored) is the call:
