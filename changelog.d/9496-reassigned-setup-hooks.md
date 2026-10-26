@@ -4,6 +4,7 @@
   callbacks affected by preceding writes, including unresolved local aliases
   of global roots. Immutable empty-object shadows and imported hook identities
   stay distinct; parameter-default writes are resolved before body-local
-  declarations. Receiver race limits and the bounded
+  declarations and suite arguments before callback invocation. Mocha imports
+  also require their ambient delegate to remain known. Receiver race limits and the bounded
   Mocha abstention rule remain in place without adding hook oracle credit
-  (#4266, #9496).
+  (#4266, #9496, #10599).

@@ -651,8 +651,13 @@ Parameter-default effects resolve in the parameter/outer environment before
 body-local declarations or empty-object proofs become visible. A default value
 does not itself prove a parameter's object identity; uncertain effects stay
 conservative without a parameter-value evaluator.
-A later write cannot revoke an already registered callback; a separate
-lexical binding or an ambient property cannot rebind an imported hook identifier.
+All suite-call arguments are evaluated before its synchronous callback, including
+that callback's parameter defaults and body. A later write cannot revoke an
+already registered callback. A separate lexical binding or ambient property does
+not rebind an imported identifier; direct runner imports retain that identity.
+Mocha's named `before` and `beforeEach` exports additionally look up their ambient
+hook at invocation, so preceding or argument-time ambient writes withhold their
+setup evidence too.
 An unreadable computed global target withholds affected ambient hook identities.
 Only ordinary statements and admitted synchronous suite callbacks have ordered
 registration facts. Helper bodies, conditional/repeated registration order and

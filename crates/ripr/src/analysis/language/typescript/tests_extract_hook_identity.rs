@@ -40,6 +40,16 @@ impl HookCalls {
             mode: Mode::Registration,
             strict: admission.block_functions_are_lexical,
             admission,
+            mocha_imports: imports
+                .iter()
+                .filter(|import| {
+                    import.source == "mocha"
+                        && !import.namespace
+                        && matches!(import.local.as_str(), "before" | "beforeEach")
+                        && import.imported.as_deref() == Some(import.local.as_str())
+                })
+                .map(|import| import.local.clone())
+                .collect(),
             active_writes: HashSet::new(),
             deferred_writes: HashSet::new(),
             all_writes: HashSet::new(),
@@ -90,6 +100,7 @@ struct Scan<'s> {
     mode: Mode,
     strict: bool,
     admission: &'s TypeScriptAdmissionContext,
+    mocha_imports: HashSet<String>,
     active_writes: HashSet<Binding>,
     deferred_writes: HashSet<Binding>,
     all_writes: HashSet<Binding>,
@@ -474,18 +485,28 @@ impl<'a> Visit<'a> for Scan<'_> {
             && matches!(callee.name.as_str(), "before" | "beforeEach" | "beforeAll")
         {
             let binding = self.binding(callee.name.as_str());
-            let known = match self.mode {
+            let mut dependencies = vec![binding.clone()];
+            // Mocha's named exports look up the ambient hook when invoked.
+            // Their import binding survives a global write, but its delegate
+            // may no longer register the callback. Other runner imports keep
+            // their independent identity.
+            if binding.frame == Some(0) && self.mocha_imports.contains(&binding.name) {
+                dependencies.push(Binding {
+                    frame: None,
+                    name: binding.name,
+                });
+            }
+            let known = dependencies.iter().all(|binding| match self.mode {
                 Mode::Registration => {
-                    !self.active_writes.contains(&binding)
-                        && !self.deferred_writes.contains(&binding)
+                    !self.active_writes.contains(binding) && !self.deferred_writes.contains(binding)
                 }
-                Mode::Deferred => !self.all_writes.contains(&binding),
-            };
+                Mode::Deferred => !self.all_writes.contains(binding),
+            });
             // Capture before evaluating arguments: later writes cannot revoke
             // the callback already passed to this callable.
             if known && self.record_calls && !self.collecting_region {
                 self.calls.insert(call.span.start);
-                captured = Some(binding);
+                captured = Some(dependencies);
             }
         }
         if self.statement_call == Some(call.span.start)
@@ -530,10 +551,34 @@ impl<'a> Visit<'a> for Scan<'_> {
         // Inline writes during argument evaluation are outside the simple
         // registration boundary: runner overload/callback selection is not
         // interpreted here. Retain that existing unknown case.
-        if let Some(binding) = captured
-            && self.active_writes.contains(&binding)
+        if let Some(dependencies) = captured
+            && dependencies
+                .iter()
+                .any(|binding| self.active_writes.contains(binding))
         {
             self.calls.remove(&call.span.start);
+        }
+    }
+
+    fn visit_arguments(&mut self, arguments: &oxc_allocator::Vec<'a, Argument<'a>>) {
+        let callback = arguments.iter().position(|argument| match argument {
+            Argument::ArrowFunctionExpression(arrow) => {
+                self.synchronous_callbacks.contains(&arrow.span.start)
+            }
+            Argument::FunctionExpression(function) => {
+                self.synchronous_callbacks.contains(&function.span.start)
+            }
+            _ => false,
+        });
+        // Creating the inline callback evaluates neither defaults nor body.
+        // The suite invokes it only after evaluating every call argument.
+        for (index, argument) in arguments.iter().enumerate() {
+            if Some(index) != callback {
+                self.visit_argument(argument);
+            }
+        }
+        if let Some(callback) = callback {
+            self.visit_argument(&arguments[callback]);
         }
     }
 

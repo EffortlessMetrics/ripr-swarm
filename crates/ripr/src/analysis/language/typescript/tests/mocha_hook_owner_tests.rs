@@ -507,6 +507,11 @@ fn hook_registration_identity_keeps_registered_mocha_bodies() -> Result<(), Stri
             ("later-sibling-global", "", String::new(), true),
             ("preceding-sibling-global", "", String::new(), false),
             ("preceding-sibling-local", "", String::new(), true),
+            ("trailing-suite-argument", "", String::new(), false),
+            ("harmless-trailing-suite-argument", "", String::new(), true),
+            ("imported-preceding-global", "", String::new(), false),
+            ("imported-later-global", "", String::new(), true),
+            ("imported-argument-global", "", String::new(), false),
         ] {
             let source = match label {
                 "preceding" => suite(&format!("{hook} = () => {{}};\n{active}")),
@@ -519,6 +524,21 @@ fn hook_registration_identity_keeps_registered_mocha_bodies() -> Result<(), Stri
                 ),
                 "preceding-sibling-local" => format!(
                     "{HEAD}\ndescribe('noise', () => {{ let {hook} = () => {{}}; {hook} = () => {{}}; }});\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                "trailing-suite-argument" => format!(
+                    "{HEAD}\ndescribe('registry', () => {{ {active} {TESTS} }}, ({hook} = () => {{}}));"
+                ),
+                "harmless-trailing-suite-argument" => {
+                    format!("{HEAD}\ndescribe('registry', () => {{ {active} {TESTS} }}, 1000);")
+                }
+                "imported-preceding-global" => format!(
+                    "import {{ {hook} }} from 'mocha';\n{HEAD}\nglobalThis.{hook} = () => {{}};\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                "imported-later-global" => format!(
+                    "import {{ {hook} }} from 'mocha';\n{HEAD}\ndescribe('registry', () => {{ {active} globalThis.{hook} = () => {{}}; {TESTS} }});"
+                ),
+                "imported-argument-global" => format!(
+                    "import {{ {hook} }} from 'mocha';\n{HEAD}\ndescribe('registry', () => {{ {hook}(globalThis.{hook} = () => {{}}, () => {{ register(\"  alpha \"); }}); {TESTS} }});"
                 ),
                 _ => suite(&format!("{prefix}{active}{suffix}")),
             };

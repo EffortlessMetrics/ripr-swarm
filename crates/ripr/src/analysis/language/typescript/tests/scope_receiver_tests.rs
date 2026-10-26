@@ -980,6 +980,89 @@ describe('target', function again() {
             ExposureClass::NoStaticPath,
         ),
         (
+            "trailing_suite_hook_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, (beforeEach = () => {}));
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "trailing_suite_global_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', function () {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, (globalThis.beforeEach = () => {}));
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "harmless_trailing_suite_argument",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, 1000);
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "mocha_import_observes_trailing_ambient_write",
+            r#"import { beforeEach } from 'mocha';
+import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, (globalThis.beforeEach = () => {}));
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "vitest_import_ignores_trailing_ambient_write",
+            r#"import { describe, it, beforeEach, expect } from 'vitest';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).toBe(1); }); }, (globalThis.beforeEach = () => {}, 1000));
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "mocha_import_receiver_keeps_existing_limit",
+            r#"import { beforeEach } from 'mocha';
+import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); globalThis.beforeEach = () => {}; it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "mocha_import_observes_preceding_ambient_write",
+            r#"import { beforeEach } from 'mocha';
+import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
             "argument_hook_write_keeps_unknown",
             r#"import { expect } from 'chai';
 import { Cart } from '../src/cart.js';

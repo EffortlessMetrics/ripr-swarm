@@ -314,7 +314,11 @@ reason `gap_evidence_unresolved`:
   unreadable global keys and other local root values remain conservative.
   Parameter-default effects resolve before body-local declarations and root
   proofs are installed, in their parameter/outer environment. Parameter values
-  are not evaluated to grant hook identity.
+  are not evaluated to grant hook identity. All suite-call arguments precede
+  invocation of its synchronous callback. Named Mocha hook imports also require
+  their ambient delegate to remain known when invoked; an imported identifier
+  alone does not shield the wrapper from preceding or argument-time global writes.
+  Earlier completed registrations and independent runner imports stay valid.
   Comments and literal contents are not writes. Helper execution, uncertain or
   repeated registration order, self-referencing callbacks, hook-binding argument
   effects and restoration remain unresolved. This rule
