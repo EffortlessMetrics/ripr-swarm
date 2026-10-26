@@ -69,10 +69,6 @@ case = "grid-bits-length-pinned"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "grid-bool-table"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "grid-delete-helper"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -363,6 +359,14 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "shape-generic-largest-compare"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "shape-hostile-macro-defined-owner"
+reason = "Tests discriminate the change but ripr withholds the gap under `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240, #9442, #9443); fail-closed by design until the owner can be paired with its assertion (#9478)."
+
+[[entry]]
+case = "shape-hostile-owner-as-path-value"
+reason = "Tests discriminate the change but ripr withholds the gap under `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240, #9442, #9443); fail-closed by design until the owner can be paired with its assertion (#9478)."
 
 [[entry]]
 case = "shape-impl-trait-return-filter"
