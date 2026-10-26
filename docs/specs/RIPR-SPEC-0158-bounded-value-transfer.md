@@ -48,7 +48,11 @@ exercised boundary from a missing one.
   literal> }` with no parameters, generics, qualifiers beyond visibility,
   statements or computed body, outside any `impl` or `trait` block, not named
   by a `use` line, and not rebound by a pattern in the test (a local
-  closure). The call is the helper's literal exactly as the literal would
+  closure). The declaration must be one the test can see: in the test's own
+  module, or in its parent module when `use super::*` is the file's only glob
+  import. A sibling module's item, an item inside another function, and a
+  name that another glob import may bind instead keep the argument unread.
+  The call is the helper's literal exactly as the literal would
   have been; a path, method or other qualified call, a call with arguments, a
   helper declared twice (a test-module copy that shadows the outer one), or
   a file the index does not hold keeps the argument unread. Both operands
@@ -412,10 +416,12 @@ exercised boundary from a missing one.
     `spec0158-modfold-helper-call`, `old-surcharge-call-expression-input`).
 25. Reject: a helper or constant the file does not pin down to one literal: a
     helper whose body computes, takes a parameter, or is declared a second
-    time by a test-module copy that returns another value, and a `const`
-    declared again in the test body, keep the argument unread
-    (`spec0158-modfold-helper-shadowed`, `spec0158-modfold-helper-computes`,
-    `spec0158-modfold-const-shadowed`).
+    time by a test-module copy that returns another value, a `const`
+    declared again in the test body, and a helper declared only in a sibling
+    module while the test glob-imports the name from elsewhere, keep the
+    argument unread (`spec0158-modfold-helper-shadowed`,
+    `spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed`,
+    `spec0158-modfold-helper-glob-import`).
 26. Reject: a call shape that is not the bare helper: a path, a method call, a
     call with arguments or a cast around it keeps the argument unread
     (`argument_fold` unit tests).
@@ -425,7 +431,8 @@ exercised boundary from a missing one.
 `analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
 `rust-verdict-corpus` cases `spec0158-modfold-const-operand`,
 `spec0158-modfold-helper-call`, `spec0158-modfold-helper-shadowed`,
-`spec0158-modfold-helper-computes` and `spec0158-modfold-const-shadowed`;
+`spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed` and
+`spec0158-modfold-helper-glob-import`;
 `analysis/classify/value_transfer.rs` `tests`;
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,

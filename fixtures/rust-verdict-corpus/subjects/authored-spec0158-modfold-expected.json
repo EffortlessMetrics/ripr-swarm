@@ -11,7 +11,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "d3a777cc4cae005e21f266e7af4f8036049f8e9538d562dd49472943e0378551"
+      "sha256": "63a136abfd1b43332b04d7d16adac0fe81dd8d720ff6c330e092cf4d8f00fc32"
     },
     {
       "path": "src/m_const.rs",
@@ -20,6 +20,14 @@
     {
       "path": "src/m_cshadow.rs",
       "sha256": "b71a775b0272991790dbec7e35adc879e236b3b81b5eed8d24f80d4f9069870e"
+    },
+    {
+      "path": "src/m_gext.rs",
+      "sha256": "de28091ca92d5147c87e1482880d6eb374dffaefd96cc0987ea0a105a154ceaa"
+    },
+    {
+      "path": "src/m_gsib.rs",
+      "sha256": "e81bda73be124d569c02216ed83393e14231121fb0391c245859cb2e2e059b2d"
     },
     {
       "path": "src/m_harg.rs",

@@ -24,6 +24,9 @@ use ra_ap_syntax::{
 #[derive(Clone, Copy, Default)]
 pub(super) struct FoldScope<'a> {
     file_source: Option<&'a str>,
+    /// The line the test starts on: a declaration folds only when that
+    /// position can see it.
+    test_line: usize,
 }
 
 impl<'a> FoldScope<'a> {
@@ -34,13 +37,15 @@ impl<'a> FoldScope<'a> {
                 .files()
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref()),
+            test_line: test.start_line,
         }
     }
 
     #[cfg(test)]
-    pub(super) fn of_source(file_source: &'a str) -> Self {
+    pub(super) fn of_source(file_source: &'a str, test_line: usize) -> Self {
         Self {
             file_source: Some(file_source),
+            test_line,
         }
     }
 
@@ -51,10 +56,19 @@ impl<'a> FoldScope<'a> {
         if !is_const_like(name) || file_imports(source, name) {
             return None;
         }
-        match named_constant(source, name) {
-            NamedConstant::Value(value) if is_decimal(&value) => Some(value),
-            _ => None,
-        }
+        let value = match named_constant(source, name) {
+            NamedConstant::Value(value) if is_decimal(&value) => value,
+            _ => return None,
+        };
+        let masked = mask_comments_and_strings(source);
+        let [at] = [
+            declaration_offsets(&masked, "const", name),
+            declaration_offsets(&masked, "static", name),
+        ]
+        .concat()[..] else {
+            return None;
+        };
+        self.sees_declaration(&masked, at).then_some(value)
     }
 
     /// The decimal value the one nullary free function `fn name() -> u64 { 1000 }`
@@ -68,10 +82,10 @@ impl<'a> FoldScope<'a> {
             return None;
         }
         let masked = mask_comments_and_strings(source);
-        let [at] = declaration_offsets(&masked, name)[..] else {
+        let [at] = declaration_offsets(&masked, "fn", name)[..] else {
             return None;
         };
-        if declared_in_associated_block(&masked, at) {
+        if declared_in_associated_block(&masked, at) || !self.sees_declaration(&masked, at) {
             return None;
         }
         let rest = masked[at..].strip_prefix("fn")?.trim_start();
@@ -89,6 +103,80 @@ impl<'a> FoldScope<'a> {
         let literal = rest.split_once('}')?.0.trim();
         is_decimal(literal).then(|| literal.to_string())
     }
+}
+
+impl FoldScope<'_> {
+    /// Whether a declaration at byte `at` of the masked file is the item the
+    /// test's bare name reaches: declared in the test's own module, or in its
+    /// parent module with `use super::*` as the only glob import. A sibling
+    /// module's item, an item inside another function, and a name a different
+    /// glob import may bind all decline.
+    fn sees_declaration(self, masked: &str, at: usize) -> bool {
+        let Some(test_at) = line_start(masked, self.test_line) else {
+            return false;
+        };
+        let declared = block_chain(masked, at);
+        let tested = block_chain(masked, test_at);
+        if !tested.starts_with(&declared) {
+            return false;
+        }
+        let modules = |chain: &[(usize, bool)]| chain.iter().filter(|(_, module)| *module).count();
+        match modules(&tested) - modules(&declared) {
+            0 => true,
+            1 => only_super_glob(masked),
+            _ => false,
+        }
+    }
+}
+
+/// Byte offset where 1-based `line` starts.
+fn line_start(masked: &str, line: usize) -> Option<usize> {
+    let mut start = 0;
+    for _ in 1..line {
+        start += masked[start..].find('\n')? + 1;
+    }
+    (line >= 1).then_some(start)
+}
+
+/// The braces open at byte `at`, outermost first, each flagged when its header
+/// declares a `mod`.
+fn block_chain(masked: &str, at: usize) -> Vec<(usize, bool)> {
+    let mut open = Vec::new();
+    let mut header_start = 0;
+    for (offset, ch) in masked[..at].char_indices() {
+        match ch {
+            '{' => {
+                let module = masked[header_start..offset]
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|word| word == "mod");
+                open.push((offset, module));
+                header_start = offset + 1;
+            }
+            '}' => {
+                open.pop();
+                header_start = offset + 1;
+            }
+            ';' => header_start = offset + 1,
+            _ => {}
+        }
+    }
+    open
+}
+
+/// Whether the file has `use super::*` and no other glob import.
+fn only_super_glob(masked: &str) -> bool {
+    let mut super_glob = false;
+    for line in masked.lines().map(str::trim_start) {
+        if !(line.starts_with("use ") || line.starts_with("pub use ")) || !line.contains('*') {
+            continue;
+        }
+        if line.replace(' ', "") == "usesuper::*;" {
+            super_glob = true;
+        } else {
+            return false;
+        }
+    }
+    super_glob
 }
 
 /// The decimal value `argument` computes in a test whose body is
@@ -215,11 +303,11 @@ fn file_imports(source: &str, name: &str) -> bool {
     })
 }
 
-/// Byte offsets of every `fn name` declaration in masked source.
-fn declaration_offsets(masked: &str, name: &str) -> Vec<usize> {
-    let width = "fn ".len() + name.len();
+/// Byte offsets of every `<keyword> name` declaration in masked source.
+fn declaration_offsets(masked: &str, keyword: &str, name: &str) -> Vec<usize> {
+    let width = keyword.len() + 1 + name.len();
     masked
-        .match_indices(format!("fn {name}").as_str())
+        .match_indices(format!("{keyword} {name}").as_str())
         .filter_map(|(at, _)| {
             let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
             let before = masked[..at].chars().next_back();
@@ -323,7 +411,11 @@ mod tests {
     }
 
     fn fold_in(file: &str, body: &str, argument: &str) -> Option<String> {
-        folded_argument(body, argument, FoldScope::of_source(file))
+        fold_at(file, 1, body, argument)
+    }
+
+    fn fold_at(file: &str, test_line: usize, body: &str, argument: &str) -> Option<String> {
+        folded_argument(body, argument, FoldScope::of_source(file, test_line))
     }
 
     #[test]
@@ -500,5 +592,40 @@ mod tests {
         ] {
             assert_eq!(fold_in(FILE, body, argument), None, "`{argument}`");
         }
+    }
+
+    #[test]
+    fn a_declaration_the_test_cannot_see_does_not_fold() {
+        let body = "fn t() {}";
+        // Line numbers below count from the test's `#[test]` line.
+        let parent = "const BASE: u32 = 9;\nfn big() -> u32 { 10 }\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn t() {}\n}\n";
+        assert_eq!(fold_at(parent, 6, body, "BASE + 1").as_deref(), Some("10"));
+        assert_eq!(fold_at(parent, 6, body, "big()").as_deref(), Some("10"));
+        // A sibling module's item is not in scope at the test.
+        let sibling = "mod hidden {\n    pub const BASE: u32 = 9;\n    pub fn big() -> u32 { 10 }\n}\nmod tests {\n    use super::*;\n    #[test]\n    fn t() {}\n}\n";
+        assert_eq!(fold_at(sibling, 7, body, "BASE + 1"), None);
+        assert_eq!(fold_at(sibling, 7, body, "big()"), None);
+        // A glob of another module may bind the name instead of the parent's.
+        let glob = parent.replace(
+            "use super::*;",
+            "use super::*;\n    use crate::external::*;",
+        );
+        assert_eq!(fold_at(&glob, 7, body, "BASE + 1"), None);
+        assert_eq!(fold_at(&glob, 7, body, "big()"), None);
+        // Without `use super::*` the parent's item is not imported at all.
+        let bare = parent.replace("    use super::*;\n", "    use crate::external::*;\n");
+        assert_eq!(fold_at(&bare, 6, body, "BASE + 1"), None);
+        // Two modules down needs a path the fold does not read.
+        let deep = "const BASE: u32 = 9;\nmod a {\n    mod tests {\n        use super::*;\n        #[test]\n        fn t() {}\n    }\n}\n";
+        assert_eq!(fold_at(deep, 5, body, "BASE + 1"), None);
+        // An item inside another function is not in scope either.
+        let inner = "fn other() {\n    const BASE: u32 = 9;\n}\n#[test]\nfn t() {}\n";
+        assert_eq!(fold_at(inner, 4, body, "BASE + 1"), None);
+        // A declaration in the test's own module wins over any glob.
+        let own = "mod tests {\n    use crate::external::*;\n    const BASE: u32 = 9;\n    #[test]\n    fn t() {}\n}\n";
+        assert_eq!(fold_at(own, 4, body, "BASE + 1").as_deref(), Some("10"));
+        // A file with no position for the test reads nothing.
+        assert_eq!(fold_at(parent, 0, body, "BASE + 1"), None);
+        assert_eq!(fold_at(parent, 99, body, "BASE + 1"), None);
     }
 }
