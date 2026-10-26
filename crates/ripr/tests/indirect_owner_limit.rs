@@ -937,3 +937,39 @@ fn the_polling_helper_matches_the_direct_await_on_a_hidden_change() -> Result<()
     }
     Ok(())
 }
+
+/// The hidden-change reader must see the owner call in either operand, in an
+/// `assert!(a == b)` condition, and in the `let` that binds the compared
+/// value, for the wrapped call and the bare call alike.
+#[test]
+fn a_hidden_change_is_withheld_whatever_shape_the_assertion_takes() -> Result<(), String> {
+    let shapes = [
+        (
+            "reversed operands",
+            "let expected = 0;\n        assert_eq!(expected, block_on(add_tax(0)));",
+        ),
+        (
+            "assert! equality",
+            "let expected = 0;\n        assert!(block_on(add_tax(0)) == expected);",
+        ),
+        (
+            "let-bound result",
+            "let actual = block_on(add_tax(0));\n        let expected = 0;\n        assert_eq!(actual, expected);",
+        ),
+        (
+            "let-bound direct await",
+            "let actual = add_tax(0).await;\n        let expected = 0;\n        assert_eq!(actual, expected);",
+        ),
+    ];
+    for (label, body) in shapes {
+        let lib = ASYNC_OWNER.replace("assert_eq!(block_on(add_tax(100)), 110);", body);
+        let findings = edited(&lib, TAX_BEFORE, "    p + p / 5")?;
+        if findings.iter().any(|f| f.class == ExposureClass::Exposed) {
+            return Err(format!(
+                "{label}: input 0 hides the change, expected no exposed finding, got {:?}",
+                summary(&findings)
+            ));
+        }
+    }
+    Ok(())
+}

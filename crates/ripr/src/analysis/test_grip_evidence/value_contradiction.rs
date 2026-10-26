@@ -326,19 +326,31 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         // Every mention of the owner must be the one call an assertion folds:
         // a second call in the expected operand, or one outside an
         // assertion, may separate the versions at an input the fold never saw.
-        if count_name_tokens(test.body.as_str(), &owner.name) != test.assertions.len() {
+        // The call may sit in either operand, or in the `let` that binds the
+        // operand, so the operands are resolved before the mentions are counted.
+        let resolved: Vec<Vec<String>> = test
+            .assertions
+            .iter()
+            .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
+            .collect();
+        let resolved_mentions: usize = resolved
+            .iter()
+            .flatten()
+            .map(|operand| count_name_tokens(operand, &owner.name))
+            .sum();
+        if count_name_tokens(test.body.as_str(), &owner.name) != resolved_mentions {
             return false;
         }
-        test.assertions.iter().all(|oracle| {
-            if count_name_tokens(&oracle.text, &owner.name) != 1 {
+        resolved.iter().all(|operands| {
+            let mut holding = operands
+                .iter()
+                .filter(|operand| count_name_tokens(operand, &owner.name) > 0);
+            let (Some(actual), None) = (holding.next(), holding.next()) else {
+                return false;
+            };
+            if count_name_tokens(actual, &owner.name) != 1 {
                 return false;
             }
-            let Some((_, arguments)) = equality_assertion_shape(&oracle.text) else {
-                return false;
-            };
-            let [actual, ..] = arguments.as_slice() else {
-                return false;
-            };
             // Invisibility only: equal owner values at the literal arguments
             // give equal results through any one-argument wrapper
             // (`block_on(owner(..))`), so reading through it can only
@@ -365,6 +377,50 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             }
         })
     })
+}
+
+/// The compared operands of an equality assertion (either order, or the two
+/// sides of `assert!(a == b)`), each bare identifier replaced by the one
+/// `let` initializer that binds it in `test_body`. Empty when the assertion
+/// is not an equality shape.
+fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<String> {
+    let operands: Vec<String> = match equality_assertion_shape(oracle_text) {
+        Some((_, arguments)) => arguments.into_iter().take(2).collect(),
+        None => crate::analysis::classify::equality_condition_operands(oracle_text)
+            .map(Vec::from)
+            .unwrap_or_default(),
+    };
+    operands
+        .into_iter()
+        .map(|operand| let_initializer(test_body, operand.trim()).unwrap_or(operand))
+        .collect()
+}
+
+/// The initializer of the single `let [mut] name = init;` in `body`.
+fn let_initializer(body: &str, name: &str) -> Option<String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    let mut found = None;
+    for (at, _) in body.match_indices("let ") {
+        let rest = body[at + 4..].trim_start();
+        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        let Some(after) = rest.strip_prefix(name) else {
+            continue;
+        };
+        let Some(init) = after.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let end = init.find(';')?;
+        if found.replace(init[..end].trim().to_string()).is_some() {
+            return None;
+        }
+    }
+    found
 }
 
 /// How many whole-identifier occurrences of `name` the `text` holds.
