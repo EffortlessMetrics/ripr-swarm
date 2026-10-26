@@ -22,7 +22,7 @@ fn module_with(definition: &str, test_body: &str) -> String {
 }
 
 #[test]
-fn local_assertion_macro_call_earns_an_unknown_oracle_never_the_inner_strength()
+fn exactly_expandable_local_assertion_macro_earns_the_expanded_assertions_grade()
 -> Result<(), Box<dyn Error>> {
     let index = index_for(&module_with(
         "macro_rules! assert_gate {\n        ($x:expr, $want:expr) => {{\n            assert_eq!(gate($x), $want);\n        }};\n    }",
@@ -32,11 +32,63 @@ fn local_assertion_macro_call_earns_an_unknown_oracle_never_the_inner_strength()
     let test = test_named(&index, "probe")?;
 
     assert_eq!(test.assertions.len(), 1, "{:?}", assertion_texts(test));
-    assert_eq!(test.assertions[0].text, "assert_gate!(11, true)");
+    assert_eq!(test.assertions[0].text, "assert_eq!(gate(11), true);");
+    assert_eq!(strengths(&index, "probe")?, vec![OracleStrength::Strong]);
+    assert!(
+        test.body.contains("assert_eq!(gate(11), true);"),
+        "the body now reads the expansion: {}",
+        test.body
+    );
+    Ok(())
+}
+
+#[test]
+fn local_assertion_macro_that_does_not_expand_exactly_stays_capped_at_unknown()
+-> Result<(), Box<dyn Error>> {
+    for (shape, definition, call) in [
+        (
+            "several arms",
+            "($x:expr) => {{ assert_eq!(gate($x), true); }};\n        ($x:expr, $want:expr) => {{ assert_eq!(gate($x), $want); }};",
+            "assert_gate!(11);",
+        ),
+        (
+            "a non-expr fragment",
+            "($x:literal) => {{ assert_eq!(gate($x), true); }};",
+            "assert_gate!(11);",
+        ),
+        (
+            "more than the assertion in the transcriber",
+            "($x:expr) => {{ let y = 1; assert_eq!(gate($x), y); }};",
+            "assert_gate!(11);",
+        ),
+        (
+            "a tautology after substitution",
+            "($x:expr, $y:expr) => {{ assert_eq!($x, $y); }};",
+            "assert_gate!(gate(11), gate(11));",
+        ),
+    ] {
+        let index = index_for(&module_with(
+            &format!("macro_rules! assert_gate {{\n        {definition}\n    }}"),
+            call,
+        ))?;
+        assert_eq!(
+            strengths(&index, "probe")?,
+            vec![OracleStrength::Unknown],
+            "{shape}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn expansion_wraps_compound_arguments() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&module_with(
+        "macro_rules! assert_gate {\n        ($x:expr, $want:expr) => { assert_eq!(gate($x), $want); };\n    }",
+        "assert_gate!(a + b, true);",
+    ))?;
     assert_eq!(
-        strengths(&index, "probe")?,
-        vec![OracleStrength::Unknown],
-        "an in-body assert_eq! is strong; the wrapper is capped at unknown"
+        assertion_texts(test_named(&index, "probe")?),
+        vec!["assert_eq!(gate((a + b)), true);"]
     );
     Ok(())
 }
@@ -291,12 +343,8 @@ fn macro_defined_inside_the_test_or_exported_twice_grants_nothing() -> Result<()
 }
 
 #[test]
-fn attributed_macros_still_earn_an_unknown_credit() -> Result<(), Box<dyn Error>> {
+fn non_ascii_identifiers_in_an_attributed_macro_are_credited_once() -> Result<(), Box<dyn Error>> {
     for (shape, definition) in [
-        (
-            "fragment in the asserted operand, also in the message",
-            "($x:expr) => {{ assert_eq!(gate($x), true, \"{}\", $x); }};",
-        ),
         (
             "non-ascii identifier in the condition",
             "($x:expr) => {{ assert!($x == résultat); }};",
@@ -310,11 +358,8 @@ fn attributed_macros_still_earn_an_unknown_credit() -> Result<(), Box<dyn Error>
             &format!("macro_rules! assert_gate {{\n        {definition}\n    }}"),
             "assert_gate!(11);",
         ))?;
-        assert_eq!(
-            strengths(&index, "probe")?,
-            vec![OracleStrength::Unknown],
-            "{shape}"
-        );
+        let test = test_named(&index, "probe")?;
+        assert_eq!(test.assertions.len(), 1, "{shape}");
     }
     Ok(())
 }
@@ -329,7 +374,7 @@ fn macro_credit_survives_an_unrelated_assertion_on_the_same_line() -> Result<(),
     assert!(
         test.assertions
             .iter()
-            .any(|assertion| assertion.text.starts_with("assert_gate!")),
+            .any(|assertion| assertion.text.starts_with("assert_eq!(gate(11)")),
         "{:?}",
         assertion_texts(test)
     );
