@@ -205,12 +205,17 @@ arguments (`!x`, `a != b`) do not change this grade.
    `static_limit_kind: rust_macro_wrapped_assertion_unresolved`. With
    `let flag = bulk(100); assert_flag!(flag, true);` the gap stays.
    A same-file `macro_rules!` wrapper such as `check_eq!` that expands to
-   `assert_eq!` takes the same limit when the only other oracle is a
-   proximity test (corpus: `idiom-assert-macro-wrapper`; test:
-   `crates/ripr/tests/local_macro_assertion_limit.rs`).
-   Corpus: `checkout-bulk-custom-assert-macro`. `strsim-sorensen-dice-equal`
-   keeps its gap: its related-test window is truncated, so a hidden direct
-   test's oracle cannot be ruled out.
+   `assert_eq!` takes the same limit when it does not expand exactly and the
+   only other oracle is a proximity test (test:
+   `crates/ripr/tests/local_macro_assertion_limit.rs`). A wrapper that does
+   expand exactly (one arm, only `$x:expr` fragments, one assertion statement)
+   is read as the assertion it stands for and credits like it (#10650;
+   corpus: `idiom-assert-macro-wrapper`, `checkout-bulk-custom-assert-macro`,
+   `spec0120-custom-assert-macro`, all `credited`). The `assert_flag!`
+   shape above keeps its limit when the macro is not defined in the file or
+   does not expand exactly. `strsim-sorensen-dice-equal` keeps its gap: its
+   related-test window is truncated, so a hidden direct test's oracle cannot
+   be ruled out.
 
 ## Required Evidence
 
