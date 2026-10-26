@@ -47,7 +47,7 @@
       "silent"
     ]
   },
-  "reasoning": "Same crate as example 5 plus tests::inner_is_positive, which calls inner(2) directly but only asserts the result is positive; tests::outer_triples still pins outer(4) to 12 through call_inner! and fails on every listed mutant, while inner_is_positive fails only on x / 3, where inner(2) becomes 0. ripr reports weakly_exposed with no static limit (reach established by the direct call), as the spec requires, which scores as a false actionable gap against the runtime truth. Spec cells: RIPR-SPEC-0117 example 6.",
+  "reasoning": "Same crate as example 5 plus tests::inner_is_positive, which calls inner(2) directly but only asserts the result is positive; tests::outer_triples still pins outer(4) to 12 through call_inner! and fails on every listed mutant, while inner_is_positive fails only on x / 3, where inner(2) becomes 0. ripr reports weakly_exposed with reach established by the direct call, and the finding names rust_macro_reach_unresolved and outer_triples as the amended example 6 requires (#7542), so the verdict reads limited, an acceptable abstention. Spec cells: RIPR-SPEC-0117 example 6.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b",
     "full_checkout_verdict": "gap",
