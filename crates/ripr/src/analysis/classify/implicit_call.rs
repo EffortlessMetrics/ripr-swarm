@@ -999,10 +999,15 @@ fn calls_by_type_path(code: &str, name: &str, self_type: &str) -> bool {
         };
         is_type(qualifier)
             || qualifier.strip_suffix('>').is_some_and(|inner| {
-                let inner = inner.rsplit_once('<').map_or("", |(_, inner)| inner);
-                inner
-                    .split_once(" as ")
-                    .is_some_and(|(ty, _)| ty.trim() == self_type)
+                // The `<` must open the qualified path itself, not a generic
+                // argument list (`Wrapper<Money as X>::add` is not this call).
+                let Some((head, inner)) = inner.rsplit_once('<') else {
+                    return false;
+                };
+                !head.ends_with(word)
+                    && inner
+                        .split_once(" as ")
+                        .is_some_and(|(ty, _)| ty.trim() == self_type)
             })
     })
 }

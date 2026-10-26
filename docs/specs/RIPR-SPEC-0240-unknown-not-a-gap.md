@@ -722,7 +722,9 @@ judged by its own evidence: `.name(`, `Money::name(`, or `<Money as Trait>::name
 where the qualifier is exactly the impl type. Another type's `name`, a type that
 only ends in the impl type, a longer method name, and a module-qualified path
 (`crate::Money::name(`, which may name another module's `Money`) do not count and
-leave the test syntax-only. A confirmed
+leave the test syntax-only. Imports and type aliases are not resolved, so a
+`Money` brought in under that name from elsewhere still matches; the test must
+also reach this impl directly to be judged this way. A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
