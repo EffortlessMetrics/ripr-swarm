@@ -4350,7 +4350,7 @@ const SPREAD_UNREADABLE_POSITIONS: usize = 16;
 pub(crate) fn positional_prefix(mut arguments: Vec<String>) -> Vec<String> {
     let Some(at) = arguments
         .iter()
-        .position(|argument| argument.trim_start().starts_with("..."))
+        .position(|argument| starts_with_spread(argument))
     else {
         return arguments;
     };
@@ -4362,6 +4362,27 @@ pub(crate) fn positional_prefix(mut arguments: Vec<String>) -> Vec<String> {
     let end = SPREAD_UNREADABLE_POSITIONS.max(at + 1);
     arguments.extend((at..end).map(|position| format!("...#{position}")));
     arguments
+}
+
+/// `true` when the argument is a spread (`...xs`), also behind leading
+/// comments: `f(/* items */ ...xs)` is still a spread.
+fn starts_with_spread(argument: &str) -> bool {
+    let mut rest = argument.trim_start();
+    loop {
+        if let Some(after) = rest.strip_prefix("/*") {
+            let Some(end) = after.find("*/") else {
+                return false;
+            };
+            rest = after[end + 2..].trim_start();
+        } else if let Some(after) = rest.strip_prefix("//") {
+            let Some(end) = after.find('\n') else {
+                return false;
+            };
+            rest = after[end + 1..].trim_start();
+        } else {
+            return rest.starts_with("...");
+        }
+    }
 }
 
 /// Split the text after a call's opening parenthesis into its top-level

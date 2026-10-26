@@ -403,3 +403,20 @@ fn a_spread_past_the_fixed_count_still_reads_as_unreadable() {
     assert_eq!(got.len(), 21);
     assert_eq!(got[20], "...#20");
 }
+
+#[test]
+fn a_comment_before_the_spread_does_not_hide_it() {
+    for spread in [
+        "/* items */ ...xs",
+        "// items\n...xs",
+        " /* a */ /* b */ ...xs",
+    ] {
+        let got = positional_prefix(vec!["1".to_string(), spread.to_string(), "5".to_string()]);
+        assert_eq!(got[0], "1", "{spread}");
+        assert_eq!(got[1], "...#1", "{spread}");
+        assert_eq!(got[2], "...#2", "{spread}");
+    }
+    // A comment alone, or around a plain argument, is not a spread.
+    let plain = positional_prefix(vec!["/* x */ 4".to_string(), "5".to_string()]);
+    assert_eq!(plain, vec!["/* x */ 4".to_string(), "5".to_string()]);
+}

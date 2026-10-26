@@ -17287,6 +17287,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/rounding_mode_tests.rs::every_positional_reader_marks_positions_after_a_spread_unreadable",
   "crates/ripr/src/analysis/language/typescript/tests/rounding_mode_tests.rs::unreadable_spread_positions_never_witness_equal_arguments",
   "crates/ripr/src/analysis/language/typescript/tests/rounding_mode_tests.rs::a_spread_past_the_fixed_count_still_reads_as_unreadable",
+  "crates/ripr/src/analysis/language/typescript/tests/rounding_mode_tests.rs::a_comment_before_the_spread_does_not_hide_it",
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::neutral_operand_change_reads_one_bounded_shape",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::identity_operand_in_every_tested_call_withdraws_credit",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::additive_identity_is_not_read_because_plus_concatenates_strings",
