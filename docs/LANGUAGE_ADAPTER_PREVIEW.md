@@ -366,7 +366,8 @@ separate bound), a 16 MiB per-file read cap
 (`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
 budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
 and unreadable changed files are named typed limitations on the diff
-result, never silent skips.
+result, never silent skips. The file-count cap only refuses unchanged context: changed
+files are always read and classified (#10461).
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
