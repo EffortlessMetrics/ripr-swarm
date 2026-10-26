@@ -22,3 +22,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`, retained from the same native golden run as entry (1); production is unchanged between that run and this evidence-only addition. No fresh golden execution is claimed by this copy.
+
+## Pending — python_while_counter_past_bound (3)
+
+Reason:
+RIPR-SPEC-0028: refresh compact human wrapping and explanatory legend after main output changes; JSON verdict and full human evidence remain unchanged.
+
+Command:
+`cargo xtask goldens bless python_while_counter_past_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
