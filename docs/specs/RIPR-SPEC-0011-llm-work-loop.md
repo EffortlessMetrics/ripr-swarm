@@ -652,6 +652,16 @@ The LLM work loop must not:
 - Missing optional cockpit artifacts are visible state, not command failures.
 - A missing receipt yields `status: incomplete` and carries the next command
   from agent status.
+- Every `ripr agent` value flag refuses a repeat with
+  `agent <command> takes <flag> once` rather than silently keeping the last
+  value (`agent receipt --command` is intentionally repeatable).
+- `ripr agent verify --gap-id ""` is refused at parse time with the same
+  non-empty wording as `agent repair` and `agent packet`.
+- `ripr agent status --out` accepts lexically equivalent spellings of the
+  default workflow directory (`./target/ripr/workflow`, a trailing slash) and
+  still refuses any other directory, including `../` escapes.
+- Numeric flag errors (`--max-seams`, `--cancel-after-ms`, `--at`) name the
+  flag without leaking std integer-parse text.
 - No automatic edits, generated tests, runtime mutation execution, speculative
   LSP features, or new public crates are added.
 
@@ -736,6 +746,11 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2`
+- `crates/ripr/src/cli/agent.rs::tests::value_flags_refuse_repeats_like_stub_and_brief`
+- `crates/ripr/src/cli/agent.rs::tests::agent_verify_gap_id_rejects_empty_like_repair_and_packet`
+- `crates/ripr/src/cli/agent.rs::tests::numeric_flag_errors_name_the_flag_without_std_parse_text`
+- `crates/ripr/src/app/test_stub.rs::tests::at_selector_line_error_names_the_value_without_std_parse_text`
+- `crates/ripr/src/cli/commands/agent.rs::tests::lexical_normalization_accepts_spellings_of_the_default_and_keeps_escapes`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`

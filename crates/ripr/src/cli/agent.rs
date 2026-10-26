@@ -354,6 +354,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             "--json" => json = true,
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent repair", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -395,6 +396,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--python-repair-trust-manifest" => {
                 i += 1;
+                refuse_repeat(
+                    &trust_manifest,
+                    "agent repair",
+                    "--python-repair-trust-manifest",
+                )?;
                 let value = expect_value(args, i, "--python-repair-trust-manifest")?;
                 if value.trim().is_empty() {
                     return Err(
@@ -406,6 +412,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--python-repair-trust-attempt" => {
                 i += 1;
+                refuse_repeat(
+                    &trust_attempt,
+                    "agent repair",
+                    "--python-repair-trust-attempt",
+                )?;
                 let value = expect_value(args, i, "--python-repair-trust-attempt")?;
                 if value.trim().is_empty() {
                     return Err(
@@ -420,6 +431,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--edit-authority" => {
                 i += 1;
+                refuse_repeat(&edit_authority, "agent repair", "--edit-authority")?;
                 let value = expect_value(args, i, "--edit-authority")?;
                 if value.trim().is_empty() {
                     return Err(
@@ -434,6 +446,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--verify-authority" => {
                 i += 1;
+                refuse_repeat(&verify_authority, "agent repair", "--verify-authority")?;
                 let value = expect_value(args, i, "--verify-authority")?;
                 if value.trim().is_empty() {
                     return Err(
@@ -448,6 +461,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--store" => {
                 i += 1;
+                refuse_repeat(&store, "agent repair", "--store")?;
                 let value = expect_value(args, i, "--store")?;
                 if value.trim().is_empty() {
                     return Err("agent repair --store requires a non-empty path".to_string());
@@ -698,6 +712,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
     let mut root_explicit = false;
     let mut seam_id: Option<String> = None;
     let mut out_dir = PathBuf::from("target/ripr/workflow");
+    let mut out_explicit = false;
     let mut json = false;
 
     let mut i = 0usize;
@@ -705,6 +720,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent start", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -719,11 +735,13 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
             }
             "--out" => {
                 i += 1;
+                refuse_repeat_if(out_explicit, "agent start", "--out")?;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
                     return Err("agent start --out requires a non-empty path".to_string());
                 }
                 out_dir = PathBuf::from(value);
+                out_explicit = true;
             }
             "--json" => json = true,
             other => return Err(unknown_argument("agent start", other)),
@@ -746,12 +764,14 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     let mut working_set: Option<WorkingSetCandidate> = None;
     let mut json = false;
     let mut max_seams = DEFAULT_AGENT_BRIEF_MAX_SEAMS;
+    let mut max_seams_explicit = false;
 
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent brief", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -788,7 +808,9 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
             "--json" => json = true,
             "--max-seams" => {
                 i += 1;
+                refuse_repeat_if(max_seams_explicit, "agent brief", "--max-seams")?;
                 max_seams = parse_max_seams(expect_value(args, i, "--max-seams")?)?;
+                max_seams_explicit = true;
             }
             other => return Err(unknown_argument("agent brief", other)),
         }
@@ -829,6 +851,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent packet", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -914,6 +937,7 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent card", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -963,6 +987,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent stub", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -1024,6 +1049,7 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent verify", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -1085,20 +1111,28 @@ pub(super) fn parse_agent_verify_execute_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent verify-execute", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
             "--packet" => {
                 i += 1;
+                refuse_repeat(&packet, "agent verify-execute", "--packet")?;
                 packet = Some(PathBuf::from(expect_value(args, i, "--packet")?));
             }
             "--result-json" => {
                 i += 1;
+                refuse_repeat(&result_json, "agent verify-execute", "--result-json")?;
                 result_json = Some(PathBuf::from(expect_value(args, i, "--result-json")?));
             }
             "--authorize" => authorize = true,
             "--cancel-after-ms" => {
                 i += 1;
+                refuse_repeat(
+                    &cancel_after_ms,
+                    "agent verify-execute",
+                    "--cancel-after-ms",
+                )?;
                 let value = expect_value(args, i, "--cancel-after-ms")?;
                 let parsed = value.parse::<u64>().map_err(|_parse_err| {
                     "invalid --cancel-after-ms: expected a positive integer".to_string()
@@ -1154,6 +1188,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent receipt", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -1182,6 +1217,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
             }
             "--test" => {
                 i += 1;
+                refuse_repeat(&test_changed, "agent receipt", "--test")?;
                 let value = expect_value(args, i, "--test")?;
                 if value.trim().is_empty() {
                     return Err("agent receipt --test requires a non-empty value".to_string());
@@ -1242,16 +1278,19 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent status", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
             "--json" => json = true,
             "--out" => {
                 i += 1;
+                refuse_repeat(&out_dir, "agent status", "--out")?;
                 out_dir = Some(PathBuf::from(expect_value(args, i, "--out")?));
             }
             "--store" => {
                 i += 1;
+                refuse_repeat(&store, "agent status", "--store")?;
                 let value = expect_value(args, i, "--store")?;
                 if value.trim().is_empty() {
                     return Err("agent status --store requires a non-empty path".to_string());
@@ -1260,6 +1299,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
             }
             "--attempt" => {
                 i += 1;
+                refuse_repeat(&attempt_id, "agent status", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
                     return Err(
@@ -1295,6 +1335,7 @@ pub(super) fn parse_agent_review_summary_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
+                refuse_repeat_if(root_explicit, "agent review-summary", "--root")?;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
                 root_explicit = true;
             }
@@ -1314,7 +1355,16 @@ pub(super) fn parse_agent_review_summary_options(
 /// One shared refusal for a value flag given twice, so a repeat is never a
 /// silent last-wins: `<command> takes <flag> once`.
 fn refuse_repeat<T>(slot: &Option<T>, command: &str, flag: &str) -> Result<(), String> {
-    if slot.is_some() {
+    refuse_repeat_if(slot.is_some(), command, flag)
+}
+
+/// `refuse_repeat` for a flag whose value is not held in an `Option`
+/// (`seen` is the parser's own "already given" fact).
+///
+/// Intentionally repeatable: `agent receipt --command` (accumulates every
+/// command run). Boolean switches are idempotent and not value flags.
+fn refuse_repeat_if(seen: bool, command: &str, flag: &str) -> Result<(), String> {
+    if seen {
         return Err(format!("{command} takes {flag} once"));
     }
     Ok(())
@@ -1534,6 +1584,98 @@ mod tests {
                 vec!["stub", "--kind", "a", "--kind", "b"],
                 "agent stub takes --kind once",
             ),
+            (
+                vec![
+                    "repair",
+                    "--python-repair-trust-manifest",
+                    "a",
+                    "--python-repair-trust-manifest",
+                    "b",
+                ],
+                "agent repair takes --python-repair-trust-manifest once",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--python-repair-trust-attempt",
+                    "a",
+                    "--python-repair-trust-attempt",
+                    "b",
+                ],
+                "agent repair takes --python-repair-trust-attempt once",
+            ),
+            (
+                vec!["repair", "--edit-authority", "a", "--edit-authority", "b"],
+                "agent repair takes --edit-authority once",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--verify-authority",
+                    "a",
+                    "--verify-authority",
+                    "b",
+                ],
+                "agent repair takes --verify-authority once",
+            ),
+            (
+                vec!["repair", "--store", "a", "--store", "b"],
+                "agent repair takes --store once",
+            ),
+            (
+                vec!["repair", "--root", "a", "--root", "b"],
+                "agent repair takes --root once",
+            ),
+            (
+                vec!["start", "--out", "a", "--out", "b"],
+                "agent start takes --out once",
+            ),
+            (
+                vec!["brief", "--max-seams", "1", "--max-seams", "2"],
+                "agent brief takes --max-seams once",
+            ),
+            (
+                vec!["verify-execute", "--packet", "a", "--packet", "b"],
+                "agent verify-execute takes --packet once",
+            ),
+            (
+                vec!["verify-execute", "--result-json", "a", "--result-json", "b"],
+                "agent verify-execute takes --result-json once",
+            ),
+            (
+                vec![
+                    "verify-execute",
+                    "--cancel-after-ms",
+                    "1",
+                    "--cancel-after-ms",
+                    "2",
+                ],
+                "agent verify-execute takes --cancel-after-ms once",
+            ),
+            (
+                vec!["receipt", "--test", "a", "--test", "b"],
+                "agent receipt takes --test once",
+            ),
+            (
+                vec!["receipt", "--verify-json", "a", "--verify-json", "b"],
+                "agent receipt takes --verify-json once",
+            ),
+            (
+                vec!["status", "--out", "a", "--out", "b"],
+                "agent status takes --out once",
+            ),
+            (
+                vec!["status", "--store", "a", "--store", "b"],
+                "agent status takes --store once",
+            ),
+            (
+                vec!["status", "--attempt", "a", "--attempt", "b"],
+                "agent status takes --attempt once",
+            ),
+            (
+                vec!["review-summary", "--root", "a", "--root", "b"],
+                "agent review-summary takes --root once",
+            ),
         ];
         for (argv, expected) in cases {
             assert_eq!(
@@ -1542,6 +1684,22 @@ mod tests {
                 "{argv:?}"
             );
         }
+        // Intentionally repeatable: receipt --command accumulates.
+        assert!(
+            parse_agent_receipt_options(&args(&[
+                "--verify-json",
+                "v",
+                "--seam-id",
+                "s",
+                "--json",
+                "--command",
+                "a",
+                "--command",
+                "b",
+            ]))
+            .is_ok(),
+            "receipt --command stays repeatable"
+        );
         // A single use of the same flags is still accepted.
         assert!(
             parse_agent_args(&args(&["card", "--seam-id", "a"])).is_ok(),

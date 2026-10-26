@@ -1098,7 +1098,7 @@ fn lexically_normalized(path: &Path) -> PathBuf {
             other => out.push(other),
         }
     }
-    out.iter().map(|component| component.as_os_str()).collect()
+    out.into_iter().collect()
 }
 
 /// Shared with the task-first `ripr status` façade (#6305): both spellings
