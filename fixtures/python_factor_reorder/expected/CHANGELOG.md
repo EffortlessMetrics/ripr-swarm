@@ -46,3 +46,16 @@ Reconcile the source-reviewed glossary lines and compare all three surfaces usin
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_factor_reorder (5)
+
+Reason:
+RIPR-SPEC-0238 #9815: expanded independent controls require four weak findings with order-sensitive guidance, including finite float rows, nested products and quoted hashes; baseline classifier assertions exposed the former errors.
+
+Command:
+`cargo xtask goldens bless python_factor_reorder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

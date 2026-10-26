@@ -17,8 +17,11 @@
 //! Fail closed toward not-`exposed` only when static evidence sees the table
 //! and either (1) the expected column is the same unvaried literal as a
 //! changed returned parameter and that literal matches the replacement
-//! return, or (2) every row's bound integer literals make the old and new
-//! arithmetic evaluate equal. An unreadable table, a non-literal cell, a
+//! return, (2) every row's bound integer literals make the old and new
+//! arithmetic evaluate equal, or (3) an exact binary factor swap has bounded
+//! primitive numeric rows with finite products. That last reading never
+//! infers the production operands' runtime types or changes grouping.
+//! An unreadable table, a non-literal cell, a
 //! non-table strong test, a row that distinguishes the change, or an
 //! unvaried value that would still fail after the replacement keeps today's
 //! verdict.
@@ -50,7 +53,8 @@ pub(super) struct UnvariedTableOperand {
 /// When every strong related table-driven oracle takes its expected value from
 /// a row column and no row varies the changed returned operand, name that
 /// operand. Also names a bound arithmetic operand when every row's integer
-/// literals make the old and new expressions agree. None when a non-table
+/// literals make the old and new expressions agree, including the bounded
+/// primitive numeric reading for exact factor swaps. None when a non-table
 /// strong test exists, a table varies or distinguishes the operand, or the
 /// table cannot be read.
 pub(super) fn python_unvaried_table_operand(

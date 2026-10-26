@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/python_factor_reorder/input
 config: <cwd>/fixtures/python_factor_reorder/input/ripr.toml
 
-Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 4 probe(s), 0 exposed, 4 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 4 of 4 finding(s) unsuppressed
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s)
 
 WARNING src/shop.py:2
   id: probe:src_shop.py:python_preview:f5eb84b2
@@ -74,6 +74,201 @@ Next step
 Drill in:
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:f5eb84b2
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:f5eb84b2
+
+WARNING src/shop.py:6
+  id: probe:src_shop.py:python_preview:8bf754ea
+
+Changed
+  after:      return b * a
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/shop.py::float_area
+  canonical gap: gap:python:src/shop.py:float_area:return_value:return_value:b*a
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `float_area`
+  - infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches returned value: return b * a (line 6)
+  - related test tests/test_shop.py:11 test_float_area uses strong exact value oracle: assert float_area(a, b) == want
+
+Weakness
+  - A strong Python oracle reaches `float_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order
+  - missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/shop.py:float_area:return_value:return_value:b*a
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: float_area
+  changed behavior: return_value changed at src/shop.py:6: `return b * a`
+  current test evidence: tests/test_shop.py:11 test_float_area currently has oracle_strength=strong, oracle_kind=exact_value: assert float_area(a, b) == want
+  missing discriminator: a table row whose operands distinguish multiplication order
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.
+  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
+  suggested file: tests/test_shop.py
+  suggested test: test_float_area
+  pytest node: tests/test_shop.py::test_float_area
+  verify: python -m pytest tests/test_shop.py::test_float_area (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:8bf754ea
+  ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:8bf754ea
+
+WARNING src/shop.py:10
+  id: probe:src_shop.py:python_preview:5bf163be
+
+Changed
+  after:      return (b * a,)
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/shop.py::boxed_area
+  canonical gap: gap:python:src/shop.py:boxed_area:return_value:return_value:b*a
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `boxed_area`
+  - infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches returned value: return (b * a,) (line 10)
+  - related test tests/test_shop.py:16 test_boxed_area uses strong exact value oracle: assert boxed_area(a, b) == want
+
+Weakness
+  - A strong Python oracle reaches `boxed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order
+  - missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/shop.py:boxed_area:return_value:return_value:b*a
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: boxed_area
+  changed behavior: return_value changed at src/shop.py:10: `return (b * a,)`
+  current test evidence: tests/test_shop.py:16 test_boxed_area currently has oracle_strength=strong, oracle_kind=exact_value: assert boxed_area(a, b) == want
+  missing discriminator: a table row whose operands distinguish multiplication order
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.
+  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
+  suggested file: tests/test_shop.py
+  suggested test: test_boxed_area
+  pytest node: tests/test_shop.py::test_boxed_area
+  verify: python -m pytest tests/test_shop.py::test_boxed_area (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:5bf163be
+  ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:5bf163be
+
+WARNING src/shop.py:14
+  id: probe:src_shop.py:python_preview:c5d74b8f
+
+Changed
+  after:      return b * a, '#'
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/shop.py::hashed_area
+  canonical gap: gap:python:src/shop.py:hashed_area:return_value:return_value:b*a
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `hashed_area`
+  - infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches returned value: return b * a, '#' (line 14)
+  - related test tests/test_shop.py:21 test_hashed_area uses strong exact value oracle: assert hashed_area(a, b) == want
+
+Weakness
+  - A strong Python oracle reaches `hashed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order
+  - missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/shop.py:hashed_area:return_value:return_value:b*a
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: hashed_area
+  changed behavior: return_value changed at src/shop.py:14: `return b * a, '#'`
+  current test evidence: tests/test_shop.py:21 test_hashed_area currently has oracle_strength=strong, oracle_kind=exact_value: assert hashed_area(a, b) == want
+  missing discriminator: a table row whose operands distinguish multiplication order
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.
+  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
+  suggested file: tests/test_shop.py
+  suggested test: test_hashed_area
+  pytest node: tests/test_shop.py::test_hashed_area
+  verify: python -m pytest tests/test_shop.py::test_hashed_area (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:c5d74b8f
+  ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:c5d74b8f
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
