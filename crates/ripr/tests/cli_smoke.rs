@@ -29381,14 +29381,21 @@ fn pr_evidence_help_exits_cleanly() {
 fn run_pr_evidence_in_fixture(root: &Path, args: &[&str]) -> Result<Output, String> {
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
         .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
-    // Match fixture_git's isolation: a Git hook's exported repository
-    // selectors must not retarget the CLI away from this fixture.
-    std::process::Command::new(&bin)
+    // Match fixture_git's isolation: no inherited GIT_* variable (repository
+    // selectors, injected config, object paths) may reach the CLI's own Git
+    // calls. Cleared on the child, never on the multithreaded test process.
+    let mut command = std::process::Command::new(&bin);
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(key);
+        }
+    }
+    command
         .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
         .args(args)
         .output()
         .map_err(|err| err.to_string())
@@ -29425,6 +29432,12 @@ fn pr_evidence_with_missing_artifacts_writes_packet() -> Result<(), String> {
     assert_eq!(packet["base"], "main", "{packet}");
     assert_eq!(packet["head"], "HEAD", "{packet}");
     assert_eq!(packet["summary"]["changed_files"], 1, "{packet}");
+    // The fixture has no tests, so analysis must have scored the changed
+    // predicate; a packet that only carries the diff would read zero here.
+    assert!(
+        packet["summary"]["no_static_path"].as_u64().unwrap_or(0) >= 1,
+        "packet must carry analyzed findings, not only the diff: {packet}"
+    );
     let diff = std::fs::read_to_string(root.join(artifacts[2])).map_err(|err| err.to_string())?;
     assert!(
         diff.contains("src/lib.rs")
