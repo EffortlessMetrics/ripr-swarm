@@ -704,9 +704,11 @@ fn unescape(value: &str) -> String {
 
 /// The unpartitioned step's `run-context.txt` shape, from shard 1's tool
 /// versions and blob identities, with the partition-specific lines replaced.
-/// `verified_attempts` discloses when the accepted shards span more than one
-/// run attempt (a partial re-run, #10605): `run_attempt` stays the verifying
-/// attempt, and the line names the attempts the shard evidence came from.
+/// `verified_attempts` discloses when any accepted shard's evidence comes from
+/// an attempt other than the verifying attempt (a partial re-run, #10605):
+/// `run_attempt` stays the verifying attempt, and the line names the attempts
+/// the shard evidence came from — including a single distinct earlier attempt,
+/// so reused results are never presented as fresh.
 fn combined_context(first: &str, options: &Options, used_attempts: &BTreeSet<u32>) -> String {
     let mut out = format!(
         "repository={}\ncheckout_sha={}\nrun_id={}\nrun_attempt={}\nprofile=ci\n\
@@ -720,7 +722,11 @@ fn combined_context(first: &str, options: &Options, used_attempts: &BTreeSet<u32
         options.shards,
         options.shards
     );
-    if used_attempts.len() > 1 {
+    if used_attempts.len() > 1
+        || used_attempts
+            .iter()
+            .any(|attempt| attempt.to_string() != options.attempt)
+    {
         let attempts: Vec<String> = used_attempts.iter().map(u32::to_string).collect();
         out.push_str(&format!("verified_attempts={}\n", attempts.join(",")));
     }
@@ -896,6 +902,31 @@ mod tests {
                 .any(|problem| problem.contains("artifact is missing")),
             "{:?}",
             outcome.problems
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// When only the verification job re-runs, every shard is reused from an
+    /// earlier attempt. A single distinct earlier attempt must still be
+    /// disclosed: without the line, the combined receipt would present
+    /// attempt-1 test results as attempt-2 results (#10669 review).
+    #[test]
+    fn reused_shards_disclose_the_single_earlier_attempt() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-reused-single-attempt");
+        lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
+        lay_out_shard(&root, false, 2, 2, 1, &["b three"])?;
+        let outcome = verify(&options_attempt(&root, 2, "2"));
+        assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+        assert!(
+            outcome.context.contains("run_attempt=2"),
+            "{}",
+            outcome.context
+        );
+        assert!(
+            outcome.context.contains("verified_attempts=1"),
+            "{}",
+            outcome.context
         );
         let _ = fs::remove_dir_all(&root);
         Ok(())
