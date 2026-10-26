@@ -329,6 +329,63 @@ fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), 
 }
 
 #[test]
+fn disjoint_value_bindings_cannot_supply_outer_primitive_evidence() -> Result<(), String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs");
+    for addition in [
+        "fn unrelated() { let ignored = 0; let shipping = 0; }",
+        "{ let ignored = 0; let shipping = 0; }",
+        "let _unused = || { let ignored = 0; let shipping = 0; };",
+        "{ let ignored = 0; let shipping: i64 = 0; }",
+        "let _unused = || { let ignored = 0; let shipping: i64 = 0; };",
+    ] {
+        let source = source.replace(
+            "    ADD_CALLS.store(",
+            &format!("    {addition}\n    ADD_CALLS.store("),
+        );
+        assert_binding_class(&source, ExposureClass::Exposed)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unread_direct_rebindings_cannot_leave_a_parameter_primitive() -> Result<(), String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "shipping: i64)")
+        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)");
+    for rebind in [
+        "#[cfg(all())] let shipping = Shipping;",
+        "let (shipping,) = (Shipping,);",
+        "let shipping; shipping = Shipping;",
+    ] {
+        let source = source.replace("    Quote {", &format!("    {rebind}\n    Quote {{"));
+        assert_binding_class(&source, ExposureClass::Exposed)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn disjoint_value_bindings_do_not_veto_outer_primitive_evidence() -> Result<(), String> {
+    for addition in [
+        "fn unrelated() { let ignored = 0; let shipping = Some(0); }",
+        "{ let ignored = 0; let shipping = Some(0); }",
+        "let _unused = || { let ignored = 0; let shipping = Some(0); };",
+    ] {
+        let source = SPACED.replace("    Quote {", &format!("    {addition}\n    Quote {{"));
+        assert_binding_class(&source, ExposureClass::WeaklyExposed)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_modules_primitive_callee_does_not_capture_outer_generics() -> Result<(), String> {
+    let primitive = include_str!("fixtures/operand_callee_identity/primitive_control.rs");
+    let source = format!(
+        "fn unrelated<u64>() {{ mod local {{ use core::primitive::u64; fn shipping_cents(_: u64) -> u64 {{ 0 }} }} }}\n{primitive}"
+    );
+    assert_binding_class(&source, ExposureClass::WeaklyExposed)
+}
+
+#[test]
 fn primitive_generic_nominal_and_import_bindings_refuse_the_downgrade() -> Result<(), String> {
     let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs");
     let without_alias =
