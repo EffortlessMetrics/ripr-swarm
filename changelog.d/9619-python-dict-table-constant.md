@@ -4,4 +4,4 @@
   `.get(key)` or `[key]` and the assertion differs between the old and new
   dict. Any mutation, alias or reflective access to the table elsewhere in the
   workspace withholds the credit. `py-shapes-package-export-lookup` now reads
-  `credited`; the Python corpus stays at 0 false verdicts in 311 cases (#9619).
+  `credited`; the Python corpus stays at 0 false verdicts in 331 cases; four new `authored-py-table-traps` cases pin the bool-key `.get` fallback and the foreign-store false promotions with credited controls (#9619).
