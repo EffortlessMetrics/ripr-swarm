@@ -80,6 +80,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
+mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
 #[cfg(test)]
@@ -723,6 +724,10 @@ impl TypeScriptAdapter {
         // then (#4261); an ownerless, import-only or deletion-only TS change
         // never reads the index.
         let mut test_index_consumed = false;
+        // A Rust change related to TypeScript tests through the Bun bridge is
+        // not reachable by TypeScript imports, so it keeps the workspace-wide
+        // partial-extraction disclosure (#10436).
+        let mut cross_language_consumed = false;
         for changed in changed_files {
             for added in &changed.added_lines {
                 if let Some(finding) = bun_cross_language_finding_for_changed_rust_line(
@@ -732,6 +737,7 @@ impl TypeScriptAdapter {
                     &all_tests,
                 ) {
                     test_index_consumed = true;
+                    cross_language_consumed = true;
                     findings.push(finding);
                 }
             }
@@ -1168,11 +1174,35 @@ impl TypeScriptAdapter {
         // The index is workspace-wide, so a diff that classified nothing
         // against it (Rust-only, or TS test edits only) is not made partial by
         // test shapes it never consulted (#4261).
-        let consulted_gaps: &[_] = if test_index_consumed {
-            &extraction_gaps
+        // #10436: a dropped registration matters only when a test in its file
+        // could be related to code this diff changed. `GapReach` answers that
+        // from the file's local import closure and keeps the gap whenever it
+        // cannot prove otherwise.
+        let scoped_gaps: Vec<TypeScriptTestExtractionGap> = if test_index_consumed {
+            let owner_names = all_owners
+                .iter()
+                .filter(|owner| changed_paths.contains(&normalized_path(&owner.file)))
+                .flat_map(|owner| {
+                    std::iter::once(owner.name.clone()).chain(owner.class_name.clone())
+                })
+                .collect::<Vec<_>>();
+            let reach = gap_reach::GapReach::new(
+                &source_by_normalized,
+                &changed_paths,
+                owner_names,
+                alias_map_ref,
+                &options.root,
+                cross_language_consumed,
+            );
+            extraction_gaps
+                .iter()
+                .filter(|gap| reach.may_reach(&gap.file))
+                .cloned()
+                .collect()
         } else {
-            &[]
+            Vec::new()
         };
+        let consulted_gaps: &[_] = &scoped_gaps;
         // One summary limitation for the whole workspace-wide index, not one
         // line per unrelated test file: the gaps are not in the diff, so a
         // per-file list buried the changed-file result.

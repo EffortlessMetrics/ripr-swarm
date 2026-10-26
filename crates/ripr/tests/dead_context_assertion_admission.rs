@@ -69,6 +69,15 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                     "if_false",
                     "closure_uncalled",
                     "mixed",
+                    "loop_outer_inner_break",
+                    "while_true",
+                    "while_paren_true",
+                    "exit_qualified",
+                    "exit_use_process",
+                    "exit_use_leaf",
+                    "exit_renamed_module",
+                    "loop_break",
+                    "labeled_break",
                 ] {
                     let body = match context {
                         "direct" => assertion.clone(),
@@ -87,6 +96,28 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                         "if_false" => format!("if false {{\n{assertion}\n}}"),
                         "closure_uncalled" => format!("let _never = || {{\n{assertion}\n}};"),
                         "mixed" => format!("{assertion}\n{{ return; }}\n{assertion}"),
+                        // An inner loop's `break` does not leave the outer loop.
+                        "loop_outer_inner_break" => {
+                            format!("loop {{ for _ in 0..1 {{ break; }} }}\n{assertion}")
+                        }
+                        "while_true" => format!("while true {{ }}\n{assertion}"),
+                        "while_paren_true" => format!("while (true) {{ }}\n{assertion}"),
+                        "exit_qualified" => format!("std::process::exit(0);\n{assertion}"),
+                        "exit_use_process" => {
+                            format!("use std::process;\nprocess::exit(0);\n{assertion}")
+                        }
+                        "exit_use_leaf" => {
+                            format!("use std::process::exit;\nexit(0);\n{assertion}")
+                        }
+                        "exit_renamed_module" => {
+                            format!("use std::process as quit;\nquit::exit(0);\n{assertion}")
+                        }
+                        // Live controls: a `break` that leaves the loop, own or
+                        // through its label, lets the assertion run.
+                        "loop_break" => format!("loop {{ break; }}\n{assertion}"),
+                        "labeled_break" => {
+                            format!("'outer: loop {{ loop {{ break 'outer; }} }}\n{assertion}")
+                        }
                         _ => return Err("unknown context".into()),
                     };
                     let (production, diff, setup, test_name, line, expression, families) =
@@ -178,7 +209,8 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                             )
                         })
                         .collect::<Vec<_>>();
-                    let live = context == "direct" || context == "mixed";
+                    let live =
+                        matches!(context, "direct" | "mixed" | "loop_break" | "labeled_break");
                     if !live {
                         for family in &families {
                             assert!(
@@ -206,15 +238,17 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
         }
     }
     for (key, classes) in &outcomes {
-        if let Some(prefix) = key.strip_suffix("_mixed") {
-            assert_eq!(
-                outcomes.get(&format!("{prefix}_direct")),
-                Some(classes),
-                "{key}: a dead sibling changed a live assertion's credit"
-            );
+        for live_suffix in ["_mixed", "_loop_break", "_labeled_break"] {
+            if let Some(prefix) = key.strip_suffix(live_suffix) {
+                assert_eq!(
+                    outcomes.get(&format!("{prefix}_direct")),
+                    Some(classes),
+                    "{key}: a dead sibling or a loop that exits changed a live assertion's credit"
+                );
+            }
         }
     }
-    assert_eq!(count, 264);
+    assert_eq!(count, 480);
     Ok(())
 }
 
@@ -344,6 +378,11 @@ fn boolean_assert_with_nested_macro_operand_credits_only_when_it_runs_and_cannot
             "live_nested_macro_with_negated_group",
             "assert!(approx_eq!(i32, compute_score(4), 8) && !(compute_score(4) < 0));",
             true,
+        ),
+        (
+            "deeper_path_use_of_the_macro_name",
+            "use float_cmp::other::approx_eq;\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
         ),
         (
             "shadowing_use_of_the_macro_name",
