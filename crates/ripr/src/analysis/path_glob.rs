@@ -106,7 +106,6 @@ fn chars_match(pattern: &[char], segment: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{path_glob_matches, segment_glob_matches};
-    use std::time::{Duration, Instant};
 
     /// The pre-fix recursive matcher, kept only as a differential oracle on
     /// inputs small enough for its exponential worst case to stay cheap.
@@ -270,21 +269,19 @@ mod tests {
 
     #[test]
     fn pathological_star_patterns_finish_quickly() {
-        let started = Instant::now();
-        let char_pattern = format!("src/{}b.rs", "*a".repeat(20) + "*");
-        let long_name = format!("src/{}.rs", "a".repeat(40));
-        assert!(!path_glob_matches(&char_pattern, &long_name));
+        // O(pattern * subject): doubling both quadruples the work, while
+        // naive backtracking is exponential and far beyond the factor.
+        crate::testing::scale::assert_growth_within("pathological globs", 10, 20, 8, |k| {
+            let char_pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
+            let long_name = format!("src/{}.rs", "a".repeat(2 * k));
+            assert!(!path_glob_matches(&char_pattern, &long_name));
 
-        let segment_pattern = format!("{}/b.rs", "**/a".repeat(20));
-        let long_path = format!("{}/c.rs", vec!["a"; 40].join("/"));
-        assert!(!path_glob_matches(&segment_pattern, &long_path));
+            let segment_pattern = format!("{}/b.rs", "**/a".repeat(k));
+            let long_path = format!("{}/c.rs", vec!["a"; 2 * k].join("/"));
+            assert!(!path_glob_matches(&segment_pattern, &long_path));
 
-        let name_pattern = "*a".repeat(20) + "*b";
-        assert!(!segment_glob_matches(&name_pattern, &"a".repeat(40)));
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "pathological globs took {:?}",
-            started.elapsed()
-        );
+            let name_pattern = "*a".repeat(k) + "*b";
+            assert!(!segment_glob_matches(&name_pattern, &"a".repeat(2 * k)));
+        });
     }
 }

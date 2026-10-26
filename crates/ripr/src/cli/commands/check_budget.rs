@@ -190,15 +190,19 @@ mod tests {
 
     #[test]
     fn exhausted_budget_refuses_with_the_typed_timeout_and_no_result() -> Result<(), String> {
-        let started = std::time::Instant::now();
+        // The worker blocks until `release` is dropped, so it cannot finish on
+        // its own: getting a result back at all proves the budget, not the
+        // worker, ended the call. No wall-clock bound is involved.
+        let (release, parked) = std::sync::mpsc::channel::<()>();
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
             || {},
-            || {
-                std::thread::sleep(Duration::from_mins(1));
+            move || {
+                let _ = parked.recv();
                 Ok(1)
             },
         );
+        drop(release);
         let Err(error) = result else {
             return Err("a stuck worker must hit the budget".to_string());
         };
@@ -210,8 +214,6 @@ mod tests {
         assert_eq!(refusal.identity, "analysis_timeout");
         assert_eq!(refusal.repair_route, "analysis/timeout");
         assert!(error.to_string().contains("not a clean result"));
-        // The bound is the budget plus the cancel grace, not the worker's 60 s.
-        assert!(started.elapsed() < Duration::from_secs(10));
         Ok(())
     }
 

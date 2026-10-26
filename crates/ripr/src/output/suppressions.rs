@@ -1560,18 +1560,16 @@ reason = "second"
     fn path_glob_matches_pathological_star_pattern_without_backtracking_blowup() {
         // Twenty `*a` wildcards against a forty-`a` name with no trailing
         // `b`: naive recursive backtracking explores ~C(40, 20) splits.
-        let started = std::time::Instant::now();
-        let pattern = format!("src/{}b.rs", "*a".repeat(20) + "*");
-        let path = format!("src/{}.rs", "a".repeat(40));
-        assert!(!path_glob_matches(&pattern, &path));
-        let pattern = format!("{}/b.rs", "**/a".repeat(20));
-        let path = format!("{}/c.rs", vec!["a"; 40].join("/"));
-        assert!(!path_glob_matches(&pattern, &path));
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(2),
-            "pathological suppression globs took {:?}",
-            started.elapsed()
-        );
+        // The matcher is O(pattern * subject), so doubling both quadruples
+        // the work; exponential backtracking is far beyond the factor.
+        crate::testing::scale::assert_growth_within("suppression globs", 10, 20, 8, |k| {
+            let pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
+            let path = format!("src/{}.rs", "a".repeat(2 * k));
+            assert!(!path_glob_matches(&pattern, &path));
+            let pattern = format!("{}/b.rs", "**/a".repeat(k));
+            let path = format!("{}/c.rs", vec!["a"; 2 * k].join("/"));
+            assert!(!path_glob_matches(&pattern, &path));
+        });
     }
 
     fn candidate(finding_id: &str, path: &str, class: &str) -> CheckSuppressionCandidate {

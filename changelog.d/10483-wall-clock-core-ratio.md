@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Core complexity tests (diff run starts and long lines, path globs, suppression globs, error-return twin chains) compare the same work at two sizes through `testing::scale::assert_growth_within` instead of asserting an absolute wall-clock bound, and the check-budget timeout test no longer measures elapsed time, so required runs stop failing on runner speed (#10483).
