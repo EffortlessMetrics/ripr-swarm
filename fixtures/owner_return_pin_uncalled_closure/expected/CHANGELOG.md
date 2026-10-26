@@ -324,3 +324,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_uncalled_closure (26)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless owner_return_pin_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

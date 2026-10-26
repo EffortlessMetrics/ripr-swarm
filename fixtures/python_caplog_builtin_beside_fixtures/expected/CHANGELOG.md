@@ -31,3 +31,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_caplog_builtin_beside_fixtures (3)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless python_caplog_builtin_beside_fixtures --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

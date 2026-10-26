@@ -671,3 +671,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_matching (26)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless typescript_related_test_matching --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

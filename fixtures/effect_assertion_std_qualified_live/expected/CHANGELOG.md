@@ -77,3 +77,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_std_qualified_live (7)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless effect_assertion_std_qualified_live --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

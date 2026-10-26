@@ -15,3 +15,16 @@ Updated:
 Retained full rendering:
 - `expected/human-full.txt` from the same successful fixture producer invocation above.
 - The producer's `check.json` bytes match the blessed file exactly; one return-value subject and its independent literal classification were checked before copying the retained rendering.
+
+## Pending — rust_polling_helper_direct (2)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless rust_polling_helper_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

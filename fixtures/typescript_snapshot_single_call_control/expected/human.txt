@@ -41,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_snapshot_single_call_control/input --diff <cwd>/fixtures/typescript_snapshot_single_call_control/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_snapshot_single_call_control/input --diff <cwd>/fixtures/typescript_snapshot_single_call_control/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

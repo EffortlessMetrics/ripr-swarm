@@ -181,3 +181,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_awaited_registration (16)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless javascript_awaited_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

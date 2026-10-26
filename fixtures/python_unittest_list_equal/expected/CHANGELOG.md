@@ -157,3 +157,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_list_equal (14)
+
+Reason:
+RIPR-SPEC-0122: #10702 check advisory agrees with repair: exposed finding says nothing to repair; a file with seams never reads as no seam
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

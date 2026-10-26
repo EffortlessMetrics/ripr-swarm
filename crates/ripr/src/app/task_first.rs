@@ -202,7 +202,7 @@ fn repair_refusal(
             {
                 (
                     RefusalKind::AlreadyGripped,
-                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
+                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair in this seam (this is the whole-seam view of `ripr repair`; `ripr check` judges your changed lines)"),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
                 // Name the evidence the route still needs, not just the gate
@@ -956,6 +956,13 @@ pub(crate) fn check_repair_route(
     // finding whose seam the gate refused must not read as "analysis could
     // not decide" either.
     let static_limited = super::gap_bound_repair::finding_is_static_limited(finding);
+    // #10702: an `exposed` finding means the related tests already notice the
+    // change. That is `check`'s own verdict; the seam view below can only
+    // disagree by reading older or wider evidence, so it must not surface a
+    // "missing evidence" or "no seam" refusal beside an exposed finding.
+    if finding.class == crate::domain::ExposureClass::Exposed && !static_limited {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::FindingAlreadyExposed);
+    }
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
     // agent-packet validator and starts a gap-bound attempt. The canonical
@@ -1023,12 +1030,19 @@ pub(crate) fn check_repair_route(
         .is_some_and(|bound_finding| bound_finding.id == finding.id)
     });
     let Some(entry) = bound.next() else {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam);
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam {
+            seams_in_file: classified.len(),
+        });
     };
     if bound.next().is_some() {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
     if let Some((kind, reason)) = repair_refusal(entry, policy, Some(root)) {
+        // #10702: the seam view reads already gripped while this finding is a
+        // gap or limitation: name the one difference, not repair's verdict.
+        if kind == RefusalKind::AlreadyGripped {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamGrippedFindingNot);
+        }
         // #9244: carry the typed kind and the producer-owned missing list so
         // the check screen words a not-ready route without parsing `reason`.
         let missing = repair_packet_eligibility(entry).readiness.missing_evidence;

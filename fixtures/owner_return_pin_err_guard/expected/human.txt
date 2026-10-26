@@ -33,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_err_guard/input --diff <cwd>/fixtures/owner_return_pin_err_guard/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_err_guard/input --diff <cwd>/fixtures/owner_return_pin_err_guard/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
-  ripr repair 6356f1ae930c0a09 --root <cwd>/fixtures/owner_return_pin_err_guard/input
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full
