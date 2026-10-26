@@ -199,3 +199,18 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.smol_str]
 opt-level = 2
+
+# The binding record hashes the running test image (#10729): a debug ripr
+# lib-test binary is ~500 MB, and unoptimized SHA-256 took ~26 s per digest,
+# so the owned-image driver test (three digests) ran 80 s and timed out on
+# loaded shards. Optimized, a digest takes about as long as `sha256sum`.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.block-buffer]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3
+[profile.dev.package.generic-array]
+opt-level = 3
+[profile.dev.package.cpufeatures]
+opt-level = 3
