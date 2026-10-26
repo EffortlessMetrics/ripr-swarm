@@ -15,3 +15,10 @@ fixtures = [
   "fixtures/typescript_private_method_unknown",
   "fixtures/typescript_nested_private_method_partial",
 ]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "xtask/src/evidence_promotion/partial_analysis.rs::nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory",
+  "xtask/src/evidence_promotion/partial_analysis.rs::partial_analysis_assertion_requires_every_identity_and_count_field",
+]
