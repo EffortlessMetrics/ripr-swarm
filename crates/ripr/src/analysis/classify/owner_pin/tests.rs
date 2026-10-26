@@ -12985,17 +12985,29 @@ fn matches_admission_preserves_source_assertion_cardinality() {
         let test = index.tests().at(0);
         assert_eq!(test.assertions.len(), 1, "{attributes}");
         assert!(test.assertions[0].text.starts_with("assert!(matches!"));
-        let strict = owner_pin_assertions(&source, &assertion_context_macros());
-        let matches = owner_pin_matches_assertions(&source, &assertion_context_macros());
-        // Admission queries cannot drop, duplicate, or rewrite extraction facts.
-        for admission in [&strict, &matches, &strict] {
-            let _ = admission.refusal(
-                (test.start_line, test.end_line, &test.name),
-                &test.body,
-                (test.assertions[0].line, &test.assertions[0].text),
-                &BTreeSet::new(),
-            );
-            assert_eq!(test.assertions.len(), 1);
-        }
+        let qualified = source.replace("assert!(matches!", "std::assert!(std::matches!");
+        let qualified_index = index_for_assertion_cardinality(&qualified);
+        assert_eq!(qualified_index, 1, "{attributes}");
+        let fallback = source.replace("; }", "; panic!(\"fallback\"); }");
+        assert_eq!(
+            index_for_assertion_cardinality(&fallback),
+            1,
+            "{attributes}"
+        );
+        let duplicate = source.replace(
+            "; }",
+            "; assert!(matches!(parse(\"bad\"), Err(Fault::Other))); }",
+        );
+        assert_eq!(
+            index_for_assertion_cardinality(&duplicate),
+            2,
+            "{attributes}"
+        );
     }
+}
+
+fn index_for_assertion_cardinality(source: &str) -> usize {
+    let indexed = index(&[(LIB, source)]);
+    assert_eq!(indexed.tests().len(), 1);
+    indexed.tests().at(0).assertions.len()
 }

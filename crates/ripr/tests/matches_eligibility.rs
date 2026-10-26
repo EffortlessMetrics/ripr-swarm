@@ -21,6 +21,7 @@ impl Drop for Scratch {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+#[derive(Clone)]
 struct Case {
     name: &'static str,
     attributes: &'static str,
@@ -348,9 +349,13 @@ fn expected_panic_message_must_be_established_before_matches_credit() -> Result<
     assert_eq!(actual, expected);
     for body in [
         r#"assert!(matches!(parse("bad"), Err(Fault::Bad)));"#,
+        r#"assert!(matches!(parse("bad"), Err(Fault::Other)), "different message");"#,
         r#"assert!(matches!(parse("bad"), Err(Fault::Bad)), "{}", "required message");"#,
     ] {
-        let unresolved = Case { body, ..case };
+        let unresolved = Case {
+            body,
+            ..case.clone()
+        };
         assert_eq!(check(&unresolved, false)?, [StaticUnknown, StaticUnknown]);
     }
     Ok(())
@@ -361,7 +366,7 @@ fn expected_panic_literal_substrings_preserve_inverse_undercredit() -> Result<()
     let case = Case {
         name: "literal_substring",
         attributes: r##"#[should_panic(expected = r#"oracle mismatch"#)]"##,
-        body: r#"assert!(matches!(parse("bad"), Err(Fault::Other)), "prefix oracle mismatch suffix");"#,
+        body: r#"assert!(matches!(parse("bad"), Err(Fault::Other)), "prefix oracle\x20mismatch suffix");"#,
         matches: [ReachableUnrevealed, WeaklyExposed],
         equality: [ReachableUnrevealed, ReachableUnrevealed],
     };
