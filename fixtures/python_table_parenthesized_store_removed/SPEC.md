@@ -18,4 +18,4 @@ The finding stays `exposed`: nothing restores the value, so the assertion fails 
 
 Refuse every parenthesized dict. This control keeps the foreign-store refusal tied to the store.
 
-These are static analyzer stimuli, not executed pytest fixtures; the verdict corpus (`authored-py-table-traps`) carries the runtime truth. RIPR-SPEC-0108 pins the finding independently of golden blessing.
+These are static analyzer stimuli, not executed pytest fixtures. RIPR-SPEC-0108 pins the finding independently of golden blessing. Native pytest on the unchanged test passes on the original module and fails on the edited one, so the credit is a genuine kill.

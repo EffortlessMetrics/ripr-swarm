@@ -3675,23 +3675,8 @@ fn missing_field_value_discriminator(
     // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
     // collection, read after the owner call directly or through a getter
     // whose body returns the field (RIPR-SPEC-0228 Decision 2).
-    let pushed_into = owner_fn.and_then(|owner| {
-        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
-            .and_then(|call| call.impl_type());
-        super::propagation_witness::pushed_literal_collection_path(
-            owner.body.as_str(),
-            owner.start_line,
-            probe.location.line,
-            &probe.expression,
-            &|method| {
-                impl_type.and_then(|impl_type| {
-                    super::builder_override::inherent_method_body(index, impl_type, method)
-                        .map(str::to_string)
-                })
-            },
-        )
-        .map(|path| (owner, path))
-    });
+    let pushed_into = owner_fn
+        .and_then(|owner| pushed_literal_path(owner, probe, index).map(|path| (owner, path)));
     let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
         pushed_into.as_ref().is_some_and(|(owner, path)| {
             pushed_collection_compared_whole(owner, path, test, assertion, index)
@@ -3843,6 +3828,34 @@ pub(in crate::analysis) fn assigned_field_of(
     )
 }
 
+/// #7131: the field collection path (`lines` for `self.lines.push(Line {
+/// sku: .. })`) the owner pushes the probe's literal onto, if the placement
+/// is one `pushed_literal_collection_path` accepts.
+pub(in crate::analysis) fn pushed_literal_path(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    let site = super::propagation_witness::pushed_literal_site(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )?;
+    // A hand-written `PartialEq` may ignore the pushed field, so the whole
+    // collection equality that confirms it is not evidence for it.
+    (!super::custom_eq::pushed_element_may_compare_leniently(&site.literal, index))
+        .then_some(site.path)
+}
+
 /// #7131: whether `assertion` compares the whole field collection `path`
 /// that `owner` pushes onto, read from the binding the test called `owner`
 /// on, after that call and with nothing between that may write through the
@@ -3852,7 +3865,7 @@ pub(in crate::analysis) fn assigned_field_of(
 /// (`binding_untouched_after_owner_call`), since another value built through
 /// the owner, or a snapshot, may carry the same changed value into the other
 /// operand.
-fn pushed_collection_compared_whole(
+pub(in crate::analysis) fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
     path: &str,
     test: &TestSummary,
@@ -6051,7 +6064,14 @@ pub(in crate::analysis) fn owner_argument_values(
 /// The argument is the literal only when nothing computes around it.
 fn owner_row_argument_values(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
     let values = owner_argument_values_in(test, argument, text_cells);
-    if values.is_empty() || passes_literals_through(strip_literal_wrappers(argument), 0) {
+    if values.is_empty() {
+        // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
+        // is the number it computes (`score(base + 1)` after `let base = 9`).
+        return super::argument_fold::folded_argument(&test.body, argument)
+            .into_iter()
+            .collect();
+    }
+    if passes_literals_through(strip_literal_wrappers(argument), 0) {
         values
     } else {
         Vec::new()
@@ -9581,8 +9601,8 @@ assert_eq!(input.amount, 100);"#
     #[test]
     fn given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing() {
         // #6672: `score(base + 1)` with `let base = 9` is 10, the boundary.
-        // ripr cannot read it, so it must not report `amount == 10` as
-        // missing from the remaining `score(base)` row.
+        // Arithmetic over the test's own literal bindings is read (RIPR-SPEC-0158
+        // example 21), so both rows are definite inputs and nothing is missing.
         let owner = function("pub fn score(amount: u32) -> bool {\n    10 <= amount\n}");
         let test = test_with_body_calls(
             "let base = 9;\nassert!(score(base + 1));\nassert!(!score(base));",
@@ -9595,6 +9615,26 @@ assert_eq!(input.amount, 100);"#
             &owner,
             &probe(ProbeFamily::Predicate, "10 <= amount"),
             &[&test],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert_eq!(gathered.unresolved_boundary, None);
+        let mut values = owner_input_values(&gathered.activation);
+        values.sort();
+        assert_eq!(values, vec!["10", "9"]);
+
+        // An operand the fold cannot read keeps the argument computed: the
+        // bare `score(base)` row stays, the boundary is unresolved, not missing.
+        let unread = test_with_body_calls(
+            "let base = 9;\nassert!(score(base + 1u32));\nassert!(!score(base));",
+            &[
+                (11, "assert!(score(base + 1u32));"),
+                (12, "assert!(!score(base));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "10 <= amount"),
+            &[&unread],
         );
 
         assert!(gathered.activation.missing_discriminators.is_empty());

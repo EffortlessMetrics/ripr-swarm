@@ -18,4 +18,4 @@ The finding reads `static_unknown`. `5.get(...)` raises `AttributeError` in both
 
 Take the `.get` default for a receiver that is not a table, or promote the edit to `exposed`.
 
-These are static analyzer stimuli, not executed pytest fixtures; the verdict corpus (`authored-py-table-traps`) carries the runtime truth. RIPR-SPEC-0108 pins the finding independently of golden blessing.
+These are static analyzer stimuli, not executed pytest fixtures. RIPR-SPEC-0108 pins the finding independently of golden blessing. Native pytest on the unchanged test raises `AttributeError` on the original and the edited module: an unsupported-operation refusal, not a surviving-mutant claim.

@@ -18,4 +18,4 @@ The finding reads `static_unknown`. `True` selects key 1, so the changed fallbac
 
 Read the unsupported bool key as absent and take the changed fallback, or promote the edit to `exposed`. The runtime pair (original and edited table) both pass this test.
 
-These are static analyzer stimuli, not executed pytest fixtures; the verdict corpus (`authored-py-table-traps`) carries the runtime truth. RIPR-SPEC-0108 pins the finding independently of golden blessing.
+These are static analyzer stimuli, not executed pytest fixtures. RIPR-SPEC-0108 pins the finding independently of golden blessing. Native pytest on the unchanged test passes on the original and the edited module, so this is a trap and not a kill.
