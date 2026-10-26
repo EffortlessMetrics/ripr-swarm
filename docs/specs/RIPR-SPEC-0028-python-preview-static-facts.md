@@ -721,10 +721,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
   `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
   edit that deletes the leading `isinstance(other, <own class>) and` from the
-  method's only `return`, when the remaining expression reads `other.<attr>`
-  for names no builtin literal has (and uses `other` nowhere else), the class
-  defines neither `__ne__` nor `__getattr__`, names no base class (a builtin
-  base answers `!=` itself), and a protocol-entry test asserts
+  method's only `return`, when the remaining expression is exactly
+  `self.<a> == other.<b>` (no call, boolean operator or conditional that could
+  skip the read) and `<b>` is an attribute the class stores itself
+  (`self.<b> = ..`) that no builtin literal has, the class defines neither
+  `__ne__` nor `__getattr__` and, read from the parsed class, names no base and
+  is plain (a builtin base answers `!=` itself), and a protocol-entry test with
+  no `try`, `with` or `raises` that could catch the error asserts
   `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
   Calling the edited method with such a literal raises `AttributeError`, so the
   assertion fails after the edit. A literal on the left, a list or custom

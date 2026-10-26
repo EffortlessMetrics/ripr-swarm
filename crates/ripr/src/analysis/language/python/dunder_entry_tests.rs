@@ -300,6 +300,23 @@ fn removed_type_guard_ignores_a_ne_assertion_on_a_builtin_subclass() -> Check {
     Ok(())
 }
 
+/// The base-class check reads the parsed class, so a comment or docstring that
+/// spells another `class Money:` header cannot stand in for the real one.
+#[test]
+fn removed_type_guard_ignores_a_decoy_class_header_in_a_comment() -> Check {
+    let source = format!(
+        "# class Money:\n{}",
+        money_without_guard().replace("class Money:", "class Money(int):")
+    );
+    let finding = classify_guard_removal(
+        &source,
+        NEW_GUARD_LINE,
+        &money_test("    assert Money(1) != 2"),
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 #[test]
 fn removed_type_guard_stays_an_abstention_without_the_exact_shape() -> Check {
     let unguarded = money_without_guard();

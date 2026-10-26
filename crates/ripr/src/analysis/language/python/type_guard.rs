@@ -15,7 +15,7 @@
 //!   literal type has, so a builtin operand raises `AttributeError` where the
 //!   guard used to answer `False`;
 //! - the class defines neither `__ne__` nor `__getattr__` and names no base
-//!   class (`int`, `float` and `str` subclasses inherit a `__ne__` that never
+//!   class, read from the parsed class and not from header text (`int`, `float` and `str` subclasses inherit a `__ne__` that never
 //!   consults the edited `__eq__`), so `!=` runs the edited `__eq__` and no
 //!   foreign operand answers the attribute read;
 //! - a related test asserts `Class(...) != <int, float, str, bool or None
@@ -102,23 +102,6 @@ pub(super) struct TypeGuardCredit<'a> {
     pub(super) assertion: &'a PythonAssertion,
 }
 
-/// Whether `class Name(...)` lists any base other than `object`. An unknown
-/// header is treated as based, which keeps the abstention.
-fn class_has_base(source: &str, class: &str) -> bool {
-    let header = format!("class {class}");
-    let Some(at) = source.find(&header) else {
-        return true;
-    };
-    let rest = source[at + header.len()..].trim_start();
-    let Some(rest) = rest.strip_prefix('(') else {
-        return !rest.starts_with(':');
-    };
-    match rest.split_once(')') {
-        Some((bases, _)) => !matches!(bases.trim(), "" | "object"),
-        None => true,
-    }
-}
-
 pub(super) fn removed_type_guard_credit<'a>(
     owner: &PythonOwner,
     old_line_text: Option<&str>,
@@ -135,7 +118,8 @@ pub(super) fn removed_type_guard_credit<'a>(
         || !owner_is_one_return(owner, owner_source)
         || owner_source.contains("def __ne__")
         || owner_source.contains("__getattr__")
-        || class_has_base(owner_source, class)
+        || !owner.class_facts.no_bases
+        || !owner.class_facts.plain
     {
         return None;
     }
@@ -273,19 +257,6 @@ fn is_foreign_literal(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_class_header_with_any_base_is_based() {
-        assert!(!class_has_base("class Money:\n    pass", "Money"));
-        assert!(!class_has_base("class Money():\n    pass", "Money"));
-        assert!(!class_has_base("class Money(object):\n    pass", "Money"));
-        assert!(class_has_base("class Money(int):\n    pass", "Money"));
-        assert!(class_has_base(
-            "class Money(Base, object):\n    pass",
-            "Money"
-        ));
-        assert!(class_has_base("class Other:\n    pass", "Money"));
-    }
-
     use super::*;
 
     #[test]
