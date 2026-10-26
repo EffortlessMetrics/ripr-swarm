@@ -435,8 +435,18 @@ fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations(
     ] {
         let fixture = Fixture::create()?;
         std::fs::write(fixture.0.join("src/reader.rs"), source).map_err(|e| e.to_string())?;
-        let diff = include_str!("../../../fixtures/inherent_receiver_macro_discard/diff.patch")
-            .replace("src/lib.rs", "src/reader.rs");
+        let original = include_str!("../../../fixtures/inherent_receiver_macro_discard/diff.patch");
+        // The path is rewritten in the `a/` and `b/` headers only; the premise
+        // is a one-file patch that names the path nowhere else.
+        assert_eq!(original.matches("diff --git").count(), 1, "one-file patch");
+        assert_eq!(
+            original.matches("src/lib.rs").count(),
+            original.matches("a/src/lib.rs").count() + original.matches("b/src/lib.rs").count(),
+            "the path appears only in the headers"
+        );
+        let diff = original
+            .replace("a/src/lib.rs", "a/src/reader.rs")
+            .replace("b/src/lib.rs", "b/src/reader.rs");
         std::fs::write(fixture.0.join("diff.patch"), diff).map_err(|e| e.to_string())?;
         let output = check_workspace(CheckInput {
             root: fixture.0.clone(),
@@ -450,7 +460,16 @@ fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations(
             !output.findings.is_empty(),
             "changed owner findings must exist"
         );
-        for finding in &output.findings {
+        let changed: Vec<_> = output
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.location.file.ends_with("src/reader.rs"))
+            .collect();
+        assert!(
+            !changed.is_empty(),
+            "the rewritten path must carry a finding"
+        );
+        for finding in changed {
             let related = finding
                 .related_tests
                 .iter()
@@ -464,6 +483,16 @@ fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations(
 
 /// Exercise the actual diff producer on the same native subjects as the
 /// full/compact repository matrix. Helper-only reach remains repository-specific.
+///
+/// `relation` in `cases.json` has the repository matrix's polarity: it is the
+/// row the repository report must carry. The diff report translates it as
+/// follows. `direct_owner_call` must be a high-confidence direct row. Every
+/// other value, including `helper_owner_call` and no relation, must not be
+/// credited as a direct or helper owner call, because a diff finding does not
+/// carry helper-only reach. The diff matrix therefore asserts no credit for
+/// those cases; it does not assert which refusal reason replaces it.
+/// Single-subject workspaces cannot show cross-subject substitution; that is
+/// covered by the multi-subject unit fixtures in `test_grip_evidence`.
 #[test]
 fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
     #[derive(serde::Deserialize)]
@@ -521,7 +550,7 @@ fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
             assert_eq!(
                 rows.len(),
                 finding.related_tests.len(),
-                "{}: no substitute subjects",
+                "{}: only the named subject is retained",
                 case.path
             );
             for row in rows {

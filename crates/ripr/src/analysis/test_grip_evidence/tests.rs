@@ -19655,6 +19655,26 @@ impl<T> ForeignView for T {}
             assert!(seam.owner().ends_with("::as_object"));
             let full = evidence_for_seam(seam, &index);
             let compact = find_related_tests_with_context(seam, &context);
+            // The maps below key rows by test name, which keeps only the last row
+            // per name. Prove first that no name repeats, so the collapse is
+            // lossless and producer row order cannot decide an assertion.
+            let full_names: Vec<_> = full
+                .related_tests
+                .iter()
+                .map(|test| test.test_name.as_str())
+                .collect();
+            let compact_names: Vec<_> = compact
+                .iter()
+                .map(|(test, _)| test.test.name.as_str())
+                .collect();
+            for names in [&full_names, &compact_names] {
+                let distinct: std::collections::BTreeSet<_> = names.iter().collect();
+                assert_eq!(
+                    distinct.len(),
+                    names.len(),
+                    "{decoy}: one row per test: {names:?}"
+                );
+            }
             let full_rows: BTreeMap<_, _> = full
                 .related_tests
                 .iter()
