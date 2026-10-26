@@ -72,6 +72,12 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
             {
                 continue;
             }
+            // The importer rehearses the unpartitioned form: `test-shards` defaults
+            // to 1 on the self-hosted routes it models, so this one condition (#10507)
+            // is true there. Any other condition, or this one elsewhere, refuses.
+            if *name == "Required Rust tests" && field == "if: inputs.test-shards == 1" {
+                continue;
+            }
             return Err(format!(
                 "unsupported selected owner metadata: {name}: {field}"
             ));
@@ -632,6 +638,14 @@ mod tests {
             ),
             source.replace("id: formatting", "id: formatting\n        if: false"),
             source.replace(
+                "if: inputs.test-shards == 1",
+                "if: inputs.test-shards == 4",
+            ),
+            source.replace(
+                "id: formatting",
+                "id: formatting\n        if: inputs.test-shards == 1",
+            ),
+            source.replace(
                 "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
                 "if: false",
             ),
@@ -639,6 +653,23 @@ mod tests {
             assert_ne!(source, changed);
             assert!(portfolio(&changed).is_err());
         }
+        Ok(())
+    }
+    #[test]
+    fn the_shard_condition_on_the_required_tests_step_still_imports() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
+        assert!(source.contains("if: inputs.test-shards == 1"));
+        let steps = portfolio(&source)?;
+        let tests = steps
+            .iter()
+            .find(|step| step.name == "Required Rust tests")
+            .ok_or("Required Rust tests step missing")?;
+        assert!(
+            tests
+                .script
+                .contains("cargo nextest run --workspace --profile ci")
+        );
         Ok(())
     }
     #[test]
