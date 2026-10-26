@@ -86,6 +86,7 @@ use tower_lsp_server::ls_types::{
 use tower_lsp_server::{LspService, Server};
 
 mod analysis_thread_routing_tests;
+mod bare_cr_origin_tests;
 mod consumed_source_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;

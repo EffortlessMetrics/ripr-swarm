@@ -231,7 +231,7 @@ t.notEqual / t.notStrictEqual       -> relational_check (weak)   # tape / node:t
 t.deepEqual                         -> exact_value (strong)      # shared
 t.notDeepEqual                      -> relational_check (weak)   # shared
 t.truthy / t.falsy / t.pass / t.fail / t.assert / t.ok / t.notOk -> smoke_only (smoke)
-t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)
+t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)  # except RIPR-SPEC-0243 rule 10 (AVA message object)
 t.regex / t.notRegex / t.like / t.notLike -> relational_check (weak)
 <any other t.method>                -> not an oracle (fail-closed)
 ```
