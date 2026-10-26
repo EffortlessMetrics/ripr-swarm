@@ -4569,7 +4569,11 @@ impl UnextractedTestFinder<'_> {
         // something else (`const test = runner`). Fail closed: the name no
         // longer counts as a parameter inside this block.
         let mut rebound = Vec::new();
-        collect_block_declared_names(statements, &mut rebound);
+        collect_registration_scope_names(
+            statements,
+            &mut rebound,
+            self.admission.block_functions_are_lexical,
+        );
         let outer = (!rebound.is_empty()).then(|| {
             let outer = self.shadowed.clone();
             self.shadowed.retain(|name| !rebound.contains(name));
