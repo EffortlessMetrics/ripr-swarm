@@ -960,7 +960,7 @@ fn match_rows(
     (!rows.is_empty()).then_some(rows)
 }
 
-/// Whether a transcriber body declares a module or more than one `fn`.
+/// Whether one substituted row declares a module, a `use` or more than one `fn`.
 fn text_defines_nested_scope(text: &str) -> bool {
     let mut functions = 0;
     for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
@@ -973,6 +973,7 @@ fn text_defines_nested_scope(text: &str) -> bool {
     functions > 1
 }
 
+/// Whether a transcriber body declares a module, a `use` or more than one `fn`.
 fn defines_nested_scope(body: &ast::TokenTree) -> bool {
     let mut functions = 0;
     for token in body
