@@ -113,6 +113,30 @@ harness registrations; external parent edges, configuration and Cargo manifests
 are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
+A field line of a `struct` declared inside an item macro (`pin_project! { pub
+struct X { buffered: Option<u8>, } }`) is also a declaration (#10268), on the
+added side and the reconstructed old side alike. The macro body is an opaque
+token tree, so the line counts only when it is plausibly `name: Type,` and its
+owner is unambiguous: every token sits directly in a `{ .. }` tree that is the
+direct input of one macro call (not a macro nested in a macro), is preceded in
+that tree by a `struct` header (searched to the tree boundary, failing closed at
+a top-level `,`, `;`, `=`, or a `fn`/`impl`/`enum`/`trait`/brace owner), and is
+followed only by the tree end or another item. The line's tokens must come from
+an allowlist of type syntax: identifiers and paths, lifetimes, balanced `<..>`,
+a reference `&` or raw-pointer `*const`/`*mut` prefix, `dyn`/`impl`/`fn`/`for`/
+`mut`/`const`/`unsafe`/`extern`, `->`, `pub` with `(crate|super|self|in path)`,
+`+` joining bound names, a paren group only as a `fn`/`Fn*` argument list or
+tuple type, and a bracket holding exactly one non-empty element type (no comma
+outside `<..>`; `[]`, `[;3]` and `[T;]` are not types) whose length, if any, is a
+literal or a path, and `<..>` only after a path or `for`. Everything else
+keeps `field_construction`: a construction (`Task { buffered: None }`), a
+literal, closure, `|`, `.`, `as`, `?`, `..`, unary or binary operator, call
+(`compute()`), macro `!`, nested brace, array element list (`[A, B]`, `[1, 2]`) or non-path length
+(`[u8; N + 1]`, `[compute(); 3]`), a second field on the line, and an
+initializer or discriminant `=`. Declared limit: a bare path such as `None` or
+`Foo` is indistinguishable from a type, so `value: None,` inside an item macro
+reads as a declaration; so does `A + B` between two bound names and a
+parenthesised single path `(a)`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
