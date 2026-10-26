@@ -1058,6 +1058,30 @@ mod tests {
     }
 
     #[test]
+    fn binary_macro_boundaries_refuse_library_targets_in_build_output() -> Result<(), String> {
+        let root = temp_workspace(
+            "binary-library-under-target",
+            &[
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers=['fuzz','target/bridge']\n",
+                ),
+                (
+                    "fuzz/Cargo.toml",
+                    "[package]\nname='fuzz'\nversion='0.0.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n",
+                ),
+                (
+                    "target/bridge/Cargo.toml",
+                    "[package]\nname='bridge'\nversion='0.0.0'\n[lib]\npath='../../fuzz/parse.rs'\n",
+                ),
+            ],
+        )?;
+        assert!(!MemberCrates::new(&root).is_binary_target_root(Path::new("fuzz/parse.rs")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn sibling_library_overlap_reads_the_selected_manifest_epoch() -> Result<(), String> {
         use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
         const SHARED: &str =

@@ -13666,6 +13666,7 @@ tests = [
   "crates/ripr/tests/rust_macro_crate_scope.rs::visible_macro_rebindings_and_unknown_placement_still_refuse_credit",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_require_manifest_authority",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_refuse_sibling_library_targets",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_refuse_library_targets_in_build_output",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::sibling_library_overlap_reads_the_selected_manifest_epoch",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::binary_macro_boundaries_match_full_scope_with_withheld_binary",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_read_the_selected_manifest_epoch",
