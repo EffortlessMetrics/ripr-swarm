@@ -176,17 +176,17 @@ use super::{
     pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
     pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
     pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_report_body,
-    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
-    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
-    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
-    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
-    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
-    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
-    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
-    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
+    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
+    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
+    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
+    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
+    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
+    repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
     repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
@@ -33267,17 +33267,228 @@ fn pr_ready_packet_keeps_nonblocking_items_actionable() {
 }
 
 #[test]
-fn pr_ready_report_status_maps_warnings_to_attention() {
-    assert_eq!(
-        pr_ready_status_from_report_status("warn"),
-        Some("needs_attention")
-    );
-    assert_eq!(
-        pr_ready_status_from_report_status("actionable"),
-        Some("needs_attention")
-    );
-    assert_eq!(pr_ready_status_from_report_status("fail"), Some("fail"));
-    assert_eq!(pr_ready_status_from_report_status("pass"), None);
+fn pr_ready_current_outcome_ignores_quoted_superseded_or_stale_reports() -> Result<(), String> {
+    with_temp_cwd("pr-ready-typed-outcome", |_root| -> Result<(), String> {
+        // These are the prior adapter's counterexample shapes. A current typed
+        // producer result, not prose interpretation, supplies their outcome.
+        let reports = [
+            "Status: pass\n",
+            "Status: fail\n",
+            "Status: warn\n",
+            "Status: not ready\n",
+            "Status: instrument_failure\n",
+            "> Status: pass\nThis was an earlier claim.\n",
+            "```text\nStatus: pass\n```\nStatus: blocked\n",
+            "Status: pass\nSuperseded by the current result.\nStatus: blocked\n",
+            "Status: pass\nSubject: old-head\nObserved: 2026-01-01\n",
+            "",
+            "Status: pass\nThe command later failed.\n",
+            "> Status: pass\nStatus: blocked\n",
+        ];
+        let changes = [changed_path(
+            "crates/ripr/src/analysis/classifier.rs",
+            &["M"],
+        )];
+        let findings = critic_findings(&changes, &[], &[]);
+        assert!(
+            !findings.is_empty(),
+            "fixture must reach actual critic findings"
+        );
+        for body in reports {
+            for (current_findings, expected) in
+                [(findings.as_slice(), "needs_attention"), (&[][..], "pass")]
+            {
+                let step = super::run_readiness_step(
+                    "critic",
+                    "cargo xtask critic",
+                    "target/ripr/reports/critic.md",
+                    false,
+                    || {
+                        let outcome = super::finish_critic_report(current_findings, &[], &[])?;
+                        // Replacing shared report bytes cannot change the invocation's result.
+                        fs::write("target/ripr/reports/critic.md", body)
+                            .map_err(|err| err.to_string())?;
+                        Ok(outcome)
+                    },
+                );
+                assert_eq!(step.status, expected, "{body:?}");
+                let json: Value =
+                    serde_json::from_str(&pr_ready_json(&[step])).map_err(|err| err.to_string())?;
+                assert_eq!(json["schema_version"], "0.1");
+                assert_eq!(json["mode"], "advisory");
+                assert_eq!(json["steps"][0]["status"], expected);
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn pr_ready_completion_only_summary_and_missing_report_are_explicit() -> Result<(), String> {
+    with_temp_cwd("pr-ready-completion-only", |_root| -> Result<(), String> {
+        let summary = pr_summary_body(&[]);
+        let header = summary
+            .split("\n## ")
+            .next()
+            .ok_or("summary header missing")?;
+        assert!(!header.lines().any(|line| line.starts_with("Status:")));
+        assert!(summary.contains("Status: advisory static projection"));
+        let step = super::run_readiness_step(
+            "pr_summary",
+            "cargo xtask pr-summary",
+            "summary.md",
+            false,
+            || {
+                fs::write("summary.md", &summary).map_err(|err| err.to_string())?;
+                Ok(super::ReadinessOutcome::Completed)
+            },
+        );
+        assert_eq!(step.status, "pass");
+        assert_eq!(step.summary, "completed");
+
+        for required in [false, true] {
+            let step = super::run_readiness_step(
+                "missing_outcome",
+                "fixture",
+                "not-created.md",
+                required,
+                || Err("\ncurrent producer outcome unavailable\nmore detail".to_string()),
+            );
+            assert_eq!(
+                step.status,
+                if required { "fail" } else { "needs_attention" }
+            );
+            assert_eq!(step.summary, "current producer outcome unavailable");
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn cockpit_pr_triage_keeps_current_typed_warning_and_clean_outcomes() -> Result<(), String> {
+    with_temp_cwd("cockpit-typed-triage", |_root| -> Result<(), String> {
+        let prs = [
+            triage_pr(41, "devex: duplicate report", &["xtask/src/main.rs"]),
+            triage_pr(42, "devex: duplicate report", &["xtask/src/main.rs"]),
+        ];
+        let today = days_from_civil(2026, 5, 14);
+        let findings = pr_triage_findings(&prs, today);
+        assert!(
+            !findings.is_empty(),
+            "fixture must reach actual triage findings"
+        );
+        for (current_findings, expected, aggregate) in [
+            (findings.as_slice(), "needs_attention", "actionable"),
+            (&[][..], "pass", "pass"),
+        ] {
+            let step = super::run_readiness_step(
+                "pr_triage",
+                "cargo xtask pr-triage-report",
+                "target/ripr/reports/pr-triage.md",
+                false,
+                || {
+                    let outcome =
+                        super::finish_pr_triage_report(&prs, current_findings, today, "fixture")?;
+                    fs::write(
+                        "target/ripr/reports/pr-triage.md",
+                        "Status: pass\nStatus: blocked\n",
+                    )
+                    .map_err(|err| err.to_string())?;
+                    Ok(outcome)
+                },
+            );
+            assert_eq!(step.status, expected);
+            let json: Value =
+                serde_json::from_str(&cockpit_json(&[step])).map_err(|err| err.to_string())?;
+            assert_eq!(json["schema_version"], "0.1");
+            assert_eq!(json["mode"], "advisory");
+            assert_eq!(json["status"], aggregate);
+            assert_eq!(json["steps"][0]["status"], expected);
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn pr_ready_worktree_doctor_preserves_current_warnings_and_errors() -> Result<(), String> {
+    with_temp_cwd("pr-ready-typed-doctor", |root| -> Result<(), String> {
+        run("git", &["init", "-b", "feature"])?;
+        fs::write(".gitignore", "target/\n").map_err(|err| err.to_string())?;
+        run("git", &["add", ".gitignore"])?;
+        run(
+            "git",
+            &[
+                "-c",
+                "user.name=readiness fixture",
+                "-c",
+                "user.email=readiness-fixture@example.invalid",
+                "commit",
+                "-m",
+                "readiness fixture",
+            ],
+        )?;
+        assert_eq!(
+            super::run_output("git", &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
+            "feature",
+            "fixture must have a committed named branch"
+        );
+        let report = "target/ripr/reports/worktree-doctor.md";
+        let clean = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(clean.status, "pass");
+        let clean_report = fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(clean_report.contains("Status: pass"));
+
+        // The first invocation creates report residue. The next invocation
+        // must preserve that real warning despite successful command execution.
+        assert!(root.join("target/ripr").exists());
+        let warning = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(warning.status, "needs_attention");
+        assert_eq!(
+            pr_ready_status(std::slice::from_ref(&warning)),
+            "actionable"
+        );
+        let warning_report =
+            fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(warning_report.contains("Status: warn"));
+        assert!(warning_report.contains("Warnings:"));
+
+        run("git", &["branch", "-m", "main"])?;
+        assert_eq!(
+            super::run_output("git", &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
+            "main"
+        );
+        fs::write("dirty.txt", "uncommitted fixture change\n").map_err(|err| err.to_string())?;
+        assert!(
+            super::collect_worktree_status_changes()?
+                .iter()
+                .any(|change| change.path == "dirty.txt"),
+            "fixture must contain an observed dirty-main change"
+        );
+        let error = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(error.status, "fail");
+        let error_report = fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(error_report.contains("Status: fail"));
+        assert!(error_report.contains("Errors:"));
+        Ok(())
+    })
 }
 
 #[test]
