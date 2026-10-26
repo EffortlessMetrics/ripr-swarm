@@ -104,9 +104,10 @@ fn arrow_literal_expectation(attribute: &str) -> Option<String> {
                 '(' | '[' | '{' => depth += 1,
                 ')' | ']' | '}' => depth = depth.checked_sub(1)?,
                 '>' if depth == 0 && previous == '=' => {
-                    if arrow.replace(at + 1).is_some() {
-                        return None;
-                    }
+                    arrow = match arrow {
+                        None => Some(at + 1),
+                        Some(_) => return None,
+                    };
                 }
                 ';' if depth == 0 && arrow.is_some() => {
                     semicolon = Some(at);
