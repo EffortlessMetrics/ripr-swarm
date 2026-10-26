@@ -29,7 +29,7 @@
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
     expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
-    let_binding_mentions_type, owner_trait_name,
+    let_binding_mentions_type, owner_trait_name, stringified_ranges,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
@@ -209,7 +209,17 @@ fn reached_only_through_syntax(
     if direct.peek().is_none() {
         return false;
     }
-    let self_type = impl_self_type_name(&owner.id.0);
+    let path_owner = type_path_owner(owner, index);
+    // The related rows are capped for display. When some were cut, a test that
+    // names the owner may be among them, and which tests survive depends on
+    // test names, so the cut finding is never judged syntax-only on the rows
+    // that happen to remain (#10551): it stays withheld, whatever the order.
+    if finding
+        .related_tests_matched_total
+        .is_some_and(|total| finding.related_tests.len() < total)
+    {
+        return true;
+    }
     direct.all(|related| {
         index
             .tests()
@@ -222,9 +232,9 @@ fn reached_only_through_syntax(
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
-                    && !self_type
-                        .as_deref()
-                        .is_some_and(|ty| calls_by_type_path(&code, &owner.name, ty))
+                    && !path_owner
+                        .as_ref()
+                        .is_some_and(|path| calls_by_type_path(&code, &owner.name, path))
             })
     })
 }
@@ -977,14 +987,85 @@ fn calls_method_named(code: &str, name: &str) -> bool {
     })
 }
 
-/// Whether `code` (comments and strings masked) calls `name` through the
-/// owner's own type, as `Type::name(..)` or `<Type as Trait>::name(..)`. The
-/// qualifier must be exactly the impl type: another type's `add`, a longer
-/// identifier ending in the type, or a longer method name is a different call
-/// and leaves the test syntax-only (#10551).
-fn calls_by_type_path(code: &str, name: &str, self_type: &str) -> bool {
+/// What a type-path call must name to be a call of this owner.
+struct TypePathOwner {
+    self_type: String,
+    trait_name: String,
+    /// The impl type has no other method of this name (inherent or another
+    /// trait's), so `Type::name(..)` cannot resolve elsewhere.
+    sole_method: bool,
+}
+
+fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePathOwner> {
+    let self_type = impl_self_type_name(&owner.id.0)?;
+    let trait_name = owner_trait_name(&owner.id.0)?;
+    let trait_name = trait_name
+        .rsplit("::")
+        .next()
+        .unwrap_or(&trait_name)
+        .to_string();
+    let same_name = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == owner.name
+                && impl_self_type_name(&function.id.0).as_deref() == Some(self_type.as_str())
+        })
+        .count();
+    Some(TypePathOwner {
+        self_type,
+        trait_name,
+        sole_method: same_name == 1,
+    })
+}
+
+/// Whether the test body brings another item in under the impl type's name, by
+/// a `use` or a local `type`, `struct`, `enum`, `trait` or `union`. A path
+/// through that name may then name a different type (`use crate::other::Money;
+/// Money::add(..)`), so no path call of it is attributed to this impl.
+fn rebinds_type_name(code: &str, self_type: &str) -> bool {
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let whole =
+        |at: usize, len: usize| !code[..at].ends_with(word) && !code[at + len..].starts_with(word);
+    let imports = code.match_indices("use").any(|(at, _)| {
+        whole(at, 3)
+            && code[at + 3..]
+                .split(';')
+                .next()
+                .is_some_and(|statement| contains_as_whole_word(statement, self_type))
+    });
+    imports
+        || ["type", "struct", "enum", "trait", "union"]
+            .iter()
+            .any(|keyword| {
+                code.match_indices(keyword).any(|(at, _)| {
+                    whole(at, keyword.len())
+                        && code[at + keyword.len()..]
+                            .trim_start()
+                            .strip_prefix(self_type)
+                            .is_some_and(|rest| !rest.starts_with(word))
+                })
+            })
+}
+
+/// Whether `code` (comments and strings masked) calls `name` through the
+/// owner's own type: `<Type as Trait>::name(..)` with the owner's trait, or
+/// `Type::name(..)` when no other method of that name exists on the type. The
+/// qualifier must be exactly the impl type: another type's `add`, another
+/// trait's, a longer identifier ending in the type, a longer method name, and
+/// text inside `stringify!` (never evaluated) are not a call of this impl and
+/// leave the test syntax-only (#10551).
+fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let self_type = owner.self_type.as_str();
+    if rebinds_type_name(code, self_type) {
+        return false;
+    }
+    let unevaluated = stringified_ranges(code);
     code.match_indices(name).any(|(at, _)| {
+        if unevaluated.iter().any(|range| range.contains(&at)) {
+            return false;
+        }
         let rest = code[at + name.len()..].trim_start();
         if !(rest.starts_with('(') || rest.starts_with("::<")) {
             return false;
@@ -993,11 +1074,13 @@ fn calls_by_type_path(code: &str, name: &str, self_type: &str) -> bool {
             return false;
         };
         let qualifier = qualifier.trim_end();
+        // Comments are masked to blanks, so `crate::other:: Money` and
+        // `crate::other::/* x */Money` are module paths too.
         let is_type = |text: &str| {
             text.strip_suffix(self_type)
-                .is_some_and(|rest| !rest.ends_with(word) && !rest.ends_with("::"))
+                .is_some_and(|rest| !rest.ends_with(word) && !rest.trim_end().ends_with("::"))
         };
-        is_type(qualifier)
+        (owner.sole_method && is_type(qualifier))
             || qualifier.strip_suffix('>').is_some_and(|inner| {
                 // The `<` must open the qualified path itself, not a generic
                 // argument list (`Wrapper<Money as X>::add` is not this call).
@@ -1005,9 +1088,11 @@ fn calls_by_type_path(code: &str, name: &str, self_type: &str) -> bool {
                     return false;
                 };
                 !head.ends_with(word)
-                    && inner
-                        .split_once(" as ")
-                        .is_some_and(|(ty, _)| ty.trim() == self_type)
+                    && inner.split_once(" as ").is_some_and(|(ty, trait_path)| {
+                        ty.trim() == self_type
+                            && trait_path.trim().rsplit("::").next()
+                                == Some(owner.trait_name.as_str())
+                    })
             })
     })
 }
@@ -1166,29 +1251,81 @@ mod tests {
 
     #[test]
     fn type_path_calls_need_the_owner_type_and_a_whole_name() {
-        assert!(calls_by_type_path("Money::add(a, b)", "add", "Money"));
-        assert!(calls_by_type_path("Money::add::<u8>(a, b)", "add", "Money"));
+        let path_owner = |sole_method| TypePathOwner {
+            self_type: "Money".into(),
+            trait_name: "Add".into(),
+            sole_method,
+        };
+        assert!(calls_by_type_path(
+            "Money::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(calls_by_type_path(
+            "Money::add::<u8>(a, b)",
+            "add",
+            &path_owner(true)
+        ));
         assert!(calls_by_type_path(
             "<Money as Add>::add(a, b)",
             "add",
-            "Money"
+            &path_owner(true)
         ));
         // A module-qualified path may name another module's `Money`; stay
         // conservative and leave the test syntax-only.
         assert!(!calls_by_type_path(
             "crate::Money::add(a, b)",
             "add",
-            "Money"
+            &path_owner(true)
         ));
-        assert!(!calls_by_type_path("Other::add(a, b)", "add", "Money"));
-        assert!(!calls_by_type_path("MyMoney::add(a, b)", "add", "Money"));
-        assert!(!calls_by_type_path("Money::address(a)", "add", "Money"));
-        assert!(!calls_by_type_path("Money::add", "add", "Money"));
+        assert!(!calls_by_type_path(
+            "Other::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "MyMoney::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Money::address(a)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path("Money::add", "add", &path_owner(true)));
         assert!(!calls_by_type_path(
             "<Other as Add>::add(a, b)",
             "add",
-            "Money"
+            &path_owner(true)
         ));
-        assert!(!calls_by_type_path("m.add(a)", "add", "Money"));
+        assert!(!calls_by_type_path("m.add(a)", "add", &path_owner(true)));
+        // Another trait's method of the same name, an inherent method that
+        // wins `Type::name`, and stringified tokens are not this call.
+        assert!(!calls_by_type_path(
+            "<Money as Audit>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Money::add(a, b)",
+            "add",
+            &path_owner(false)
+        ));
+        assert!(calls_by_type_path(
+            "<Money as std::ops::Add>::add(a, b)",
+            "add",
+            &path_owner(false)
+        ));
+        assert!(!calls_by_type_path(
+            "stringify!(Money::add(1, 2))",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(calls_by_type_path(
+            "let _ = stringify!(x); Money::add(1, 2)",
+            "add",
+            &path_owner(true)
+        ));
     }
 }
