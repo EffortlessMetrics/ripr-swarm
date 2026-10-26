@@ -860,8 +860,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     A local alias of a captured-log read (`msgs = caplog.text`,
     `.messages` or `.records`) reads as the read itself only when the name
     is bound once, to the read, at the assertion's own indentation and after
-    every owner call, and appears nowhere else in the test but the
-    assertion statement (a wrapped assertion counts as one statement). An
+    every owner call, before the assertion, and appears nowhere else in the
+    test but as a read inside that native assertion span (a wrapped assertion
+    counts as one statement). A semicolon-separated mutation or use is a
+    separate statement even on the same physical line. Native store contexts,
+    including walrus expressions inside f-strings and comprehension targets,
+    cannot borrow the alias's captured-log evidence (#10595). An
     alias that is appended to, rebound, deleted, read in a comprehension,
     taken before the call or inside a nested block keeps the abstention, as
     does a name spelled inside a quoted literal (single, double or triple

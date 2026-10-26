@@ -13737,6 +13737,52 @@
       ]
     },
     {
+      "id": "python_caplog_alias_same_line_mask",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_same_line_mask",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_caplog_alias_late_binding",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_late_binding",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
       "id": "python_caplog_alias_in_literal",
       "language": "python",
       "tier": "pure",
