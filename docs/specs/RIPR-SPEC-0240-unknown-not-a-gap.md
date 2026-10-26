@@ -710,7 +710,9 @@ by a direct call reaches the owner only through syntax (none calls the
 method as `.name(`, matched to the related test by name, file and line) and the
 finding is `weakly_exposed` or `reachable_unrevealed` with infection read
 and propagation read or weak, so only the discriminator is unconfirmed (stage
-states decide this, as in `withhold_pinned_shape_gap`; the discriminate summary
+states decide this, with the same infection and propagation test as
+`withhold_pinned_shape_gap`, which also requires the summary token this rule
+does not; the discriminate summary
 differs between "an assertion matched but cannot confirm" and "no assertion
 matched", and both leave the credit unconfirmed): it stays `static_unknown`
 under `rust_implicit_call_unresolved`. A finding whose infection or propagation
