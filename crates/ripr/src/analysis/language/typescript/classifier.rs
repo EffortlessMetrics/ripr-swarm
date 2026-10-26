@@ -4925,7 +4925,7 @@ fn observed_argument_bindings(owner: &TypeScriptOwner, arguments: &[String]) -> 
 /// value the intervening statement already changed. Only closing braces at
 /// the branch's own depth are recognized as branch closers.
 pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, String)> {
-    if !lines.get(start)?.contains('{') {
+    if !changed_if_opens_its_own_body(lines, start)? {
         return None;
     }
     enum Phase {
@@ -5019,6 +5019,47 @@ pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<
         (Some(true_expr), Some(false_expr)) => Some((true_expr, false_expr)),
         _ => None,
     }
+}
+
+/// Whether the changed line at `start` leaves exactly one brace open (its own
+/// if-body) and sits directly in the owner's body (#7433). The scan below
+/// starts at depth 1, so a one-line `if (c) { return 1; }` would read the
+/// enclosing block's next `return` as the true branch, and a changed `if`
+/// inside a nested arrow or `function` would read that inner function's
+/// returns instead of the owner's. Braces in strings and comments are blanked
+/// first; `None` means the text could not be lined up, which also fails the scan.
+fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
+    lines.get(start)?;
+    let masked = mask_comments_and_strings(&lines[..=start].join("\n"));
+    let masked_lines: Vec<&str> = masked.split('\n').collect();
+    if masked_lines.len() != start + 1 {
+        return None;
+    }
+    let changed = masked_lines[start].trim();
+    let net_open = changed.matches('{').count() as i64 - changed.matches('}').count() as i64;
+    if !changed.ends_with('{') || net_open != 1 {
+        return Some(false);
+    }
+    // One entry per brace still open before the changed line: whether the
+    // line that opened it declares a function. The first entry is the owner's
+    // own body, whatever it is declared with.
+    let mut opened_by_function: Vec<bool> = Vec::new();
+    for line in &masked_lines[..start] {
+        let declares_function = line.contains("=>")
+            || line
+                .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                .any(|token| token == "function");
+        for c in line.chars() {
+            match c {
+                '{' => opened_by_function.push(declares_function),
+                '}' => {
+                    opened_by_function.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(!opened_by_function.iter().skip(1).any(|nested| *nested))
 }
 
 /// The expression of a single-line `return <expr>;` statement, when `trimmed`

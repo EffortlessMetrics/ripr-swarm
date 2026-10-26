@@ -1,0 +1,9 @@
+# Registers the changed-if branch-scan guards (#7433) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_refuses_a_one_line_changed_if",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_refuses_a_changed_if_in_a_nested_function",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_keeps_plain_nesting_and_blanked_literals",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_gives_up_on_a_one_line_changed_if",
+]

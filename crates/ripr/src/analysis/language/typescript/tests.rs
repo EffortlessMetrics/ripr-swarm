@@ -15667,6 +15667,137 @@ fn branch_return_expressions_single_return_shapes_still_attributed() {
     );
 }
 
+/// #7433: a one-line `if` closes its own body, so the scan must not read the
+/// enclosing block's next `return` as the true branch. The real pair here is
+/// 1/2; the scan used to answer 2/3.
+#[test]
+fn branch_return_expressions_refuses_a_one_line_changed_if() {
+    let lines: Vec<&str> = [
+        "export function f(s: number, admin: boolean): number {",
+        "    if (!admin) {",
+        "        if (s === 404) { return 1; }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&lines, 2), None);
+}
+
+/// #7433: a changed `if` inside a nested arrow belongs to that arrow's
+/// returns, not the owner's.
+#[test]
+fn branch_return_expressions_refuses_a_changed_if_in_a_nested_function() {
+    for header in [
+        "    const pick = (n: number) => {",
+        "    const pick = function (n: number) {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (n === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    };",
+            "    return pick(s);",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(branch_return_expressions(&lines, 2), None, "{header}");
+    }
+}
+
+/// #7433 controls: a multi-line `if` nested in a plain block, an arrow owner,
+/// and braces or `=>` inside earlier strings and comments keep the scan.
+#[test]
+fn branch_return_expressions_keeps_plain_nesting_and_blanked_literals() {
+    let nested: Vec<&str> = [
+        "export function f(s: number, admin: boolean): number {",
+        "    if (!admin) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&nested, 2),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let arrow_owner: Vec<&str> = [
+        "export const f = (s: number): number => {",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "};",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&arrow_owner, 1),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let literals: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    const label = \"{ => function {\"; // {",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&literals, 2),
+        Some(("1".to_string(), "2".to_string()))
+    );
+}
+
+/// #7433 through the liveness decision: at the boundary input the real pair is
+/// 1/2, so pinning `3` is dead. The misread pair 2/3 called that expectation
+/// live, which let a dead pin witness the boundary.
+#[test]
+fn expected_side_is_live_gives_up_on_a_one_line_changed_if() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number, admin: boolean): number {\n",
+                "    if (!admin) {\n",
+                "        if (s === 404) { return 1; }\n",
+                "        return 2;\n",
+                "    }\n",
+                "    return 3;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string(), "admin".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "        if (s === 404) { return 1; }",
+            "s",
+            "404",
+            &["404".to_string()],
+            "3",
+        ),
+        None,
+        "a one-line changed if has no attributable branch pair"
+    );
+}
+
 /// #4117 review of the liveness lookup: a duplicated predicate line cannot be
 /// attributed through the declared offset (a multiline declarator can shift
 /// the offset onto the identical line of a different function), so the check
