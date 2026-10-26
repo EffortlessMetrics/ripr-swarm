@@ -3,7 +3,7 @@
   "language": "rust",
   "tier": "pure",
   "source_fixture": "fixtures/rust_twin_collection_read_self_computed",
-  "vector": "two_collections_that_both_ran_the_owner_cannot_credit_their_equality",
+  "vector": "two_collections_with_equivalent_owner_histories_cannot_credit_their_equality",
   "probe_family": "side_effect",
   "assertions": [
     {
