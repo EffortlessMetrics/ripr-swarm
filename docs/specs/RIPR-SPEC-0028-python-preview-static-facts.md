@@ -213,7 +213,7 @@ mock expectations, and custom `assert_*` helpers.
     Environment and mock calls admit only inert literal arguments: `chdir` may
     invoke `__fspath__`, `setenv` may invoke `__str__`, and mock comparisons may
     invoke `__eq__`. Mock configuration, escaping references, and retained call
-    results retain the veto; admitted calls are complete discarded expressions.
+    results retain the veto; admitted mock calls are complete discarded expressions.
     Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
     receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
     and all formatted strings retain the veto because their executable expressions
