@@ -232,6 +232,13 @@ fn weak_equality_read_of_an_eq_owner_abstains_instead_of_grading_a_gap() -> Chec
 
 const OLD_GUARD: &str = "        return isinstance(other, Money) and self.cents == other.cents";
 
+/// The guarded line the edit started from: the edited line with the
+/// `isinstance(other, Money)` operand guard put back, so a control that changes
+/// the remaining expression is still a pure guard removal.
+fn guarded_form(new_line: &str) -> String {
+    new_line.replacen("return ", "return isinstance(other, Money) and ", 1)
+}
+
 /// Classify the `__eq__` edit against the file as it reads after the edit,
 /// which is what the workspace pass hands the classifier.
 fn classify_guard_removal(
@@ -242,11 +249,12 @@ fn classify_guard_removal(
     let owners = owners_of(new_src, "shapes/money.py");
     let line = owner(&owners, "__eq__")?.start_line + 1;
     let tests = tests_of(test_src)?;
+    let old_line = guarded_form(new_line);
     classify_change_with_source(
         Path::new("shapes/money.py"),
         line,
         new_line,
-        Some(OLD_GUARD),
+        Some(&old_line),
         &owners,
         &tests,
         Some(new_src),
