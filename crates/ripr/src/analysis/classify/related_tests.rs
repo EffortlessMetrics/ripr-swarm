@@ -5677,8 +5677,8 @@ mod tests {
     // call; one bound through a same-impl factory returning another type is not.
     #[test]
     fn declared_self_factory_receivers_bind_the_owner_impl() {
-        let lib = "pub struct Site;\npub struct Cache;\nimpl Site {\n    pub fn with_langs(n: u8) -> Self { Site }\n    pub fn with_cache() -> Cache { Cache }\n    pub fn build(&self) -> u8 { 1 }\n}\nimpl Cache {\n    pub fn build(&self) -> u8 { 2 }\n}\n";
-        let tests = "#[test]\nfn langs() {\n    let s = Site::with_langs(1);\n    assert_eq!(s.build(), 1);\n}\n\n#[test]\nfn cache() {\n    let c = Site::with_cache();\n    assert_eq!(c.build(), 2);\n}\n";
+        let lib = "pub struct Site;\npub struct Cache;\nimpl Site {\n    pub fn with_langs(n: u8) -> Self { Site }\n    pub fn with_cache() -> Cache { Cache }\n    pub fn with_shadow<Site>(value: Site) -> Site { value }\n    pub fn build(&self) -> u8 { 1 }\n}\nimpl Cache {\n    pub fn build(&self) -> u8 { 2 }\n}\n";
+        let tests = "#[test]\nfn langs() {\n    let s = Site::with_langs(1);\n    assert_eq!(s.build(), 1);\n}\n\n#[test]\nfn cache() {\n    let c = Site::with_cache();\n    assert_eq!(c.build(), 2);\n}\n\n#[test]\nfn shadow() {\n    let c = Site::with_shadow(Cache);\n    assert_eq!(c.build(), 2);\n}\n";
         let mut index = RustIndex::default();
         for (path, text) in [("src/lib.rs", lib), ("tests/site.rs", tests)] {
             let facts =
@@ -5712,6 +5712,8 @@ mod tests {
         };
         assert_eq!(reason("langs"), Some(RelationReason::DirectOwnerCall));
         assert_ne!(reason("cache"), Some(RelationReason::DirectOwnerCall));
+        // The factory's own type parameter named like the impl is not the impl.
+        assert_ne!(reason("shadow"), Some(RelationReason::DirectOwnerCall));
     }
 
     #[test]

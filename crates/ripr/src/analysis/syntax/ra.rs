@@ -1065,10 +1065,14 @@ fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
     // signature writes, so it never establishes a receiver type (#10301).
     let returns_owner_type = !has_self_param
         && function.async_token().is_none()
+        && is_unconditional_impl_associated_fn(function)
         && match (&container, function.ret_type().and_then(|ret| ret.ty())) {
             (FunctionContainer::Inherent { self_ty }, Some(ret)) => {
                 let ret = compact_syntax_text(ret.syntax().text().to_string());
-                ret == "Self" || ret == *self_ty
+                // `fn with_cache<Site>(..) -> Site` names its own type
+                // parameter, not the impl's type: spelling is not identity.
+                ret == "Self"
+                    || (ret == *self_ty && !generic_type_param_named(function.syntax(), &ret))
             }
             _ => false,
         };
@@ -1078,6 +1082,56 @@ fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
         has_body: function.body().is_some(),
         returns_owner_type,
     }
+}
+
+/// Whether `function` is declared directly in an `impl` block and no `cfg` or
+/// `cfg_attr` attribute on it, that block or an enclosing module can remove or
+/// swap it (#10301). A `fn` nested in an associated const's block is not an
+/// associated function, and a conditional declaration may be inactive while a
+/// different live item answers the same path, so neither supplies positive
+/// factory authority. Availability is not resolved: any such attribute fails
+/// closed.
+fn is_unconditional_impl_associated_fn(function: &ast::Fn) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    let in_impl = function
+        .syntax()
+        .parent()
+        .filter(|list| list.kind() == K::ASSOC_ITEM_LIST)
+        .and_then(|list| list.parent())
+        .is_some_and(|parent| parent.kind() == K::IMPL);
+    if !in_impl {
+        return false;
+    }
+    fn gated(attrs: impl Iterator<Item = ast::Attr>) -> bool {
+        attrs.into_iter().any(|attr| {
+            let text = attr.syntax().text().to_string();
+            let body = text
+                .trim_start_matches(['#', '!'])
+                .trim_start()
+                .strip_prefix('[')
+                .unwrap_or("")
+                .trim_start();
+            let end = body
+                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '#'))
+                .unwrap_or(body.len());
+            matches!(
+                cfg_predicates::rust_ident_name(&body[..end]),
+                "cfg" | "cfg_attr"
+            )
+        })
+    }
+    if gated(function.attrs()) {
+        return false;
+    }
+    function.syntax().ancestors().skip(1).all(|node| {
+        if let Some(block) = ast::Impl::cast(node.clone()) {
+            !gated(block.attrs())
+        } else if let Some(module) = ast::Module::cast(node) {
+            !gated(module.attrs())
+        } else {
+            true
+        }
+    })
 }
 
 /// The item a type-path call `T::name(` would find this `fn` in (#4558).
