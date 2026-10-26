@@ -4288,6 +4288,25 @@ impl OwnerReturnPin {
         {
             return false;
         }
+        // #7714: a test-file helper that computes its value from the owner
+        // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
+        // expected operand the owner's own value, however it is bound.
+        if test_file_helpers_reaching_owner(index, test, expected, &self.name)
+            .iter()
+            .any(|helper| {
+                expected_reaches_owner(test, &assertion.text, expected, helper)
+                    || expected_constant_reaches_owner(
+                        index,
+                        test,
+                        expected,
+                        helper,
+                        &PinCall::Bare,
+                        &self.owner_file,
+                    )
+            })
+        {
+            return false;
+        }
         match (&self.path, call) {
             // #6692: the clone must be compared with its own receiver, and
             // the test's file must not import some other `Clone`.
@@ -11139,8 +11158,8 @@ fn constant_scope(
 /// one, `.name(..)` or `T::name(..)` for a method), so a constant built
 /// with some other type's `new` or `len` keeps the pin. A test-file `use ..
 /// as` rename of a constant and a constant file's rename of the owner are
-/// followed. A constant computed through a helper that calls the owner is
-/// not.
+/// followed. A constant computed through a test-file helper that calls the
+/// owner is refused by the caller (#7714).
 fn expected_constant_reaches_owner(
     index: &RustIndex,
     test: &TestSummary,
@@ -11206,6 +11225,61 @@ fn expected_constant_reaches_owner(
         }
     }
     false
+}
+
+/// #7714: names of the functions in the test's own file, other than the
+/// test, whose body names the owner `name` or, transitively, another such
+/// function. An expected value such a helper returns is computed from the
+/// owner, so comparing the owner with it compares the owner with itself.
+/// Matching a same-named item in another module only withholds the pin.
+fn test_file_helpers_reaching_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    expected: &str,
+    name: &str,
+) -> Vec<String> {
+    // A literal or an operand with no name in it cannot reach a helper.
+    let masked_expected = mask_comments_and_strings(expected);
+    if !masked_expected
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|word| is_plain_identifier(word) && word != name)
+    {
+        return Vec::new();
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return Vec::new();
+    };
+    // Free non-test functions only: a method or a sibling test sharing a
+    // common name (`new`, `len`) would otherwise withhold unrelated pins.
+    let candidates: Vec<(&str, String)> = facts
+        .functions
+        .iter()
+        .filter(|function| {
+            function.start_line != test.start_line
+                && function.name != name
+                && matches!(
+                    function.impl_context,
+                    crate::analysis::facts::FunctionImplContext::Free
+                )
+                && !function
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.contains("test") || attr.contains("rstest"))
+        })
+        .map(|function| (function.name.as_str(), function.body.as_str()))
+        .map(|(helper, body)| (helper, mask_comments_and_strings(body)))
+        .collect();
+    let mut reaching: BTreeSet<String> = BTreeSet::new();
+    let mut frontier = vec![name.to_string()];
+    while let Some(target) = frontier.pop() {
+        for (helper, body) in &candidates {
+            if !reaching.contains(*helper) && contains_as_whole_word(body, &target) {
+                reaching.insert((*helper).to_string());
+                frontier.push((*helper).to_string());
+            }
+        }
+    }
+    reaching.into_iter().collect()
 }
 
 /// Names `file` imports the owner `name` under (`use crate::quota as q;`).

@@ -539,10 +539,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// cross-package wrapper reach limit of #10163, which landed at `1.102` without
 /// its own bump, is invalidated by this generation too. Old entries keep the
 /// weak reading.
-/// `1.110`: an `async` owner called through a test-local polling helper
+/// `1.110`: a grouped `use crate::{a, b};` names each plain
+/// `#[macro_export]` test generator member like a single import (#10298).
+/// `1.111`: an `async` owner called through a test-local polling helper
 /// (`block_on(owner(..))`) credits like `.await` (RIPR-SPEC-0197, #9478). Old
 /// entries keep the indirect-owner limit.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.110";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.111";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -699,8 +701,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.110";
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
-/// `0.117`: same polling-helper owner pin as full `1.110` (#9478).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.117";
+/// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.118";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -859,8 +861,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.117";
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
-/// `0.117`: same polling-helper owner pin as full `1.110` (#9478).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.117";
+/// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.118";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5013,8 +5015,8 @@ mod tests {
         // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
         // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #10298's.
         // 1.108 -> 1.109: indirect-owner limit and `cfg_attr` test (RIPR-SPEC-0240).
-        // 1.109 -> 1.110: polling-helper owner pin (RIPR-SPEC-0197, #9478).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.110");
+        // 1.110 -> 1.111: polling-helper owner pin (RIPR-SPEC-0197, #9478).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.111");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5111,9 +5113,9 @@ mod tests {
         // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
         // 0.113 -> 0.115: same `#[test_case]` transition as the outer cache.
         // 0.115 -> 0.116: same indirect-owner limit and `cfg_attr` test as full 1.109.
-        // 0.116 -> 0.117: same polling-helper owner pin as full 1.110.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.117");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.117");
+        // 0.117 -> 0.118: same polling-helper owner pin as full 1.111.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.118");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.118");
     }
 
     #[test]
