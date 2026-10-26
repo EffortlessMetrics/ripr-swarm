@@ -57,6 +57,18 @@ fn claims_payload_pins_credit_only_on_a_verified_claims_import() -> Result<(), S
             true,
         ),
         result_case(
+            "trailing_comment_after_the_macro_is_inert",
+            "use claims::assert_ok;",
+            "let q = assert_ok!(checked_div(17, 5)) /* payload */;\nassert_eq!(q, 3);",
+            true,
+        ),
+        result_case(
+            "qualified_path_invocation_is_not_admitted",
+            "use claims;",
+            "let q = claims::assert_ok!(checked_div(17, 5));\nassert_eq!(q, 3);",
+            false,
+        ),
+        result_case(
             "grouped_import_bound_assert_ok",
             "use claims::{assert_err, assert_ok};",
             bound,

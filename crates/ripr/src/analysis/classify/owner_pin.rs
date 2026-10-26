@@ -77,7 +77,7 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, source_imports_claims_macro,
+    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
     trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
@@ -4067,7 +4067,8 @@ impl OwnerReturnPin {
                                         let (name, call) = claims_payload_call(initializer)?;
                                         let imported =
                                             index.files().get(&test.file).is_some_and(|facts| {
-                                                source_imports_claims_macro(&facts.source, name)
+                                                source_imported_claims_macros(&facts.source)
+                                                    .contains(&name)
                                             });
                                         (unwrap_wrapper.is_some() && imported)
                                             .then(|| self.awaited_call_shape(call, &self.name))
@@ -4481,12 +4482,9 @@ impl OwnerReturnPin {
         // (the syntax admission settles the manifest and shadowing): they
         // evaluate their operand and bind nothing, so an owner call inside
         // one is no rebinding.
-        let claims_macros: Vec<&str> = CLAIMS_MACROS
-            .into_iter()
-            .filter(|name| {
-                test_source.is_some_and(|source| source_imports_claims_macro(source, name))
-            })
-            .collect();
+        let claims_macros: Vec<&str> = test_source
+            .map(source_imported_claims_macros)
+            .unwrap_or_default();
         match (&self.call, call) {
             // #7082: a cfg on the owner or an enclosing module may compile
             // a same-named `static`, `const` or `use` in its place, which
@@ -5591,7 +5589,10 @@ fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
         return None;
     }
     let close = matching_close(&masked, open, b'(', b')')?;
-    (close + 1 == masked.len()).then_some((name, operand[open + 1..close].trim()))
+    masked[close + 1..]
+        .trim()
+        .is_empty()
+        .then_some((name, operand[open + 1..close].trim()))
 }
 
 /// RIPR-SPEC-0225 decision 6: the call `operand` unwraps, when it is
@@ -6340,10 +6341,6 @@ const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
     "expect",
     "expect_file",
 ];
-
-/// claims' assertion macros: each evaluates its operand once and panics on
-/// the wrong variant, so none returns from or binds a name in the test.
-const CLAIMS_MACROS: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.

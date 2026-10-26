@@ -29,7 +29,7 @@ pub(crate) use owner_pin::{
     empty_macro_binding_ambiguities, err_return_guard_key, local_empty_macro_names,
     macro_binding_scan, macro_call_is_statement, node_has_macro_escape, owner_pin_assertions,
     owner_reference_count, returns_leave_the_function, skipping_table_column,
-    source_binds_value_name, source_declares_value_name, source_imports_claims_macro,
+    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
     supported_targeted_item_context, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
     use_rebinds_crate_name,
 };

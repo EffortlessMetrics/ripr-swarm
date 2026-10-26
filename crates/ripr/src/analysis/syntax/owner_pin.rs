@@ -1409,25 +1409,29 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     )
 }
 
-/// Whether `source` names the claims macro `name` by a `use claims::name;`
-/// (or `use claims::{name, ..};`) import, under its own name. A source that
+/// The claims macros `source` names by a `use claims::name;` (or
+/// `use claims::{name, ..};`) import, under their own names. A source that
 /// does not parse cleanly imports nothing provable. The import's manifest
 /// verdict and shadowing are the binding scan's, which already treats an
 /// unverified or foreign import of a trusted name as a binding site.
-pub(crate) fn source_imports_claims_macro(source: &str, name: &str) -> bool {
-    parse_clean_source_file(source).is_some_and(|parse| {
-        parse
-            .tree()
-            .syntax()
-            .descendants()
-            .filter_map(ast::UseTree::cast)
-            .any(|item| {
-                item.use_tree_list().is_none()
-                    && item.rename().is_none()
-                    && is_drop_in_assertion(&item, name)
-            })
-    })
+pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let uses: Vec<ast::UseTree> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|item| item.use_tree_list().is_none() && item.rename().is_none())
+        .collect();
+    CLAIMS_MACRO_NAMES
+        .into_iter()
+        .filter(|name| uses.iter().any(|item| is_drop_in_assertion(item, name)))
+        .collect()
 }
+
+const CLAIMS_MACRO_NAMES: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.
