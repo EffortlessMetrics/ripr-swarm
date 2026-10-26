@@ -2,8 +2,9 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
-    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
+    activation_and_boundary_input, assertion_compares_hand_built_field,
+    assertion_observes_collection_argument, assertion_out_parameter, body_contains_owner_call,
+    call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
@@ -960,7 +961,12 @@ impl ClassifiedProbeEvidence {
                             })
                             .as_deref()
                             .is_some_and(|path| {
-                                pushed_collection_compared_whole(
+                                assertion_compares_hand_built_field(
+                                    &test.body,
+                                    &assertion.text,
+                                    path,
+                                    &owner.name,
+                                ) && pushed_collection_compared_whole(
                                     owner,
                                     path,
                                     test,

@@ -2275,6 +2275,7 @@ fn analyze_related_assertions(
             // what it seeded, then took the exit and never ran the literal.
             let pushed_literal_read = matches!(probe.family, ProbeFamily::FieldConstruction)
                 && !return_admission.owner_may_exit_before_probe
+                && !test_is_should_panic(test)
                 && (return_admission.pushed_literal_observed)(test, assertion);
             let field_collection_read = field_collection_read || keyed_read || pushed_literal_read;
             let collection_argument_read =
