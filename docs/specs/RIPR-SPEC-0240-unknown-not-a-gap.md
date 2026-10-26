@@ -741,7 +741,19 @@ A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
-`Index`, `Drop` and the iterator traits keep the abstention until their own
+`a[i]` credits the same way (#10552). A read runs `Index::index` and a write
+(`a[i] = v`, `a[i] += v`, `&mut a[i]`) runs `IndexMut::index_mut`, so a site is
+credited to the one impl it runs. The receiver is a whole operand typed as the
+impl's self type (a leading `&` or `&mut` is allowed because indexing
+auto-dereferences; a field, method chain or helper return is not), a read whose
+value is discarded runs nothing a test can observe, and a site whose result is
+projected further (`a[i].len()`, `a[i].x`, `a[i][j]`) is credited to neither
+trait because the projection may borrow either way. A second `Index` impl for
+the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
+as for operators. An unconfirmed credit stays withheld; an assertion-free test
+stays a real `weakly_exposed` gap.
+
+`Drop` and the iterator traits keep the abstention until their own
 readings are added. `Drop` and `Iterator::next` need more than a relation: the
 observed value (a counter behind a shared cell, a `collect`ed vector) shares no
 token with the changed line, so a relation without observation confirmation
