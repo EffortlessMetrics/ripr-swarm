@@ -28,7 +28,6 @@
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 
-
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
 # gap, partial); `trap_floor` the count of trap cases the tests cannot
@@ -474,7 +473,6 @@ id = "RIPR-SPEC-0096"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
-
 # Rust oracle kind and strength admission
 [[spec]]
 id = "RIPR-SPEC-0231"
@@ -702,12 +700,10 @@ id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
 
-
 [[spec]]
 id = "RIPR-SPEC-0300"
 scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
-
 
 [[spec]]
 id = "RIPR-SPEC-0309"
@@ -786,6 +782,24 @@ reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot
 # Rust bounded helper-call transfer
 [[spec]]
 id = "RIPR-SPEC-0159"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0150
+[[spec]]
+id = "RIPR-SPEC-0150"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0154
+[[spec]]
+id = "RIPR-SPEC-0154"
+scope = "out"
+reason = "Rust analyzer assertion-form rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0157
+[[spec]]
+id = "RIPR-SPEC-0157"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
 

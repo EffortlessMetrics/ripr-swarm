@@ -131,9 +131,12 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     // reach that syntax alone established (operator crediting, #9567) and
     // whose observation no assertion confirmed: relating the test says the
     // owner runs, not that an assertion would notice it change, so the gap
-    // stays withheld instead of becoming a "add a test" signal (#9567).
+    // stays withheld instead of becoming a "add a test" signal (#9567). A
+    // weakness with another cause (the test never drives the changed branch)
+    // is a real gap and keeps its class.
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
+            && only_discrimination_unconfirmed(finding)
             && reached_only_through_syntax(finding, owner, index))
     {
         return false;
@@ -175,6 +178,19 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     true
 }
 
+/// Whether the earlier stages are established and only the discriminator is
+/// unconfirmed, the way `pinned_shape` reads it: reach is already decided by
+/// the caller, infection is read, and propagation is read or weak. A finding
+/// whose infection or propagation is not read has a different missing leg and
+/// keeps its own gap. Stage states, not summary text, carry this: the summary
+/// differs between "an assertion matched but cannot confirm" and "no assertion
+/// matched", and both leave the credit unconfirmed.
+fn only_discrimination_unconfirmed(finding: &Finding) -> bool {
+    let ripr = &finding.ripr;
+    ripr.infect.state == StageState::Yes
+        && matches!(ripr.propagate.state, StageState::Yes | StageState::Weak)
+}
+
 /// Whether every test related to the owner by a direct call reaches it only
 /// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
@@ -197,7 +213,11 @@ fn reached_only_through_syntax(
         index
             .tests()
             .iter()
-            .find(|test| test.name == related.name && test.file == related.file)
+            .find(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+            })
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)

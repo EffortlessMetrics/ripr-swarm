@@ -740,6 +740,14 @@ When the producer-owned `analysis_outcome` is not complete (for example
 with its recovery, and the clean `No static exposure findings found` notice is
 not printed.
 
+When the outcome is complete but carries advisory limitations (for example
+`eol_only_churn`, #4952), the stream instead starts with a
+`ripr analysis limitations` notice naming the outcome kind and each limitation
+with its recovery. The notice is a disclosure, not a scope reduction: the
+incomplete warning does not fire, on both the with-findings and the empty
+complete branches, and an empty complete stream still prints its
+`No static exposure findings found` notice (#10520).
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
@@ -1380,7 +1388,7 @@ A finding contains:
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
     "delta": "control",
-    "file": "src/lib.rs",
+    "file": "./src/lib.rs",
     "line": 88,
     "expression": "if amount >= discount_threshold {"
   },
@@ -1489,6 +1497,19 @@ A finding contains:
   "language": "rust"
 }
 ```
+
+**Path spelling.** The same source path is spelled differently per surface
+(and even per field). Join or key on paths only within one surface and one
+field; normalize across surfaces at this crosswalk:
+
+| Surface / field | Spelling | Rule |
+| --- | --- | --- |
+| Finding `probe.file` (this contract) | `./src/lib.rs` | `./`-prefixed for files under `--root`; files outside `--root` keep their portable spelling (`finding_location_text`, `crates/ripr/src/analysis/mod.rs`) |
+| Finding `related_tests[].file` (this contract) | `tests/pricing.rs` | repository-relative, no `./` (`output::path::display_path`) — deliberately different from `probe.file` within the same document |
+| Context Packet `probe.file` | `./src/lib.rs` | same `./`-prefixed finding location as Finding `probe.file` for files under `--root` (`ContextPacket::from_finding`; `display_path_text` only normalizes separators) |
+| SARIF `artifactLocation.uri` | `src/lib.rs` | `./` stripped, RFC 3986 percent-encoded (`crates/ripr/src/output/sarif.rs`) |
+| GitHub annotation `file=` | `src/lib.rs` | repository-relative, no `./` (`crates/ripr/src/output/path.rs`) |
+| Finding/gap IDs (`probe:…`, `gap:…`) | `src_lib.rs` / `src/lib.rs` | path embedded in the content-addressed ID; IDs are identity, never path-join inputs |
 
 The evidence-first fields are additive in schema `0.2`:
 
