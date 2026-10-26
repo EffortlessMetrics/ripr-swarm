@@ -961,6 +961,18 @@ fn match_rows(
 }
 
 /// Whether a transcriber body declares a module or more than one `fn`.
+fn text_defines_nested_scope(text: &str) -> bool {
+    let mut functions = 0;
+    for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        match word {
+            "mod" | "use" => return true,
+            "fn" => functions += 1,
+            _ => {}
+        }
+    }
+    functions > 1
+}
+
 fn defines_nested_scope(body: &ast::TokenTree) -> bool {
     let mut functions = 0;
     for token in body
@@ -1008,10 +1020,16 @@ fn expand_rows(
     }
     let mut text = String::new();
     for row in rows {
-        text.push_str(&substitute(body.syntax(), |name| {
+        let expanded = substitute(body.syntax(), |name| {
             row.get(name)
                 .map(|(fragment, argument)| (fragment.as_str(), argument))
-        })?);
+        })?;
+        // A `tt` row element can supply the `fn`, `mod` or `use` the authored
+        // body lacks, so the scope refusal also reads each substituted row.
+        if arrow_rows && text_defines_nested_scope(&expanded) {
+            return None;
+        }
+        text.push_str(&expanded);
         text.push('\n');
         if text.len() > MAX_EXPANSION_BYTES {
             return None;
@@ -1437,6 +1455,39 @@ mod tests {
                 .len(),
             1,
             "premise: the plain arrow body expands"
+        );
+
+        // A `tt` row element can bring the scope keyword in from the
+        // invocation; the substituted row is refused the same way.
+        let supplied = |body: &str, invocation: &str| {
+            format!(
+                "macro_rules! t {{\n    ($($k:tt $name:ident => ($v:expr, $w:expr))*) => {{ $( {body} )* }};\n}}\nt! {{ {invocation} }}\n"
+            )
+        };
+        assert!(
+            expand_local_test_macros(&supplied(
+                "$k gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($v), $w); }",
+                "fn a => (1, 2)"
+            ))
+            .is_empty(),
+            "a second fn supplied by a tt"
+        );
+        assert!(
+            expand_local_test_macros(&supplied(
+                "$k scope { #[test] fn t() { assert_eq!(crate::gate($v), $w); } } fn $name() {}",
+                "mod a => (1, 2)"
+            ))
+            .is_empty(),
+            "a module supplied by a tt"
+        );
+        assert_eq!(
+            expand_local_test_macros(&supplied(
+                "#[test] fn $name() { let _ = stringify!($k); assert_eq!(gate($v), $w); }",
+                "x a => (1, 2)"
+            ))
+            .len(),
+            1,
+            "premise: a tt row element that is not a scope keyword expands"
         );
 
         // A `tt` binds one rustc token: a fused `::` is one `tt`, so the

@@ -256,6 +256,31 @@ fn an_arrow_transcriber_with_its_own_scope_adds_no_test() -> Result<(), String> 
 }
 
 #[test]
+fn a_scope_keyword_supplied_by_a_row_token_adds_no_test() -> Result<(), String> {
+    // `$kind:tt` brings the second `fn` (or a `mod`) in from the invocation, so
+    // the authored body alone looks scope-free.
+    for (label, body) in [
+        (
+            "a second fn",
+            "    macro_rules! gate_cases {\n        ($($kind:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $kind gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { fn ten_is_open => (10, true) }\n",
+        ),
+        (
+            "a module",
+            "    macro_rules! gate_cases {\n        ($($scope:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $scope $name { #[test] fn ten_is_open() { assert_eq!(crate::gate($input), $want); } } )*\n        };\n    }\n\n    gate_cases! { mod ten => (10, true) }\n",
+        ),
+    ] {
+        let predicate = TempRepo::create(body)?.predicate()?;
+        assert!(predicate.related_tests.is_empty(), "{label}: {predicate:?}");
+        assert_ne!(
+            state(&predicate.ripr.reach.state),
+            "Yes",
+            "{label}: {predicate:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
     let uninvoked = TempRepo::create(GENERATOR)?.predicate()?;
     assert!(uninvoked.related_tests.is_empty(), "{uninvoked:?}");
