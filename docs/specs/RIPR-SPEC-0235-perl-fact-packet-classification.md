@@ -579,7 +579,10 @@ cases.
     / medium. Neither has a location (class unchanged; today location
     emitted).
 16. `relations: []`: `no_static_path`, reach `no`, gap, no location
-    (unchanged).
+    (unchanged). On a `partial` packet, the real producer's status, the
+    same facts read `static_unknown`, no gap, no location (#8352): a
+    partial run may simply not have emitted the link, so neither "no
+    static path" nor "reachable" is an assessed result.
 17. `changed_observable: "return $amount * 0.9"`, `observed_sink:
     "$amount * 0.9"`: `exposed`, `perl_already_discriminated:`, no gap, no
     location (unchanged).
