@@ -62,7 +62,8 @@ generic syntax reason.
 - The finding keeps its normal predicate-shaped classification and
   gains evidence: `binding_predicate_relation` names the binding, both
   causal initializers, and the use line; when the initializer contains
-  an operation, `binding_predicate_value_unresolved` (a neutral
+  an operation and the actual infection authority has not established its
+  boundary input, `binding_predicate_value_unresolved` (a neutral
   disclosure prefix, deliberately outside the structured `limitation_*`
   contract, since the finding carries no `static_limit_kind`) names the
   earliest (leftmost) one — a std-operation token (`.find(`, `.rfind(`,
@@ -70,6 +71,10 @@ generic syntax reason.
   earliest call prefix, or the earliest binary operator (arithmetic,
   bitwise, comparison). A bare literal/identifier copy resolves to
   text with no value-unresolved line.
+  A later bounded input authority (RIPR-SPEC-0158) can resolve the operand;
+  infection `yes` then supersedes this syntax-only unresolved disclosure.
+  The causal relation remains, and this presentation rule changes no stage
+  or classification. Unknown operands keep their unresolved disclosure.
 - The generic `changed syntax is not mapped` limitation is absent for
   supported direct binding-use cases.
 - Fail-closed blockers (recorded as the relation's explicit scope

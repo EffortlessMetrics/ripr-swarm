@@ -58,6 +58,32 @@ render green. A change to the nextest config, the workflow, or `Cargo.lock`
 changes the blob identities recorded in `run-context.txt`, so an older receipt
 cannot be read as evidence for the new inputs.
 
+Hosted sharded form (#10507). On the GitHub-hosted route the same row runs as
+four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs in
+`rust-test-shards.yml`, started by `routed-rust.yml` only after the hosted
+`rust-gates.yml` job (every other gate, doctests and PR evidence) passed; that
+job is called with `test-shards: 4`, so its own `rust-tests` step is skipped, the
+single `if: inputs.test-shards == 1` condition `product_gate_plan.rs` allows on
+that row. The self-hosted routes keep the unpartitioned step in their gates job.
+A partitioned run selects exactly the tests of the unpartitioned command because
+`rust-test-shards-verify` runs `cargo xtask verify-test-shards`, which fails the
+hosted result unless each shard retained status 0, a run context naming this
+repository, checkout, run, attempt, profile, partition and command with
+`nextest_exit=0`, and a complete JUnit report with no failure whose testcases
+are exactly that shard's partition list, and the partition lists are pairwise
+disjoint and equal to the full workspace list; and `routed-rust.yml`'s
+`result` job fails unless that job passed (also after a self-hosted tempfail
+fallback). A missing, cancelled or red shard is a failure, never a pass. Each
+shard retains its own `junit.xml` and `run-context.txt` (the context names the
+partition and the blob identities of this workflow too), and the verifier writes
+the combined `junit.xml` and `run-context.txt` plus `shards-summary.txt` under
+the unsharded `<artifact>-nextest-<attempt>` name, so consumers of that
+evidence, including the Contabo product contract, read the same files. The
+Contabo importer accepts the one `if: inputs.test-shards == 1` condition on the
+nextest row (it rehearses the unpartitioned form) and refuses any other. The
+parallel form that runs the gates and shards at once would save more time but
+removes the gates-first ordering, so it is not the required shape.
+
 Focused tests in `product_gate_plan.rs` read the real workflow, nextest
 config, and this table. Each of these fails `cargo nextest run`:
 

@@ -47,6 +47,14 @@ SHA-256 hashes with the sources.
 
 For a website change:
 
+- Run `cargo test -p xtask --bin xtask release_website_tests`. It checks local
+  links/assets and fixture excerpts, then executes the page's focused equality
+  test in a standalone project using the boundary fixture's function and tests.
+  This models the reader's crate, not ripr's nested fixture workspace. Both
+  original tests must pass with the old condition, while the equality test must
+  reject it; a successful command that executes zero tests is also rejected. The matching
+  development build is required to replay the displayed ripr fixture command;
+  the page's 0.10.0 install remains a separate published-version workflow.
 - Validate HTML and run a browser accessibility scan such as axe-core. Automated
   scans provide partial accessibility evidence.
 - Check desktop and mobile layouts at 320, 375, 768, and 1440 CSS pixels, 200%

@@ -20,7 +20,6 @@
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 
-
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
 # `floor` is the fewest tagged cases `verdict-corpus validate` and `check`
@@ -52,7 +51,7 @@ floor = 14
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 44
+match_floor = 49
 overclaim_ceiling = 0
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
@@ -777,9 +776,9 @@ example = 8
 reason = "the example asserts that the criterion_main! runner invocation is harness plumbing, not a production obligation. Verdict rows label changed behavior using named runtime-test outcomes; mutating the runner registration does not label that no-obligation classification. Executable bench-helper edits are measured separately. diff_analysis_treats_cargo_benches_as_evidence_not_production directly pins the macro/probe boundary"
 
 # Assertion-form parity
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0154"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Changed-binding → predicate-operand relation
 [[spec]]
@@ -940,12 +939,10 @@ id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
 
-
 [[spec]]
 id = "RIPR-SPEC-0300"
 scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
-
 
 [[spec]]
 id = "RIPR-SPEC-0309"

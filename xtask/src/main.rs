@@ -87,6 +87,7 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_producer_sweep;
 mod verification_contracts;
+mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_run;
@@ -23827,6 +23828,9 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+mod release_website_tests;
 
 #[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]

@@ -706,17 +706,27 @@ against `Money(..)` operands, a destructured result), reveal reads the
 observation as unconfirmed and the finding would read `weakly_exposed`, a "add
 a test" signal for code the test pins. `withhold_implicit_call_gap` therefore
 also applies to a finding whose reach is established, when every test related
-by a direct call reaches the owner only through syntax (none spells the
-method's name) and the finding is `weakly_exposed` or `reachable_unrevealed`:
-it stays `static_unknown` under `rust_implicit_call_unresolved`. A confirmed
+by a direct call reaches the owner only through syntax (none calls the
+method as `.name(`, matched to the related test by name, file and line) and the
+finding is `weakly_exposed` or `reachable_unrevealed` with infection read
+and propagation read or weak, so only the discriminator is unconfirmed (stage
+states decide this, with the same infection and propagation test as
+`withhold_pinned_shape_gap`, which also requires the summary token this rule
+does not; the discriminate summary
+differs between "an assertion matched but cannot confirm" and "no assertion
+matched", and both leave the credit unconfirmed): it stays `static_unknown`
+under `rust_implicit_call_unresolved`. A finding whose infection or propagation
+is not read, such as a changed line behind a branch the test never takes,
+keeps its class. A path-form call (`Money::add(a, b)`) is not `.name(` and
+reads as syntax-only. A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
 `Index`, `Drop` and the iterator traits keep the abstention until their own
-readings are added. `Drop` and `Iterator::next` need more than a relation:
-the observed value (a counter behind a shared cell, a `collect`ed vector) shares
-no token with the changed line, so relating the test alone reads
-`weakly_exposed` on a test that pins the effect (#9567).
+readings are added. `Drop` and `Iterator::next` need more than a relation: the
+observed value (a counter behind a shared cell, a `collect`ed vector) shares no
+token with the changed line, so a relation without observation confirmation
+would read `weakly_exposed` on a test that pins the effect (#9567).
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
