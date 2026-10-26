@@ -56,13 +56,30 @@ queued PR's claim and scope (#8192) through the same admission job: the PR
 number comes from the merge-group branch name
 (`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
 the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
-reaches the PR-evidence step). The exact-head binding is the head SHA in the
-queue branch name, so a push after enqueue fails admission. Admission is per
-PR, so the queue must use a group size of 1; the queued commit must be a single
+reaches the PR-evidence step). The resolver accepts a head-suffixed ref or a
+base-suffixed fallback; the latter does not authoritatively identify the queued
+H. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
 squash commit of the queued PR sitting directly on the group's `base_sha`, or
 admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
+
+The terminal Result now pins the initially admitted PR/head and native
+run/attempt. After the children finish, it rechecks the open, non-draft,
+same-repository destination and head, the request label for label requests,
+the same queue-entry identity for queue requests, GitHub's current blocking
+review decision, and every page of review threads. Missing or malformed
+evidence refuses the result; a Result-only retry cannot reuse admission from
+an older attempt. Main/manual authorities and child-result checks remain.
+
+This is a late eligibility check, not queue-cutover acceptance. The current
+base-suffixed queue-ref fallback still uses a timestamp and does not establish
+the reviewed/admitted H or its composed G tree. Candidate-local admission code
+also remains a trusted-source prerequisite. Neither these API freshness reads
+nor a tree match authenticates an arbitrary caller workflow or makes the final
+read and protected merge atomic. Preserve the installed gates until the
+source, producer and live-enforcement migration in [MERGE_FLOW](MERGE_FLOW.md)
+is qualified.
 
 ## Merge-ready label flow
 
