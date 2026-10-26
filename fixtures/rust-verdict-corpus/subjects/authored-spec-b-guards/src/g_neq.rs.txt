@@ -1,0 +1,18 @@
+//! An `!=` guard in a Result-returning test, the twin of assert!(a == b, ..).
+
+pub fn tripled_g_neq(x: u32) -> u32 {
+    x * 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_triples_to_six_g_neq() -> Result<(), String> {
+        if tripled_g_neq(2) != 6 {
+            return Err("two must triple to six".to_string());
+        }
+        Ok(())
+    }
+}

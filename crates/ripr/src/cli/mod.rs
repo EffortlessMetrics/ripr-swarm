@@ -980,7 +980,8 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "diff", "--format", "xml"])),
             Err(CommandError::Failure(
-                "unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string()
+                "unknown diff format \"xml\". Accepted: human, text, md, markdown, json."
+                    .to_string()
             ))
         );
         assert_eq!(

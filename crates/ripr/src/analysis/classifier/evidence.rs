@@ -1,6 +1,6 @@
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
@@ -172,7 +172,7 @@ impl ClassifiedProbeEvidence {
         } else {
             const_reader_reach(context)
         };
-        let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -280,6 +280,12 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &flow_sinks,
         );
+        crate::analysis::classify::refine_literal_length_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &mut flow_sinks,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -370,7 +376,10 @@ impl ClassifiedProbeEvidence {
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
-            context.owner_fn,
+            OwnerInputs {
+                owner: context.owner_fn,
+                literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+            },
             owner_has_other_callers,
             assertion_macros_rebound,
         );
@@ -1103,6 +1112,21 @@ impl ClassifiedProbeEvidence {
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired
+            && !gathered
+                .literal_length_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    context.owner_fn.is_some_and(|owner| {
+                        boundary.pairs(
+                            context.probe,
+                            owner,
+                            &test_summaries,
+                            context.index,
+                            &assertion_admitted,
+                            &owner_pin_admits,
+                        )
+                    })
+                })
             && !has_same_test_boundary_oracle_pairing(
                 context.probe,
                 context.owner_fn,
