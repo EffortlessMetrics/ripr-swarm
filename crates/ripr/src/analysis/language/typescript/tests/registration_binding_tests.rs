@@ -70,6 +70,49 @@ fn registration_bindings_keep_imported_and_global_controls() -> Result<(), Strin
     Ok(())
 }
 
+/// #10477: a registration picked off a whole-module `require()` namespace
+/// relates like the destructured form, across declarations.
+#[test]
+fn registration_picked_off_a_require_namespace_is_a_known_runner() -> Result<(), String> {
+    for prelude in [
+        "const runner = require('node:test'); const test = runner.test;",
+        "const runner = require('node:test'); const { test } = runner;",
+        "const runner = require('node:test'), test = runner.test;",
+        "const runner = require('node:test'); const { describe, test } = runner;",
+    ] {
+        let source = format!("{prelude}\n{TEST}");
+        let finding = registration_finding("registration-namespace-pick", &source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+    }
+    Ok(())
+}
+
+/// #10477 negatives: a non-runner module, a namespace that is written, escaped
+/// or rebound, and a `let` namespace never make the picked local a runner.
+#[test]
+fn registration_picked_off_an_unproven_require_namespace_stays_unrelated() -> Result<(), String> {
+    for prelude in [
+        "const helpers = require('./helpers'); const test = helpers.test;",
+        "const runner = require('node:test'); const test = runner.test; runner.test = () => {};",
+        "const runner = require('node:test'), test = runner.test; runner.test = () => {};",
+        "const runner = require('node:test'); const test = runner.test; globalThis.r = runner;",
+        "let runner = require('node:test'); const test = runner.test; runner = {};",
+        "const runner = require('node:test'); const runner2 = runner; const test = runner2.test;",
+        "const runner = require('node:test'); const test = runner?.test;",
+        "const runner = require('node:test'); const { test = () => {} } = runner;",
+    ] {
+        let source = format!("{prelude}\n{TEST}");
+        assert_eq!(
+            registration_finding("registration-namespace-negative", &source)?.class,
+            ExposureClass::NoStaticPath,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn registration_bindings_reject_local_noop_callbacks() -> Result<(), String> {
     for source in [

@@ -212,6 +212,8 @@ impl TypeScriptAdmissionContext {
         context
             .registration_imports
             .extend(verified_extended_registrations(program, &esm_imports));
+        let namespace_picks = verified_namespace_member_registrations(program, &context);
+        context.registration_imports.extend(namespace_picks);
         let mut helpers = BTreeSet::new();
         let mut enclosing = BTreeSet::new();
         collect_setup_names(statements, &mut helpers, &mut enclosing);
@@ -539,6 +541,155 @@ fn verified_extended_registrations(
                 || code[at + import.local.len()..].trim_start().starts_with('(')
         }) {
             result.extend(candidates);
+        }
+    }
+    result
+}
+
+/// Registrations picked off a whole-module `require()` namespace
+/// (`const runner = require('node:test'); const test = runner.test;`, also
+/// `const { test } = runner`) (#10477). Each declaration is extracted alone, so
+/// the namespace binding it reads is not in view there; this pass carries it
+/// across declarations. The pick only counts when the namespace is a single
+/// top-level declaration whose every other use in the file is one of the
+/// qualifying picks, so `runner.test = stub`, `runner = other`, a direct
+/// `runner.test(...)` call or an escaped `runner` refuse every pick, and the
+/// picked local is never written. The usual runner-source and shadowing gates
+/// still decide whether the resulting import is a known registration.
+fn verified_namespace_member_registrations(
+    program: &oxc_ast::ast::Program<'_>,
+    context: &TypeScriptAdmissionContext,
+) -> Vec<TypeScriptImport> {
+    use oxc_ast::ast::{BindingPattern, PropertyKey};
+    let namespaces: Vec<&TypeScriptImport> = context
+        .registration_imports
+        .iter()
+        .filter(|import| import.imported.as_deref() == Some("default") && import.namespace)
+        .collect();
+    if namespaces.is_empty() {
+        return Vec::new();
+    }
+    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+        program.source_text,
+        program.source_type,
+    ) else {
+        return Vec::new();
+    };
+    if super::tests_extract::file_is_opaque(&code) {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    for namespace in namespaces {
+        let mut allowed = Vec::new();
+        let mut declared = 0usize;
+        // (member, local, declarator span) per qualifying pick.
+        let mut picks: Vec<(String, String, oxc_span::Span)> = Vec::new();
+        let mut declared_at = None;
+        for statement in &program.body {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.declare {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                if let BindingPattern::BindingIdentifier(id) = &declarator.id
+                    && id.name.as_str() == namespace.local
+                {
+                    declared += 1;
+                    declared_at = Some(declarator.span.start);
+                    allowed.push(id.span.start as usize..id.span.end as usize);
+                }
+            }
+            if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let Some(init) = declarator
+                    .init
+                    .as_ref()
+                    .map(Expression::get_inner_expression)
+                else {
+                    continue;
+                };
+                match (&declarator.id, init) {
+                    (
+                        BindingPattern::BindingIdentifier(local),
+                        Expression::StaticMemberExpression(member),
+                    ) if !member.optional => {
+                        let Expression::Identifier(receiver) = member.object.get_inner_expression()
+                        else {
+                            continue;
+                        };
+                        if receiver.name.as_str() == namespace.local {
+                            allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                            picks.push((
+                                member.property.name.to_string(),
+                                local.name.to_string(),
+                                declarator.span,
+                            ));
+                        }
+                    }
+                    (BindingPattern::ObjectPattern(pattern), Expression::Identifier(receiver))
+                        if receiver.name.as_str() == namespace.local && pattern.rest.is_none() =>
+                    {
+                        let mut group = Vec::new();
+                        for property in &pattern.properties {
+                            let (
+                                PropertyKey::StaticIdentifier(key),
+                                BindingPattern::BindingIdentifier(local),
+                            ) = (&property.key, &property.value)
+                            else {
+                                group.clear();
+                                break;
+                            };
+                            if property.computed {
+                                group.clear();
+                                break;
+                            }
+                            group.push((
+                                key.name.to_string(),
+                                local.name.to_string(),
+                                declarator.span,
+                            ));
+                        }
+                        if !group.is_empty() {
+                            allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                            picks.extend(group);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Exactly one declaration of the namespace, before each pick.
+        let Some(declared_at) = declared_at.filter(|_| declared == 1) else {
+            continue;
+        };
+        if !super::tests_extract::identifier_occurrences(&code, &namespace.local)
+            .all(|at| allowed.iter().any(|range| range.contains(&at)))
+        {
+            continue;
+        }
+        for (member, local, span) in picks {
+            if span.start < declared_at || local == namespace.local {
+                continue;
+            }
+            // Exclude only this declarator's initializing write.
+            let outside = format!(
+                "{}{}",
+                &code[..span.start as usize],
+                &code[span.end as usize..]
+            );
+            if super::tests_extract::identifier_written_in(&outside, &local) {
+                continue;
+            }
+            result.push(TypeScriptImport {
+                source: namespace.source.clone(),
+                imported: Some(member),
+                local,
+                namespace: false,
+            });
         }
     }
     result

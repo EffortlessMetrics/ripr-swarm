@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript or JavaScript test registered through a member picked off a whole-module `require()` namespace (`const runner = require("node:test"); const test = runner.test;`, `const { test } = runner;`) is now extracted and contributes exposure evidence, instead of reading as an unknown local and being missed. The namespace must be declared once and used only by those picks; a written, escaped, aliased or non-runner namespace stays unrelated (#10477).
