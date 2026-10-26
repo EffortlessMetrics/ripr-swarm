@@ -467,7 +467,16 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
         let Some(after) = rest.strip_prefix(name) else {
             continue;
         };
-        let Some(init) = after.trim_start().strip_prefix('=') else {
+        // A type annotation (`let name: u32 = ..`) binds the same value.
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(annotated) => match annotated.find(['=', ';']) {
+                Some(at) if annotated[at..].starts_with('=') => &annotated[at..],
+                _ => continue,
+            },
+            None => after,
+        };
+        let Some(init) = after.strip_prefix('=') else {
             continue;
         };
         let end = init.find(';')?;

@@ -1061,3 +1061,36 @@ fn two_assertions_over_one_bound_result_are_still_read() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A typed `let actual: u32 = ..` binds the same value as the untyped form, so
+/// the hidden input is withheld and a separating input keeps the untyped
+/// verdict, for one assertion and for two.
+#[test]
+fn a_typed_let_reads_like_the_untyped_let() -> Result<(), String> {
+    let exposed_for = |annotation: &str, input: &str, expected: &str, repeats: usize| {
+        let assertions = vec!["assert_eq!(actual, expected);"; repeats].join("\n        ");
+        let lib = ASYNC_OWNER.replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            &format!(
+                "let actual{annotation} = block_on(add_tax({input}));\n        let expected = {expected};\n        {assertions}"
+            ),
+        );
+        edited(&lib, TAX_BEFORE, "    p + p / 5")
+            .map(|findings| findings.iter().any(|f| f.class == ExposureClass::Exposed))
+    };
+    for repeats in [1, 2] {
+        for (input, expected) in [("0", "0"), ("100", "110")] {
+            let typed = exposed_for(": u32", input, expected, repeats)?;
+            let untyped = exposed_for("", input, expected, repeats)?;
+            if typed != untyped {
+                return Err(format!(
+                    "input {input}, {repeats} assertion(s): typed exposed={typed} but untyped exposed={untyped}"
+                ));
+            }
+        }
+    }
+    if exposed_for(": u32", "0", "0", 1)? {
+        return Err("a typed let at input 0 must not credit the hidden change".into());
+    }
+    Ok(())
+}
