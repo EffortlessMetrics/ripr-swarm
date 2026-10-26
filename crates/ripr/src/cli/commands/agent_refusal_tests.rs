@@ -1,6 +1,6 @@
 //! Regression pins for the `ripr agent` adapter's refusal classification,
-//! recovery narration and argument-validation errors that the sibling
-//! `tests` module and the integration suites do not reach.
+//! recovery narration and argument-validation errors. These helper-boundary
+//! pins supplement the real adapter process tests in `tests/cli_smoke.rs`.
 
 use super::super::tests::{args, unique_command_test_dir};
 use super::*;
