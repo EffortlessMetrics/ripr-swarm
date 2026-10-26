@@ -9972,6 +9972,7 @@ name = "rust integration public-API path limitation"
 spec = "docs/specs/RIPR-SPEC-0118-rust-integration-public-api-path-limitation.md"
 tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::limited_journey_private_helper_detail_requires_exact_declarations",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::limited_journey_private_helper_detail_refuses_same_name_indexed_entries",
   "crates/ripr/src/output/next_step.rs::tests::limited_journey_names_the_edge_and_does_not_prescribe_tests_to_close_it",
   "crates/ripr/src/output/next_step.rs::tests::limited_journey_absent_next_step_stays_absent_with_a_typed_edge",
   "crates/ripr/src/output/human/explain.rs::tests::limited_journey_explain_names_the_analysis_boundary_instead_of_a_test_recipe",

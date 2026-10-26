@@ -3172,6 +3172,61 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn limited_journey_private_helper_detail_refuses_same_name_indexed_entries()
+    -> Result<(), String> {
+        for duplicate_entry in [false, true] {
+            let mut files = BTreeMap::new();
+            for (path, source) in [
+                ("src/lib.rs", "pub fn outer() { inner(); }\nfn inner() {}\n"),
+                ("src/sibling.rs", "pub fn outer() {}\n"),
+            ] {
+                if path == "src/sibling.rs" && !duplicate_entry {
+                    continue;
+                }
+                let path = PathBuf::from(path);
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+                files.insert(path, facts);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files,
+                ..Default::default()
+            });
+            let reach = TransitiveReachIndex::new(&index);
+            let mut entries = reach
+                .production_functions()
+                .filter(|function| function.name == "outer")
+                .map(|function| {
+                    assert_eq!(
+                        declaration_visibility(&index, function).as_deref(),
+                        Some("pub")
+                    );
+                    function.id.0.as_str()
+                })
+                .collect::<Vec<_>>();
+            entries.sort_unstable();
+            let expected_entries = if duplicate_entry {
+                vec!["src/lib.rs::outer", "src/sibling.rs::outer"]
+            } else {
+                vec!["src/lib.rs::outer"]
+            };
+            assert_eq!(entries, expected_entries);
+            let owner = SymbolId("src/lib.rs::inner".to_string());
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "outer").as_deref(),
+                if duplicate_entry {
+                    None
+                } else {
+                    Some(
+                        "private helper `inner` behind public entry point `outer`; candidate path only",
+                    )
+                },
+                "duplicate indexed entry: {duplicate_entry}"
+            );
+        }
+        Ok(())
+    }
+
     // (a) Candidate path found -> witness captured naming the test + entry symbol.
     // test calls `outer`, `outer` calls `inner` (the changed owner).
     #[test]

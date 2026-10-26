@@ -287,6 +287,12 @@ may already observe the change; do not prescribe a direct private-helper call
 or promise that repeating the public assertion resolves the path. Exact indexed
 function identity and declaration visibility may name the private-helper/public
 entry boundary without promoting the candidate path to confirmed reach.
+The annotation requires exactly one indexed owner identity and one indexed
+entry with that name. Two public entries with the same name in distinct indexed
+files withhold it, even when one calls the exact private owner. This guard does
+not establish completeness for siblings outside the index. The parser-backed
+`limited_journey_private_helper_detail_refuses_same_name_indexed_entries` test
+pairs the unique-entry annotation with that duplicate-entry refusal.
 This is additive `limitation_helper_boundary` evidence; all existing canonical
 edge, route, and non-claim values remain unchanged.
 `explain` presents investigation guidance instead of a recipe claimed to change
