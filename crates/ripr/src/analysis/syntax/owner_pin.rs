@@ -2466,11 +2466,17 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result
 }
 
-/// Where a root statement of `function` never completes: a `loop` with no
-/// `break` (`loop {}`) or a standard-library `process::exit` / `abort` call.
-/// Like an earlier `return`, it keeps every later invocation from running
-/// (#8927). Nested statements do not count: only the body's own list.
+/// Where a root statement of `function` never completes: a `loop` (or
+/// `while true`) that no `break` leaves, or a standard-library
+/// `process::exit` / `abort` call, spelled in full, through an imported
+/// `std::process` module (renamed or not) or as an imported leaf. Like an
+/// earlier `return`, it keeps every later invocation from running (#8927).
+/// Nested statements do not count: only the body's own list. A `break` that
+/// belongs to an inner loop, closure or async block does not leave the outer
+/// loop (#8983); a labeled `break` leaves it when the label is its own or an
+/// enclosing one.
 fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
+    let process = StdProcessNames::of(function);
     function
         .body()?
         .stmt_list()?
@@ -2480,10 +2486,12 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
             _ => None,
         })
         .find(|expression| match expression {
-            ast::Expr::LoopExpr(body) => !body
-                .syntax()
-                .descendants()
-                .any(|node| ast::BreakExpr::can_cast(node.kind())),
+            ast::Expr::LoopExpr(body) => !loop_is_left_by_break(body.syntax()),
+            ast::Expr::WhileExpr(body) => {
+                body.condition()
+                    .is_some_and(|condition| is_literal_true(&condition))
+                    && !loop_is_left_by_break(body.syntax())
+            }
             ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
                 let path: String = callee
                     .syntax()
@@ -2491,14 +2499,138 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
                     .to_string()
                     .split_whitespace()
                     .collect();
-                matches!(
-                    path.strip_prefix("::").unwrap_or(&path),
-                    "std::process::exit" | "std::process::abort"
-                )
+                process.diverges(path.strip_prefix("::").unwrap_or(&path))
             }),
             _ => false,
         })
         .map(|expression| expression.syntax().text_range().start())
+}
+
+/// `true`, however many parentheses wrap it (`while (true) {}`).
+fn is_literal_true(condition: &ast::Expr) -> bool {
+    match condition {
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| is_literal_true(&inner)),
+        other => other.syntax().text().to_string().trim() == "true",
+    }
+}
+
+/// Whether some `break` inside `loop_node` leaves exactly that loop.
+fn loop_is_left_by_break(loop_node: &SyntaxNode) -> bool {
+    let label_of = |node: &SyntaxNode| {
+        node.children()
+            .find_map(ast::Label::cast)
+            .and_then(|label| label.lifetime())
+            .map(|lifetime| lifetime.text().to_string())
+    };
+    loop_node
+        .descendants()
+        .filter_map(ast::BreakExpr::cast)
+        .any(|expression| {
+            let wanted = expression
+                .lifetime()
+                .map(|lifetime| lifetime.text().to_string());
+            for ancestor in expression.syntax().ancestors().skip(1) {
+                if ancestor == *loop_node {
+                    // Reached with no inner owner: the `break` is this loop's
+                    // own, or names its label or an enclosing one.
+                    return true;
+                }
+                // A closure, function or async block is its own control
+                // context: a `break` inside it never leaves an outer loop.
+                if ast::ClosureExpr::can_cast(ancestor.kind())
+                    || ast::Fn::can_cast(ancestor.kind())
+                    || ast::BlockExpr::cast(ancestor.clone())
+                        .is_some_and(|block| block.async_token().is_some())
+                {
+                    return false;
+                }
+                match &wanted {
+                    // An unlabeled `break` belongs to the nearest loop.
+                    None => {
+                        if ast::LoopExpr::can_cast(ancestor.kind())
+                            || ast::WhileExpr::can_cast(ancestor.kind())
+                            || ast::ForExpr::can_cast(ancestor.kind())
+                        {
+                            return false;
+                        }
+                    }
+                    // A labeled one belongs to the loop or block carrying
+                    // that label.
+                    Some(wanted) => {
+                        if label_of(&ancestor).as_ref() == Some(wanted) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            // Not under `loop_node` after all: keep the older answer.
+            true
+        })
+}
+
+/// The ways `function` can spell a standard-library process exit: the
+/// `std::process` module under whatever name an import gives it, and the
+/// `exit` / `abort` leaves under theirs. A glob import of `std::process`
+/// makes the bare names divergent too. Over-matching only withholds credit.
+struct StdProcessNames {
+    modules: Vec<String>,
+    leaves: Vec<String>,
+}
+
+impl StdProcessNames {
+    fn of(function: &ast::Fn) -> Self {
+        let mut names = Self {
+            modules: Vec::new(),
+            leaves: Vec::new(),
+        };
+        let Some(root) = function.syntax().ancestors().last() else {
+            return names;
+        };
+        let mut leaves = Vec::new();
+        for import in root.descendants().filter_map(ast::Use::cast) {
+            if let Some(tree) = import.use_tree() {
+                flatten_use_tree(&tree, &[], &mut leaves);
+            }
+        }
+        for leaf in leaves {
+            let path: Vec<&str> = leaf.path.iter().map(String::as_str).collect();
+            let path = match path.as_slice() {
+                ["core", rest @ ..] | ["std", rest @ ..] => {
+                    let mut with_std = vec!["std"];
+                    with_std.extend(rest);
+                    with_std
+                }
+                other => other.to_vec(),
+            };
+            match (&leaf.binding, path.as_slice()) {
+                (UseBinding::Name(name), ["std", "process"])
+                | (UseBinding::Name(name), ["std", "process", "self"]) => {
+                    names.modules.push(name.clone());
+                }
+                (UseBinding::Name(name), ["std", "process", "exit" | "abort"]) => {
+                    names.leaves.push(name.clone());
+                }
+                (UseBinding::Glob, ["std", "process"]) => {
+                    names.leaves.push("exit".to_string());
+                    names.leaves.push("abort".to_string());
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    fn diverges(&self, path: &str) -> bool {
+        if matches!(path, "std::process::exit" | "std::process::abort") {
+            return true;
+        }
+        if self.leaves.iter().any(|leaf| leaf == path) {
+            return true;
+        }
+        path.split_once("::").is_some_and(|(module, leaf)| {
+            matches!(leaf, "exit" | "abort") && self.modules.iter().any(|name| name == module)
+        })
+    }
 }
 
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
