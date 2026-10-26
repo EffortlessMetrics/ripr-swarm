@@ -26,6 +26,7 @@ use std::path::Path;
 
 mod equality_dispatch;
 mod operator_dispatch;
+pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
@@ -5982,6 +5983,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["value".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };
@@ -6092,6 +6094,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };
@@ -6146,6 +6149,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };

@@ -1,5 +1,6 @@
 use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::fixtures::literal_owner_instance_fixture;
 use super::source_utils::normalized_path;
 use super::{
     PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
@@ -332,6 +333,11 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
 /// grammars are testable anywhere (#4378 pattern).
 pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
+    // A doctest example is synthesized under a path no file has (rule 26);
+    // pytest has no node for it, so no command is advertised.
+    if path.starts_with("tests/__doctest__/") {
+        return None;
+    }
     match test.framework {
         PythonFramework::Pytest => {
             let node = test.qualified_name.replace('.', "::");
@@ -2757,7 +2763,7 @@ pub(super) fn owner_method_bound_locals(
             locals.push(var);
         }
     }
-    for path in setup_bound_receivers(test, owner, class, method) {
+    for path in instance_bound_receivers(test, owner, class, method) {
         if !locals.contains(&path) {
             locals.push(path);
         }
@@ -2786,6 +2792,34 @@ pub(super) fn setup_bound_receivers(
         .filter(|receiver| contains_attribute_call(&test.body_text, &receiver.path, method))
         .map(|receiver| receiver.path.clone())
         .collect()
+}
+
+/// Receivers that already hold an instance of the owner class when the test
+/// body starts and that the body calls `method` on: setup-hook paths
+/// ([`setup_bound_receivers`]) and fixture parameters whose fixture returns a
+/// fresh literal-built instance of the class (#9619).
+fn instance_bound_receivers(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+) -> Vec<String> {
+    let mut receivers = setup_bound_receivers(test, owner, class, method);
+    let owner_class = owner
+        .qualified_name
+        .rsplit_once('.')
+        .map(|(class, _)| class);
+    if owner_class == Some(class) {
+        for fixture in &test.fixtures {
+            if literal_owner_instance_fixture(test, owner, fixture)
+                && contains_attribute_call(&test.body_text, fixture, method)
+                && !receivers.contains(fixture)
+            {
+                receivers.push(fixture.clone());
+            }
+        }
+    }
+    receivers
 }
 
 /// Whether the assertion text calls `.method(` only on receivers that are not
@@ -2874,7 +2908,7 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
             super::test_activation::activation_control(test).is_none()
                 && (owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
-                }) || !setup_bound_receivers(test, owner, class, method).is_empty())
+                }) || !instance_bound_receivers(test, owner, class, method).is_empty())
         })
     })
 }

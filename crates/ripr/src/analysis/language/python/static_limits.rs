@@ -4,6 +4,7 @@ use super::approx_band::{PythonBandReading, parse_expression, python_band_readin
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::effect_alignment::ChangedEffect;
+use super::fixtures::literal_owner_instance_fixture;
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
@@ -392,7 +393,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
 }
 
 pub(super) fn contains_dynamic_dispatch(text: &str) -> bool {
-    text.contains("getattr(") || (text.contains('[') && text.contains("]("))
+    contains_call_at_name_boundary(text, "getattr") || (text.contains('[') && text.contains("]("))
 }
 
 pub(super) fn contains_dynamic_import(text: &str) -> bool {
@@ -464,21 +465,23 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
     text.contains("__getattr__")
-        || contains_call_at_name_boundary(text, "type(")
-        || contains_call_at_name_boundary(text, "setattr(")
+        || contains_call_at_name_boundary(text, "type")
+        || contains_call_at_name_boundary(text, "setattr")
         || contains_metaclass_declaration(text)
 }
 
-/// `call` (`type(`) where the name starts at an identifier boundary:
-/// `type(x)` and `builtins.type(x)`, not `content_type(x)`. Text in a string
+/// A call of `name` (`type`) where the name starts at an identifier boundary
+/// and `(` follows after optional spaces: `type(x)`, `type (x)` and
+/// `builtins.type(x)`, not `content_type(x)`. Text in a string
 /// still counts: a boundary is the only thing read, so an f-string expression
 /// or a multi-line string can never hide a real call.
-fn contains_call_at_name_boundary(text: &str, call: &str) -> bool {
-    text.match_indices(call).any(|(idx, _)| {
+fn contains_call_at_name_boundary(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
         !text[..idx]
             .chars()
             .next_back()
             .is_some_and(is_python_identifier_char)
+            && text[idx + name.len()..].trim_start().starts_with('(')
     })
 }
 
@@ -918,12 +921,16 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.framework == PythonFramework::Pytest
-        && !test.parametrized
         && body_calls_owner(&test.body_text, owner)
         && test
             .fixtures
             .iter()
+            // A direct parametrize argname is a value pytest supplies, not a
+            // fixture; a parametrize mark does not resolve the test's other
+            // fixtures (#9619).
+            .filter(|fixture| !test.direct_parametrized.contains(fixture))
             .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+            .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
             .any(|fixture| body_uses_identifier(&test.body_text, fixture))
 }
 
@@ -1342,9 +1349,20 @@ pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) ->
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
             && !line_uses_known_static_cli_symbol(text, import)
-            && (text.contains(&format!("{}(", import.alias))
-                || text.contains(&format!("{}.", import.alias)))
+            && (names_imported_alias(text, &import.alias, '(')
+                || names_imported_alias(text, &import.alias, '.'))
     })
+}
+
+/// Whether `text` uses `alias` as a whole name followed by `next`. A substring
+/// match read `pos.x` as a use of `os` (RIPR-SPEC-0238 rule 8 requires tokens).
+/// Only an identifier character or a dot before the alias rules it out, so
+/// `x.os.getcwd()` (an attribute of another object) is not the import either;
+/// a string or comment prefix is not consulted, since f-string fields are code.
+fn names_imported_alias(text: &str, alias: &str, next: char) -> bool {
+    let needle = format!("{alias}{next}");
+    text.match_indices(&needle)
+        .any(|(idx, _)| python_callee_start_has_boundary(text, idx))
 }
 
 pub(super) fn is_known_mock_constructor_import(import: &PythonImport) -> bool {

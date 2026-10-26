@@ -1,0 +1,41 @@
+#[derive(Debug, Clone)]
+pub struct EmbSku(pub String);
+
+// Hand-written: skus are equal when they match ignoring case.
+impl PartialEq for EmbSku {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+}
+
+// Derived, but it embeds EmbSku, so the derived eq runs EmbSku::eq.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbLine {
+    pub sku: EmbSku,
+    pub qty: u32,
+}
+
+#[derive(Default)]
+pub struct EmbOrder {
+    pub lines: Vec<EmbLine>,
+}
+
+impl EmbOrder {
+    pub fn add_emb(&mut self, sku: &str, qty: u32) {
+        self.lines.push(EmbLine { sku: EmbSku(sku.to_uppercase()), qty });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line_c_embed() {
+        let mut order = EmbOrder::default();
+        let mut expected = EmbOrder::default();
+        expected.lines.push(EmbLine { sku: EmbSku("BOLT".to_string()), qty: 2 });
+        order.add_emb("bolt", 2);
+        assert_eq!(order.lines, expected.lines);
+    }
+}

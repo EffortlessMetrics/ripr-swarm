@@ -404,7 +404,10 @@ is bound by an import from `vitest`, `@jest/globals`, `@playwright/test` or
 parameter (Vitest `test("x", ({ expect }) => ...)`). Any other binding of
 `expect` makes step 2 produce no assertion: a file-level or test-body
 declaration (`const`, `let`, `var`, `function`, `class`), another parameter,
-or an import from any other module. A chai-bound `expect` is read only by
+or an import from any other module. Named exports of those declarations and
+named default-exported functions/classes create the same local binding and
+withhold matcher credit. A source re-export (`export { expect } from ...`)
+creates no local binding. A chai-bound `expect` is read only by
 step 1, so a chai chain step 1 does not know yields no assertion instead of
 falling through to the Jest table. A renamed import (`expect as e`) and
 `expect.soft` stay unrecognised.
@@ -593,6 +596,21 @@ strong:
   no repeated wildcard (`.`, a character class, an escaped class such as
   `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
   whose top-level `message` is a string literal.
+- AVA `t.throws` or `t.throwsAsync` (the test callback's first parameter of
+  a test registered through AVA's own `test` import, `import test from "ava"`
+  or `import { test } from "ava"`; tape and uvu give `t.throws` a different
+  expectation contract) whose second argument is an object holding exactly
+  one property, a plain `message` with a string literal value (a duplicate
+  key keeps the last value in JavaScript, so a second `message` is refused).
+  AVA compares `message` by equality, as `node:assert` does. The first
+  argument must be a plain function for `t.throws` and an async function for
+  `t.throwsAsync`, a `t.throwsAsync` credits only when awaited or returned to
+  the runner (a bare call can outlive the test), and every mention of the receiver in the test body must be
+  a `t.method(...)` call, so a shadowed receiver or a replaced matcher never
+  credits. Any other field (`instanceOf`, `is`, `name`, `code`), a spread, a
+  computed, shorthand or method `message`, a regex or non-literal `message`,
+  a missing expectation, a promise argument and `t.notThrows` /
+  `t.notThrowsAsync` stay `broad_error` / weak. (Amended 2026-10-26, #10400.)
 
 Rule 4's message-only guard applies to all of them: on a message-only
 change, a chai string (also the message of a chai class and message
@@ -669,10 +687,21 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not a call argument (`const later = () =>
-   this.helper()` is created, not run), and static methods contribute no
-   edge. An arrow passed to a call is read as invoked; the relation stays weak
-   and never reads `exposed`.
+   an arrow body that is not the first argument of a synchronous array method
+   (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
+   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`, an array element, a logical
+   operand, a stored callback, and a deferred callee such as `setTimeout`,
+   an event listener, `subscribe` or `then` are created or run later), the body
+   of a nested `function`, parameter defaults included (a call the method makes
+   outside it still counts; a
+   function whose parameters are followed by a return type annotation, or a
+   nested `class`, drops the method), a generator method (neither caller nor
+   callee), a class name the file declares more than once, and static methods
+   contribute no edge. A test that replaces the changed method or a method on
+   the chain (a fabricating `spyOn`, an assignment on any receiver, `delete` on
+   a prototype, `defineProperty`; the gate does not track which object a
+   receiver names, so an assignment on an unrelated object withholds too) is not related through the chain; a bare
+   call-through spy is. The relation stays weak and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -1160,6 +1189,70 @@ sits. A
 `let` or `var` binding that the file assigns to again
 (`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
 records no import. A `const` binding cannot be reassigned and is unchanged.
+
+A test registration picked off a whole-module `require()` namespace is a named
+runner import too (#10477): `const runner = require("node:test"); const test =
+runner.test;`, `const { test } = runner;` and the single-declaration form
+`const runner = require("node:test"), test = runner.test;` record the import
+`const { test } = require("node:test")` records. Declarations are extracted one
+at a time, so a separate pass carries the namespace across them. It requires
+exactly one top-level declaration of the namespace, a `const` pick declared
+after it, and that every other use of the namespace in the file is one of the
+qualifying picks: `runner.test = stub`, `runner = other`, an escaped `runner`, an
+alias (`const again = runner`), an optional chain, a computed key, a default or
+nested pattern, and a pick whose local the file writes refuse every pick. The
+runner-source and shadowing gates of rule 5 still decide whether the resulting
+import is a known registration, so a non-runner module's `helpers.test` stays
+unrelated.
+
+The pick is conservative on purpose (#10477 review). `.default`, computed,
+nested, defaulted and rest picks are not read, and neither is a member that is
+not an active registration root: `runner.xit` or `{ xdescribe: describe }`
+renamed into an active-looking local would pass the local-spelling extraction
+guards, so inactive members never become a pick. The namespace must be declared
+once and every other use must be a pick declared after it (a forward pick, a
+direct call, an alias, an escape, a tagged or interpolated use, `delete`,
+`Object.assign`/`defineProperty` or a call through it refuses every pick). The
+picked local must be declared before any use, never written (wrapped targets,
+member assignment, update, compound and loop targets included) and only called,
+optionally through a member chain. A file that can reach a name without
+spelling it (`eval`, `with`, an identifier escape) reads nothing.
+
+**Rule 23. A Playwright fixture that constructs a class is that class's
+receiver (2026-10-26, #9619).** `const test = base.extend<{ cart: Cart }>({
+cart: async ({}, use) => { await use(new Cart()); } })` hands every `test("...",
+({ cart }) => ...)` a fresh `Cart`, which reads as `const cart = new Cart()`
+in the registration's scope: a call through `cart` relates to the class's
+methods as rule 5's receivers do. It applies only when all of these hold, and
+otherwise the parameter stays unresolved as before:
+
+- `base` is the local name of `test` imported from `@playwright/test`, and
+  the file has exactly one `.extend` call, no `mergeTests`, and no use of
+  the extended `test` beyond calling it and its registration members
+  (`describe`, hooks, `only`, `skip`, `fixme`, `step`, `slow`): a `use`
+  override in any spelling (`.use (`, `["use"]`, a template key), an alias, a wrapper call, a
+  re-export or a template tag withholds, and so does punctuation directly
+  after the word in a comment or title;
+- the extended `test` is declared once and never reassigned;
+- the `extend` argument is one object literal of plain `key: function`
+  entries (no spread, computed key, method shorthand or `[fixture, options]`
+  tuple) and the fixture's function is `async ({}, use) => { await
+  use(new Cls(<literals>)); }`: an empty first pattern, a plain `use`
+  parameter, one awaited statement, a class named by a plain identifier and
+  string, number, boolean or `null` literal arguments;
+- the registration is a call of the extended `test` itself, not `test.only`
+  or another member (a skipped registration that destructures the fixture
+  withholds the name file-wide), and its callback's first parameter destructures the key
+  with a plain identifier (`{ cart }` or `{ cart: basket }`), with no
+  default and no nested pattern;
+- nothing else in the file writes or redeclares that name (a hook taking
+  the same fixture counts) or rebinds the class, by rule 5's receiver checks.
+
+A fixture that does more than construct (a second statement, a dependency
+on another fixture, a factory call, a statement that seeds the instance), a worker-scoped or
+`auto` tuple, an override with `test.use` (any spelling), and a merged or twice-extended
+test leave the parameter unresolved: the instance the test sees may not be
+the fresh one the constructor builds.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -1722,6 +1815,22 @@ keys); do not take the next number.
     2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
+
+- example `playwright-fixture-class-receiver`: `src/cart.ts` changes `add`'s
+  `this.cents.push(amount)` to `amount + 1` (corpus case
+  `pw-fixture-add-amount`), and `test/cart.spec.ts` has `const test =
+  base.extend<{ cart: Cart }>({ cart: async ({}, use) => { await use(new
+  Cart()); } })` with `test("lines add up", ({ cart }) => { cart.add(250);
+  cart.add(150); expect(cart.total()).toBe(400); })`: the fixture builds a
+  fresh `Cart`, so `cart.add` relates to the owner and `exact_value` /
+  strong reads `exposed` (rule 23; today `no_static_path`). The same spec
+  with the fixture also calling `seed(cart)` before `use`, or with a
+  `test.use({ cart })` override: `no_static_path` (unchanged).
+- example `playwright-fixture-reducer-seed`: the same `Cart`, with `total`'s
+  `reduce((a, b) => a + b, 0)` changed to start from `1` (corpus case
+  `pw-fixture-empty-total`), and `test("an empty cart totals zero", ({ cart })
+  => { expect(cart.total()).toBe(0); })`: `exact_value` / strong, `exposed`
+  (rule 23).
 
 ## Test Mapping
 

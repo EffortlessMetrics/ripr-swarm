@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,5 +2,5 @@
+ mod shadow;
+ 
+ pub fn gate(n: u32) -> bool {
+-    n > 9
++    n >= 10
+ }
