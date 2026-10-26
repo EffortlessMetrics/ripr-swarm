@@ -169,10 +169,15 @@ next transition on the existing incident.
 After landing, read back M and the accepted candidate; verify the corresponding
 tree and claim closure. A returned merge acknowledgment is not the readback.
 An incidental post-merge compile can detect a fault but is not pre-merge
-composition proof. Do not add a routine full post-merge replay; separately
-admitted main health retains its existing one-hour-AND-ten-merges cadence until
-an explicit policy change. Release synchronization into `ripr`, packaging,
-publication and installed verification remain separate transactions.
+composition proof. Under #4984, the selected merge-queue-only qualification
+direction supersedes the former one-hour-AND-ten-merges automatic main-health
+target. Retain historical observations with their original subjects and scope;
+they do not authorize routine full post-merge replay. Current installed workflow
+and required-check obligations remain binding until verified cutover; this
+document does not disable a workflow. Named incident, deep and release proof
+retain their separate purposes and authority. Release synchronization into
+`ripr`, packaging, publication and installed verification remain separate
+transactions.
 
 A small clear review fix belongs in the candidate. A genuinely out-of-scope gap
 gets an existing or new evidenced issue; a valid later nit is not erased by an
