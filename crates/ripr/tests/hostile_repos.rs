@@ -1110,24 +1110,54 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     Ok(())
 }
 
-/// A truncated `.git/index` is refused with Git's reason and a rebuild route,
-/// not Git's `fatal:` line alone (#10567).
+/// A truncated `.git/index` is refused with Git's reason and a rebuild route
+/// bound to the selected root, not Git's `fatal:` line alone (#10567). The run
+/// starts in a different repository with a staged change, and the root has a
+/// space in its name, so an unbound or unquoted `git reset` would be wrong.
 #[test]
 fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
     let scratch = Scratch::new("truncated-index")?;
-    let root = plain(&scratch, "truncated-index")?;
+    let root = plain(&scratch, "truncated index")?;
+    let decoy = plain(&scratch, "decoy")?;
+    fs::write(decoy.join("staged.txt"), "staged\n").map_err(|e| format!("write failed: {e}"))?;
+    git(&decoy, &["add", "staged.txt"])?;
+    let decoy_index =
+        fs::read(decoy.join(".git/index")).map_err(|e| format!("read failed: {e}"))?;
+
     let index = root.join(".git/index");
     let bytes = fs::read(&index).map_err(|e| format!("read index failed: {e}"))?;
     fs::write(&index, &bytes[..bytes.len().min(20)]).map_err(|e| format!("write failed: {e}"))?;
-    let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let ran = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", "main"],
+        &[],
+    )?;
     assert_sane(&ran, "truncated index")?;
     if ran.code != Some(2) {
         return Err(format!("expected a refusal\n{}", ran.stderr));
     }
-    for needle in ["index file smaller than expected", "run `git reset`"] {
+    let bound = format!("git -C '{root_arg}' reset");
+    for needle in ["index file smaller than expected", bound.as_str()] {
         if !ran.stderr.contains(needle) {
             return Err(format!("missing `{needle}`\n{}", ran.stderr));
         }
+    }
+
+    // Follow the advice literally: remove the named index, rebuild it in the
+    // selected root, and the same invocation now completes.
+    fs::remove_file(&index).map_err(|e| format!("remove index failed: {e}"))?;
+    git(&root, &["reset", "-q"])?;
+    let again = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", "main"],
+        &[],
+    )?;
+    assert_found_change(&again, "after the advised index rebuild")?;
+    let decoy_after =
+        fs::read(decoy.join(".git/index")).map_err(|e| format!("read failed: {e}"))?;
+    if decoy_after != decoy_index {
+        return Err("the refusal or repair touched the decoy repository's index".to_string());
     }
     Ok(())
 }

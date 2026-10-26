@@ -166,6 +166,13 @@ path (the stdin sentinel `-` stays), never the relative spelling repeated as
 typed, so pasting one from another directory analyzes the same repository
 (#3948).
 
+When Git refuses the repository state while reading committed content (exit
+128, for example a truncated index), the refusal keeps Git's reason and names
+the rebuild repair bound to the selected root: a shell-quoted
+`git -C '<root>' reset` after removing the index file Git names, so the advice
+works from another directory, from a root with spaces, and for a linked
+worktree whose index lives under its gitdir (#10567).
+
 ### Doctor guidance
 
 When `ripr doctor --root <repo>` sees staged or unstaged tracked changes **and
@@ -290,6 +297,9 @@ that untracked source was analyzed.
 ## Test Mapping
 
 - `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
+- `crates/ripr/tests/hostile_repos.rs::truncated_index_refusal_names_the_rebuild_repair`
+  - truncated index refusal names the rebuild repair bound to the selected
+  root; following it restores the run and leaves a decoy repository untouched.
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit`
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding`
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base`

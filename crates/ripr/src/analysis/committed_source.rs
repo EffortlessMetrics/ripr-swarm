@@ -663,6 +663,12 @@ fn is_regular_file_mode(mode: &str) -> bool {
     mode == "100644" || mode == "100755"
 }
 
+/// POSIX single-quote `text` so a repair command pasted from a refusal targets
+/// the selected root even when it contains spaces or quotes.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
 fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<Vec<u8>, CoreError> {
     let describe = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
     let output = crate::git::run_git_output_with_optional_deadline_and_limit(
@@ -681,10 +687,14 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
         // the common case); name the repair rather than repeat Git's line
         // alone (#10567).
         let repair = if output.status.code() == Some(128) {
-            ". If Git names `.git/index`, remove that file and run `git reset` to rebuild \
-             it; otherwise correct or restore the file it names. Then re-run."
+            let quoted = shell_quote(&root.to_string_lossy());
+            format!(
+                ". If Git names an index file (`.git/index`, or `index` under a linked \
+                 worktree's gitdir), remove that file and run `git -C {quoted} reset` to \
+                 rebuild it; otherwise correct or restore the file it names. Then re-run."
+            )
         } else {
-            ""
+            String::new()
         };
         return Err(format!(
             "committed-source probe: `git {describe}` exited with {}: {detail}{repair}",
