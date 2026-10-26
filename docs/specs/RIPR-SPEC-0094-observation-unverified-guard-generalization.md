@@ -143,53 +143,28 @@ Per-family fixture pairs (blind and confirmed) plus the MatchArm qualifier-blind
 
 ## Acceptance Examples
 
-### ReturnValue blind (must downgrade)
-
-```
-probe family:  return_value
-expression:    base * 2
-test:          assert!(compute_score(3) > 0);
-Before fix:    exposed / confidence 1.0
-After fix:     weakly_exposed / confidence 0.92 / observation_unverified
-```
-
-### ReturnValue confirmed (must stay exposed)
-
-```
-probe family:  return_value
-expression:    x * SCALE_FACTOR
-test:          assert_eq!(compute_score(3), 3 * SCALE_FACTOR);
-After fix:     exposed / confidence 1.0 (SCALE_FACTOR token_match fires)
-```
-
-### MatchArm sibling-qualifier blind (Part B, must downgrade)
-
-```
-probe family:  match_arm
-expression:    Mode::Frozen => -1,
-test:          assert_eq!(classify(Mode::Warm), 1);
-Before fix:    exposed / confidence 1.0
-After fix:     weakly_exposed / confidence 0.92 / observation_unverified
-```
-
-### SideEffect / CallDeletion blind (must downgrade)
-
-```
-probe family:  call_deletion (effect)
-expression:    notifier.send(order_id)
-test:          assert!(result);              // plain assert, no mock, no token
-After fix:     weakly_exposed / observation_unverified
-```
-
-### SideEffect confirmed (Part C, must stay exposed)
-
-```
-probe family:  side_effect
-expression:    notifier.send(order_id)
-test:          assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);
-After fix:     exposed   (strong persisted-state observer; token_match on
-                          `notifier`; effect observer kind-matches the seam)
-```
+1. ReturnValue blind, must downgrade. Probe family `return_value`,
+   expression `base * 2`, test `assert!(compute_score(3) > 0);`. Before the
+   fix: `exposed` / confidence 1.0. After: `weakly_exposed` / confidence 0.92 /
+   `observation_unverified`.
+2. ReturnValue confirmed, must stay exposed. Probe family `return_value`,
+   expression `x * SCALE_FACTOR`, test
+   `assert_eq!(compute_score(3), 3 * SCALE_FACTOR);`. After the fix:
+   `exposed` / confidence 1.0 (the `SCALE_FACTOR` `token_match` fires).
+3. MatchArm sibling-qualifier blind (Part B), must downgrade. Probe family
+   `match_arm`, expression `Mode::Frozen => -1,`, test
+   `assert_eq!(classify(Mode::Warm), 1);`. Before the fix: `exposed` /
+   confidence 1.0. After: `weakly_exposed` / confidence 0.92 /
+   `observation_unverified`.
+4. SideEffect / CallDeletion blind, must downgrade. Probe family
+   `call_deletion` (effect), expression `notifier.send(order_id)`, test
+   `assert!(result);` (a plain assert, no mock, no token). After the fix:
+   `weakly_exposed` / `observation_unverified`.
+5. SideEffect confirmed (Part C), must stay exposed. Probe family
+   `side_effect`, expression `notifier.send(order_id)`, test
+   `assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);`. After
+   the fix: `exposed` (a strong persisted-state observer; `token_match` on
+   `notifier`; the effect observer kind-matches the seam).
 
 In `observation_verified_side_effect`, this call is the function's tail-return
 expression, so its aligned diff produces SideEffect and ReturnValue probes,
@@ -204,7 +179,7 @@ supply no returned-value discriminator.
 
 A bare Medium mock observer (`mock.verify();`, no token) clears
 `observation_unverified` via Part C but remains `weakly_exposed` because Medium
-strength maps to a weak discriminator — see Non-Goals.
+strength maps to a weak discriminator; see Non-Goals.
 
 ## Strongest-oracle confirmation (#4404)
 

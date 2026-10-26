@@ -190,6 +190,9 @@ pub(crate) fn collect_callback_assertions(
         returns_to_runner,
         literal_consts: &literal_consts,
         match_object_consts: &match_object_consts,
+        receiver_named_once: receiver.is_some_and(|name| {
+            identifier_occurrences(statements_text(statements, source), name) == 1
+        }),
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -326,6 +329,7 @@ pub(crate) fn statements_collect_assertion_probe(
         returns_to_runner: false,
         literal_consts: &[],
         match_object_consts: &[],
+        receiver_named_once: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -355,6 +359,10 @@ pub(crate) struct AssertionContext<'a> {
     /// The test body's top-level object `const`s a `toMatchObject` argument
     /// may read (RIPR-SPEC-0250 rule 1). Empty inside a nested statement.
     match_object_consts: &'a [MatchObjectConst],
+    /// Whether the receiver (`done`) is named exactly once in the whole test
+    /// body, so the one call that settles the test is the one a credited
+    /// callback holds (RIPR-SPEC-0246 rule 9).
+    receiver_named_once: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -370,6 +378,7 @@ impl<'a> AssertionContext<'a> {
             returns_to_runner: self.returns_to_runner,
             literal_consts: &[],
             match_object_consts: &[],
+            receiver_named_once: self.receiver_named_once,
             table_consts: &[],
         }
     }
@@ -739,6 +748,9 @@ fn collect_nested_callback_assertions(
     let Expression::CallExpression(call) = expr else {
         return;
     };
+    if !awaited && !returned {
+        collect_done_callback_assertions(call, source, context, out);
+    }
     let Some(member) = call.callee.as_member_expression() else {
         return;
     };
@@ -912,6 +924,7 @@ fn collect_nested_callback_assertions(
                 returns_to_runner: true,
                 literal_consts: &literal_consts,
                 match_object_consts: &match_object_consts,
+                receiver_named_once: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
@@ -949,6 +962,110 @@ fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
             _ => return false,
         };
     }
+}
+
+/// RIPR-SPEC-0246 rule 9: the assertions of a callback handed to a call in a
+/// test that takes a `done` callback, read as the test's own when the
+/// callback must settle the test.
+///
+/// The test callback's first parameter (`done`) is called with no arguments
+/// as a top-level statement of the callback, after only expression and
+/// declaration statements. A runner cannot pass the test unless that call
+/// runs, and the statements before it either finish or throw, so every
+/// assertion among them has to hold for the test to pass. A callback the
+/// callee never invokes times out instead of passing.
+///
+/// Refused (fail closed, nothing collected): an `async` or generator
+/// callback, a `done` that takes arguments or sits behind a branch, a
+/// `return`, `throw`, `if`, `try` or loop before it, a callback parameter or
+/// declaration that shadows `done`, and a test without a callback parameter.
+fn collect_done_callback_assertions(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    let Some(done) = context.receiver else {
+        return;
+    };
+    // `done` is named only inside one callback: not beside it in the test
+    // body (a second settle path), not in a sibling callback or branch.
+    if !context.receiver_named_once {
+        return;
+    }
+    for argument in &call.arguments {
+        if callback_is_async_or_generator(argument) {
+            continue;
+        }
+        let Some(statements) = function_body_statements_from_argument(argument) else {
+            continue;
+        };
+        if super::tests_extract::argument_parameter_names(argument)
+            .iter()
+            .any(|parameter| parameter == done)
+        {
+            continue;
+        }
+        let mut declared = Vec::new();
+        super::tests_extract::collect_block_declared_names(statements, &mut declared);
+        if declared.iter().any(|name| name == done) {
+            continue;
+        }
+        let mut settles_at = None;
+        for (index, statement) in statements.iter().enumerate() {
+            match statement {
+                Statement::ExpressionStatement(expression)
+                    if is_bare_call_of(&expression.expression, done) =>
+                {
+                    settles_at = Some(index);
+                    break;
+                }
+                Statement::ExpressionStatement(_) | Statement::VariableDeclaration(_) => {}
+                _ => break,
+            }
+        }
+        let Some(settles_at) = settles_at else {
+            continue;
+        };
+        for statement in statements.iter().take(settles_at) {
+            collect_expect_assertions_in_statement(statement, source, &context.nested(), out);
+        }
+    }
+}
+
+/// The source text spanning `statements`.
+fn statements_text<'s>(statements: &[Statement<'_>], source: &'s SourceText<'_>) -> &'s str {
+    let text: &str = source;
+    let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
+        return "";
+    };
+    text.get(first.span().start as usize..last.span().end as usize)
+        .unwrap_or("")
+}
+
+/// Whole-word occurrences of `name` in `text`, counting any in strings and
+/// comments too (over-counting only refuses credit).
+fn identifier_occurrences(text: &str, name: &str) -> usize {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            !text[..*at].chars().next_back().is_some_and(is_word)
+                && !text[at + name.len()..].chars().next().is_some_and(is_word)
+        })
+        .count()
+}
+
+/// `name()`: a call of the bare identifier with no arguments.
+fn is_bare_call_of(expression: &Expression<'_>, name: &str) -> bool {
+    let Expression::CallExpression(call) = expression.get_inner_expression() else {
+        return false;
+    };
+    call.arguments.is_empty()
+        && !call.optional
+        && matches!(
+            call.callee.get_inner_expression(),
+            Expression::Identifier(identifier) if identifier.name == name
+        )
 }
 
 /// `true` for an `async` or generator arrow or function callback.
@@ -1880,6 +1997,23 @@ fn assert_call_assertion(
         oracle_kind = OracleKind::ExactErrorVariant;
         oracle_strength = OracleStrength::Strong;
     }
+    // RIPR-SPEC-0243 rule 10: `assert.match(value, /^literal$/)` with a
+    // regex that matches only one string (anchored, no flags but `u`, no
+    // metacharacters) is a string equality check, so it pins the value as
+    // `strictEqual` does. A wider regex stays a weak relational check.
+    // Without `m`, `$` matches only at end of input in JavaScript (ECMAScript
+    // Assertion `$`, multiline false), never before a final newline, so
+    // `/^literal$/` rejects "literal\n" (checked in node 22).
+    let anchored_match_literal = (method == "match" && !matches!(flavor, AssertFlavor::Chai))
+        .then(|| call.arguments.get(1))
+        .flatten()
+        .filter(|arg| matches!(arg, Argument::RegExpLiteral(_)))
+        .and_then(|arg| source_text_for_argument(arg, source))
+        .and_then(|text| super::error_payload_guard::plain_anchored_regex_text(&text));
+    if anchored_match_literal.is_some() {
+        oracle_kind = OracleKind::ExactValue;
+        oracle_strength = OracleStrength::Strong;
+    }
     // RIPR-SPEC-0247 rule 2: loose `==` equality against a literal that
     // coercion cannot reach pins the value as strict equality does.
     // A test-local `const` bound to such a literal reads as the literal.
@@ -1923,11 +2057,14 @@ fn assert_call_assertion(
         OracleKind::ExactValue | OracleKind::RelationalCheck
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
-    let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        match resolved_const.or(loose_number_literal) {
-            Some(literal) => (Some(literal.to_string()), false),
-            None => expected_argument_metadata(expected_arg, source),
-        };
+    let (expected_value_or_variant, has_dynamic_matcher_arg) = match (
+        anchored_match_literal,
+        resolved_const.or(loose_number_literal),
+    ) {
+        (Some(literal), _) => (Some(js_double_quoted(&literal)), false),
+        (None, Some(literal)) => (Some(literal.to_string()), false),
+        (None, None) => expected_argument_metadata(expected_arg, source),
+    };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
     let rendered_call = match &error_payload {
@@ -1975,6 +2112,18 @@ fn node_assert_error_payload(
                 TypeScriptErrorPayloadKind::AssertRejectsRegex
             } else {
                 TypeScriptErrorPayloadKind::AssertThrowsRegex
+            },
+        });
+    }
+    if let Argument::RegExpLiteral(_) = arg {
+        let expected = source_text_for_argument(arg, source)?;
+        super::error_payload_guard::plain_unanchored_regex_text(&expected)?;
+        return Some(TypeScriptErrorPayload {
+            expected,
+            kind: if rejects {
+                TypeScriptErrorPayloadKind::AssertRejectsContainsRegex
+            } else {
+                TypeScriptErrorPayloadKind::AssertThrowsContainsRegex
             },
         });
     }
@@ -2197,19 +2346,13 @@ pub(crate) fn chai_expect_assertion_from_expression(
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
     }
-    // RIPR-SPEC-0243 rule 10: a non-negated chai `throw` with exactly one
-    // string-literal argument matches the message as a substring, as Jest's
-    // `toThrow("...")` does, so it pins the error the same way.
+    // RIPR-SPEC-0243 rule 10: a non-negated chai `throw` pins the error when
+    // its arguments are a string literal (substring message), a PascalCase
+    // class reference, or a class followed by a string literal. A regex, an
+    // instance, or any other argument stays broad.
     let error_payload = terminal_call
-        .filter(|call| {
-            !negated && matches!(oracle_kind, OracleKind::BroadError) && call.arguments.len() == 1
-        })
-        .and_then(|call| call.arguments.first())
-        .and_then(|arg| safe_error_literal_payload_text(arg, source))
-        .map(|expected| TypeScriptErrorPayload {
-            expected,
-            kind: TypeScriptErrorPayloadKind::ChaiThrowLiteral,
-        });
+        .filter(|_| !negated && matches!(oracle_kind, OracleKind::BroadError))
+        .and_then(|call| chai_throw_payload(&call.arguments, source));
     if error_payload.is_some() {
         oracle_kind = OracleKind::ExactErrorVariant;
         oracle_strength = OracleStrength::Strong;
@@ -2265,6 +2408,38 @@ pub(crate) fn chai_expect_assertion_from_expression(
         expected_object_const: None,
         compares_reference_identity: false,
     })
+}
+
+/// The pinned error payload of a chai `.throw(...)` argument list
+/// (RIPR-SPEC-0243 rule 10). Fail closed on every other shape.
+fn chai_throw_payload(
+    arguments: &oxc_allocator::Vec<'_, Argument<'_>>,
+    source: &str,
+) -> Option<TypeScriptErrorPayload> {
+    match arguments.as_slice() {
+        [only] => {
+            if let Some(expected) = safe_error_literal_payload_text(only, source) {
+                Some(TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::ChaiThrowLiteral,
+                })
+            } else {
+                safe_error_class_payload_text(only, source).map(|expected| TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::ChaiThrowClass,
+                })
+            }
+        }
+        [class, message] => {
+            let class = safe_error_class_payload_text(class, source)?;
+            let message = safe_error_literal_payload_text(message, source)?;
+            Some(TypeScriptErrorPayload {
+                expected: format!("{class}, {message}"),
+                kind: TypeScriptErrorPayloadKind::ChaiThrowClassLiteral,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Unwrap the chain between `expect(...)` and the matcher call: the
@@ -3082,4 +3257,41 @@ pub(crate) fn collect_related_mock_paths(
         }
     }
     paths
+}
+
+/// `text` as a JavaScript double-quoted string literal. Rust's `{:?}` is not
+/// JavaScript escaping (`\u{..}`, `\0`), so the escapes are written out.
+fn js_double_quoted(text: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') => {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(test)]
+mod js_literal_tests {
+    use super::js_double_quoted;
+
+    #[test]
+    fn js_double_quoted_writes_javascript_escapes() {
+        assert_eq!(js_double_quoted("a-b"), "\"a-b\"");
+        assert_eq!(js_double_quoted("say \"hi\"\\"), "\"say \\\"hi\\\"\\\\\"");
+        assert_eq!(js_double_quoted("é"), "\"é\"");
+        assert_eq!(js_double_quoted("a\u{0}b\u{2028}"), "\"a\\u0000b\\u2028\"");
+    }
 }

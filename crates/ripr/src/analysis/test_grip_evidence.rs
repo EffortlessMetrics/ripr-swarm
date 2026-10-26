@@ -50,9 +50,12 @@ use super::rust_index::{
 };
 use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
-use crate::domain::{
-    Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
-    SymbolId, ValueContext, ValueFact,
+use crate::{
+    domain::{
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
+        StageState, SymbolId, ValueContext,
+    },
+    value_origins::LocatedValueFact as ValueFact,
 };
 // Re-export so callers that import from this module continue to compile.
 pub(crate) use crate::domain::{RelationConfidence, RelationReason};
@@ -3198,9 +3201,12 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
             .then(a.text.cmp(&b.text))
             .then(a.file.cmp(&b.file))
     });
-    // Cross-file collisions still collapse (first file in path order), as before
-    // #8389, so JSON observed values and totals do not move.
-    values.dedup_by(|a, b| a.line == b.line && a.value == b.value && a.text == b.text);
+    // File is part of a value's identity (#8389), as in the activation sorter:
+    // only exact same-file duplicates collapse, so one test file's fact never
+    // hides another file's at the same line.
+    values.dedup_by(|a, b| {
+        a.file == b.file && a.line == b.line && a.value == b.value && a.text == b.text
+    });
 }
 
 #[cfg(test)]

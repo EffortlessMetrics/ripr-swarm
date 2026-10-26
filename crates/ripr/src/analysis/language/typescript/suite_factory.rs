@@ -19,6 +19,7 @@ use oxc_ast::ast::{Argument, Expression, Function, Statement};
 const MAX_EXPANSIONS: usize = 8;
 
 /// The source with the expansions appended, and where each expansion starts.
+#[derive(Clone)]
 pub(crate) struct SuiteFactoryExpansion {
     pub(crate) source: String,
     /// `(first line of an appended expansion, line of the call it came from)`,

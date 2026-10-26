@@ -30,6 +30,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach owner: pin
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -37,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast probe:src_shared.rs:return_value:b867b1ce
   ripr context --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast --at probe:src_shared.rs:return_value:b867b1ce
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_shared.rs:return_value:b867b1ce --root <cwd>/fixtures/shared_target_assertion_return/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/shared_target_assertion_return/input --at src/shared.rs:2 --kind return_value
 

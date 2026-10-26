@@ -1,0 +1,7 @@
+use spec0096_4::Ledger;
+
+#[test]
+fn apply_succeeds() {
+    let mut ledger = Ledger { balance: 100 };
+    assert!(ledger.apply(5).is_ok());
+}

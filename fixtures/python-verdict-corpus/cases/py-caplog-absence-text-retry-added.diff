@@ -1,0 +1,12 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -5,7 +5,7 @@ log = logging.getLogger("absence.audit")
+ 
+ def settle(amount):
+     if amount > 0:
+-        log.warning("settled: %s", amount)
++        log.warning("settled: %s, retry queued", amount)
+         return True
+     return False
+ 

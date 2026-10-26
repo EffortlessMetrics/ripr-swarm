@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,7 +11,7 @@
+ pub fn iter_total(items: &Vec<u64>) -> u64 {
+     let mut sum = 0u64;
+     for w in items.iter() {
+-        sum = sum + w;
++        sum += w;
+     }
+     sum
+ }
