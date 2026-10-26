@@ -6439,11 +6439,31 @@ const SPEC_INDEX_FRAGMENT_DIR: &str = "docs/spec-index.d";
 /// index-link match serves both places.
 fn specs_index_text(root: &Path, readme: &Path) -> Result<String, String> {
     let mut text = read_text_lossy(readme)?;
-    for (_, fragment) in spec_index_fragments(root)? {
-        text.push('\n');
-        text.push_str(&fragment.replace("](../specs/", "]("));
+    for (name, fragment) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md") else {
+            continue;
+        };
+        if let Some(row) = spec_index_fragment_row(stem, &fragment) {
+            text.push('\n');
+            text.push_str(&row.replace("](../specs/", "]("));
+        }
     }
     Ok(text)
+}
+
+/// The one index row of a fragment, or `None` when the fragment is not exactly
+/// that: a single non-blank line, a table row whose only link is the canonical
+/// `[stem](../specs/<file>)`. Anything else (fenced examples, comments, a second
+/// row, an equivalent-but-different link spelling) earns no credit.
+fn spec_index_fragment_row<'a>(stem: &str, text: &'a str) -> Option<&'a str> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let row = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let prefix = format!("| [{stem}](../specs/");
+    (row.starts_with(&prefix) && row.ends_with('|') && row.matches("](").count() == 1)
+        .then_some(row)
 }
 
 /// Every `docs/spec-index.d/*.md` as (file name, text), in file-name order.
@@ -6494,10 +6514,9 @@ fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> R
                 ));
             }
         }
-        let rows = text.matches(&format!("[{stem}](../specs/")).count();
-        if rows != 1 {
+        if spec_index_fragment_row(stem, &text).is_none() {
             violations.push(format!(
-                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must hold exactly one `[{stem}](../specs/<file>)` row, found {rows}"
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must hold exactly one table row `| [{stem}](../specs/<file>) | status | topic |` and nothing else"
             ));
         }
         if readme_text.contains(&format!("[{stem}](")) {

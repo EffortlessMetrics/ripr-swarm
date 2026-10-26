@@ -31756,15 +31756,46 @@ fn spec_index_fragments_must_be_named_for_the_one_spec_they_register() -> Result
     );
     let violations = spec_numbering_violations(&root)?;
     assert!(
-        violations
-            .iter()
-            .any(|violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one")),
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
         "{violations:?}"
     );
     assert!(
         violations
             .iter()
             .any(|violation| violation.contains("RIPR-SPEC-0001.md duplicates the README row")),
+        "{violations:?}"
+    );
+
+    // Equivalent link spellings are still two rows, and a fenced example
+    // renders no index link, so neither earns credit.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n| [RIPR-SPEC-0002](./../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "```\n| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n```\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]")),
+        "a fenced row must not register the spec: {violations:?}"
+    );
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
         "{violations:?}"
     );
     Ok(())
