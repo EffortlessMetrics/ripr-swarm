@@ -7920,6 +7920,66 @@ fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
     Ok(())
 }
 
+/// #10537 review: a KNOWN seam withheld by agent policy is not an unknown
+/// seam. `agent start` keeps the plain failure (exit 2), as `agent packet`
+/// does for the same case; only an id absent from the inventory exits 3.
+#[test]
+fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, diff) = agent_brief_sample_workspace("agent-start-config-hidden")?;
+    let root_path = root.display().to_string();
+    let diff = diff.display().to_string();
+    let brief = run_ripr(&[
+        "agent", "brief", "--root", &root_path, "--diff", &diff, "--json",
+    ]);
+    assert_success(&brief);
+    let seam_id = json_string_field(&String::from_utf8_lossy(&brief.stdout), "seam_id")
+        .ok_or("expected brief output to include a seam_id")?;
+
+    // Control: before the policy hides it, the seam starts successfully.
+    let visible = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        &seam_id,
+    ]);
+    assert_success(&visible);
+
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )?;
+    let hidden = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        &seam_id,
+    ]);
+    assert_eq!(
+        hidden.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&hidden.stderr)
+    );
+    assert!(String::from_utf8_lossy(&hidden.stderr).contains("hidden by config"));
+
+    // Discriminator: a truly absent id under the same config exits 3.
+    let absent = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "no-such-seam",
+    ]);
+    assert_eq!(absent.status.code(), Some(3));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 #[test]
 fn agent_start_packet_discloses_the_command_shell_assumption()
 -> Result<(), Box<dyn std::error::Error>> {

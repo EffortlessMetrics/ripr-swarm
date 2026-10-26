@@ -382,11 +382,23 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        return Err(CoreError::seam_id_unknown(format!(
+        let message = format!(
             "agent start seam_id {} was not found or is hidden by config. {}",
             options.seam_id,
             unknown_seam_id_hint(&options.root, &options.seam_id)
-        )));
+        );
+        // Like `agent packet`: only an id absent from the inventory is the
+        // typed unknown-seam refusal (exit 3). A known seam withheld by agent
+        // policy keeps the plain failure (exit 2).
+        let in_inventory = report
+            .classified
+            .iter()
+            .any(|entry| entry.seam.id().as_str() == options.seam_id);
+        return Err(if in_inventory {
+            CoreError::from(message)
+        } else {
+            CoreError::seam_id_unknown(message)
+        });
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
