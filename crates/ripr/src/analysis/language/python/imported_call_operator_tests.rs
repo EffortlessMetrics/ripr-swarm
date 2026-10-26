@@ -356,3 +356,14 @@ fn a_call_with_keywords_or_a_test_that_cannot_run_is_not_credited() -> Check {
     withheld(&finding, "test edited in the same diff");
     Ok(())
 }
+
+#[test]
+fn a_workspace_type_with_its_own_arithmetic_keeps_the_abstention() -> Check {
+    // `lookup` may return an instance whose `__mul__` and `__add__` both give
+    // 30, so the pinned value says nothing about the operator.
+    let table = "class Rate:\n    def __mul__(self, units):\n        return 30\n\n    def __add__(self, units):\n        return 30\n\n\ndef lookup(tier):\n    return Rate()\n";
+    let source = quote_source(QUOTE_NEW);
+    let finding = quote_finding(&workspace_with(table, &source, TEST))?;
+    withheld(&finding, "workspace type with __mul__ and __add__");
+    Ok(())
+}

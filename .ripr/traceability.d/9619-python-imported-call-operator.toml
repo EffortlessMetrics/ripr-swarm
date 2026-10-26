@@ -12,4 +12,5 @@ tests = [
   "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_patched_owner_keeps_the_mocked_module_abstention",
   "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::the_other_operand_may_be_an_expression_and_the_call_may_come_second",
   "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_call_with_keywords_or_a_test_that_cannot_run_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_workspace_type_with_its_own_arithmetic_keeps_the_abstention",
 ]

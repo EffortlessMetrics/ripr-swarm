@@ -16,6 +16,8 @@
 //!   to exactly one undecorated module-level function of the workspace, with
 //!   parameters and literals as arguments, and the other operand is an
 //!   expression over the parameters and integer literals;
+//! - no workspace type defines `__add__`, `__sub__`, `__mul__` or their reflected
+//!   forms, which could answer the operator with the pinned value itself;
 //! - a straight-line `assert owner(<literals>) == <integer literal>`
 //!   of a test names the owner through an import the test does not rebind;
 //! - the old operator, the literals and the assertion fix a whole number `X`,
@@ -38,6 +40,13 @@ use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 /// The limit evidence this credit replaces.
 pub(super) const IMPORTED_CALL_LIMIT_EVIDENCE: &str =
     "static_limit missing_import_graph: changed line calls an imported symbol";
+
+/// Methods that let a workspace type answer `+`, `-` or `*` with something
+/// other than the number the assertion pins, so the call result is not a
+/// number the old operator can be solved for.
+const ARITHMETIC_METHODS: [&str; 6] = [
+    "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
+];
 
 /// The one-`return` shape of the owner: `call OP other` or `other OP call`.
 struct Shape {
@@ -82,6 +91,14 @@ fn credits<'a>(
     let module_owner = owners
         .iter()
         .find(|candidate| candidate.is_module_owner() && candidate.file == file)?;
+    // The integer reading of the call result holds only while no workspace
+    // type defines its own arithmetic.
+    if owners
+        .iter()
+        .any(|candidate| ARITHMETIC_METHODS.contains(&candidate.name.as_str()))
+    {
+        return None;
+    }
     let old_source = with_line_replaced(new_source, line, old_line_text)?;
     let (Mod::Module(new_module), Mod::Module(old_module)) = (
         parse_module_result(file, new_source).ok()?,
