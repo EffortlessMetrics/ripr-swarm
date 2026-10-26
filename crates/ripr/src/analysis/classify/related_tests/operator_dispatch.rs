@@ -17,8 +17,8 @@
 //! - the test sits in the owner's own file and no scope between the test and
 //!   the file declares or renames another `T`;
 //! - `a[i]` is read as `Index::index` for a read and `IndexMut::index_mut` for
-//!   an assignment or `&mut a[i]`; a projected result (`a[i].x`) is credited
-//!   to neither because it may borrow either way;
+//!   an assignment or `&mut a[i]`; a projected result (`a[i].x`), a parenthesised or destructured
+//!   place and a `ref mut` binding are credited to neither because it may borrow either way;
 //! - the operator's `Self` operand has a syntactically resolvable type `T`
 //!   (a constructor, a unit struct, a `let` annotated or built by one), is a
 //!   whole operand (not the tail of a longer expression, not behind `&`, not
@@ -516,7 +516,24 @@ fn index_access(masked: &str, at: usize, mut_borrowed: bool) -> Option<IndexAcce
         depth == 0
     })? + at;
     let after = masked[close + 1..].trim_start();
-    if after.starts_with(['.', '[']) {
+    if after.starts_with(['.', '[', '(']) {
+        return None;
+    }
+    // A site inside a parenthesised or destructured place (`(m[0]).x = 1`,
+    // `(m[0], m[1]) = ..`) or beside a `ref mut` binding is a mutable place
+    // whatever follows the `]`, so only a plainly read position is credited.
+    let statement = masked[..at]
+        .rsplit([';', '{', '}'])
+        .next()
+        .unwrap_or_default()
+        .trim_start();
+    if statement.starts_with('(')
+        || statement
+            .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["ref", "mut"])
+    {
         return None;
     }
     let assigns = (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))

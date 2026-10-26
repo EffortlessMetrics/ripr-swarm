@@ -1336,7 +1336,7 @@ mod other {
     pub struct Money(pub i64);
 }
 ";
-    let cases: [(&str, Case); 14] = [
+    let cases: [(&str, Case); 18] = [
         (
             "another type's impl",
             Case {
@@ -1421,6 +1421,38 @@ mod other {
             ),
         ),
         (
+            "a parenthesised place",
+            with_body(
+                INDEX,
+                "parenthesised",
+                "let mut m = Money(1);\n        (m[0]).push(1);",
+            ),
+        ),
+        (
+            "a destructuring assignment",
+            with_body(
+                INDEX,
+                "destructured",
+                "let mut m = Money(1);\n        (m[0], m[1]) = (1, 2);",
+            ),
+        ),
+        (
+            "a ref mut binding",
+            with_body(
+                INDEX,
+                "ref_mut",
+                "let mut m = Money(1);\n        let ref mut r = m[0];\n        *r = 1;",
+            ),
+        ),
+        (
+            "a call on the element",
+            with_body(
+                INDEX,
+                "element_call",
+                "let mut m = Money(1);\n        m[0](1);",
+            ),
+        ),
+        (
             "a chained index",
             with_body(
                 INDEX,
@@ -1431,15 +1463,15 @@ mod other {
         (
             "a type the test redeclares",
             Case {
-                test_body: "struct Money(i64);\n        let m = Money(1);\n        assert_eq!(m.0, 1);\n        let _ = m;",
+                test_body: "struct Money(i64);\n        let m = Money(1);\n        assert_eq!(m[0], 1);",
                 ..INDEX
             },
         ),
         (
-            "a same-named type from another module",
+            "a same-named type imported from another module",
             Case {
                 extra_items: shadowed,
-                test_body: "let m = other::Money(1);\n        assert_eq!(m[0], 1);",
+                test_body: "use other::Money;\n        let m = Money(1);\n        assert_eq!(m[0], 1);",
                 ..INDEX
             },
         ),
