@@ -14,7 +14,12 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.66)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: self.items.iter().map(|(_, price)| price).sum()
-  Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+  Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does
+    not evaluate (an environment variable the test sets or removes, a mockall closure that reads the
+    call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a
+    helper-built receiver under a changed closure, a hand-written recording double, or an async
+    owner driven by an executor helper in the test's file), so ripr cannot say whether the check
+    notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
   Related test (1 of 5 matched rows): src/lib.rs:52 fixture_total (ripr could not confirm that this assertion observes the changed behavior)
   Next step: `fixture_total` (src/lib.rs:52) pins the owner's result on a receiver a test helper
     builds, and ripr does not read what the helper puts in it for the changed closure to run over,
@@ -28,6 +33,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach total: fixture_total
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 12 more detail line(s) in --format human-full
@@ -35,7 +43,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast probe:src_lib.rs:return_value:d4907aca
   ripr context --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast --at probe:src_lib.rs:return_value:d4907aca
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:d4907aca --root <cwd>/fixtures/fixture_receiver_extension_iter/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/fixture_receiver_extension_iter/input --at src/lib.rs:16 --kind return_value
 

@@ -43,10 +43,12 @@ Weakness
 
 Stop reasons:
   - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
+    Next: Pass a literal input in the test, or assert on a value derived from the fixture with an exact `assert_eq!`.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 
 Limitation detail
   last established edge: related tests `fixture_total` (src/lib.rs:52)

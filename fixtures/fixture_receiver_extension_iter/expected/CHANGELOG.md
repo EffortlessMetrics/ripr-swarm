@@ -34,3 +34,16 @@ The human-full output from the fixture replay at a8fc17b9d385e0d153a6beb80c3435d
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — fixture_receiver_extension_iter (4)
+
+Reason:
+RIPR-SPEC-0240: retain the extension-dispatch refusal while refreshing current-main limitation wrapping and related-test selection; one static_unknown finding remains independently pinned (#9766)
+
+Command:
+`cargo xtask goldens bless fixture_receiver_extension_iter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
