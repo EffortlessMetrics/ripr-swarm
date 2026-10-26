@@ -226,7 +226,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     resolve_agent_command_root(&mut command)?;
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        // An unknown `--seam-id` is a typed refusal (exit 3), like `agent
+        // card`, `agent stub` and `agent packet`; other failures stay exit 2.
+        AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
         AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
@@ -277,13 +279,19 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
-fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
-    let written = write_agent_start(options)?;
+    let written = write_agent_start(options).map_err(|error| {
+        if error.check_failure_kind() == Some(crate::core_error::CheckFailureKind::SeamIdUnknown) {
+            CommandError::Decision(String::from(error))
+        } else {
+            CommandError::Failure(String::from(error))
+        }
+    })?;
     if json {
         // Machine-readable mode: one JSON document with the same information
         // the prose lines carry. The prose output remains the default.
-        let rendered = render_agent_start_json(&written)?;
+        let rendered = render_agent_start_json(&written).map_err(CommandError::Failure)?;
         print!("{rendered}");
         return Ok(());
     }
@@ -348,7 +356,7 @@ struct AgentStartWritten {
     next_command: Option<String>,
 }
 
-fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
+fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, CoreError> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
@@ -365,7 +373,7 @@ fn write_agent_start_with_report(
     input: &app::CheckInput,
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
-) -> Result<AgentStartWritten, String> {
+) -> Result<AgentStartWritten, CoreError> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let mut selection = select_agent_brief_seams(
         &report.classified,
@@ -374,11 +382,23 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        return Err(format!(
+        let message = format!(
             "agent start seam_id {} was not found or is hidden by config. {}",
             options.seam_id,
             unknown_seam_id_hint(&options.root, &options.seam_id)
-        ));
+        );
+        // Like `agent packet`: only an id absent from the inventory is the
+        // typed unknown-seam refusal (exit 3). A known seam withheld by agent
+        // policy keeps the plain failure (exit 2).
+        let in_inventory = report
+            .classified
+            .iter()
+            .any(|entry| entry.seam.id().as_str() == options.seam_id);
+        return Err(if in_inventory {
+            CoreError::from(message)
+        } else {
+            CoreError::seam_id_unknown(message)
+        });
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -1035,6 +1055,46 @@ fn run_agent_receipt_for_attempt(
     }
 }
 
+/// Whether lexical `..` resolution can disagree with the filesystem: true
+/// when a component that `lexically_clean` would pop is itself a symlink
+/// the kernel follows before the later `..` (or when a relative path keeps
+/// a leading `..` that cannot be checked at all). Callers that accepted a
+/// path on a lexical comparison must refuse in that case — the spelled path
+/// and the cleaned path can then name different real directories (#10624
+/// review).
+fn parent_dir_follows_symlink(path: &Path) -> bool {
+    let mut walked = PathBuf::new();
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if stack.pop().is_some() {
+                    // `walked` currently ends at the popped component, so it
+                    // is exactly the path the kernel would follow first.
+                    if crate::agent::loop_commands::is_symlink(&walked) {
+                        return true;
+                    }
+                    walked.pop();
+                } else if !is_absolute {
+                    // lexically_clean preserves a leading relative `..`;
+                    // there is nothing on disk to prove it against.
+                    return true;
+                }
+            }
+            std::path::Component::Normal(name) => {
+                walked.push(name);
+                stack.push(name.to_owned());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                walked.push(component.as_os_str())
+            }
+        }
+    }
+    false
+}
+
 /// Anchor a relative `agent receipt --out` at the resolved `--root` (issue
 /// #3967): the product renders `--out` relative next to an absolute
 /// `--root`, so resolving it at the paste-site process CWD wrote genuine
@@ -1068,13 +1128,29 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
     // commands. Passing the workflow directory there rendered
     // `--root ./target/ripr/workflow`, a command that cannot run (#3893).
     // A non-default `--out` is refused rather than silently ignored until
-    // the inspected paths can follow it.
+    // the inspected paths can follow it. The comparison is lexical, not raw
+    // `PathBuf` equality: `--out ./target/ripr/workflow` names exactly the
+    // accepted directory and must not fail on its `./` spelling (#10542).
     if let Some(dir) = &options.out_dir {
         let requested = resolve_agent_start_out_dir(&options.root, dir);
         let default_dir = options.root.join("target/ripr/workflow");
-        if requested != default_dir {
+        if crate::agent::loop_commands::lexically_clean(&requested)
+            != crate::agent::loop_commands::lexically_clean(&default_dir)
+        {
             return Err(format!(
                 "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
+                dir.display(),
+                default_dir.display()
+            ));
+        }
+        // Lexical equality is unsound when a `..` follows a symlink: the
+        // filesystem resolves `..` after the symlink target, not after the
+        // spelled component, so the accepted spelling can name a different
+        // real directory than the default (#10624 review). Refuse unless
+        // lexical resolution provably matches filesystem resolution.
+        if parent_dir_follows_symlink(&requested) {
+            return Err(format!(
+                "agent status --out {} is not supported: a symlink before `..` resolves to a different directory than its spelling; agent status reads the workflow artifacts under {}",
                 dir.display(),
                 default_dir.display()
             ));
@@ -1766,7 +1842,8 @@ fn run_agent_repair_phase(
                 &before_input,
                 &before_config,
                 &before_report,
-            )?;
+            )
+            .map_err(String::from)?;
             for path in &started.paths {
                 eprintln!(
                     "{}",

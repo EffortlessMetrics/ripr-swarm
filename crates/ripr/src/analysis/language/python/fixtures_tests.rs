@@ -2,7 +2,9 @@
 //! names a pytest fixture whose body calls the owner is related with
 //! reach-only evidence and never earns an oracle or `exposed`.
 
-use super::fixtures::attach_fixture_defs;
+use super::fixtures::{
+    FixtureSideEffects, attach_fixture_defs, mark_isolated_fixture_defs, side_effects_of,
+};
 use super::source_facts::extract_source_facts;
 use super::source_utils::is_test_file;
 use super::*;
@@ -17,11 +19,13 @@ pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<Python
     let mut owners = Vec::new();
     let mut tests = Vec::new();
     let mut defs: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+    let mut side: BTreeMap<PathBuf, FixtureSideEffects> = BTreeMap::new();
     for (path, source) in files {
         let facts = extract_source_facts(Path::new(path), source);
         if !facts.fixtures.is_empty() {
             defs.insert(PathBuf::from(path), facts.fixtures.clone());
         }
+        side.insert(PathBuf::from(path), side_effects_of(&facts));
         if is_test_file(Path::new(path)) {
             tests.extend(facts.tests);
         } else {
@@ -29,6 +33,9 @@ pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<Python
         }
     }
     attach_fixture_defs(&mut tests, &defs);
+    // Every conftest the workspace holds is in `files`; none is unreadable.
+    mark_isolated_fixture_defs(&mut tests, &defs, &side, |_| false);
+    super::param_fixtures::apply_literal_param_fixtures(&mut tests);
     (owners, tests)
 }
 

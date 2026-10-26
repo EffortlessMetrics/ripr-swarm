@@ -326,20 +326,46 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         // Every mention of the owner must be the one call an assertion folds:
         // a second call in the expected operand, or one outside an
         // assertion, may separate the versions at an input the fold never saw.
-        if count_name_tokens(test.body.as_str(), &owner.name) != test.assertions.len() {
+        // The call may sit in either operand, or in the `let` that binds the
+        // operand, so the operands are resolved before the mentions are counted.
+        let resolved: Vec<Vec<ResolvedOperand>> = test
+            .assertions
+            .iter()
+            .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
+            .collect();
+        // A `let` read by several assertions is one call in the body, so each
+        // binding's initializer counts once however many assertions use it.
+        let mut counted_bindings = std::collections::BTreeSet::new();
+        let resolved_mentions: usize = resolved
+            .iter()
+            .flatten()
+            .filter(|operand| match &operand.binding {
+                Some(name) => counted_bindings.insert(name.clone()),
+                None => true,
+            })
+            .map(|operand| count_name_tokens(&operand.text, &owner.name))
+            .sum();
+        if count_name_tokens(test.body.as_str(), &owner.name) != resolved_mentions {
             return false;
         }
-        test.assertions.iter().all(|oracle| {
-            if count_name_tokens(&oracle.text, &owner.name) != 1 {
+        resolved.iter().all(|operands| {
+            let mut holding = operands
+                .iter()
+                .map(|operand| operand.text.as_str())
+                .filter(|operand| count_name_tokens(operand, &owner.name) > 0);
+            let (Some(actual), None) = (holding.next(), holding.next()) else {
+                return false;
+            };
+            if count_name_tokens(actual, &owner.name) != 1 {
                 return false;
             }
-            let Some((_, arguments)) = equality_assertion_shape(&oracle.text) else {
-                return false;
-            };
-            let [actual, ..] = arguments.as_slice() else {
-                return false;
-            };
-            let Some(call_arguments) = owner_call_arguments(actual, &owner.name) else {
+            // Invisibility only: equal owner values at the literal arguments
+            // give equal results through any one-argument wrapper
+            // (`block_on(owner(..))`), so reading through it can only
+            // withhold credit, never grant it.
+            let Some(call_arguments) = owner_call_arguments(actual, &owner.name)
+                .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
+            else {
                 return false;
             };
             let environment = BTreeMap::new();
@@ -359,6 +385,106 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             }
         })
     })
+}
+
+/// The compared operands of an equality assertion (either order, or the two
+/// sides of `assert!(a == b)`), each bare identifier replaced by the one
+/// `let` initializer that binds it in `test_body`. Empty when the assertion
+/// is not an equality shape.
+fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand> {
+    let operands: Vec<String> = match equality_assertion_shape(oracle_text) {
+        Some((_, arguments)) => arguments.into_iter().take(2).collect(),
+        None => crate::analysis::classify::equality_condition_operands(oracle_text)
+            .map(Vec::from)
+            .unwrap_or_default(),
+    };
+    operands
+        .into_iter()
+        .map(|operand| {
+            let name = operand.trim().to_string();
+            match let_initializer(test_body, &name) {
+                Some(text) => ResolvedOperand {
+                    text,
+                    binding: Some(name),
+                },
+                None => ResolvedOperand {
+                    text: operand,
+                    binding: None,
+                },
+            }
+        })
+        .collect()
+}
+
+/// A compared operand after `let` resolution; `binding` names the `let` it
+/// was read through so a shared binding is counted once.
+struct ResolvedOperand {
+    text: String,
+    binding: Option<String>,
+}
+
+/// The initializer of the single `let [mut] name = init;` in `body`.
+fn let_initializer(body: &str, name: &str) -> Option<String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    // A later `name = ..`, `name += ..` or `&mut name` changes the compared
+    // value after the initializer, so the initializer alone is not it.
+    let mutated = body.match_indices(name).any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + name.len()..].trim_start();
+        let whole = !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_');
+        whole
+            && (body[..at].trim_end().ends_with("&mut")
+                || (after.starts_with('=')
+                    && !after.starts_with("==")
+                    && !body[..at].trim_end().ends_with("let")
+                    && !body[..at].trim_end().ends_with("mut"))
+                || after.starts_with("+=")
+                || after.starts_with("-=")
+                || after.starts_with("*=")
+                || after.starts_with("/="))
+    });
+    if mutated {
+        return None;
+    }
+    let mut found = None;
+    for (at, _) in body.match_indices("let ") {
+        if body[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            continue;
+        }
+        let rest = body[at + 4..].trim_start();
+        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        let Some(after) = rest.strip_prefix(name) else {
+            continue;
+        };
+        // A type annotation (`let name: u32 = ..`) binds the same value.
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(annotated) => match annotated.find(['=', ';']) {
+                Some(at) if annotated[at..].starts_with('=') => &annotated[at..],
+                _ => continue,
+            },
+            None => after,
+        };
+        let Some(init) = after.strip_prefix('=') else {
+            continue;
+        };
+        let end = init.find(';')?;
+        if found.replace(init[..end].trim().to_string()).is_some() {
+            return None;
+        }
+    }
+    found
 }
 
 /// How many whole-identifier occurrences of `name` the `text` holds.
@@ -498,6 +624,24 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
         return None;
     }
     Some(super::split_top_level_commas(&inside))
+}
+
+/// The owner call's arguments when `operand` is `owner(..).await` or
+/// `wrapper(owner(..))` with a plain identifier wrapper and nothing else
+/// around the call.
+fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
+    let trimmed = operand.trim();
+    // `owner(..).await` is the same call read through the executor.
+    if let Some(call) = trimmed.strip_suffix(".await") {
+        return owner_call_arguments(call, owner_name);
+    }
+    let name_end = trimmed.find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))?;
+    if name_end == 0 || trimmed[..name_end] == *owner_name {
+        return None;
+    }
+    let rest = trimmed[name_end..].trim_start();
+    let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
+    owner_call_arguments(inner, owner_name)
 }
 
 /// Evaluate the owner's body as a pure integer function of `arguments`.

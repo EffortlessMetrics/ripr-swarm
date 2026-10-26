@@ -190,21 +190,70 @@ pub(crate) fn python_workspace_file_limit() -> usize {
         .unwrap_or(DEFAULT_PYTHON_MAX_WORKSPACE_FILES)
 }
 
-/// Truncate an already-sorted discovered-file list to the walk cap.
+/// Streaming selection of discovered workspace files under the walk cap.
 ///
-/// Returns the retained prefix and the number of refused files. Truncating
-/// the sorted list (rather than stopping the directory walk early) keeps the
-/// retained set deterministic: identical workspace content yields an
-/// identical analyzed set on every run.
-pub(crate) fn truncate_workspace_files(
-    sorted_files: Vec<std::path::PathBuf>,
+/// Files for which `is_changed` holds are always retained, even past the cap:
+/// they are the subject of the diff, so the cap may only cut context around
+/// them (#10461). The rest of the cap is filled with the earliest in path order
+/// context paths. Paths are pushed as the walk finds them, in any order, and
+/// only the changed paths plus at most `max_files` context paths are held at
+/// once (#10594), so discovery memory follows the cap rather than the
+/// workspace size. The retained set depends only on the discovered paths and
+/// the diff, never on directory iteration order.
+pub(crate) struct WorkspaceFileSelection<F> {
     max_files: usize,
-) -> (Vec<std::path::PathBuf>, usize) {
-    if sorted_files.len() <= max_files {
-        return (sorted_files, 0);
+    is_changed: F,
+    changed: Vec<std::path::PathBuf>,
+    /// Max-heap of the earliest context paths seen so far, never longer than
+    /// `max_files`.
+    context: std::collections::BinaryHeap<std::path::PathBuf>,
+    discovered: usize,
+    #[cfg(test)]
+    peak_context: usize,
+}
+
+impl<F: Fn(&Path) -> bool> WorkspaceFileSelection<F> {
+    pub(crate) fn new(max_files: usize, is_changed: F) -> Self {
+        Self {
+            max_files,
+            is_changed,
+            changed: Vec::new(),
+            context: std::collections::BinaryHeap::new(),
+            discovered: 0,
+            #[cfg(test)]
+            peak_context: 0,
+        }
     }
-    let refused = sorted_files.len() - max_files;
-    (sorted_files.into_iter().take(max_files).collect(), refused)
+
+    /// Admit one discovered path.
+    pub(crate) fn push(&mut self, file: std::path::PathBuf) {
+        self.discovered += 1;
+        if (self.is_changed)(&file) {
+            self.changed.push(file);
+            return;
+        }
+        if self.context.len() < self.max_files {
+            self.context.push(file);
+        } else if self.context.peek().is_some_and(|latest| file < *latest) {
+            self.context.pop();
+            self.context.push(file);
+        }
+        #[cfg(test)]
+        {
+            self.peak_context = self.peak_context.max(self.context.len());
+        }
+    }
+
+    /// The retained files in sorted order and the number of refused files.
+    pub(crate) fn finish(self) -> (Vec<std::path::PathBuf>, usize) {
+        let mut context = self.context.into_sorted_vec();
+        context.truncate(self.max_files.saturating_sub(self.changed.len()));
+        let mut kept = self.changed;
+        kept.extend(context);
+        kept.sort();
+        let refused = self.discovered - kept.len();
+        (kept, refused)
+    }
 }
 
 /// Result of reading every retained workspace source under the caps.
@@ -676,22 +725,118 @@ mod tests {
         );
     }
 
+    fn select(
+        files: &[PathBuf],
+        max_files: usize,
+        is_changed: impl Fn(&Path) -> bool,
+    ) -> (Vec<PathBuf>, usize) {
+        let mut selection = WorkspaceFileSelection::new(max_files, is_changed);
+        for file in files {
+            selection.push(file.clone());
+        }
+        selection.finish()
+    }
+
     #[test]
-    fn truncate_workspace_files_keeps_sorted_prefix_and_counts_refusals() {
+    fn workspace_file_selection_keeps_sorted_prefix_and_counts_refusals() {
         let files: Vec<PathBuf> = (0..5)
             .map(|index| PathBuf::from(format!("f{index}.py")))
             .collect();
-        let (kept, refused) = truncate_workspace_files(files.clone(), 3);
+        let unchanged = |_: &Path| false;
+        let (kept, refused) = select(&files, 3, unchanged);
         assert_eq!(kept, files[..3], "sorted prefix is retained");
         assert_eq!(refused, 2, "refused count is disclosed");
 
-        let (kept, refused) = truncate_workspace_files(files.clone(), 5);
+        let (kept, refused) = select(&files, 5, unchanged);
         assert_eq!(kept, files, "at-cap list is untouched");
         assert_eq!(refused, 0);
 
-        let (kept, refused) = truncate_workspace_files(Vec::new(), 3);
+        let (kept, refused) = select(&[], 3, unchanged);
         assert!(kept.is_empty());
         assert_eq!(refused, 0);
+    }
+
+    #[test]
+    fn workspace_file_selection_always_keeps_changed_files() {
+        let files: Vec<PathBuf> = (0..5)
+            .map(|index| PathBuf::from(format!("f{index}.py")))
+            .collect();
+        let last = Path::new("f4.py");
+        let (kept, refused) = select(&files, 3, |file| file == last);
+        assert_eq!(
+            kept,
+            vec![files[0].clone(), files[1].clone(), files[4].clone()],
+            "a late-sorting changed file displaces context, not itself"
+        );
+        assert_eq!(refused, 2, "refused count is disclosed");
+
+        let (kept, refused) = select(&files, 1, |file| file == Path::new("f3.py") || file == last);
+        assert_eq!(
+            kept,
+            vec![files[3].clone(), files[4].clone()],
+            "changed files are kept even when they alone exceed the cap"
+        );
+        assert_eq!(refused, 3);
+    }
+
+    #[test]
+    fn workspace_file_selection_is_order_independent_and_holds_at_most_the_cap() {
+        // #10594: discovery order is directory iteration order, so the
+        // selection must not depend on it, and must not buffer every path.
+        let sorted: Vec<PathBuf> = (0..2000)
+            .map(|index| PathBuf::from(format!("pkg{:02}/m{index:04}.py", index % 37)))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        // The first and the last path in sorted order are the changed ones,
+        // so the late-sorting one must survive a cap it sorts far past.
+        let first = sorted[0].clone();
+        let last = sorted[sorted.len() - 1].clone();
+        let changed = |file: &Path| file == first || file == last;
+        let expected = {
+            let mut kept: Vec<PathBuf> = sorted
+                .iter()
+                .filter(|file| !changed(file))
+                .take(3)
+                .cloned()
+                .collect();
+            kept.extend(sorted.iter().filter(|file| changed(file)).cloned());
+            kept.sort();
+            kept
+        };
+        // A deterministic shuffle: stride through the list by a step coprime
+        // to its length.
+        let shuffled: Vec<PathBuf> = (0..sorted.len())
+            .map(|index| sorted[(index * 7919) % sorted.len()].clone())
+            .collect();
+        for order in [&sorted, &shuffled] {
+            let mut selection = WorkspaceFileSelection::new(5, changed);
+            for file in order.iter() {
+                selection.push(file.clone());
+            }
+            assert!(
+                selection.peak_context <= 5,
+                "context buffer grew past the cap: {}",
+                selection.peak_context
+            );
+            let (kept, refused) = selection.finish();
+            assert_eq!(kept, expected, "same subset whatever the discovery order");
+            assert_eq!(refused, sorted.len() - 5);
+        }
+
+        // More changed files than the cap: every changed file, no context.
+        let (kept, refused) = select(&shuffled, 1, |file| file.starts_with("pkg01"));
+        let changed_count = sorted
+            .iter()
+            .filter(|file| file.starts_with("pkg01"))
+            .count();
+        assert_eq!(kept.len(), changed_count);
+        assert!(kept.iter().all(|file| file.starts_with("pkg01")));
+        assert!(
+            kept.windows(2).all(|pair| pair[0] < pair[1]),
+            "kept stays sorted"
+        );
+        assert_eq!(refused, sorted.len() - changed_count);
     }
 
     #[test]

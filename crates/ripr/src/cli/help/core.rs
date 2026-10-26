@@ -56,7 +56,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format FORMAT] [--quiet]
 
 Options:
   --root PATH       Workspace root. Defaults to the current directory, then
@@ -70,7 +70,7 @@ Options:
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
-  --format FORMAT   human or json. Defaults to human. json writes the same
+  --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
@@ -164,9 +164,8 @@ pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name t
 Usage: ripr check [OPTIONS]
 
 Common options:
-  --base REV        Compare against this revision. When omitted, ripr uses the
-                    local origin/HEAD ref, then origin/main, origin/master,
-                    main, and master in order.
+  --base REV        Compare against this revision; when omitted, ripr uses
+                    the origin/HEAD ref, then origin/main, origin/master, main, master.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
@@ -182,15 +181,16 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
+  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
+                    excludes repo seam-inventory formats). On analysis_timeout,
+                    raise/disable it or narrow the diff; re-run.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
-
 Examples:
   ripr check
   ripr check --base origin/main --json
-
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -634,8 +634,9 @@ Options:
                 that changed nothing: timing fields are omitted. The human
                 screen always prints its run-time summary; --timings only
                 affects --json.
-  --profile     Check installed-binary analysis (default) or prerequisites for
-                building RIPR from source.
+  --profile NAME  Select the doctor profile: analysis (default; checks the
+                  installed binary) or source-build (prerequisites for
+                  building RIPR from source).
 
 Environment variables:
   RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and

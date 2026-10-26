@@ -363,7 +363,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         }
                         continue;
                     }
-                    preserve_malformed_catalog_cursor(&mut message, &frame);
+                    preserve_malformed_request_params(&mut message, &frame);
                     if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {
@@ -401,17 +401,18 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
     }
 }
 
-/// The SDK's optional typed params can erase a wrongly typed cursor while
-/// retaining metadata. Keep that raw input available to the existing custom
-/// request handler, after ID validation and before normal SDK dispatch. Moving
-/// the decoded extensions preserves protocol/metadata validation precedence.
-fn preserve_malformed_catalog_cursor(message: &mut ClientJsonRpcMessage, frame: &[u8]) {
+/// The SDK can erase a wrongly typed catalog cursor or treat a null tool
+/// argument object as omission. Keep that raw input available to the existing
+/// custom request handler, after ID validation and before normal SDK dispatch.
+/// Moving decoded extensions preserves protocol/metadata validation precedence.
+fn preserve_malformed_request_params(message: &mut ClientJsonRpcMessage, frame: &[u8]) {
     let ClientJsonRpcMessage::Request(request) = message else {
         return;
     };
     if !matches!(
         &request.request,
-        ClientRequest::ListToolsRequest(_)
+        ClientRequest::CallToolRequest(_)
+            | ClientRequest::ListToolsRequest(_)
             | ClientRequest::ListPromptsRequest(_)
             | ClientRequest::ListResourcesRequest(_)
             | ClientRequest::ListResourceTemplatesRequest(_)
@@ -424,10 +425,16 @@ fn preserve_malformed_catalog_cursor(message: &mut ClientJsonRpcMessage, frame: 
     let Some(params) = raw.get("params") else {
         return;
     };
-    if !params
-        .get("cursor")
-        .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
-    {
+    let malformed = if matches!(&request.request, ClientRequest::CallToolRequest(_)) {
+        params
+            .get("arguments")
+            .is_some_and(|arguments| !arguments.is_object())
+    } else {
+        params
+            .get("cursor")
+            .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+    };
+    if !malformed {
         return;
     }
     let mut custom = CustomRequest::new(request.request.method(), Some(params.clone()));

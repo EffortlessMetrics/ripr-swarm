@@ -270,7 +270,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_argument_values(test, argument) {
+            for value in owner_row_argument_values(test, argument, false) {
                 let value = parameters
                     .get(idx)
                     .map(|parameter| format!("{parameter} = {value}"))
@@ -3143,7 +3143,8 @@ fn call_built_input_reason(
                     let arguments =
                         crate::analysis::syntax::fn_signature::call_argument_facts(&contents)?;
                     let argument = arguments.get(position)?;
-                    (argument.built_by_call && owner_argument_values(test, &argument.text).is_empty())
+                    (argument.built_by_call
+                        && owner_row_argument_values(test, &argument.text, false).is_empty())
                         .then(|| {
                             format!(
                                 "a related test passes `{parameter}` the result of a call (`{}`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches",
@@ -3674,23 +3675,8 @@ fn missing_field_value_discriminator(
     // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
     // collection, read after the owner call directly or through a getter
     // whose body returns the field (RIPR-SPEC-0228 Decision 2).
-    let pushed_into = owner_fn.and_then(|owner| {
-        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
-            .and_then(|call| call.impl_type());
-        super::propagation_witness::pushed_literal_collection_path(
-            owner.body.as_str(),
-            owner.start_line,
-            probe.location.line,
-            &probe.expression,
-            &|method| {
-                impl_type.and_then(|impl_type| {
-                    super::builder_override::inherent_method_body(index, impl_type, method)
-                        .map(str::to_string)
-                })
-            },
-        )
-        .map(|path| (owner, path))
-    });
+    let pushed_into = owner_fn
+        .and_then(|owner| pushed_literal_path(owner, probe, index).map(|path| (owner, path)));
     let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
         pushed_into.as_ref().is_some_and(|(owner, path)| {
             pushed_collection_compared_whole(owner, path, test, assertion, index)
@@ -3842,6 +3828,34 @@ pub(in crate::analysis) fn assigned_field_of(
     )
 }
 
+/// #7131: the field collection path (`lines` for `self.lines.push(Line {
+/// sku: .. })`) the owner pushes the probe's literal onto, if the placement
+/// is one `pushed_literal_collection_path` accepts.
+pub(in crate::analysis) fn pushed_literal_path(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    let site = super::propagation_witness::pushed_literal_site(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )?;
+    // A hand-written `PartialEq` may ignore the pushed field, so the whole
+    // collection equality that confirms it is not evidence for it.
+    (!super::custom_eq::pushed_element_may_compare_leniently(&site.literal, index))
+        .then_some(site.path)
+}
+
 /// #7131: whether `assertion` compares the whole field collection `path`
 /// that `owner` pushes onto, read from the binding the test called `owner`
 /// on, after that call and with nothing between that may write through the
@@ -3851,7 +3865,7 @@ pub(in crate::analysis) fn assigned_field_of(
 /// (`binding_untouched_after_owner_call`), since another value built through
 /// the owner, or a snapshot, may carry the same changed value into the other
 /// operand.
-fn pushed_collection_compared_whole(
+pub(in crate::analysis) fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
     path: &str,
     test: &TestSummary,
@@ -4483,7 +4497,7 @@ fn owner_call_parameter_values_where(
                     if let Some(values) = receivers.cell(parameter, argument) {
                         return Some((parameter, values, argument.trim(), false));
                     }
-                    let values = owner_argument_values_in(test, argument, receivers.text_cells);
+                    let values = owner_row_argument_values(test, argument, receivers.text_cells);
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
                             &test.body,
@@ -6041,6 +6055,29 @@ pub(in crate::analysis) fn owner_argument_values(
     owner_argument_values_in(test, argument, false)
 }
 
+/// The values an owner call's argument contributes to an input ROW. Unlike
+/// [`owner_argument_values`], which also feeds the visible-literal reading of
+/// a boundary gap (a literal-carrying call such as `score(order(5000))` stays
+/// a visible `5000` there), a row asserts what the call received, so a
+/// literal inside a call chain is that call's operand, not the argument:
+/// `std::env::var("WHO").unwrap_or_default()` passes no `"WHO"` (#10484).
+/// The argument is the literal only when nothing computes around it.
+fn owner_row_argument_values(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
+    let values = owner_argument_values_in(test, argument, text_cells);
+    if values.is_empty() {
+        // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
+        // is the number it computes (`score(base + 1)` after `let base = 9`).
+        return super::argument_fold::folded_argument(&test.body, argument)
+            .into_iter()
+            .collect();
+    }
+    if passes_literals_through(strip_literal_wrappers(argument), 0) {
+        values
+    } else {
+        Vec::new()
+    }
+}
+
 /// [`owner_argument_values`], optionally reading a whole string or char
 /// literal in a constant-row table column as the exact input it is. Only an
 /// emptiness guard asks for it (see [`admits_closed_form`]): a text cell
@@ -6101,6 +6138,90 @@ fn owner_argument_values_in(test: &TestSummary, argument: &str, text_cells: bool
         .filter(|value| !value.starts_with(['"', '\'']))
         .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
         .collect()
+}
+
+/// The argument with the wrappers that keep a literal's value stripped: a
+/// reference (`&"Bob"`), `.to_string()`, `.to_owned()`, `.into()` and
+/// `String::from(..)`. Anything else around a literal is left in place for
+/// [`passes_literals_through`] to judge.
+fn strip_literal_wrappers(argument: &str) -> &str {
+    let mut text = argument.trim();
+    loop {
+        let before = text;
+        text = text.strip_prefix('&').map_or(text, str::trim_start);
+        for method in ["to_string", "to_owned", "into"] {
+            text = strip_empty_method_call(text, method);
+        }
+        text = strip_string_from(text);
+        if text == before {
+            return text;
+        }
+    }
+}
+
+/// `receiver.method()` with Rust's permitted whitespace around the dot, the
+/// name and the empty parentheses, reduced to `receiver`.
+fn strip_empty_method_call<'a>(text: &'a str, method: &str) -> &'a str {
+    let Some(rest) = text.trim_end().strip_suffix(')') else {
+        return text;
+    };
+    let Some(rest) = rest.trim_end().strip_suffix('(') else {
+        return text;
+    };
+    let Some(rest) = rest.trim_end().strip_suffix(method) else {
+        return text;
+    };
+    rest.trim_end()
+        .strip_suffix('.')
+        .map_or(text, str::trim_end)
+}
+
+/// `String::from(inner)` with whitespace allowed between its tokens, reduced
+/// to `inner`.
+fn strip_string_from(text: &str) -> &str {
+    let rest = text.trim_start();
+    let Some(rest) = rest.strip_prefix("String").map(str::trim_start) else {
+        return text;
+    };
+    let Some(rest) = rest.strip_prefix("::").map(str::trim_start) else {
+        return text;
+    };
+    let Some(rest) = rest.strip_prefix("from").map(str::trim_start) else {
+        return text;
+    };
+    rest.strip_prefix('(')
+        .and_then(|inner| inner.trim_end().strip_suffix(')'))
+        .map_or(text, str::trim)
+}
+
+/// Whether every group in `text` passes its contents through as values: a
+/// bare tuple or array, a constructor or variant (`Some(10)`), `vec![..]`,
+/// at every depth. A call, method call or macro that merely holds a literal
+/// computes its value instead (the same rule [`collect_spelled_values`] applies
+/// below the line).
+fn passes_literals_through(text: &str, depth: usize) -> bool {
+    if depth > MAX_SPELLED_DEPTH {
+        return false;
+    }
+    let structure = structural_bytes(text);
+    top_level_comma_ranges(&structure)
+        .into_iter()
+        .all(|(start, end)| {
+            let (Some(argument), Some(argument_structure)) =
+                (text.get(start..end), structure.get(start..end))
+            else {
+                return true;
+            };
+            if argument.trim().is_empty() {
+                return true;
+            }
+            let shape = argument_shape(argument, argument_structure);
+            shape.all_groups_transparent
+                && shape
+                    .groups
+                    .iter()
+                    .all(|group| passes_literals_through(group, depth + 1))
+        })
 }
 
 fn is_plain_identifier(text: &str) -> bool {
@@ -9425,10 +9546,63 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn a_literal_inside_a_call_chain_is_not_the_argument() {
+        // #10484: `std::env::var("WHO").unwrap_or_default()` passes whatever
+        // the variable holds, not `"WHO"`.
+        let test = test_with_body_calls("", &[]);
+        for chain in [
+            r#"&std::env::var("WHO").unwrap_or_default()"#,
+            r#"&std::env::var ("WHO").unwrap_or_default ()"#,
+            r#"&make_name("Bob")"#,
+            r#"&make_name::<u8>("Bob")"#,
+            r#"&(make_name)("Bob")"#,
+            r#"&format!("{}", "Bob")"#,
+            r#"name_for("Bob").as_str()"#,
+            r#"Some(load("Bob"))"#,
+            r#"&"Bob".repeat(3)"#,
+            r#"7.max(load(2))"#,
+        ] {
+            assert!(
+                owner_row_argument_values(&test, chain, false).is_empty(),
+                "`{chain}` holds a literal inside a call and passes none"
+            );
+        }
+    }
+
+    #[test]
+    fn a_literal_behind_a_value_preserving_wrapper_is_still_the_argument() {
+        let test = test_with_body_calls("", &[]);
+        for (spelled, expected) in [
+            ("\"Bob\"", "\"Bob\""),
+            ("&\"Bob\"", "\"Bob\""),
+            ("\"Bob\".to_string()", "\"Bob\""),
+            ("\"Bob\".to_owned()", "\"Bob\""),
+            ("\"Bob\".into()", "\"Bob\""),
+            ("String::from(\"Bob\")", "\"Bob\""),
+            ("String :: from (\"Bob\")", "\"Bob\""),
+            ("\"Bob\".to_string ()", "\"Bob\""),
+            ("\"Bob\" . into ( )", "\"Bob\""),
+            ("&String::from(\"Bob\")", "\"Bob\""),
+            ("Some(10)", "10"),
+            ("Some(\"Bob\")", "\"Bob\""),
+            ("(10, true)", "10"),
+            ("-5", "-5"),
+        ] {
+            assert_eq!(
+                owner_row_argument_values(&test, spelled, false)
+                    .first()
+                    .map(String::as_str),
+                Some(expected),
+                "`{spelled}` is the literal it spells"
+            );
+        }
+    }
+
+    #[test]
     fn given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing() {
         // #6672: `score(base + 1)` with `let base = 9` is 10, the boundary.
-        // ripr cannot read it, so it must not report `amount == 10` as
-        // missing from the remaining `score(base)` row.
+        // Arithmetic over the test's own literal bindings is read (RIPR-SPEC-0158
+        // example 21), so both rows are definite inputs and nothing is missing.
         let owner = function("pub fn score(amount: u32) -> bool {\n    10 <= amount\n}");
         let test = test_with_body_calls(
             "let base = 9;\nassert!(score(base + 1));\nassert!(!score(base));",
@@ -9441,6 +9615,26 @@ assert_eq!(input.amount, 100);"#
             &owner,
             &probe(ProbeFamily::Predicate, "10 <= amount"),
             &[&test],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert_eq!(gathered.unresolved_boundary, None);
+        let mut values = owner_input_values(&gathered.activation);
+        values.sort();
+        assert_eq!(values, vec!["10", "9"]);
+
+        // An operand the fold cannot read keeps the argument computed: the
+        // bare `score(base)` row stays, the boundary is unresolved, not missing.
+        let unread = test_with_body_calls(
+            "let base = 9;\nassert!(score(base + 1u32));\nassert!(!score(base));",
+            &[
+                (11, "assert!(score(base + 1u32));"),
+                (12, "assert!(!score(base));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "10 <= amount"),
+            &[&unread],
         );
 
         assert!(gathered.activation.missing_discriminators.is_empty());
@@ -9577,14 +9771,22 @@ assert_eq!(input.amount, 100);"#
             ),
             (None, missing.clone())
         );
-        // A literal-carrying call is a visible literal (existing reading).
-        assert_eq!(
-            gap(
-                "assert_eq!(score(order(5000)), 25);",
-                &[(10, "assert_eq!(score(order(5000)), 25);")]
-            ),
-            (None, missing.clone())
+        // A literal inside a call is that call's operand, not the input the
+        // owner received (#10484): `order(5000)` may return 999, so no
+        // `amount == 999` gap is claimed from it; the boundary is unresolved
+        // as for any call-built input. The reading used to take `5000` as a
+        // visible literal.
+        let (unresolved, missing_for_call) = gap(
+            "assert_eq!(score(order(5000)), 25);",
+            &[(10, "assert_eq!(score(order(5000)), 25);")],
         );
+        assert!(
+            unresolved
+                .as_deref()
+                .is_some_and(|reason| reason.contains("result of a call (`order(5000)`)")),
+            "{unresolved:?}"
+        );
+        assert!(missing_for_call.is_empty(), "{missing_for_call:?}");
         // A visible one-sided literal beside a call-built input keeps the
         // missing equality: the visible row already names the boundary.
         assert_eq!(
@@ -9901,6 +10103,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    transparent_macros_rebound: false,
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
@@ -9908,6 +10111,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    transparent_macros_rebound: false,
                 },
             ],
             stop_above: None,

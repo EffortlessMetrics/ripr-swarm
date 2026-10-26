@@ -18,8 +18,16 @@
       "sha256": "34272b2c6b59675611f314b5c6319a9167d21ba3ae8c1a4d830b0ae4175bcb46"
     },
     {
+      "path": "src/table.ts",
+      "sha256": "089778f7bcd97f1063c6ee80326d79edc0ef6f15280f292e7f4a7379a3ee0458"
+    },
+    {
       "path": "test/boundary.test.ts",
       "sha256": "278e3b1470c460cd9fe0ed334655df4c6b2b80a00225c41bf0eba6f8eec14742"
+    },
+    {
+      "path": "test/table.test.ts",
+      "sha256": "932be5179ac2a7d5ad01bde0f263278b21538acac4c277a81231e5824fb73e02"
     },
     {
       "path": "tsconfig.json",
