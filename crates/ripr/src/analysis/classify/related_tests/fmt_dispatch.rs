@@ -71,6 +71,11 @@ pub(super) fn is_fmt_dispatch_owner(owner: &FunctionSummary) -> bool {
     fmt_owner(owner).is_some()
 }
 
+/// Display owner identity shared by pin admission and its fallback refusal.
+pub(in crate::analysis) fn is_display_fmt_owner(owner: &FunctionSummary) -> bool {
+    matches!(fmt_owner(owner), Some((FmtTrait::Display, _)))
+}
+
 /// Cheap lexical prefilter for the candidate index: the body may format.
 pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
     ["format", "write", "print", "to_string"]

@@ -626,8 +626,44 @@ impl ClassifiedProbeEvidence {
         let field_oracle_needs_admission = arm_selector
             .as_ref()
             .is_some_and(ArmSelector::field_oracle_needs_admission);
+        // RIPR-SPEC-0297 / #9836: unsafe edits in a Display write tail
+        // receive no assertion credit. Generic token overlap must not
+        // resurrect credit after the literal-edit gate refused it.
+        let fmt_write_tail = context
+            .owner_fn
+            .is_some_and(crate::analysis::classify::is_display_fmt_owner)
+            && matches!(
+                &propagation_witness,
+                Some(PropagationWitnessDiagnostic::Valid(witness))
+                    if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
+            );
+        let fmt_literal_edit = fmt_write_tail
+            && crate::analysis::classify::changes_only_string_literals(
+                context.probe.before.as_deref(),
+                context.probe.after.as_deref(),
+            );
+        let fmt_display_assertion = |test: &TestSummary, assertion: &OracleFact| {
+            fmt_write_tail
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::assertion_pins_display_string(
+                        test,
+                        assertion,
+                        owner,
+                        context.index,
+                    )
+                })
+        };
+        let fmt_display_pin = |test: &TestSummary, assertion: &OracleFact| {
+            fmt_literal_edit && fmt_display_assertion(test, assertion)
+        };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
+            (!fmt_write_tail || fmt_literal_edit)
+                && pin_syntax.admits_equality_assertion(
+                    context.probe,
+                    test,
+                    assertion,
+                    context.index,
+                )
                 && (!field_oracle_needs_admission
                     || pin_syntax.admits(test, assertion, context.index))
         };
@@ -747,16 +783,6 @@ impl ClassifiedProbeEvidence {
                 })
             })
         };
-        // RIPR-SPEC-0297: a `write!(f, ..)`-only `Display::fmt` has its whole
-        // output pinned by an exact `value.to_string()` assertion.
-        let fmt_write_tail = matches!(
-            &propagation_witness,
-            Some(PropagationWitnessDiagnostic::Valid(witness))
-                if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
-        ) && crate::analysis::classify::changes_only_string_literals(
-            context.probe.before.as_deref(),
-            context.probe.after.as_deref(),
-        );
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
@@ -776,15 +802,7 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
-                || (fmt_write_tail
-                    && context.owner_fn.is_some_and(|owner| {
-                        crate::analysis::classify::assertion_pins_display_string(
-                            test,
-                            assertion,
-                            owner,
-                            context.index,
-                        )
-                    }))
+                || fmt_display_pin(test, assertion)
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })

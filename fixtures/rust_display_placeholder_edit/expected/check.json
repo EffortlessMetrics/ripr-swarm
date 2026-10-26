@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/rust_display_placeholder_edit/input",
-  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:cb283aa86d311e2c94ca397a3c410482f58614911795f56a33da598d92242d36","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,9 +23,9 @@
         "normalized_discriminator": "write!f_lit5c757b37627d3a3f5c757b37647dc2b043_self.0"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "reachable_unrevealed",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.79,
       "probe": {
         "id": "probe:src_display.rs:return_value:f7797365",
         "family": "return_value",
@@ -38,15 +38,15 @@
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach fmt: exact_display_pin"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), \"21°C\");", "source assertion argument value \"21°C\" at line 17", "source assertion argument value 21 at line 17"],
+      "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses no oracle", "source assertion argument value \"21°C\" at line 17", "source assertion argument value 21 at line 17"],
       "flow_sinks": [
         {"kind":"return_value","text":"write!(f, \"/u{7b}:?/u{7d}°C\", self.0)","line":7}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach fmt: exact_display_pin"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach fmt: exact_display_pin"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "17": "assert_eq!(Temp(21).to_string(), \"21°C\");"
       },
@@ -86,20 +86,20 @@
           "name": "exact_display_pin",
           "file": "src/display.rs",
           "line": 16,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(Temp(21).to_string(), \"21°C\");",
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": ["proc_macro_opaque"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
-      "recommended_next_step": "The related test `exact_display_pin` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
-      "suggested_next_action": "The related test `exact_display_pin` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
+      "suggested_next_action": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

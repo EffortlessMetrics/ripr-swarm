@@ -4,4 +4,4 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::literal_only_credit_refuses_hidden_or_unchanged_runtime_edits",
   "crates/ripr/tests/display_placeholder_edit.rs",
 ]
-fixtures = ["fixtures/rust_display_placeholder_edit", "fixtures/evidence-promotion-honesty-corpus/corpus.json"]
+fixtures = ["fixtures/rust_display_placeholder_edit", "fixtures/rust_display_raw_placeholder_edit", "fixtures/evidence-promotion-honesty-corpus/corpus.json"]

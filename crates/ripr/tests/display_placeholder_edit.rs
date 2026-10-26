@@ -25,7 +25,7 @@ mod tests {
 
     #[test]
     fn zero_degrees() {
-        assert_eq!(Temp(21).to_string(), \"21°C\");
+        assert_eq!(Temp(21).to_string(), EXPECTED);
     }
 }
 ";
@@ -69,7 +69,7 @@ impl TempRepo {
             .map_err(|error| format!("write source failed: {error}"))?;
         std::fs::write(
             root.join("src/display.rs"),
-            LIB.replace("AFTER", after).replace("21°C", expected),
+            LIB.replace("AFTER", after).replace("EXPECTED", expected),
         )
         .map_err(|error| format!("write source failed: {error}"))?;
         std::fs::write(root.join("diff.patch"), patch)
@@ -99,7 +99,11 @@ impl Drop for TempRepo {
 
 /// The class of the one finding on line 7 after `before` became `after`.
 fn class_after(before: &str, after: &str) -> Result<ExposureClass, String> {
-    class_after_template(&format!("\"{before}\""), &format!("\"{after}\""), "21°C")
+    class_after_template(
+        &format!("\"{before}\""),
+        &format!("\"{after}\""),
+        r#""21°C""#,
+    )
 }
 
 fn class_after_template(
@@ -169,7 +173,7 @@ fn raw_template_quotes_cannot_hide_a_placeholder_change() -> Result<(), String> 
         class_after_template(
             r##"r#"quoted"marker"{}°C"#"##,
             r##"r#"quoted"marker"{:?}°C"#"##,
-            r#"quoted\"marker\"21°C"#
+            r#""quoted\"marker\"21°C""#
         )?,
         ExposureClass::Exposed
     );
@@ -180,7 +184,20 @@ fn raw_template_quotes_cannot_hide_a_placeholder_change() -> Result<(), String> 
 fn cancelling_fixed_fragments_withhold_credit() -> Result<(), String> {
     assert_eq!(format!("21{}", 21), format!("{}21", 21));
     assert_ne!(
-        class_after_template(r#""21{}""#, r#""{}21""#, "2121")?,
+        class_after_template(r#""21{}""#, r#""{}21""#, r#""2121""#)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_raw_expected_string_cannot_bypass_the_display_edit_gate() -> Result<(), String> {
+    assert_ne!(
+        class_after_template(
+            r##"r#"quoted"marker"{}°C"#"##,
+            r##"r#"quoted"marker"{:?}°C"#"##,
+            r##"r#"quoted"marker"21°C"#"##,
+        )?,
         ExposureClass::Exposed
     );
     Ok(())
