@@ -3,6 +3,32 @@
 use super::*;
 
 #[test]
+fn constructor_and_call_results_cannot_escape_mock_tracking() {
+    let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
+    for body in [
+        "    handle = (mock.Mock())\n    handle.side_effect = change_default\n    handle()\n",
+        "    handle, = (mock.Mock(),)\n    handle.side_effect = change_default\n    handle()\n",
+        "    use(mock.Mock())\n",
+        "    handle = mock.Mock()\n    other = handle()\n    other.side_effect = change_default\n    other()\n",
+        "    handle = mock.Mock()\n    f\"{(other := handle())}\"\n    other.side_effect = change_default\n    other()\n",
+        "    class Holder:\n        handle = mock.Mock()\n    Holder.handle.side_effect = change_default\n    Holder.handle()\n",
+    ] {
+        // Use a different helper parameter so the assigned-child control cannot
+        // pass because of an unrelated duplicate binding of `handle`.
+        let tests = tests_with(
+            "from unittest import mock\ndef change_default():\n    is_adult.__defaults__ = (0,)\ndef use(value):\n    value.side_effect = change_default\n    value()\n",
+            "",
+            body,
+        );
+        assert_eq!(
+            credited_strengths(owner, &tests).last(),
+            Some(&OracleStrength::Smoke),
+            "{tests}"
+        );
+    }
+}
+
+#[test]
 fn mock_calls_and_inspection_do_not_execute_user_equality_or_rebound_methods() {
     let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
     for (prelude, body) in [

@@ -15,7 +15,8 @@ The changed comparison is analyzed.
 
 ## Then
 
-One `weakly_exposed` finding. The bare assertion remains smoke because it
+One `static_unknown` finding, retaining the existing `mocked_module` limit.
+The bare assertion remains smoke because it
 can observe the replacement rather than the changed production callable.
 
 ## Must Not

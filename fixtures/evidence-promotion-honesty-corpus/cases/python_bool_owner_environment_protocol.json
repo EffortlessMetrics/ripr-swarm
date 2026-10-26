@@ -18,6 +18,11 @@
     },
     {
       "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "smoke_only",
+      "strength": "smoke"
     }
   ]
 }

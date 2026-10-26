@@ -7,9 +7,10 @@
 //!
 //! - literal-argument `monkeypatch.setenv(` / `delenv(` / `chdir(` calls on an injected
 //!   test/fixture parameter (no default, rebinding, or explicit supplying call);
-//! - zero-argument constructors from unshadowed `unittest.mock` imports;
+//! - directly assigned zero-argument constructors from unshadowed `unittest.mock` imports;
 //! - literal calls and standard inspection/reset methods on their directly
-//!   assigned, unrebound objects, with no escaping references or configuration;
+//!   assigned, unrebound objects, with discarded results and no escaping references
+//!   or configuration;
 //! - `import` / `from .. import` statements (a statement start, no `as`);
 //! - a formal parameter (`def test(monkeypatch)`) or a recognized fixture type;
 //! - an inert string statement (never a formatted string).
@@ -121,7 +122,9 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
                 // A formatted string hides its expressions from the token stream.
                 if !docstring
                     && (string_names_patcher(value)
-                        || (kind.is_any_fstring() && names.iter().any(|name| value.contains(name))))
+                        || (kind.is_any_fstring()
+                            && (names.iter().any(|name| value.contains(name))
+                                || mock_receivers.iter().any(|name| value.contains(name)))))
                 {
                     return true;
                 }
@@ -134,6 +137,16 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
         let Some(chain) = Chain::at(&tokens, index) else {
             continue;
         };
+        // A class-held mock also has a direct assignment, but qualified uses
+        // are outside the local receiver model. Do not lose it after a dot.
+        if chain
+            .segments
+            .iter()
+            .any(|name| mock_receivers.contains(name))
+            && !mock_receivers.contains(chain.segments[0])
+        {
+            return true;
+        }
         // A known mock can execute user equality or side-effect protocols if
         // configured, called with arbitrary objects, or passed to a helper.
         // Inspect its uses even when the variable name has no patch marker.
@@ -147,6 +160,7 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
                 && is_statement_start(&tokens, index)
                 && matches!(tokens.get(chain.end + 1), Some(Tok::Equal));
             let call = matches!(tokens.get(chain.end + 1), Some(Tok::Lpar))
+                && discarded_call(&tokens, index, chain.end + 1)
                 && (chain.segments.len() == 1 || bindings.mock_inspection(&tokens, &chain))
                 && inert_call_arguments(&tokens, chain.end + 1)
                 && !call_args_hide_a_target(&tokens, chain.end + 1, names);
@@ -369,6 +383,16 @@ impl Bindings<'_> {
         ) && self.mock_binding(tokens, receiver)
     }
 
+    fn constructor_assignment(&self, tokens: &[Tok], start: usize) -> bool {
+        let Some(receiver_index) = start.checked_sub(2) else {
+            return false;
+        };
+        is_statement_start(tokens, receiver_index)
+            && matches!(tokens.get(start - 1), Some(Tok::Equal))
+            && matches!(&tokens[receiver_index], Tok::Name { name }
+                if self.mock_binding(tokens, name))
+    }
+
     fn injection_site(
         &self,
         function: &str,
@@ -493,8 +517,10 @@ fn chain_may_patch(
             && bindings.fixture_parameter(tokens, regions, "monkeypatch")
             && inert_call_arguments(tokens, chain.end + 1))
             || (bindings.mock_constructor(chain)
-                && matches!(tokens.get(chain.end + 2), Some(Tok::Rpar)))
+                && matches!(tokens.get(chain.end + 2), Some(Tok::Rpar))
+                && bindings.constructor_assignment(tokens, start))
             || (bindings.mock_inspection(tokens, chain)
+                && discarded_call(tokens, start, chain.end + 1)
                 && inert_call_arguments(tokens, chain.end + 1));
         return !allowed || call_args_hide_a_target(tokens, chain.end + 1, names);
     }
@@ -507,6 +533,15 @@ fn chain_may_patch(
     !(mock_assignment
         || regions.parameters[start] && chain.segments.len() == 1
         || regions.annotations[start] && bindings.fixture_annotation(chain))
+}
+
+/// A mock call can return another configurable mock. Do not let that result
+/// escape into an assignment, argument, return, or chained expression.
+fn discarded_call(tokens: &[Tok], start: usize, open: usize) -> bool {
+    is_statement_start(tokens, start)
+        && matching_close(tokens, open).is_some_and(|close| {
+            matches!(tokens.get(close + 1), None | Some(Tok::Newline | Tok::Semi))
+        })
 }
 
 /// Comprehension targets have their own scope and are not statement bindings.

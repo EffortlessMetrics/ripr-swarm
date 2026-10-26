@@ -202,7 +202,7 @@ mock expectations, and custom `assert_*` helpers.
     every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
     `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
     `chdir(` call on an injected pytest test/fixture parameter (no default,
-    rebinding, or explicit supplying call), a zero-argument constructor from an
+    rebinding, or explicit supplying call), a directly assigned zero-argument constructor from an
     unshadowed `unittest.mock` import (`Mock`, `MagicMock`, ..), an `import` /
     `from .. import` statement without `as`, a formal parameter, a recognized
     imported fixture type annotation, or an inert string statement, with no
@@ -212,7 +212,8 @@ mock expectations, and custom `assert_*` helpers.
     bindings cannot borrow an import or constructor from a different scope.
     Environment and mock calls admit only inert literal arguments: `chdir` may
     invoke `__fspath__`, `setenv` may invoke `__str__`, and mock comparisons may
-    invoke `__eq__`. Mock configuration and escaping references retain the veto.
+    invoke `__eq__`. Mock configuration, escaping references, and retained call
+    results retain the veto; admitted calls are complete discarded expressions.
     Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
     receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
     and formatted strings are never inert docstrings. Everything else keeps the credit withheld: any other
