@@ -165,16 +165,23 @@ two bindings that each ran the owner before the read
 owner moves both sides together (#7135). The refusal needs equivalent
 histories: each binding has the same constructor and the same ordered
 statements using it (arguments included, binding name abstracted; read-only
-uses of the collection are not history). A different argument
-(`c.add(2); d.add(4)`), call count or seeding (`d.items.push(20)`) leaves the
-credit alone, because the sides diverge when the owner changes. A constructor
-that cannot be found or that names the other binding (`let d = c.clone()`)
-counts as equivalent. A twin that never ran the owner (built
-or seeded independently) leaves the other side's credit alone. The owner
-call is found as a `binding.owner(..)` statement by method name only: a twin
-built through a helper or builder, chained after the call, or fed by a
-same-named method of another type is not recognised as fed (a missed refusal
-or a missed credit respectively).
+uses of the collection are not history, whether spelled as the field or as the
+read's getter: `d.history().len()`). A statement inside a block carries the
+block's condition (`if ready() { c.items.push(1); }`), so differing conditions
+make differing histories. The history window ends at the `assert` on the read
+line, so a rewrite on the same line before it counts. A different argument
+(`c.add(2); d.add(4)`), call count, condition or seeding (`d.items.push(20)`)
+leaves the credit alone, because the sides diverge when the owner changes. A
+constructor that cannot be found or that names the other binding
+(`let d = c.clone()`) counts as equivalent; its statement is compared up to the
+first brace, so a struct literal is matched on its head, not its fields. A twin
+that never ran the owner (built or seeded independently) leaves the other side's
+credit alone, except a twin built through the owner in its own `let`
+(`let d = Bag::new().add(20).clone()`): that side's history is not
+recoverable, so the comparison refuses. The owner call is found as a
+`binding.owner(..)` statement by method name only: a twin built through another
+helper or builder, or fed by a same-named method of another type, is not
+recognised as fed (a missed refusal or a missed credit respectively).
 
 A read of a sibling field keeps a `FieldValue` missing discriminator for `f`,
 as for constructed fields (RIPR-SPEC-0005). A test that reaches the owner and

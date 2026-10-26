@@ -595,7 +595,8 @@ fn field_collection_observer_confirms(
     // driving statements, arguments included). Differing arguments, call
     // counts or seeding make the sides diverge when the owner changes, so
     // the comparison can notice.
-    let mut owner_fed: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let mut owner_fed: std::collections::BTreeMap<&str, Option<&str>> =
+        std::collections::BTreeMap::new();
     for read in &reads {
         if owner_call_reaches_read_unrewritten(
             test,
@@ -609,8 +610,20 @@ fn field_collection_observer_confirms(
                 .impl_type()
                 .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
         }) {
-            owner_fed.insert(read.binding.as_str());
+            owner_fed
+                .entry(read.binding.as_str())
+                .or_insert(read.getter.as_deref());
         }
+    }
+    // A compared side built by chaining the owner (`let d = Bag::new().add(20)`)
+    // is owner-fed too, but its history is not comparable statement by
+    // statement: refuse rather than credit a side the owner may have written.
+    let chain_built = reads.iter().any(|read| {
+        !owner_fed.contains_key(read.binding.as_str())
+            && binding_built_through_owner(test, &read.binding, owner.name())
+    });
+    if !owner_fed.is_empty() && chain_built {
+        return false;
     }
     if owner_fed.len() > 1 && equivalent_owner_histories(test, &owner_fed, path, assertion.line) {
         return false;
@@ -716,17 +729,25 @@ fn tighten_dots(code: &str) -> String {
 /// no independence is established.
 fn equivalent_owner_histories(
     test: &TestSummary,
-    bindings: &std::collections::BTreeSet<&str>,
+    bindings: &std::collections::BTreeMap<&str, Option<&str>>,
     path: &str,
     read_line: usize,
 ) -> bool {
     let masked = mask_comments_and_strings(&test.body);
     let skipped = read_line.saturating_sub(test.start_line);
-    let offset: usize = masked
+    let line_start: usize = masked
         .split_inclusive('\n')
         .take(skipped)
         .map(str::len)
         .sum();
+    // The window also covers the part of the read line before the assertion
+    // macro (`d.items.clear(); assert_eq!(..)`), as the unrewritten-read guard
+    // does.
+    let offset = masked
+        .get(line_start..)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|line| line.rfind("assert"))
+        .map_or(line_start, |found| line_start + found);
     let (Some(before_masked), Some(before)) = (masked.get(..offset), test.body.get(..offset))
     else {
         return true;
@@ -735,11 +756,11 @@ fn equivalent_owner_histories(
     let mut start = 0;
     for (at, ch) in before_masked.char_indices() {
         if matches!(ch, ';' | '{' | '}') {
-            statements.push((start, at));
+            statements.push((start, at, ch));
             start = at + 1;
         }
     }
-    statements.push((start, before_masked.len()));
+    statements.push((start, before_masked.len(), ';'));
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mentions = |text: &str, name: &str| {
         text.match_indices(name).any(|(at, found)| {
@@ -766,10 +787,13 @@ fn equivalent_owner_histories(
         out.split_whitespace().collect::<Vec<_>>().join(" ")
     };
     let mut histories: Vec<Vec<String>> = Vec::new();
-    for binding in bindings {
+    for (binding, getter) in bindings {
         let mut history = Vec::new();
         let mut constructed = false;
-        for &(from, to) in &statements {
+        // Guards (`if f1 {`) of the blocks the statement sits in: part of the
+        // statement's meaning once the block contributes to the history.
+        let mut guards: Vec<(String, bool)> = Vec::new();
+        for &(from, to, terminator) in &statements {
             let (Some(code), Some(text)) = (before_masked.get(from..to), before.get(from..to))
             else {
                 return true;
@@ -786,23 +810,40 @@ fn equivalent_owner_histories(
                     rest.strip_prefix(binding)
                         .is_some_and(|after| !after.starts_with(ident))
                 });
+            let mut entry = None;
             if declared {
                 let Some((_, rhs)) = text.split_once('=') else {
                     return true;
                 };
                 if bindings
-                    .iter()
+                    .keys()
                     .any(|other| other != binding && mentions(rhs, other))
                 {
                     return true;
                 }
                 constructed = true;
-                history.push(format!("let {}", abstracted(rhs, binding)));
+                entry = Some(format!("let {}", abstracted(rhs, binding)));
             } else if mentions(code, binding) && {
                 let stripped = strip_sibling_field_reads(code, binding, path);
-                !only_field_reads_between(&stripped, 0, stripped.len(), binding, None, path)
+                !only_field_reads_between(&stripped, 0, stripped.len(), binding, *getter, path)
             } {
-                history.push(abstracted(text, binding));
+                entry = Some(abstracted(text, binding));
+            }
+            if let Some(entry) = entry {
+                for (guard, added) in &mut guards {
+                    if !*added {
+                        history.push(format!("if {guard}"));
+                        *added = true;
+                    }
+                }
+                history.push(entry);
+            }
+            match terminator {
+                '{' => guards.push((abstracted(text, binding), false)),
+                '}' => {
+                    guards.pop();
+                }
+                _ => {}
             }
         }
         if !constructed {
@@ -811,6 +852,32 @@ fn equivalent_owner_histories(
         histories.push(history);
     }
     histories.windows(2).all(|pair| pair[0] == pair[1])
+}
+
+/// #7135: whether `binding` is declared with a right-hand side that calls the
+/// owner `method` (`let d = Bag::new().add(20);`), so the owner wrote it
+/// without a bare `binding.method(..)` statement.
+fn binding_built_through_owner(test: &TestSummary, binding: &str, method: &str) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let call = format!(".{method}(");
+    masked.match_indices("let ").any(|(at, keyword)| {
+        if masked[..at].chars().next_back().is_some_and(ident) {
+            return false;
+        }
+        let rest = masked[at + keyword.len()..].trim_start();
+        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        let Some(after) = rest.strip_prefix(binding) else {
+            return false;
+        };
+        if after.starts_with(ident) {
+            return false;
+        }
+        after
+            .split(';')
+            .next()
+            .is_some_and(|statement| statement.contains(&call))
+    })
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an
