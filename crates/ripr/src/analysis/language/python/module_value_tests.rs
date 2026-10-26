@@ -1024,6 +1024,17 @@ fn classify_lambda(
     others: &[(&str, &str)],
     test_source: &str,
 ) -> Result<Finding, String> {
+    classify_line(source, 1, new, old, others, test_source)
+}
+
+fn classify_line(
+    source: &str,
+    line: usize,
+    new: &str,
+    old: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+) -> Result<Finding, String> {
     let mut owners = owners_of(source);
     let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
     let own = Path::new("hostile/settings.py");
@@ -1055,7 +1066,7 @@ fn classify_lambda(
     });
     classify_change_with_context(
         own,
-        1,
+        line,
         new,
         Some(old),
         &owners,
@@ -1335,6 +1346,360 @@ fn a_pinned_lambda_body_edit_is_credited() -> Check {
             test,
         )?;
         assert_credited(&finding);
+    }
+    Ok(())
+}
+
+// A default edit of a plain `@dataclass` field (#9619).
+
+const DC_OLD: &str = "    tax_rate: float = 0.2";
+const DC_NEW: &str = "    tax_rate: float = 0.25";
+const DC_METHOD: &str =
+    "    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n";
+const DC_TEST: &str = "from hostile.settings import Invoice\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n";
+
+fn dc_source(head: &str, tax: &str, rest: &str) -> String {
+    format!("from dataclasses import dataclass\n\n\n{head}\n    amount: int\n{tax}\n\n{rest}")
+}
+
+fn dc_test(body: &str) -> String {
+    format!("from hostile.settings import Invoice\n\n\ndef test_it():\n{body}\n")
+}
+
+/// Classify the edit of the `tax_rate` line of `source` (new text `new`, the
+/// old text `DC_OLD`).
+fn classify_dc(
+    source: &str,
+    new: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+) -> Result<Finding, String> {
+    let line = source
+        .lines()
+        .position(|text| text == new)
+        .ok_or_else(|| format!("the edited line is not in the source: {new}"))?
+        + 1;
+    classify_line(source, line, new, DC_OLD, others, test_source)
+}
+
+fn dc_default() -> String {
+    dc_source("@dataclass\nclass Invoice:", DC_NEW, DC_METHOD)
+}
+
+#[test]
+fn a_dataclass_default_no_assertion_distinguishes_is_not_credited() -> Check {
+    for (label, body) in [
+        (
+            "rate passed positionally",
+            "    assert Invoice(100, 0.5).total() == 150",
+        ),
+        (
+            "rate passed by keyword",
+            "    assert Invoice(100, tax_rate=0.5).total() == 150",
+        ),
+        (
+            "the same rate passed explicitly",
+            "    assert Invoice(100, 0.2).total() == 120",
+        ),
+        ("another field", "    assert Invoice(100).amount == 100"),
+        (
+            "both rates round alike",
+            "    assert Invoice(1).total() == 1",
+        ),
+        (
+            "not the pinned value",
+            "    assert Invoice(100).total() > 0",
+        ),
+    ] {
+        let finding = classify_dc(&dc_default(), DC_NEW, &[], &dc_test(body))?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dataclass_that_is_not_plain_is_not_credited() -> Check {
+    let methods = |extra: &str| format!("{DC_METHOD}\n{extra}");
+    for (label, source) in [
+        (
+            "post init",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &methods("    def __post_init__(self):\n        self.tax_rate = 0.3\n"),
+            ),
+        ),
+        (
+            "custom init",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &methods(
+                    "    def __init__(self, amount):\n        self.amount = amount\n        self.tax_rate = 0.3\n",
+                ),
+            ),
+        ),
+        (
+            "setattr hook",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &methods(
+                    "    def __setattr__(self, name, value):\n        object.__setattr__(self, name, 0.3)\n",
+                ),
+            ),
+        ),
+        (
+            "base class",
+            dc_source("@dataclass\nclass Invoice(Base):", DC_NEW, DC_METHOD),
+        ),
+        (
+            "metaclass",
+            dc_source(
+                "@dataclass\nclass Invoice(metaclass=Meta):",
+                DC_NEW,
+                DC_METHOD,
+            ),
+        ),
+        (
+            "frozen call decorator",
+            dc_source("@dataclass(frozen=True)\nclass Invoice:", DC_NEW, DC_METHOD),
+        ),
+        (
+            "init disabled",
+            dc_source("@dataclass(init=False)\nclass Invoice:", DC_NEW, DC_METHOD),
+        ),
+        (
+            "second decorator",
+            dc_source("@wrap\n@dataclass\nclass Invoice:", DC_NEW, DC_METHOD),
+        ),
+        (
+            "plain class variable",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &methods("    rounding = 2\n"),
+            ),
+        ),
+        (
+            "slots",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &methods("    __slots__ = ('amount',)\n"),
+            ),
+        ),
+        (
+            "nested class",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &methods("    class Meta:\n        pass\n"),
+            ),
+        ),
+        (
+            "keyword-only field",
+            dc_source(
+                "@dataclass\nclass Invoice:",
+                DC_NEW,
+                &format!("    discount: float = field(default=0.0, kw_only=True)\n\n{DC_METHOD}"),
+            ),
+        ),
+        (
+            "decorator is not the dataclasses one",
+            dc_default().replace(
+                "from dataclasses import dataclass",
+                "from attrs import dataclass",
+            ),
+        ),
+        (
+            "decorator is rebound",
+            dc_default().replace(
+                "@dataclass\nclass",
+                "dataclass = lambda cls: cls\n\n\n@dataclass\nclass",
+            ),
+        ),
+    ] {
+        let line_new = DC_NEW;
+        let finding = classify_dc(&source, line_new, &[], DC_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dataclass_default_that_is_not_a_plain_literal_swap_is_not_credited() -> Check {
+    for (label, new, old) in [
+        (
+            "field default",
+            "    tax_rate: float = field(default=0.25)",
+            DC_OLD,
+        ),
+        (
+            "computed default",
+            "    tax_rate: float = 0.2 + 0.05",
+            DC_OLD,
+        ),
+        (
+            "annotation changed",
+            "    tax_rate: Decimal = 0.25",
+            "    tax_rate: Missing = 0.2",
+        ),
+        ("field renamed", "    rate: float = 0.25", DC_OLD),
+        (
+            "default added",
+            "    tax_rate: float = 0.25",
+            "    tax_rate: float",
+        ),
+    ] {
+        let source = dc_source("@dataclass\nclass Invoice:", new, DC_METHOD);
+        let line = source
+            .lines()
+            .position(|text| text == new)
+            .ok_or_else(|| format!("{label}: line missing"))?
+            + 1;
+        let finding = classify_line(&source, line, new, old, &[], DC_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dataclass_method_outside_the_evaluator_is_not_credited() -> Check {
+    for (label, method) in [
+        (
+            "property",
+            "    @property\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n",
+        ),
+        (
+            "two statements",
+            "    def total(self):\n        rate = self.tax_rate\n        return round(self.amount * (1 + rate))\n",
+        ),
+        (
+            "calls another method",
+            "    def total(self):\n        return round(self.amount * (1 + self.rate()))\n\n    def rate(self):\n        return self.tax_rate\n",
+        ),
+        (
+            "default argument",
+            "    def total(self, extra=0):\n        return round(self.amount * (1 + self.tax_rate)) + extra\n",
+        ),
+        (
+            "defined twice",
+            "    def total(self):\n        return 0\n\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n",
+        ),
+        (
+            "unknown call",
+            "    def total(self):\n        return fmt(self.amount * (1 + self.tax_rate))\n",
+        ),
+        (
+            "attribute of an attribute",
+            "    def total(self):\n        return round(self.amount * (1 + self.tax_rate.real))\n",
+        ),
+        (
+            "shadowed round",
+            "    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n\n\ndef round(value):\n        return 0\n",
+        ),
+    ] {
+        let source = dc_source("@dataclass\nclass Invoice:", DC_NEW, method);
+        let finding = classify_dc(&source, DC_NEW, &[], DC_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_rebound_dataclass_or_field_is_not_credited() -> Check {
+    let source = dc_default();
+    let rebound = format!("{source}\n\nInvoice = other\n");
+    let finding = classify_dc(&rebound, DC_NEW, &[], DC_TEST)?;
+    assert_lambda_withheld(&finding, "class bound twice");
+    for (label, other) in [
+        (
+            "class attribute write",
+            "from hostile.settings import Invoice\nInvoice.tax_rate = 0.5\n",
+        ),
+        (
+            "setattr",
+            "import hostile.settings as s\nsetattr(s.Invoice, 'tax_rate', 0.5)\n",
+        ),
+        (
+            "module attribute write",
+            "import hostile.settings as s\ns.Invoice = other\n",
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[("tests/conftest.py", other)], DC_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    for (label, body) in [
+        (
+            "test writes the field",
+            "    Invoice.tax_rate = 0.5\n    assert Invoice(100).total() == 120",
+        ),
+        (
+            "test shadows the class",
+            "    Invoice = other\n    assert Invoice(100).total() == 120",
+        ),
+        (
+            "test may skip",
+            "    if cond:\n        return\n    assert Invoice(100).total() == 120",
+        ),
+        (
+            "extra positional argument",
+            "    assert Invoice(100, 0.2, 7).total() == 120",
+        ),
+        (
+            "unknown keyword",
+            "    assert Invoice(100, rate=0.2).total() == 120",
+        ),
+        (
+            "missing required field",
+            "    assert Invoice().total() == 120",
+        ),
+        (
+            "non-literal argument",
+            "    assert Invoice(compute()).total() == 120",
+        ),
+        ("star arguments", "    assert Invoice(*args).total() == 120"),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[], &dc_test(body))?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_pinned_dataclass_default_edit_is_credited() -> Check {
+    let source = dc_default();
+    for (label, test) in [
+        ("method through the default", DC_TEST.to_string()),
+        (
+            "keyword constructor",
+            dc_test("    assert Invoice(amount=100).total() == 120"),
+        ),
+        (
+            "attribute read",
+            dc_test("    assert Invoice(100).tax_rate == 0.2"),
+        ),
+        (
+            "alias import",
+            "from hostile.settings import Invoice as Bill\n\n\ndef test_it():\n    assert Bill(100).total() == 120\n"
+                .to_string(),
+        ),
+        (
+            "other fields passed",
+            dc_test("    assert Invoice(100).total() == 120\n    assert Invoice(100, 0.5).total() == 150"),
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[], &test)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{label}: {finding:?}");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("related_test_relation: module_value_call")),
+            "{label}: {:?}",
+            finding.evidence
+        );
     }
     Ok(())
 }

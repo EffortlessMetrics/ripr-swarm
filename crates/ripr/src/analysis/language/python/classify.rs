@@ -6,6 +6,7 @@ use super::assertion_selection::{
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
 use super::message_pin;
@@ -375,6 +376,26 @@ pub(super) fn classify_change_for_owner_with_value_origins(
                 )
             })
             .unwrap_or_default()
+    } else if no_behavior.sole_line_replacement {
+        // A default edit inside a plain `@dataclass` class body (#9619).
+        owner_source
+            .map(|source| {
+                dataclass_default_credits(
+                    &ModuleEdit {
+                        file,
+                        line,
+                        line_text,
+                        old_line_text,
+                        new_source: source,
+                    },
+                    owner,
+                    owners
+                        .iter()
+                        .find(|candidate| candidate.is_module_owner() && candidate.file == file),
+                    all_tests,
+                )
+            })
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -449,8 +470,15 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
-    // A pinned lambda body edit is read by the module-value credit.
-    .filter(|limit| module_value.is_empty() || limit.evidence != LAMBDA_LIMIT_EVIDENCE)
+    // A pinned lambda body edit or dataclass default edit is read by the
+    // module-value credit, which lifts only the limit its own reading answers.
+    .filter(|limit| {
+        module_value.is_empty()
+            || (limit.evidence != LAMBDA_LIMIT_EVIDENCE
+                && !owner.decorators.iter().any(|decorator| {
+                    limit.evidence == format!("static_limit decorator_indirection: `{decorator}`")
+                }))
+    })
     .or_else(|| {
         module_object_rebind_limit(
             line_text,
