@@ -3070,9 +3070,8 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        // Route through the shared value-error helper so a format typo meets
-        // the same "Accepted: ..." contract (plus a near-miss suggestion) as
-        // every other `--format` value in the CLI (#10543).
+        // Share the enum-value diagnostic and near-miss suggestion with
+        // pilot and outcome without changing diff's accepted aliases.
         _ => Err(unknown_value(
             "diff format",
             value,
