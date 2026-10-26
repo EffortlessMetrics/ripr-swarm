@@ -281,6 +281,46 @@ fn test_file_macros_and_inner_cfg_are_plain(root: &SyntaxNode) -> bool {
     })
 }
 
+/// Whether test code in the file calls something that can end the test run
+/// without a failure: `process::exit`, `process::abort` or `exec`. Such a
+/// call in a helper, a table loop or an owner-call argument keeps the
+/// assertion after it from running while the test still passes (#8015), and
+/// no scan of the test body alone sees a callee's body. Fail closed on any
+/// path ending in `exit`/`abort`, and on a `.exec()` method call; a user
+/// function of that name refuses too. `whole_file` reads every item (a test
+/// file of its own); otherwise only `#[test]` functions and `#[cfg(test)]`
+/// modules, since the file also holds production code.
+fn diverging_call_in_test_code(root: &SyntaxNode, whole_file: bool) -> bool {
+    let test_only = |node: &SyntaxNode| {
+        node.ancestors().any(|ancestor| {
+            ast::Fn::cast(ancestor.clone()).is_some_and(|function| {
+                function
+                    .attrs()
+                    .any(|attribute| attribute.syntax().text() == "#[test]")
+            }) || ast::Module::cast(ancestor).is_some_and(|module| {
+                module
+                    .attrs()
+                    .any(|attribute| is_test_build_gate(&attribute.syntax().text().to_string()))
+            })
+        })
+    };
+    root.descendants().any(|node| {
+        let diverges = if let Some(call) = ast::CallExpr::cast(node.clone()) {
+            call.expr()
+                .and_then(|callee| match callee {
+                    ast::Expr::PathExpr(path) => path.path()?.segment()?.name_ref(),
+                    _ => None,
+                })
+                .is_some_and(|name| name.text() == "exit" || name.text() == "abort")
+        } else if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
+            call.name_ref().is_some_and(|name| name.text() == "exec")
+        } else {
+            false
+        };
+        diverges && (whole_file || test_only(&node))
+    })
+}
+
 /// The only function of this name anywhere in the file.
 fn unique_function(root: &SyntaxNode, name: &str) -> Option<ast::Fn> {
     let mut functions = root
@@ -358,6 +398,14 @@ fn plain_related_tests<'c>(
             }
             let test_root = parsed(&test_facts.source)?;
             if !test_file_macros_and_inner_cfg_are_plain(test_root.syntax()) {
+                return None;
+            }
+            // In the owner's own file only test-only code counts: a
+            // production `process::exit` there says nothing about the test.
+            let shares_owner_file = context
+                .owner_fn
+                .is_some_and(|owner_fn| owner_fn.file == test.file);
+            if diverging_call_in_test_code(test_root.syntax(), !shares_owner_file) {
                 return None;
             }
             unique_function(test_root.syntax(), &test.name)
