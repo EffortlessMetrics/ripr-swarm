@@ -362,3 +362,35 @@ fn an_unasserted_empty_call_is_no_input_row() -> Result<(), String> {
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn a_grouped_callee_holding_a_literal_stays_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&(make_name)(\"Bob\")), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_turbofish_call_holding_a_literal_stays_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&make_name::<u8>(\"Bob\")), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_macro_call_holding_a_literal_stays_unknown() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&format!(\"{}\", \"Bob\")), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_discarded_empty_call_on_the_assertion_line_is_no_input_row() -> Result<(), String> {
+    let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    let _ = initial(\"\"); assert_eq!(initial(\"ada\"), 'A');\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
+    let findings = guard_findings(NEW, test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}

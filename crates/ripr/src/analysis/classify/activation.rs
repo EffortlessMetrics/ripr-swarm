@@ -4558,13 +4558,14 @@ fn argument_text_calls_nothing(call_text: &str, owner_name: &str) -> bool {
         arguments = arguments.replace(conversion, "");
     }
     // The owner's own opening parenthesis follows the name directly; any later
-    // parenthesis that follows an identifier or `]` is a call.
+    // parenthesis that follows an identifier, `]`, a closing `)` (grouped
+    // callee), `>` (turbofish) or `!` (macro) is a call.
     let chars: Vec<char> = arguments.chars().collect();
     !chars.iter().enumerate().skip(1).any(|(idx, ch)| {
         *ch == '('
-            && chars
-                .get(idx - 1)
-                .is_some_and(|prev| prev.is_alphanumeric() || matches!(prev, '_' | ']'))
+            && chars.get(idx - 1).is_some_and(|prev| {
+                prev.is_alphanumeric() || matches!(prev, '_' | ']' | ')' | '>' | '!')
+            })
     })
 }
 
