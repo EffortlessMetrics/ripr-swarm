@@ -15746,6 +15746,24 @@ fn branch_return_expressions_keeps_plain_nesting_and_blanked_literals() {
         branch_return_expressions(&arrow_owner, 1),
         Some(("1".to_string(), "2".to_string()))
     );
+    let multiline_comment: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    /* a block comment",
+        "       over two lines { => */",
+        "    const t = `x",
+        "y`;",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&multiline_comment, 5),
+        Some(("1".to_string(), "2".to_string()))
+    );
     let literals: Vec<&str> = [
         "export function f(s: number): number {",
         "    const label = \"{ => function {\"; // {",

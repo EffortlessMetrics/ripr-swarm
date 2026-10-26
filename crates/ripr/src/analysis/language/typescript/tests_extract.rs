@@ -3583,7 +3583,7 @@ fn body_calls_context_skip(text: &str, context: &str) -> bool {
 
 /// Replace comments and string / template literal contents with spaces,
 /// keeping byte offsets and newlines.
-fn mask_comments_and_strings_text(text: &str) -> String {
+pub(super) fn mask_comments_and_strings_text(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = bytes.to_vec();
     let mut i = 0;

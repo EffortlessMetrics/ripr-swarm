@@ -5026,11 +5026,12 @@ pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<
 /// starts at depth 1, so a one-line `if (c) { return 1; }` would read the
 /// enclosing block's next `return` as the true branch, and a changed `if`
 /// inside a nested arrow or `function` would read that inner function's
-/// returns instead of the owner's. Braces in strings and comments are blanked
+/// returns instead of the owner's (method shorthand carries neither token and
+/// is not recognized). Braces in strings and comments are blanked
 /// first; `None` means the text could not be lined up, which also fails the scan.
 fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
     lines.get(start)?;
-    let masked = mask_comments_and_strings(&lines[..=start].join("\n"));
+    let masked = super::tests_extract::mask_comments_and_strings_text(&lines[..=start].join("\n"));
     let masked_lines: Vec<&str> = masked.split('\n').collect();
     if masked_lines.len() != start + 1 {
         return None;
