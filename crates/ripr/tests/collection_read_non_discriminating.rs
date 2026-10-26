@@ -46,6 +46,11 @@ fn non_discriminating_collection_reads_never_credit_exposed() -> Result<(), Stri
             false,
         ),
         (
+            "spaced_readonly_use_does_not_make_twins_independent",
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\nlet _ = c . items.len();\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);",
+            false,
+        ),
+        (
             "identically_seeded_twins",
             "let mut c = Bag::new();\nc.items.push(1);\nc.add(20);\nlet mut d = Bag::new();\nd.items.push(1);\nd.add(20);\nassert_eq!(c.items, d.items);",
             false,

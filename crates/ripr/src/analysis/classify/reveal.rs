@@ -633,6 +633,24 @@ fn field_collection_observer_confirms(
     })
 }
 
+/// `code` without whitespace around `.`, so spaced and tight spellings of one
+/// field access compare equal.
+fn tighten_dots(code: &str) -> String {
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len());
+    for (at, &ch) in chars.iter().enumerate() {
+        if ch.is_whitespace() {
+            let prev = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+            let next = chars[at..].iter().find(|c| !c.is_whitespace());
+            if prev == Some(&'.') || next == Some(&'.') {
+                continue;
+            }
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// #7135: whether every binding in `bindings` was built and driven the same
 /// way before the read at `read_line`, so a wrong owner moves every compared
 /// side together. The history of a binding is its constructor and, in order,
@@ -702,6 +720,9 @@ fn equivalent_owner_histories(
             else {
                 return true;
             };
+            // `c . items.len()` is the same field access as `c.items.len()`.
+            let (code, text) = (tighten_dots(code), tighten_dots(text));
+            let (code, text) = (code.as_str(), text.as_str());
             let trimmed = code.trim_start();
             let declared = trimmed
                 .strip_prefix("let ")
