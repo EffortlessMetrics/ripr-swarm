@@ -87,6 +87,7 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_producer_sweep;
 mod verification_contracts;
+mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_run;
