@@ -76,6 +76,21 @@ exercised boundary from a missing one.
   Both forms share the intrinsic-identity admission; their operation-family
   limits remain distinct. Literal-only expressions do not require unused
   parameter types to be resolved. Alias resolution is not inferred from a name.
+  A directly compared owner parameter also constrains unsuffixed arithmetic:
+  `let k = ((if flag { 255 } else { 0 }) + 1) / 2; k <= bound` is not a
+  wide-integer computation when `bound: u8`. Local and direct forms retain
+  that declared counterpart constraint even for literal-only initializers.
+  Narrow or unresolved counterpart identities refuse arithmetic credit;
+  genuine wide counterparts and unrelated unused narrow parameters retain
+  their existing support. A live comparison local retains its initializer's
+  declared parameter constraints; unsupported declarations or rebound inputs
+  cannot borrow a stale wide parameter type. This does not infer typed constants, annotations,
+  helper return types or arbitrary Rust result types.
+  Raw or Unicode value names remain unresolved where existing plain-identifier
+  liveness evidence cannot certify the comparison constraint.
+  Explicit numeric suffixes on the counterpart retain their intrinsic limits:
+  narrow suffixes refuse arithmetic, wide suffixes preserve bounded arithmetic,
+  and checked integer methods still require usize semantics.
 - `map_or` evaluates its default once before selecting `Some` or `None`.
   A refused default (including division by zero or an unsupported call)
   leaves either arm unresolved. An evaluated default contributes its

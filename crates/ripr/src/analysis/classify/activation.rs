@@ -424,7 +424,7 @@ fn observed_discriminator_values(
         &left,
         resolve_boundary_operand(
             owner,
-            &left,
+            (&left, &right),
             probe.location.line,
             &parameters,
             index,
@@ -439,7 +439,7 @@ fn observed_discriminator_values(
         &right,
         resolve_boundary_operand(
             owner,
-            &right,
+            (&right, &left),
             probe.location.line,
             &parameters,
             index,
@@ -624,7 +624,8 @@ pub(crate) enum ResolvedOperand {
     /// (`let unit = if si { KIB } else { KB };`), each declared once with
     /// a plain decimal value. They join the row's exact inputs so the
     /// bounded evaluator reads them like any other named value. The final
-    /// field retains declared types of referenced owner parameters so
+    /// field retains declared types of referenced owner parameters and a
+    /// directly compared parameter that can constrain the result, so
     /// integer operations cannot inherit the host index width by accident.
     Local(String, String, Vec<(String, String)>, Vec<Option<String>>),
     /// A direct call to a unique helper (`is_word_start(input, 0)`)
@@ -757,13 +758,83 @@ fn local_integer_operations_supported(
     if !checked && !arithmetic {
         return true;
     }
-    parameter_types.iter().all(|ty| {
-        ty.as_deref().is_some_and(|ty| {
-            matches!(
-                ty,
-                "usize" | "&str" | "String" | "&String" | "char" | "bool"
-            ) || (!checked && WIDE_INTEGER_TYPES.contains(&ty))
+    parameter_types
+        .iter()
+        .all(|ty| integer_operation_type_supported(ty.as_deref(), checked))
+}
+
+fn integer_operation_type_supported(ty: Option<&str>, checked: bool) -> bool {
+    ty.is_some_and(|ty| {
+        matches!(
+            ty,
+            "usize" | "&str" | "String" | "&String" | "char" | "bool"
+        ) || (!checked && WIDE_INTEGER_TYPES.contains(&ty))
+    })
+}
+
+/// Carry constraints from an existing live local or the directly compared
+/// expression. This collects declared parameter inputs and explicit numeric
+/// suffixes; it does not
+/// infer a local result type. Unsupported local declarations and rebound
+/// inputs cannot borrow a former parameter's wide declaration.
+struct IntegerComparisonInputs<'a> {
+    parameters: Vec<&'a String>,
+    literal_types: Vec<&'static str>,
+}
+
+fn comparison_integer_inputs<'a>(
+    owner: &FunctionSummary,
+    counterpart: &str,
+    predicate_line: usize,
+    parameters: &'a [String],
+) -> Option<IntegerComparisonInputs<'a>> {
+    // These existing binding/liveness helpers certify plain identifiers.
+    // A raw/Unicode value name must not disappear during token collection,
+    // nor may an alternate raw spelling hide a later narrow declaration.
+    if counterpart.contains("r#") || !counterpart.is_ascii() {
+        return None;
+    }
+    let initializer = live_local_initializer(owner, counterpart, predicate_line);
+    if initializer.is_none() && owner_declares_local(owner, counterpart, predicate_line) {
+        return None;
+    }
+    let read = initializer.as_deref().unwrap_or(counterpart);
+    let masked_read = crate::analysis::language::mask_rust_comments_and_strings(read);
+    if masked_read.contains("r#") || !masked_read.is_ascii() {
+        return None;
+    }
+    let names = free_identifiers(read);
+    let inputs: Vec<_> = parameters
+        .iter()
+        .filter(|name| names.contains(name))
+        .collect();
+    let masked_owner = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let literal_types = masked_read
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|token| token.starts_with(|ch: char| ch.is_ascii_digit()))
+        .filter_map(|token| {
+            // An unsuffixed hex number may itself end in f32/f64 digits.
+            let chars: Vec<_> = token.char_indices().collect();
+            if radix_literal_end(&chars, 0) == Some(chars.len()) {
+                return None;
+            }
+            [
+                "usize", "isize", "u128", "i128", "u64", "i64", "u32", "i32", "u16", "i16", "u8",
+                "i8", "f32", "f64",
+            ]
+            .into_iter()
+            .find(|ty| token.ends_with(ty))
         })
+        .collect();
+    (!has_name_token(&masked_owner, &format!("r#{counterpart}"))
+        && !inputs.iter().any(|name| {
+            !is_plain_identifier(name)
+                || has_name_token(&masked_owner, &format!("r#{name}"))
+                || owner_rebinds_operand(owner, name, predicate_line)
+        }))
+    .then_some(IntegerComparisonInputs {
+        parameters: inputs,
+        literal_types,
     })
 }
 
@@ -774,12 +845,31 @@ fn local_integer_operations_supported(
 /// keeps the unknown reading.
 fn closed_form_operand(
     owner: &FunctionSummary,
-    operand: &str,
+    (operand, counterpart): (&str, &str),
     parameters: &[String],
     predicate_line: usize,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<ResolvedOperand> {
     let text = closed_form_text(owner, operand, parameters, predicate_line, index)?;
+    // Unsuffixed arithmetic can inherit its type from the other side even
+    // when it reads no integer parameter itself. A declared comparison
+    // parameter must therefore meet the same intrinsic wide-integer gate.
+    let comparison_parameters =
+        comparison_integer_inputs(owner, counterpart, predicate_line, parameters)?;
+    if intrinsic_parameter_types(owner, &comparison_parameters.parameters, index)
+        .iter()
+        .map(|ty| ty.as_deref())
+        .chain(
+            comparison_parameters
+                .literal_types
+                .iter()
+                .copied()
+                .map(Some),
+        )
+        .any(|ty| !integer_operation_type_supported(ty, false))
+    {
+        return None;
+    }
     let constants = initializer_constants(owner, text, parameters, index);
     Some(ResolvedOperand::Expression(text.to_string(), constants))
 }
@@ -950,7 +1040,7 @@ fn credited_resolution(
 
 fn resolve_boundary_operand(
     owner: &FunctionSummary,
-    operand: &str,
+    (operand, counterpart): (&str, &str),
     predicate_line: usize,
     parameters: &[String],
     index: &crate::analysis::rust_index::RustIndex,
@@ -999,11 +1089,32 @@ fn resolve_boundary_operand(
         }
         let constants = initializer_constants(owner, &initializer, parameters, index);
         let names = free_identifiers(&initializer);
-        let parameters_read: Vec<&String> = names
+        let mut parameters_read: Vec<&String> = names
             .iter()
             .filter(|name| parameters.contains(name))
             .collect();
-        let parameter_types = intrinsic_parameter_types(owner, &parameters_read, index);
+        // Rust unifies the local's integer type with a directly compared
+        // parameter. A bool-selected or literal-only initializer does not
+        // establish a wide result independently of that constraint.
+        let parameter_types =
+            comparison_integer_inputs(owner, counterpart, predicate_line, parameters).map_or_else(
+                || vec![None],
+                |comparison_parameters| {
+                    for parameter in comparison_parameters.parameters {
+                        if !parameters_read.contains(&parameter) {
+                            parameters_read.push(parameter);
+                        }
+                    }
+                    let mut types = intrinsic_parameter_types(owner, &parameters_read, index);
+                    types.extend(
+                        comparison_parameters
+                            .literal_types
+                            .into_iter()
+                            .map(|ty| Some(ty.to_string())),
+                    );
+                    types
+                },
+            );
         return Some(ResolvedOperand::Local(
             operand.to_string(),
             initializer,
@@ -1019,7 +1130,15 @@ fn resolve_boundary_operand(
     }
     resolve_direct_call(operand, index, workspace_complete).or_else(|| {
         allow_closed_form
-            .then(|| closed_form_operand(owner, operand, parameters, predicate_line, index))
+            .then(|| {
+                closed_form_operand(
+                    owner,
+                    (operand, counterpart),
+                    parameters,
+                    predicate_line,
+                    index,
+                )
+            })
             .flatten()
     })
 }
@@ -2366,7 +2485,7 @@ fn missing_boundary_discriminator(
         &left,
         resolve_boundary_operand(
             owner,
-            &left,
+            (&left, &right),
             probe.location.line,
             &parameters,
             index,
@@ -2381,7 +2500,7 @@ fn missing_boundary_discriminator(
         &right,
         resolve_boundary_operand(
             owner,
-            &right,
+            (&right, &left),
             probe.location.line,
             &parameters,
             index,

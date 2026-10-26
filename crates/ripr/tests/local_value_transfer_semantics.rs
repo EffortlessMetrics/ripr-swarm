@@ -54,6 +54,8 @@ fn finding_with_prelude(
 #[derive(Clone, Copy)]
 enum OperandShape {
     Local,
+    AnnotatedLocal(&'static str),
+    LocalReversed,
     Direct,
     Reversed,
 }
@@ -92,10 +94,20 @@ fn finding_with_context(
     )
     .map_err(|error| error.to_string())?;
     let (binding, before, after, lines, predicate_offset) = match shape {
-        OperandShape::Local => (
-            format!("    let k = {expression};\n"),
+        OperandShape::Local | OperandShape::AnnotatedLocal(_) => (
+            match shape {
+                OperandShape::AnnotatedLocal(ty) => format!("    let k: {ty} = {expression};\n"),
+                _ => format!("    let k = {expression};\n"),
+            },
             format!("k < {bound}"),
             format!("k <= {bound}"),
+            4,
+            2,
+        ),
+        OperandShape::LocalReversed => (
+            format!("    let k = {expression};\n"),
+            format!("{bound} > k"),
+            format!("{bound} >= k"),
             4,
             2,
         ),
@@ -423,6 +435,272 @@ fn bounded_local_arithmetic_preserves_the_scalar_width_gate() -> Result<(), Stri
     ] {
         let finding = finding_for(ty, "n + 1", argument, bound)?;
         assert_eq!(finding["ripr"]["infect"]["state"], state, "{ty}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn comparison_parameter_constrains_unsuffixed_local_arithmetic() -> Result<(), String> {
+    for shape in [OperandShape::Local, OperandShape::LocalReversed] {
+        for (ty, largest, boundary, state) in [
+            ("u8", "255", "128", "unknown"),
+            ("i8", "127", "64", "unknown"),
+            ("u16", "65535", "32768", "unknown"),
+            ("i16", "32767", "16384", "unknown"),
+            ("u32", "255", "128", "yes"),
+            ("i32", "127", "64", "yes"),
+            ("usize", "255", "128", "yes"),
+        ] {
+            let finding = finding_with_shape(
+                "",
+                &format!("bool, bound: {ty}"),
+                &format!("((if n {{ {largest} }} else {{ 0 }}) + 1) / 2"),
+                &format!("true, {boundary}"),
+                "bound",
+                shape,
+            )?;
+            assert_eq!(finding["ripr"]["infect"]["state"], state, "{ty}: {finding}");
+            let equality = finding["activation"]["observed_values"]
+                .as_array()
+                .ok_or("missing observed values")?
+                .iter()
+                .any(|value| {
+                    value["value"]
+                        .as_str()
+                        .is_some_and(|value| value.contains(" == "))
+                });
+            assert_eq!(equality, state == "yes", "{ty}: {finding}");
+            if state == "unknown" {
+                assert!(
+                    finding["activation"]["missing_discriminators"]
+                        .as_array()
+                        .ok_or("missing discriminators")?
+                        .is_empty(),
+                    "{finding}"
+                );
+            }
+        }
+    }
+    let unused = finding_for(
+        "bool, bound: u32, unused: u8",
+        "((if n { 255 } else { 0 }) + 1) / 2",
+        "true, 128, 0",
+        "bound",
+    )?;
+    assert_eq!(unused["ripr"]["infect"]["state"], "yes", "{unused}");
+    Ok(())
+}
+
+#[test]
+fn comparison_parameter_constrains_literal_arithmetic_in_both_operand_shapes() -> Result<(), String>
+{
+    for shape in [
+        OperandShape::Local,
+        OperandShape::LocalReversed,
+        OperandShape::Direct,
+        OperandShape::Reversed,
+    ] {
+        for (ty, state) in [("u8", "unknown"), ("u32", "yes"), ("usize", "yes")] {
+            let finding = finding_with_shape(
+                "",
+                &format!("bool, bound: {ty}"),
+                "(255 + 1) / 2",
+                "true, 128",
+                "bound",
+                shape,
+            )?;
+            assert_eq!(finding["ripr"]["infect"]["state"], state, "{ty}: {finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn counterpart_identity_and_annotation_refusals_remain_conservative() -> Result<(), String> {
+    for shape in [OperandShape::Local, OperandShape::LocalReversed] {
+        let finding = finding_with_shape(
+            "use std::primitive::u8 as usize;\n",
+            "bool, bound: usize",
+            "((if n { 255 } else { 0 }) + 1) / 2",
+            "true, 128",
+            "bound",
+            shape,
+        )?;
+        assert_eq!(finding["ripr"]["infect"]["state"], "unknown", "{finding}");
+    }
+    for ty in ["u8", "u32"] {
+        let finding = finding_with_shape(
+            "",
+            "bool",
+            "((if n { 255 } else { 0 }) + 1) / 2",
+            "true",
+            "128",
+            OperandShape::AnnotatedLocal(ty),
+        )?;
+        assert_eq!(finding["ripr"]["infect"]["state"], "unknown", "{finding}");
+    }
+    let flag = finding_for(
+        "bool, bound: u8",
+        "if n { 128 } else { 0 }",
+        "true, 128",
+        "bound",
+    )?;
+    assert_eq!(flag["ripr"]["infect"]["state"], "yes", "{flag}");
+    Ok(())
+}
+
+#[test]
+fn live_comparison_local_cannot_hide_a_narrow_or_rebound_constraint() -> Result<(), String> {
+    for shape in [OperandShape::Local, OperandShape::LocalReversed] {
+        for (prefix, counterpart, ty, state) in [
+            ("    let limit = bound;\n", "limit", "u8", "unknown"),
+            ("    let limit = bound;\n", "limit", "u32", "yes"),
+            (
+                "    let limit = if n { bound } else { 0 };\n",
+                "limit",
+                "u8",
+                "unknown",
+            ),
+            (
+                "    let limit = if n { bound } else { 0 };\n",
+                "limit",
+                "u32",
+                "yes",
+            ),
+            ("    let bound: u8 = 128;\n", "bound", "u32", "unknown"),
+        ] {
+            let finding = finding_with_context(
+                "",
+                ("", prefix),
+                &format!("bool, bound: {ty}"),
+                "((if n { 255 } else { 0 }) + 1) / 2",
+                "true, 128",
+                counterpart,
+                shape,
+            )?;
+            assert_eq!(
+                finding["ripr"]["infect"]["state"], state,
+                "{prefix}: {finding}"
+            );
+            if state == "unknown" {
+                assert!(
+                    finding["activation"]["missing_discriminators"]
+                        .as_array()
+                        .ok_or("missing discriminators")?
+                        .is_empty(),
+                    "{finding}"
+                );
+                assert!(
+                    finding["activation"]["observed_values"]
+                        .as_array()
+                        .ok_or("missing observed values")?
+                        .iter()
+                        .all(|value| !value["value"]
+                            .as_str()
+                            .is_some_and(|value| value.contains(" == "))),
+                    "{finding}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn non_plain_comparison_names_cannot_erase_integer_constraints() -> Result<(), String> {
+    for shape in [OperandShape::Local, OperandShape::LocalReversed] {
+        for (prefix, ty, counterpart) in [
+            ("", "bool, r#bound: u8", "r#bound"),
+            ("", "bool, 限: u8", "限"),
+            ("    let limit = r#bound;\n", "bool, r#bound: u8", "limit"),
+            ("    let r#limit = bound;\n", "bool, bound: u8", "r#limit"),
+            ("    let r#bound: u8 = 128;\n", "bool, bound: u32", "bound"),
+        ] {
+            let finding = finding_with_context(
+                "",
+                ("", prefix),
+                ty,
+                "((if n { 255 } else { 0 }) + 1) / 2",
+                "true, 128",
+                counterpart,
+                shape,
+            )?;
+            assert_eq!(finding["ripr"]["infect"]["state"], "unknown", "{finding}");
+            assert!(
+                finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing observed values")?
+                    .iter()
+                    .all(|value| !value["value"]
+                        .as_str()
+                        .is_some_and(|value| value.contains(" == "))),
+                "{finding}"
+            );
+            assert!(
+                finding["activation"]["missing_discriminators"]
+                    .as_array()
+                    .ok_or("missing discriminators")?
+                    .is_empty(),
+                "{finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn suffixed_comparison_literals_retain_their_integer_limits() -> Result<(), String> {
+    for shape in [OperandShape::Local, OperandShape::LocalReversed] {
+        for (bound, state) in [
+            ("128u8", "unknown"),
+            ("128_u8", "unknown"),
+            ("128u16", "unknown"),
+            ("128_u32", "yes"),
+            ("128_usize", "yes"),
+            ("128", "yes"),
+        ] {
+            let finding = finding_with_shape(
+                "",
+                "bool",
+                "((if n { 255 } else { 0 }) + 1) / 2",
+                "true",
+                bound,
+                shape,
+            )?;
+            assert_eq!(
+                finding["ripr"]["infect"]["state"], state,
+                "{bound}: {finding}"
+            );
+            if state == "unknown" {
+                assert!(
+                    finding["activation"]["observed_values"]
+                        .as_array()
+                        .ok_or("missing observed values")?
+                        .iter()
+                        .all(|value| !value["value"]
+                            .as_str()
+                            .is_some_and(|value| value.contains(" == "))),
+                    "{finding}"
+                );
+                assert!(
+                    finding["activation"]["missing_discriminators"]
+                        .as_array()
+                        .ok_or("missing discriminators")?
+                        .is_empty(),
+                    "{finding}"
+                );
+            }
+        }
+        let local = finding_with_context(
+            "",
+            ("", "    let limit = 128_u8;\n"),
+            "bool",
+            "((if n { 255 } else { 0 }) + 1) / 2",
+            "true",
+            "limit",
+            shape,
+        )?;
+        assert_eq!(local["ripr"]["infect"]["state"], "unknown", "{local}");
     }
     Ok(())
 }
