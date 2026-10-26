@@ -361,3 +361,202 @@ fn a_method_header_without_a_return_type_is_not_a_nested_method() {
     let untyped = COMMAND.replace("  add(value: string): this {", "  add(value) {");
     assert_eq!(entry_names(&untyped, "_collect"), ["add"]);
 }
+
+fn with_call(replacement: &str) -> String {
+    COMMAND.replace(CALL_LINE, replacement)
+}
+
+#[test]
+fn an_arrow_stored_rather_than_run_records_no_edge() {
+    // Array element, logical operand and a stored callback are not run by the
+    // method (#9942 item 2).
+    for (label, line) in [
+        (
+            "array-element",
+            "    const queue = [value, () => this._collect(value, this.items)];",
+        ),
+        (
+            "logical-operand",
+            "    const run = value || (() => this._collect(value, this.items));",
+        ),
+        (
+            "stored-by-push",
+            "    this.callbacks.push(() => this._collect(value, this.items));",
+        ),
+    ] {
+        assert!(
+            entry_names(&with_call(line), "_collect").is_empty(),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn a_callback_a_callee_may_run_later_or_never_records_no_edge() {
+    // Deferred or event-driven callees (#9942 item 3).
+    for (label, line) in [
+        (
+            "timer",
+            "    setTimeout(() => this._collect(value, this.items), 0);",
+        ),
+        (
+            "listener",
+            "    this.emitter.on('x', () => this._collect(value, this.items));",
+        ),
+        (
+            "microtask",
+            "    queueMicrotask(() => this._collect(value, this.items));",
+        ),
+        (
+            "subscription",
+            "    this.stream.subscribe(() => this._collect(value, this.items));",
+        ),
+        (
+            "promise-then",
+            "    this.ready.then(() => this._collect(value, this.items));",
+        ),
+    ] {
+        assert!(
+            entry_names(&with_call(line), "_collect").is_empty(),
+            "{label}"
+        );
+    }
+    // Synchronous array callbacks keep the edge, including a second argument
+    // position and an optional call.
+    for (label, line) in [
+        (
+            "map",
+            "    [value].map((item) => this._collect(item, this.items));",
+        ),
+        (
+            "reduce-first-argument",
+            "    [value].reduce((acc, item) => this._collect(item, acc), this.items);",
+        ),
+        (
+            "optional-call",
+            "    this.list?.forEach((item) => this._collect(item, this.items));",
+        ),
+    ] {
+        assert_eq!(
+            entry_names(&with_call(line), "_collect"),
+            ["add"],
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn a_generator_entry_does_not_run_its_body_until_iterated() {
+    // `*items()` and `async *items()` only create an iterator (#9942 item 4).
+    for (label, header) in [
+        ("generator", "  *items(value: string) {"),
+        ("async-generator", "  async *items(value: string) {"),
+    ] {
+        let source = COMMAND.replace(
+            "  add(value: string): this {",
+            &format!(
+                "{header}\n    yield this._collect(value, this.items);\n  }}\n\n  add(value: string): this {{"
+            ),
+        );
+        assert_eq!(entry_names(&source, "_collect"), ["add"], "{label}");
+    }
+    // A generator is not a callee either: `this.items()` does not run it.
+    let called = COMMAND.replace(
+        CALL_LINE,
+        "    this.items = this.walk(value);",
+    ).replace(
+        "  add(value: string): this {",
+        "  *walk(value: string) {\n    yield this._collect(value, this.items);\n  }\n\n  add(value: string): this {",
+    );
+    assert!(entry_names(&called, "_collect").is_empty());
+}
+
+#[test]
+fn an_unused_function_expression_does_not_drop_a_real_call() -> Result<(), String> {
+    // The method really calls the helper outside the function expression
+    // (#9942 item 5).
+    let source = with_call(
+        "    const later = function () {\n      this._collect(value, this.items);\n    };\n    this.items = this._collect(value, this.items);",
+    );
+    assert_eq!(entry_names(&source, "_collect"), ["add"]);
+    assert_entry_related("unused-function-expression", &source, ADD_TEST)?;
+    // A call only inside the function expression is not an edge.
+    let inside = with_call(
+        "    const later = function () {\n      this._collect(value, this.items);\n    };",
+    );
+    assert!(entry_names(&inside, "_collect").is_empty());
+    // A function declaration nested in the method is treated the same way.
+    let declared = with_call(
+        "    function inner() {\n      return this._collect(value, this.items);\n    }\n    this.items = this._collect(value, this.items);",
+    );
+    assert_eq!(entry_names(&declared, "_collect"), ["add"]);
+    // A nested class still drops the caller entirely.
+    let nested_class = with_call(
+        "    const Local = class { run() { return 1; } };\n    this.items = this._collect(value, this.items);",
+    );
+    assert!(entry_names(&nested_class, "_collect").is_empty());
+    // A return type annotation after the parameters cannot be told from a
+    // body, so the caller is dropped.
+    let annotated = with_call(
+        "    const typed = function (item: string): { ok: boolean } {\n      return { ok: this._collect(item, []).length > 0 };\n    };\n    this.items = this._collect(value, this.items);",
+    );
+    assert!(entry_names(&annotated, "_collect").is_empty());
+    Ok(())
+}
+
+const HELPER_SPY_TEST_HEAD: &str = "import { Command } from '../src/cmd';\n\nit('collects', () => {\n  const program = new Command();\n";
+
+#[test]
+fn a_test_that_replaces_the_helper_does_not_run_the_real_code() -> Result<(), String> {
+    // Spy with a fabricated value, and a plain assignment on the instance
+    // (#9942 item 1): the public method no longer reaches the real helper.
+    for (label, setup) in [
+        (
+            "spy-mock-return",
+            "  jest.spyOn(Command.prototype, '_collect').mockReturnValue(['z']);\n",
+        ),
+        (
+            "spy-mock-implementation",
+            "  jest.spyOn(program, '_collect').mockImplementation(() => []);\n",
+        ),
+        ("assigned", "  program._collect = jest.fn();\n"),
+        (
+            "prototype-assigned",
+            "  Command.prototype._collect = jest.fn();\n",
+        ),
+        (
+            "define-property",
+            "  Object.defineProperty(program, '_collect', { value: () => [] });\n",
+        ),
+    ] {
+        let test = format!(
+            "{HELPER_SPY_TEST_HEAD}{setup}  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
+        );
+        assert_no_static_path(label, COMMAND, &test)?;
+    }
+    // A bare call-through spy still runs the real helper.
+    let through = format!(
+        "{HELPER_SPY_TEST_HEAD}  jest.spyOn(Command.prototype, '_collect');\n  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
+    );
+    assert_entry_related("call-through-spy", COMMAND, &through)?;
+    // A comparison is not an assignment.
+    let compared = format!(
+        "{HELPER_SPY_TEST_HEAD}  const same = program._collect === undefined;\n  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
+    );
+    assert_entry_related("comparison", COMMAND, &compared)
+}
+
+#[test]
+fn a_second_class_with_the_same_name_does_not_lend_its_methods() {
+    // Two classes called `Command` in one file share the `(file, name)` key
+    // (#9942 item 6): the second one's `run` must not read as an entry of the
+    // first one's `_collect`.
+    let source = format!(
+        "{COMMAND}\nfunction other() {{\n  class Command {{\n    run(value: string) {{\n      return this._collect(value, []);\n    }}\n  }}\n  return Command;\n}}\n"
+    );
+    assert!(entry_names(&source, "_collect").is_empty());
+    let nested_first = format!(
+        "function other() {{\n  class Command {{\n    run(value: string) {{\n      return this._collect(value, []);\n    }}\n  }}\n  return Command;\n}}\n\n{COMMAND}"
+    );
+    assert!(entry_names(&nested_first, "_collect").is_empty());
+}

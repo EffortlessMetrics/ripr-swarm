@@ -687,10 +687,19 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not a call argument (`const later = () =>
-   this.helper()` is created, not run), and static methods contribute no
-   edge. An arrow passed to a call is read as invoked; the relation stays weak
-   and never reads `exposed`.
+   an arrow body that is not the callback of a synchronous array method
+   (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
+   their kin; `const later = () => this.helper()`, an array element, a logical
+   operand, a stored callback, and a deferred callee such as `setTimeout`,
+   an event listener, `subscribe` or `then` are created or run later), the body
+   of a nested `function` (a call the method makes outside it still counts; a
+   function whose parameters are followed by a return type annotation, or a
+   nested `class`, drops the method), a generator method (neither caller nor
+   callee), a class name the file declares more than once, and static methods
+   contribute no edge. A test that replaces the changed method or a method on
+   the chain (a fabricating `spyOn`, an assignment on an instance or the
+   prototype, `defineProperty`) is not related through the chain; a bare
+   call-through spy is. The relation stays weak and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
