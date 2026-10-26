@@ -885,7 +885,9 @@ impl ClassifiedProbeEvidence {
                                         )
                                         .activation
                                     });
-                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
+                                wrapper_return_boundary_pinned(
+                                    owner, assertion, chain, activation, test,
+                                )
                             })
                 },
                 assertion_admitted: &assertion_admitted,

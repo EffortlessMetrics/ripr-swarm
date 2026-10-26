@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0158-fold-two-bindings",
+  "subject_id": "authored-spec0158-fold-expected",
+  "origin": "authored",
+  "anchor": "src/f_two.rs:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "owner_called_with_product_of_two_let_bindings",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

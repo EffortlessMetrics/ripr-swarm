@@ -2934,8 +2934,10 @@ unmet condition keeps today's reading:
 
 1. The owner is a free function the integer constant fold can evaluate (the
    #6026 fold, which also evaluates `.pow(n)`, `.min(n)` and `.max(n)` on
-   integer values), the probe carries its `before` text, and that text
-   replaces the current text exactly once in the owner's body.
+   integer values, and, since #10737, the bitwise operators `& | ^`, the
+   shifts `<< >>`, `.clamp(lo, hi)` and `.saturating_add`/`.saturating_sub`
+   through the declared return width), the probe carries its `before` text,
+   and that text replaces the current text exactly once in the owner's body.
 2. No other function calls the owner by name (the same guard the `&&`/`||`
    skipped-operand reading uses).
 3. At least one related test names the owner, and every such test is a plain
@@ -2943,8 +2945,10 @@ unmet condition keeps today's reading:
    assertions are all equality assertions whose first operand is one bare
    owner call with literal arguments that fold.
 4. At every such call the owner folds to the same value under the current and
-   the baseline body, while a small grid of integer arguments (each parameter
-   over `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters) finds a call at
+   the baseline body, while a grid of integer arguments (each parameter over
+   `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters; a single-parameter
+   owner also tries `16, 31, 64, 100, 255, 1000, 4096, 65536`, so a divisor or
+   saturation point above ten still separates the versions) finds a call at
    which the two bodies fold to different values. An equivalent rewrite
    (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
    a test that tells the versions apart would name one that cannot exist.
