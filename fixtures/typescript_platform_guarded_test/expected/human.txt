@@ -24,8 +24,8 @@ Start here:
     analysis cannot evaluate (a platform or environment guard); whether they run, and what they
     assert, is not established either way
   Related test: tests/guarded.test.ts:7 isAdult at the boundary
-  Next step — TypeScript preview advisory: the related test asserts inside a callback the extractor
-    cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is
+  Next step — TypeScript preview advisory: every related test is registered under a condition or
+    loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is
     needed on that evidence, and no repair packet is emitted
   Evidence: reach yes · infection unknown · propagation unknown · observation unknown · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
