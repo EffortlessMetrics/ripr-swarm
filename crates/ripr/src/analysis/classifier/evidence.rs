@@ -1363,12 +1363,16 @@ impl ClassifiedProbeEvidence {
         // #9871: a reader-only relation has no owner pin to refuse against, so
         // an owner-name scan would only add a misleading refusal note.
         let mut owner_refusals_are_limits = false;
+        let credits = oracle_crediting_relations(&context.related_tests);
         let assertion_refusal = (context.const_readers.is_empty()
             && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
                 || discriminate.state != StageState::Yes))
             .then(|| {
                 let mut notes = Vec::new();
-                for (test, _) in &context.related_tests {
+                // Owner-calling refusals in tests that could have credited an
+                // oracle, and whether each rests on an analyzer limit.
+                let mut crediting_owner_refusals: Vec<bool> = Vec::new();
+                for (test, reason) in &context.related_tests {
                     for assertion in &test.assertions {
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
                             context.probe,
@@ -1403,23 +1407,27 @@ impl ClassifiedProbeEvidence {
                             calls_owner,
                             is_analyzer_limit: is_limit(&refusal),
                         };
+                        if note.calls_owner && credits(*reason) {
+                            crediting_owner_refusals.push(note.is_analyzer_limit);
+                        }
                         notes.push(note);
                     }
                 }
                 // #5431: every refusal of an assertion that calls the owner
                 // rests on a limit of ripr's own reading.
-                owner_refusals_are_limits = notes.iter().any(|note| note.calls_owner)
-                    && notes
-                        .iter()
-                        .filter(|note| note.calls_owner)
-                        .all(|note| note.is_analyzer_limit);
+                owner_refusals_are_limits = !crediting_owner_refusals.is_empty()
+                    && crediting_owner_refusals.iter().all(|limit| *limit);
                 preferred_refusal_note(notes)
             })
             .flatten();
         // A refused owner-calling assertion beside an admitted weaker one:
         // the refused assertion may be the exact oracle the gap asks for.
-        let mixed_refusal_is_analyzer_limit =
-            owner_refusals_are_limits && observe.summary != ASSERTION_CONTEXT_UNESTABLISHED;
+        let mixed_refusal_is_analyzer_limit = owner_refusals_are_limits
+            && observe.summary != ASSERTION_CONTEXT_UNESTABLISHED
+            && [&reach, &infect, &propagate]
+                .iter()
+                .all(|stage| stage.state == StageState::Yes)
+            && discriminate.state != StageState::Yes;
         if let Some(note) = &assertion_refusal {
             evidence.push(format!(
                 "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",

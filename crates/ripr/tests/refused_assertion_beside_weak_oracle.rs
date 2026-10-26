@@ -14,17 +14,17 @@ fn an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap() -> Result<(), S
         (
             "glob_refused_eq_plus_weak",
             "use mystery::*;",
-            "assert_eq!(tier(250), 2);\n        assert!(tier(250) > 1);",
+            "assert_eq!(tier(100), 2);\n        assert!(tier(100) > 1);",
             "static_unknown",
         ),
         // Control: the weak assertion alone is a real weak oracle.
-        ("weak_only", "", "assert!(tier(250) > 1);", "weakly_exposed"),
+        ("weak_only", "", "assert!(tier(100) > 1);", "weakly_exposed"),
         // The refused assertion does not call the owner, so it could not
         // have been the oracle.
         (
             "glob_refused_unrelated_eq_plus_weak",
             "use mystery::*;",
-            "assert_eq!(1 + 1, 2);\n        assert!(tier(250) > 1);",
+            "assert_eq!(1 + 1, 2);\n        assert!(tier(100) > 1);",
             "weakly_exposed",
         ),
         // A branch can keep the assertion from running: a real gap that a
@@ -32,7 +32,15 @@ fn an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap() -> Result<(), S
         (
             "branch_refused_eq_plus_weak",
             "fn flag() -> bool { false }",
-            "if flag() {\n            assert_eq!(tier(250), 2);\n        }\n        assert!(tier(250) > 1);",
+            "if flag() {\n            assert_eq!(tier(100), 2);\n        }\n        assert!(tier(100) > 1);",
+            "weakly_exposed",
+        ),
+        // The boundary input is never supplied: that gap stands whatever the
+        // refused assertion compares.
+        (
+            "glob_refused_eq_off_boundary_plus_weak",
+            "use mystery::*;",
+            "assert_eq!(tier(250), 2);\n        assert!(tier(250) > 1);",
             "weakly_exposed",
         ),
     ];
@@ -69,12 +77,12 @@ fn an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap() -> Result<(), S
             wrong.push(format!("{name}: expected {expected}, got {classes:?}"));
         }
         if expected == "static_unknown" {
-            let withheld = report.findings.iter().any(|f| {
-                f.static_limit_kind.is_some()
-                    && f.missing.iter().all(|line| !line.contains("n == 100"))
-            });
+            let withheld = report
+                .findings
+                .iter()
+                .any(|f| f.static_limit_kind.is_some());
             if !withheld {
-                wrong.push(format!("{name}: no named limit or a repair value remains"));
+                wrong.push(format!("{name}: no named limit"));
             }
         }
     }

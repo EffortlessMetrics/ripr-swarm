@@ -776,6 +776,13 @@ unparsed or unplaced file, a glob or `#[macro_use]` that only may rebind the
 macro). The classifier hands the decision over as an evidence marker, and the
 pass drops the repair values like any withheld gap. It never raises a class.
 
+The pass applies only when reach, infection and propagation are established
+(`yes`) and the discriminator is the missing stage: a boundary input no test
+supplies is a gap whatever a refused assertion compares. Only refusals in
+tests that could have credited an oracle (`oracle_crediting_relations`) count,
+as for the unestablished-context rule above; the macro named in the next step
+is the standard `assert_eq!`.
+
 Refusals that are not analyzer limits (a branch, a loop that may run zero
 times, a gated module, a real rebinding) keep the gap, as do refused
 assertions that do not call the owner: they could not have been its oracle,
