@@ -39,6 +39,13 @@ Updated:
 - `first-useful-action/unchanged-after-attempt/agent-verify.json`
 - `first-useful-action/unchanged-after-attempt/agent-receipt.json`
 
+### test_case arrow row classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
+`#[test_case(.. => literal)]` row read as the harness-compared return
+(RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:

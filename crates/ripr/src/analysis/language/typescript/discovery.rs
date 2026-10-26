@@ -219,8 +219,16 @@ pub(crate) fn visit_workspace_with_handwritten(
                 // Symlinks and NTFS junctions are NOT followed (fail-closed:
                 // following them risks cycles and outside-root reads), but
                 // the skip is counted so the adapter can disclose that
-                // link-hidden tests/sources were not seen (#4104-D).
-                skipped_links += 1;
+                // link-hidden tests/sources were not seen (#4104-D). A link
+                // that is itself a regular file under a name the adapter
+                // would never index (a docs `0.index.md -> README.md`) hides
+                // no test or source: the walk indexes by the entry's own
+                // path, so it is skipped without a disclosure. Anything
+                // else (a directory, a source-named link, a dangling or
+                // unreadable target) stays counted.
+                if !symlink_cannot_hide_sources(&path) {
+                    skipped_links += 1;
+                }
                 continue;
             }
             if file_type.is_dir() {
@@ -269,6 +277,16 @@ pub(crate) fn visit_workspace_with_handwritten(
         truncated,
         skipped_links,
     }
+}
+
+/// `true` when the symlink at `path` is a file link whose own name the
+/// TypeScript adapter does not accept, so nothing indexable can sit behind it
+/// (h3's `docs/5.migration/0.index.md` link made every h3 analysis partial).
+/// Only the target's file-ness is read, never its content; a directory, a
+/// dangling link or a failed stat is "could hide sources" and stays disclosed.
+fn symlink_cannot_hide_sources(path: &Path) -> bool {
+    !TypeScriptAdapter.accepts_path(path)
+        && std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
 }
 
 /// `true` for directory entry types that are neither directories, regular
@@ -691,6 +709,51 @@ mod tests {
             scan.files
         );
         let _ = linked;
+    }
+
+    /// A file symlink under a non-source name (a docs link such as h3's
+    /// `docs/5.migration/0.index.md`) hides nothing the walk would index, so it
+    /// is not disclosed; a source-named file link, a directory link and a
+    /// dangling link all still are.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_count_non_source_file_links_but_counts_every_other_link()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-nonsource");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write("README.md", "# docs\n");
+        workspace.write("real/linked.test.ts", "test('x', () => {});\n");
+        let root = &workspace.0;
+        workspace.write("docs/guide.md", "# guide\n");
+        symlink(root.join("README.md"), root.join("docs/index.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 0,
+            "a markdown file link hides no source and must not be disclosed"
+        );
+
+        symlink(
+            root.join("real/linked.test.ts"),
+            root.join("linked.test.ts"),
+        )?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "a source-named file link is counted");
+
+        symlink(root.join("real"), root.join("docs/real.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 2,
+            "a directory link is counted even under a non-source name"
+        );
+
+        symlink(root.join("missing.md"), root.join("docs/dangling.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 3,
+            "a dangling link cannot be shown harmless and is counted"
+        );
+        Ok(())
     }
 
     /// A Unix socket is neither dir, file, nor link, so before the

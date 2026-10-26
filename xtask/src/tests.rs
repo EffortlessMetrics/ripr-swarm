@@ -8564,6 +8564,47 @@ fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Res
     Ok(())
 }
 
+/// The `ripr` binary this test run was built against, as an absolute path.
+/// Resolve-only: a nested `cargo build` would contend on the build lock the
+/// outer test run holds. Order: the `RIPR_TEST_BINARY` override (a runner that
+/// keeps its binaries outside `target/`, such as an archived run, sets it),
+/// then the active `CARGO_TARGET_DIR`, then the repository `target/`, in the
+/// profile this test build itself uses (`--release` places it under `release`).
+pub(crate) fn ripr_worktree_binary() -> Result<String, String> {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let file_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+    if let Ok(override_path) = std::env::var("RIPR_TEST_BINARY") {
+        candidates.push(PathBuf::from(override_path));
+    }
+    if let Ok(target_root) = std::env::var("CARGO_TARGET_DIR") {
+        candidates.push(Path::new(&target_root).join(profile).join(&file_name));
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repository parent")?;
+    candidates.push(root.join("target").join(profile).join(&file_name));
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return std::path::absolute(candidate)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("resolve worktree ripr binary: {error}"));
+        }
+    }
+    let attempted = candidates
+        .iter()
+        .map(|candidate| candidate.display().to_string())
+        .collect::<Vec<_>>()
+        .join("`, `");
+    Err(format!(
+        "no built ripr binary found (looked at `{attempted}`); run `cargo build -p ripr` first (tests resolve the binary and never spawn a nested build)"
+    ))
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
