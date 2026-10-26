@@ -795,7 +795,7 @@ fn equivalent_owner_histories(
         let mut history = Vec::new();
         let mut constructed = false;
         // Block conditions (`if f1 {`) are deliberately not part of the
-        // history: two conditions cannot be proven to diverge from their text
+        // history: two conditions cannot be shown to diverge from their text
         // (`if ready` against `if ready == true`), so a pair that matches
         // except for its guards stays refused.
         for &(from, to) in &statements {

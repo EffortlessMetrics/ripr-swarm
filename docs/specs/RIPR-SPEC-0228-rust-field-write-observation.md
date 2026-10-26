@@ -166,7 +166,7 @@ owner moves both sides together (#7135). The refusal needs equivalent
 histories: each binding has the same constructor and the same ordered
 statements using it (arguments included, binding name abstracted; read-only
 uses of the collection are not history, whether spelled as the field or as the
-read's getter: `d.history().len()`). Block conditions are not part of the history: two conditions cannot be proven
+read's getter: `d.history().len()`). Block conditions are not part of the history: two conditions cannot be shown
 to diverge from their text (`if ready` against `if ready == true`), so twins
 that match except for their guards stay refused. The history window ends at the `assert` on the read
 line, so a rewrite on the same line before it counts. A different argument
