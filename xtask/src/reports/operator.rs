@@ -3,6 +3,14 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// The mirror compiles ripr's module verbatim, so helpers consumed only by
+// ripr proper (for example `parent_dir_follows_symlink`, used by
+// `cli/commands/agent.rs`) are dead in this compilation; the allow states
+// that the mirror is intentional, not abandoned code.
+#[allow(
+    dead_code,
+    reason = "path mirror of crates/ripr/src/agent/loop_commands.rs; items consumed only by ripr proper are dead in this compilation by design"
+)]
 #[path = "../../../crates/ripr/src/agent/loop_commands.rs"]
 pub(super) mod loop_commands;
 
