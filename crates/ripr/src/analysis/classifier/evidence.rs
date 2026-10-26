@@ -626,9 +626,9 @@ impl ClassifiedProbeEvidence {
         let field_oracle_needs_admission = arm_selector
             .as_ref()
             .is_some_and(ArmSelector::field_oracle_needs_admission);
-        // RIPR-SPEC-0297 / #9836: unsafe edits in a Display write tail
-        // receive no assertion credit. Generic token overlap must not
-        // resurrect credit after the literal-edit gate refused it.
+        // RIPR-SPEC-0297 / #9836: an unsafe Display write edit needs its
+        // admitted owner pin; generic token overlap cannot establish that
+        // the changed format output is discriminated.
         let fmt_write_tail = context
             .owner_fn
             .is_some_and(crate::analysis::classify::is_display_fmt_owner)
@@ -657,13 +657,7 @@ impl ClassifiedProbeEvidence {
             fmt_literal_edit && fmt_display_assertion(test, assertion)
         };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            (!fmt_write_tail || fmt_literal_edit)
-                && pin_syntax.admits_equality_assertion(
-                    context.probe,
-                    test,
-                    assertion,
-                    context.index,
-                )
+            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
                 && (!field_oracle_needs_admission
                     || pin_syntax.admits(test, assertion, context.index))
         };
@@ -784,6 +778,9 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            if fmt_write_tail && !fmt_literal_edit {
+                return false;
+            }
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
             // forwards it (the entry form of the owner-return pin).
@@ -857,9 +854,13 @@ impl ClassifiedProbeEvidence {
             &import_defeats,
             &cross_package_defeats,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
-                }),
+                owner_return_pin_required: (fmt_write_tail && !fmt_literal_edit)
+                    || context.owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::returned_closure_pin_required(
+                            context.probe,
+                            owner,
+                        )
+                    }),
                 owner_return_pin: &owner_pin_admits,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()

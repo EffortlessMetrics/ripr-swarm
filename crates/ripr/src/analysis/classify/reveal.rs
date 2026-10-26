@@ -35,9 +35,9 @@ use crate::domain::*;
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
-    /// A changed whole returned closure needs its admitted applied owner pin;
-    /// token coincidence cannot establish that the closure ran discriminatingly.
-    pub(in crate::analysis) returned_closure_pin_required: bool,
+    /// A changed returned closure or unsafe Display format edit needs its
+    /// admitted owner pin; token coincidence cannot confirm discrimination.
+    pub(in crate::analysis) owner_return_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Exact wrapper assertion observing the boundary of a private boolean
     /// whole-return tail (#9849). Separate from direct owner-pin credit.
@@ -142,7 +142,7 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
-            returned_closure_pin_required: false,
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
@@ -186,7 +186,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
-            returned_closure_pin_required: false,
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
@@ -231,7 +231,7 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
-            returned_closure_pin_required: false,
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
@@ -1790,7 +1790,7 @@ fn analyze_related_assertions(
     // #7063: a payload-carrying construction whose variant the change kept
     // (or whose old text is unknown) may have changed only its payload.
     // A changed variant is seen by a variant pin, as before.
-    let owner_pin_required = return_admission.returned_closure_pin_required
+    let owner_pin_required = return_admission.owner_return_pin_required
         || matches!(
             probe.family,
             ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
@@ -5776,7 +5776,7 @@ mod tests {
         };
         let admission = ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
-            returned_closure_pin_required: false,
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
@@ -7218,7 +7218,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 assertion_has_known_implicit_observer: &|_, _| None,
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &pin,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -7312,7 +7312,7 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     assertion_has_known_implicit_observer: &|_, _| None,
-                    returned_closure_pin_required: false,
+                    owner_return_pin_required: false,
                     owner_return_pin: &pin,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
@@ -7492,7 +7492,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
-                    returned_closure_pin_required: false,
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
@@ -7600,7 +7600,7 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
-                    returned_closure_pin_required: false,
+                    owner_return_pin_required: false,
                     owner_return_pin: &pin,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
@@ -8021,7 +8021,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -8111,7 +8111,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -9886,7 +9886,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -9955,7 +9955,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -9995,7 +9995,7 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -10054,7 +10054,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -10115,7 +10115,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -10320,7 +10320,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -10363,7 +10363,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -10786,7 +10786,7 @@ return Err(\"typed pin\".into());
                         collection_argument_observed: &|_, _| false,
                         out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
-                        returned_closure_pin_required: false,
+                        owner_return_pin_required: false,
                         owner_return_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
@@ -10862,7 +10862,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
-                    returned_closure_pin_required: false,
+                    owner_return_pin_required: false,
                     out_parameter_read: &|_, _| None,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -10951,7 +10951,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
-                    returned_closure_pin_required: false,
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
@@ -11240,7 +11240,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -11344,7 +11344,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
-                    returned_closure_pin_required: false,
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
@@ -11391,7 +11391,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -11889,7 +11889,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
@@ -12435,7 +12435,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
-                returned_closure_pin_required: false,
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,

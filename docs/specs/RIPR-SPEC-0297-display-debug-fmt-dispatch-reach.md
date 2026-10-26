@@ -116,9 +116,12 @@ all are required:
   grammar. Public API controls and the real-producer honesty fixture discriminate
   the original placeholder false-credit case.
 
-A `format!` or `{}` side, a computed expected string, a weaker assertion such as
-`ends_with`, and `Debug` owners are not read here and keep their prior verdict.
-This credits only; it widens no actionability.
+A `format!` or `{}` side, a computed expected string and a weaker assertion
+such as `ends_with` gain no display-string pin support here. Unsafe edits in a
+Display write tail also cannot recover discriminator credit through generic
+token overlap. Existing assertion provenance stays intact: the missing evidence
+is observation of the changed output, not execution or macro binding. Debug
+owners retain their prior handling. No actionability widens.
 
 ### A helper whose one caller is a `fmt` (#8999)
 

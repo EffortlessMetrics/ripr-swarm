@@ -111,12 +111,16 @@ fn class_after_template(
     after: &str,
     expected: &str,
 ) -> Result<ExposureClass, String> {
+    Ok(finding_after_template(before, after, expected)?.class)
+}
+
+fn finding_after_template(before: &str, after: &str, expected: &str) -> Result<Finding, String> {
     let findings = TempRepo::create(after, &diff(before, after), expected)?.findings()?;
     let mut on_line = findings
         .iter()
         .filter(|finding| finding.probe.location.line == 7);
     match (on_line.next(), on_line.next()) {
-        (Some(finding), None) => Ok(finding.class.clone()),
+        (Some(finding), None) => Ok(finding.clone()),
         other => Err(format!(
             "premise: exactly one finding on line 7, got {other:?} in {findings:?}"
         )),
@@ -200,5 +204,18 @@ fn a_raw_expected_string_cannot_bypass_the_display_edit_gate() -> Result<(), Str
         )?,
         ExposureClass::Exposed
     );
+    Ok(())
+}
+
+#[test]
+fn an_unsafe_format_edit_keeps_the_real_assertion_provenance() -> Result<(), String> {
+    let finding = finding_after_template(r#""{}°C""#, r#""{:?}°C""#, r#""21°C""#)?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert!(finding.related_tests.iter().any(|test| {
+        test.oracle
+            .as_deref()
+            .is_some_and(|text| text.starts_with("assert_eq!"))
+    }));
+    assert!(!format!("{finding:?}").contains("rust_assertion_context_unestablished"));
     Ok(())
 }
