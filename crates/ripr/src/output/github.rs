@@ -860,6 +860,7 @@ mod tests {
             AnalysisOutcomeCounts {
                 changed_file_count: 1,
                 changed_line_count: 2,
+                finding_count: 1,
                 ..AnalysisOutcomeCounts::default()
             },
             vec![AnalysisLimitation::new(
