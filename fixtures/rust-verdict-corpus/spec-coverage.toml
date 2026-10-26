@@ -770,11 +770,6 @@ reason = "the meta-gate's own pass/fail messages over charter fixtures; the Rust
 id = "RIPR-SPEC-0150"
 scope = "in"
 
-# Rust producer-owned source role
-[[unmeasured]]
-id = "RIPR-SPEC-0153"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
-
 # Assertion-form parity
 [[spec]]
 id = "RIPR-SPEC-0154"
@@ -826,11 +821,6 @@ reason = "the repeated state is reached only by an input that recurses forever a
 [[spec]]
 id = "RIPR-SPEC-0168"
 scope = "in"
-
-# Contextual source-role composition
-[[unmeasured]]
-id = "RIPR-SPEC-0169"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # path-dependency diff-scope expansion
 [[spec]]

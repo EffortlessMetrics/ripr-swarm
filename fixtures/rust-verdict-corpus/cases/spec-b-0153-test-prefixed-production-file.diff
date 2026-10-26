@@ -1,0 +1,12 @@
+diff --git a/src/test_named.rs b/src/test_named.rs
+--- a/src/test_named.rs
++++ b/src/test_named.rs
+@@ -1,7 +1,7 @@
+ //! A production file whose name starts with test_.
+ 
+ pub fn shifted_named(base: u32) -> u32 {
+-    base + 13
++    13 + base
+ }
+ 
+ #[cfg(test)]
