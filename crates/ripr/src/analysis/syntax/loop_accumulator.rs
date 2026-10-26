@@ -7,7 +7,7 @@
 //! and keeps the update's existing `static_unknown`.
 
 use ra_ap_syntax::{
-    AstNode, SyntaxKind,
+    AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasName},
 };
 
@@ -19,6 +19,24 @@ pub(crate) struct LoopAccumulator {
     /// Zero-based position of the slice-like parameter the loop walks,
     /// counted over the owner's non-`self` parameters.
     pub(crate) walked_position: usize,
+    /// The update's term when it is a call of a same-file function on the
+    /// loop variable (`double(*x).await * 1`); `None` for a plain term.
+    pub(crate) term: Option<CallTerm>,
+}
+
+/// RIPR-SPEC-0360 call-in-term: `acc += callee(*x)[.await] [op literal]`.
+/// The call's value is read by evaluating the callee, never assumed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CallTerm {
+    /// The called function's bare name.
+    pub(crate) callee: String,
+    /// The loop variable is passed as `*x` (true) or as `x` (false).
+    pub(crate) dereferences: bool,
+    /// The update subtracts the term (`-=`, or `acc = acc - term`).
+    pub(crate) subtracts: bool,
+    /// An operator (`+ - * / %`) and integer literal applied to the call's
+    /// value: the `* 1` in `double(*x).await * 1`.
+    pub(crate) scale: Option<(char, i128)>,
 }
 
 /// The accumulator `update` belongs to, or `None` when any fact is missing.
@@ -36,7 +54,7 @@ pub(crate) fn loop_accumulator(
     function: &ast::Fn,
     update: &ast::BinExpr,
 ) -> Option<LoopAccumulator> {
-    if function.async_token().is_some() || function.unsafe_token().is_some() {
+    if function.unsafe_token().is_some() {
         return None;
     }
     let (local, term) = updated_local(update)?;
@@ -66,11 +84,33 @@ pub(crate) fn loop_accumulator(
         return None;
     }
     let loop_variable = loop_variable(&for_expr)?;
-    if loop_variable == local || !is_plain_term(&term, &loop_variable) {
+    let walked = walked_parameter(&for_expr)?;
+    if walked == local || walked == loop_variable || loop_variable == local {
         return None;
     }
-    let walked = walked_parameter(&for_expr)?;
-    if walked == local || walked == loop_variable {
+    let subtracts = update.op_token().is_some_and(|op| op.text() == "-=")
+        || (update.op_token().is_some_and(|op| op.text() == "=")
+            && ast::BinExpr::cast(update.rhs()?.syntax().clone())?
+                .op_token()
+                .is_some_and(|op| op.text() == "-"));
+    // A plain term, or a call of one other function on the loop variable.
+    let (call_term, awaited) = if is_plain_term(&term, &loop_variable) {
+        (None, false)
+    } else {
+        let (call, awaited) = call_term(&term, &loop_variable, subtracts)?;
+        if [&local, &walked].contains(&&call.callee)
+            || call.callee == loop_variable
+            || Some(call.callee.as_str())
+                == function
+                    .name()
+                    .map(|name| name.text().to_string())
+                    .as_deref()
+        {
+            return None;
+        }
+        (Some(call), awaited)
+    };
+    if function.async_token().is_some() && call_term.is_none() {
         return None;
     }
     let position = function
@@ -84,14 +124,17 @@ pub(crate) fn loop_accumulator(
     }
     // The shape allows nothing else: no exit, second loop, macro, closure
     // or block that could skip or repeat the update.
+    let mut awaits = 0usize;
     for node in function.syntax().descendants() {
+        if node.kind() == SyntaxKind::AWAIT_EXPR {
+            awaits += 1;
+        }
         if matches!(
             node.kind(),
             SyntaxKind::RETURN_EXPR
                 | SyntaxKind::BREAK_EXPR
                 | SyntaxKind::CONTINUE_EXPR
                 | SyntaxKind::TRY_EXPR
-                | SyntaxKind::AWAIT_EXPR
                 | SyntaxKind::MACRO_CALL
                 | SyntaxKind::CLOSURE_EXPR
                 | SyntaxKind::LOOP_EXPR
@@ -110,6 +153,10 @@ pub(crate) fn loop_accumulator(
         {
             return None;
         }
+    }
+    // The one `.await`, if any, is the call term's own.
+    if awaits != usize::from(awaited) {
+        return None;
     }
     // `acc` is named only by its `let`, the update and the tail.
     let named = function
@@ -139,6 +186,7 @@ pub(crate) fn loop_accumulator(
     Some(LoopAccumulator {
         local,
         walked_position: position,
+        term: call_term,
     })
 }
 
@@ -206,6 +254,83 @@ fn is_plain_term(term: &ast::Expr, loop_variable: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// `callee(*x)`, `callee(x)`, either followed by `.await`, and optionally
+/// one `+ - * / %` with an integer literal on its right. Returns the term and
+/// whether it awaits. The call is to one bare same-file name; a path, method
+/// or macro could resolve to something ripr cannot read.
+fn call_term(term: &ast::Expr, loop_variable: &str, subtracts: bool) -> Option<(CallTerm, bool)> {
+    let (call_part, scale) = match term {
+        ast::Expr::BinExpr(bin) => {
+            let op = bin.op_token()?;
+            let operator = match op.text() {
+                "+" => '+',
+                "-" => '-',
+                "*" => '*',
+                "/" => '/',
+                "%" => '%',
+                _ => return None,
+            };
+            let ast::Expr::Literal(literal) = bin.rhs()? else {
+                return None;
+            };
+            let ast::LiteralKind::IntNumber(number) = literal.kind() else {
+                return None;
+            };
+            // Decimal only: a prefixed literal is not read.
+            let text = number.text().replace('_', "");
+            let end = text
+                .find(|ch: char| !ch.is_ascii_digit())
+                .unwrap_or(text.len());
+            if text.starts_with("0x") || text.starts_with("0b") || text.starts_with("0o") {
+                return None;
+            }
+            let digits = text[..end].to_string();
+            (bin.lhs()?, Some((operator, digits.parse::<i128>().ok()?)))
+        }
+        other => (other.clone(), None),
+    };
+    let (call, awaited) = match call_part {
+        ast::Expr::AwaitExpr(awaited) => match awaited.expr()? {
+            ast::Expr::CallExpr(call) => (call, true),
+            _ => return None,
+        },
+        ast::Expr::CallExpr(call) => (call, false),
+        _ => return None,
+    };
+    let callee = path_ident(&call.expr()?)?;
+    let mut arguments = call.arg_list()?.args();
+    let argument = arguments.next()?;
+    if arguments.next().is_some() {
+        return None;
+    }
+    let dereferences = match &argument {
+        ast::Expr::PathExpr(_) => {
+            if path_ident(&argument).as_deref() != Some(loop_variable) {
+                return None;
+            }
+            false
+        }
+        ast::Expr::PrefixExpr(prefix)
+            if prefix.op_token().is_some_and(|op| op.text() == "*")
+                && prefix
+                    .expr()
+                    .is_some_and(|inner| path_ident(&inner).as_deref() == Some(loop_variable)) =>
+        {
+            true
+        }
+        _ => return None,
+    };
+    Some((
+        CallTerm {
+            callee,
+            dereferences,
+            subtracts,
+            scale,
+        },
+        awaited,
+    ))
 }
 
 /// The name the loop binds to each element: `w` or `&w`.
@@ -366,7 +491,8 @@ mod tests {
             found,
             Some(LoopAccumulator {
                 local: "sum".to_string(),
-                walked_position: 0
+                walked_position: 0,
+                term: None,
             })
         );
     }
@@ -397,6 +523,21 @@ mod tests {
     }
 
     #[test]
+    fn a_call_on_the_loop_variable_is_the_call_term() {
+        let call = |term: &str| accumulator(&SUM.replace("sum += w;", term)).and_then(|a| a.term);
+        let plain = call("sum += weigh(w);").expect("a call term");
+        assert_eq!(plain.callee, "weigh");
+        assert!(!plain.dereferences && !plain.subtracts && plain.scale.is_none());
+        let scaled = call("sum -= weigh(*w) * 3;").expect("a scaled call term");
+        assert!(scaled.dereferences && scaled.subtracts);
+        assert_eq!(scaled.scale, Some(('*', 3)));
+        // A plain term carries none, and the owner's own name is not a callee.
+        assert!(accumulator(SUM).is_some_and(|a| a.term.is_none()));
+        assert!(call("sum += total(w);").is_none());
+        assert!(call("sum += weigh(w) * 0x2;").is_none());
+    }
+
+    #[test]
     fn anything_beyond_the_one_shape_is_refused() {
         let refused = [
             // A nonzero start can make `*=` agree with `+=` on a pinned value.
@@ -406,8 +547,12 @@ mod tests {
             // The returned value is not the accumulator.
             SUM.replace("\n    sum\n}", "\n    sum + 1\n}"),
             SUM.replace("\n    sum\n}", "\n    sum * 2\n}"),
-            // A call in the term can run code or exit.
-            SUM.replace("sum += w;", "sum += weigh(w);"),
+            // A call outside the call term can run code or exit.
+            SUM.replace("sum += w;", "sum += weigh(w, 1);"),
+            SUM.replace("sum += w;", "sum += self::weigh(w);"),
+            SUM.replace("sum += w;", "sum += w.weigh();"),
+            SUM.replace("sum += w;", "sum += weigh(w) * scale;"),
+            SUM.replace("sum += w;", "sum += weigh(w) * 2 + 1;"),
             SUM.replace("sum += w;", "sum += w.get()?;"),
             // An operator in the term has mutants a total pin does not separate.
             SUM.replace("sum += w;", "sum += *w * 2;"),

@@ -41,6 +41,7 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+mod call_term_fold;
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
@@ -2852,7 +2853,11 @@ enum ReturnPathGate {
     /// a nonzero integer literal: from zero, a nonzero result separates the
     /// update from a flipped sign, a product, a quotient and a deleted
     /// statement.
-    LoopAccumulator { position: usize },
+    LoopAccumulator {
+        position: usize,
+        /// RIPR-SPEC-0360 call-in-term: the callee the pinned run folds through.
+        term: Option<call_term_fold::CallPin>,
+    },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -3189,10 +3194,13 @@ impl OwnerReturnPin {
                     crate::analysis::syntax::loop_accumulator::loop_accumulator_at(
                         &owner.body,
                         changed_line,
-                    ) =>
+                    )
+                // A call term needs its owner type, or it has no pin at all.
+                && let Some(term) = call_term_fold::admit(accumulator.term.clone(), owner) =>
             {
                 ReturnPathGate::LoopAccumulator {
                     position: accumulator.walked_position,
+                    term,
                 }
             }
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
@@ -4409,16 +4417,35 @@ impl OwnerReturnPin {
                 }
                 // RIPR-SPEC-0360: some pinned run walks a non-empty literal
                 // sequence and pins a nonzero integer.
-                if let ReturnPathGate::LoopAccumulator { position } = path
-                    && !call_text.is_some_and(|text| {
-                        closure_adaptor::pinned_run_sums_to_nonzero(
+                if let ReturnPathGate::LoopAccumulator { position, term } = path
+                    && !call_text.is_some_and(|text| match term {
+                        None => closure_adaptor::pinned_run_sums_to_nonzero(
                             test,
                             loan.as_ref(),
                             text,
                             &self.name,
                             *position,
                             expected,
-                        )
+                        ),
+                        // Folded through the callee: the run must give the
+                        // pinned value and tell every neighbour apart.
+                        Some(term) => closure_adaptor::pinned_run_accepts(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                            expected,
+                            &|elements, want| {
+                                call_term_fold::pinned_run_separates(
+                                    term,
+                                    &self.owner_file,
+                                    index,
+                                    elements,
+                                    want,
+                                )
+                            },
+                        ),
                     })
                 {
                     return false;
