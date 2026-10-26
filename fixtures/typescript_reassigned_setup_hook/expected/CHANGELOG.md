@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt` (same native fixture run; required corpus projection)
+
+## Pending — typescript_reassigned_setup_hook (3)
+
+Reason:
+RIPR-SPEC-0243: retain no_static_path and zero receiver evidence after conflict composition; align digest with accepted wrapping, legend and repair guidance from main (#10258, #10426, #10415)
+
+Command:
+`cargo xtask goldens bless typescript_reassigned_setup_hook --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
