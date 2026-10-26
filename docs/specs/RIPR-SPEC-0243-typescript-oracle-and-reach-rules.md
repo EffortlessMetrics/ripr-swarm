@@ -235,6 +235,19 @@ change. An unguarded related test decides the finding as before. The finding and
 outcome name `typescript_conditional_registration` with the guard and its line.
 A constant condition keeps its existing reading.
 
+**Rule 21. A test registered in a loop over data static analysis cannot enumerate is reached, never credited (#10501).**
+A `test` / `it` call (or a `describe` holding them) inside a `for...of`,
+`for...in` or `.forEach` callback whose iterable is not a known non-empty
+literal (a file listing, a parameter, a call result) is indexed for reach under
+the loop head as its guard (`for (... of data)`, `data.forEach(...)`; a nesting
+`if` joins with `&&`). The loop may run zero times or many, with titles and
+counts unknown, so the test keeps no assertion, its admission stays unresolved,
+and the finding reads as under Rule 20: `static_unknown` when every
+oracle-eligible related test is guarded, otherwise decided by the unguarded
+tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
+loop variable or callback parameter named `test`, `it` or `describe` is not
+descended. The dropped-registration disclosure no longer fires for these shapes.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.

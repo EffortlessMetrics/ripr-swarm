@@ -6669,6 +6669,10 @@ pub(crate) fn classify_resolved_owner(
         matches!(verdict.class, ExposureClass::StaticUnknown) && reach_only_through_module_entry;
     let ladder_unresolved_unknown =
         matches!(verdict.class, ExposureClass::StaticUnknown) && !ladder_entry_unknown;
+    // Same unknown arm, different cause: the registration, not an assertion
+    // callback, is what static analysis cannot resolve (#10438, #10501).
+    let conditional_registration_unknown =
+        ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
     ts_apply_post_ladder_rules(
         &mut verdict,
         &mut static_limit,
@@ -6882,6 +6886,8 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
         "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
+    } else if conditional_registration_unknown {
+        "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
         "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
@@ -6957,6 +6963,9 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::StaticUnknown if hook_owner_unknown => {
             "TypeScript preview advisory: a mocha setup hook calls the changed owner outside every test body, so a test may observe the state it set; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if conditional_registration_unknown => {
+            "TypeScript preview advisory: every related test is registered under a condition or loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
             "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
