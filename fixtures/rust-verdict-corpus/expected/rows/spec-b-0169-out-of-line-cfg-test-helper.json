@@ -2,7 +2,7 @@
   "case_id": "spec-b-0169-out-of-line-cfg-test-helper",
   "subject_id": "authored-spec-b-layout",
   "origin": "authored",
-  "anchor": "src/l_outline/tests.rs:4",
+  "anchor": "src/l_outline/checks.rs:4",
   "behavior_family": "return_value",
   "test_shape": "cfg_test_out_of_line_helper_edit",
   "hard_case": false,
