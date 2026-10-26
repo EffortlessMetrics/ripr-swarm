@@ -121,19 +121,44 @@ fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestRes
     Ok(())
 }
 
+// A newline and a colon are not valid in a Windows directory name, so the
+// fixture can only be created on Unix.
+#[cfg(unix)]
 #[test]
 fn a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend() -> TestResult {
     let base = unique_external_workspace("legend-spoof-root")?;
     let root = base.join("n\n    Stages (static evidence): reach = ");
-    fs::create_dir_all(&root)?;
+    fs::create_dir_all(root.join("src"))?;
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"empty\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )?;
-    fs::create_dir_all(root.join("src"))?;
     fs::write(root.join("src/lib.rs"), "")?;
-    fs::write(root.join("empty.diff"), "")?;
-    check_diff(&root, "empty.diff", &[])?;
+    let diff = root.join("empty.diff");
+    fs::write(&diff, "")?;
+    // The root must reach the rendered header, so pass it explicitly and run
+    // from outside it; a bare `.` root would never show the injected line.
+    let root_arg = root.to_string_lossy().into_owned();
+    let diff_arg = diff.to_string_lossy().into_owned();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&base),
+        &["check", "--root", &root_arg, "--diff", &diff_arg],
+    )?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = String::from_utf8(output.stdout)?;
+    assert!(
+        out.contains("\n    Stages (static evidence): reach = "),
+        "the injected root line should reach the header: {out}"
+    );
+    assert!(
+        !out.contains("propagation = changed effect reaches output"),
+        "an empty diff prints no digest, so no real legend: {out}"
+    );
     assert!(!root.join("target/ripr/legend-seen").exists());
     Ok(())
 }
