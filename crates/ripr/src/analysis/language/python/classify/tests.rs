@@ -1330,36 +1330,59 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
 /// (#9619).
 #[test]
 fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), String> {
-    // A value the read cannot settle (#10685) may route the name too.
-    for indirect in ["True", "IND", "[\"quantity\"]", "[NAME]", "routes()", "1"] {
-        let finding = classify_case(
+    let module = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
             DISCOUNT_SOURCE,
-            &format!(
-                "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect={indirect})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
-            ),
+            tests,
             2,
             "    if quantity > 100:",
             "    if quantity >= 100:",
-        )?;
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{indirect}");
-        assert_eq!(
-            finding.static_limit_kind,
-            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
-            "{indirect}"
-        );
+        )?
+        .static_limit_kind)
+    };
+    // A value the read cannot settle (#10685) may route the name too, and so
+    // may a positional `indirect` or a splat that can carry one.
+    for mark in [
+        ", indirect=True",
+        ", indirect=IND",
+        ", indirect=[\"quantity\"]",
+        ", indirect=[NAME]",
+        ", indirect=routes()",
+        ", indirect=1",
+        ", True",
+        ", IND",
+        ", **{\"indirect\": True}",
+        ", *REST",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}{mark}"
+            );
+        }
     }
     // Control: values that leave the name direct keep it a pytest value.
-    for indirect in ["False", "None", "[\"other\"]", "()"] {
-        let finding = classify_case(
-            DISCOUNT_SOURCE,
-            &format!(
-                "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect={indirect})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
-            ),
-            2,
-            "    if quantity > 100:",
-            "    if quantity >= 100:",
-        )?;
-        assert_eq!(finding.static_limit_kind, None, "{indirect}");
+    for mark in [
+        ", indirect=False",
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=()",
+        ", False",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(limit(&tests)?, None, "{shape}{mark}");
+        }
     }
     Ok(())
 }

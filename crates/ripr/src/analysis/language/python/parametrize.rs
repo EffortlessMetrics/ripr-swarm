@@ -131,11 +131,16 @@ fn argname_routings(decorators: &[Expr]) -> Vec<(String, Routing)> {
             continue;
         }
         let mut argnames = call.args.first();
-        let mut indirect = None;
+        // `indirect` is the third positional parameter of
+        // `parametrize(argnames, argvalues, indirect, ids, scope)`.
+        let mut indirect = call.args.get(2);
+        // A `*args` or `**kwargs` splat may carry `indirect` unseen.
+        let mut splat = call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)));
         for keyword in &call.keywords {
             match keyword.arg.as_ref().map(|arg| arg.as_str()) {
                 Some("argnames") => argnames = Some(&keyword.value),
                 Some("indirect") => indirect = Some(&keyword.value),
+                None => splat = true,
                 _ => {}
             }
         }
@@ -143,7 +148,11 @@ fn argname_routings(decorators: &[Expr]) -> Vec<(String, Routing)> {
             continue;
         };
         for name in names {
-            let routing = indirect.map_or(Routing::Direct, |value| indirect_routing(value, &name));
+            let routing = if splat {
+                Routing::Unsettled
+            } else {
+                indirect.map_or(Routing::Direct, |value| indirect_routing(value, &name))
+            };
             found.push((name, routing));
         }
     }
@@ -200,6 +209,10 @@ fn is_parametrize_name(name: &str) -> bool {
 
 /// The cases of one `parametrize(argnames, argvalues, ...)` call.
 fn decorator_cases(source: &str, call: &ast::ExprCall) -> Option<Vec<Vec<(String, String)>>> {
+    // A third positional argument is `indirect`; a splat may hide one.
+    if call.args.len() > 2 || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_))) {
+        return None;
+    }
     let mut argnames = call.args.first();
     let mut argvalues = call.args.get(1);
     for keyword in &call.keywords {

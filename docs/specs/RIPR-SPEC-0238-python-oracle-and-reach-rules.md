@@ -415,7 +415,9 @@ This order is the existing behavior and is normative:
   computed list, a non-boolean constant) makes no fixture edge
   (RIPR-SPEC-0028) but still counts here; only literal `False`, `None` or a
   literal string list that omits it leaves the argname a direct value
-  (#10685). A fixture is resolved, and does not
+  (#10685). `indirect` is read from the keyword or the third positional
+  argument; a `*args` or `**kwargs` splat in the mark leaves every argname
+  unsettled. A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,

@@ -457,6 +457,19 @@ struct PythonTest {
     constant_rebinding: module_constants::PythonTestRebinding,
 }
 
+impl PythonTest {
+    /// Whether pytest certainly passes `name`'s parametrize value to the
+    /// test itself: a direct argname whose `indirect=` the read settled.
+    /// Such a parameter runs no fixture code (#10685).
+    fn takes_parametrize_value(&self, name: &str) -> bool {
+        self.direct_parametrized.iter().any(|direct| direct == name)
+            && !self
+                .unsettled_indirect
+                .iter()
+                .any(|unsettled| unsettled == name)
+    }
+}
+
 /// A module-level `@pytest.fixture` function: its body is read with the same
 /// relation rules as a test body when a test names it as a parameter (#4563).
 #[derive(Clone, Debug, PartialEq, Eq)]
