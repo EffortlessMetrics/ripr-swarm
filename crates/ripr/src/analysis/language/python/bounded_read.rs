@@ -194,7 +194,7 @@ pub(crate) fn python_workspace_file_limit() -> usize {
 ///
 /// Files for which `is_changed` holds are always retained, even past the cap:
 /// they are the subject of the diff, so the cap may only cut context around
-/// them (#10461). The rest of the cap is filled with the lexically earliest
+/// them (#10461). The rest of the cap is filled with the earliest in path order
 /// context paths. Paths are pushed as the walk finds them, in any order, and
 /// only the changed paths plus at most `max_files` context paths are held at
 /// once (#10594), so discovery memory follows the cap rather than the
