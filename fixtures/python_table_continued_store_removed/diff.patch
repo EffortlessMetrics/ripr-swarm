@@ -1,0 +1,10 @@
+diff --git a/rates/table.py b/rates/table.py
+--- a/rates/table.py
++++ b/rates/table.py
+@@ -1,5 +1,5 @@
+ MARKER = 0; \
+-RATES = {"silver": 5}
++RATES = {"silver": 6}
+ 
+ def price(tier):
+     return RATES.get(tier, 0)

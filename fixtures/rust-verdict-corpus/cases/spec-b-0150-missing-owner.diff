@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,7 +4,7 @@
+ 
+ pub static CUTS: LazyLock<[bool; 2]> = LazyLock::new(|| {
+     ["a.b", "abc"].map(|input| {
+-        let end = input.rfind('.').map_or(0, |idx| idx);
++        let end = input.rfind('.').map_or(0, |at| at);
+         end == 1
+     })
+ });

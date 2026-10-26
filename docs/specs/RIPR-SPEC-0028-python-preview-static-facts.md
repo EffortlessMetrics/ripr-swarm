@@ -462,7 +462,16 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A value no
+nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
+the parameters are unchanged positional ones without defaults, `*args` or
+keywords, `NAME` is bound once in the old and new module, no file writes or
+patches it, and the bound expression over the parameters and literals is inside
+the same evaluator; a test that calls `NAME` with literal arguments in a
+straight-line `assert` that holds with the old body and fails with the new one
+is the oracle, and only then is the lambda-syntax limit lifted. A changed
+parameter list, a default, a body outside the evaluator, a second binding or a
+test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
 assertion distinguishes is never graded as a gap. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
@@ -477,6 +486,22 @@ multiline setup remains eligible. A generator test lends no executed-body credit
 Formatted strings remain uncertain in this bounded admission because their
 expressions can carry generator syntax. Statement identity uses the reported
 source assertion, independently of the boolean oracle's normalized gate text.
+A one-line module-level dict literal of unique `str` or `int` keys and scalar
+values (#9619) is a constant of the same kind, read only by a module function
+through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
+itself, a `bool` lookup key, a missing key without a default, a computed or
+spread entry and a multi-line literal decide nothing. The table is mutable in
+place, so credit also requires that no source mention `NAME` other than as an
+import or export, a `.get` read or a subscript read on a line that binds
+nothing (the owning module's defining statement aside): a store through a
+subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
+f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`,
+`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
+module withholds credit. A reflective file that also imports modules withholds credit for every
+table, because the module it reflects over may be another file's re-export that no word of the
+file names. A definition after a `;` is discovered like one at the start of a line, so an explicit
+line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
@@ -719,12 +744,35 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
+  edit that deletes the leading `isinstance(other, <own class>) and` from the
+  method's only `return`, when the remaining expression is exactly
+  `self.<a> == other.<b>` (no call, boolean operator or conditional that could
+  skip the read) and `<b>` is an attribute the class stores itself
+  (`self.<b> = ..`) that no builtin literal has, the class defines neither
+  `__ne__` nor `__getattr__` and, read from the parsed class, names no base and
+  is plain (a builtin base answers `!=` itself), and a protocol-entry test with
+  no `try`, `with` or `raises` that could catch the error asserts
+  `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
+  Calling the edited method with such a literal raises `AttributeError`, so the
+  assertion fails after the edit. A literal on the left, a list or custom
+  operand, an early exit before the `return` or an `==` read that expects a
+  match keep the `dynamic_dispatch` abstention. The builtin-attribute list is
+  a finite catalogue of the Python 3.14 literal types, not a general claim
+  about Python semantics (#9619, #9421).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
   reaches: captured output, the file read back, a mock call pinned with
   arguments, or the field read through a bound receiver (RIPR-SPEC-0238
   rule 17).
+
+Effect-channel observations use native assertion and compared-operand spans.
+The owner call must finish before the operand is read, including statements at
+different columns on one line. Failure messages and weaker, discarded conjuncts
+cannot supply a later read for an earlier comparison. Resolved assertion helpers
+retain their call-site identity and require the owner to complete before their
+arguments are evaluated.
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
@@ -765,6 +813,17 @@ can show:
   emit `decorator_indirection`, so a memoized owner with a direct exact test is
   credited and a twin whose test misses the change remains a gap, while `@retry`
   stays limited
+- a corpus row (`py-shapes-decorator-wrapped-return`) and unit tests proving a
+  workspace-local forwarding decorator does not emit `decorator_indirection`
+  (#9619). Accepted: a bare `@name` over a module-level `def name(fn)` bound
+  once in the owner's file whose wrapper takes only `*args`/`**kwargs`, may run
+  side-effect calls that neither touch the arguments nor call or reset `fn`
+  (plain `fn.__name__`-style reads are allowed), is optionally decorated by
+  plain `functools.wraps(fn)`, and ends with `return fn(*args[, **kwargs])`.
+  Rejected, keeping the limit: called or grouped decorator spellings,
+  transforming, swallowing or retrying wrappers, `yield`/`await`, a wrapper
+  name or parameter that shadows `fn`, rebound, imported or method-scoped
+  decorators, and repo-mode classification (no owner source)
 - fixtures proving the first repair classes carry activation-level missing
   discriminators for predicate boundaries, return values, exception paths,
   field/object values, and output/log/call effects

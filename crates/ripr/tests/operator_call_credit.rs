@@ -7,7 +7,7 @@
 //! type, a shadowed type or a second impl of the trait for the type does not.
 //! Relating the test never raises a class by itself.
 
-use ripr::domain::RelationReason;
+use ripr::domain::{ExposureClass, RelationReason};
 use ripr::{CheckInput, Finding, Mode, OutputFormat, check_workspace};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,6 +60,20 @@ mod tests {{
 }
 
 fn direct_tests(case: &Case) -> Result<Vec<String>, String> {
+    let findings = findings_of(case)?;
+    let mut names: Vec<String> = findings
+        .iter()
+        .flat_map(|finding| &finding.related_tests)
+        .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .map(|test| test.name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The findings on the changed line, in a throwaway workspace.
+fn findings_of(case: &Case) -> Result<Vec<Finding>, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root: PathBuf = std::env::temp_dir().join(format!(
         "ripr-operator-credit-{}-{}",
@@ -71,7 +85,7 @@ fn direct_tests(case: &Case) -> Result<Vec<String>, String> {
     result.map_err(|message| format!("{}: {message}", case.label))
 }
 
-fn run(case: &Case, root: &Path) -> Result<Vec<String>, String> {
+fn run(case: &Case, root: &Path) -> Result<Vec<Finding>, String> {
     std::fs::create_dir_all(root.join("src")).map_err(|e| format!("create dir: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -121,15 +135,7 @@ index 1111111..2222222 100644
     if findings.is_empty() {
         return Err("premise: the changed line yields a finding".to_string());
     }
-    let mut names: Vec<String> = findings
-        .iter()
-        .flat_map(|finding| &finding.related_tests)
-        .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
-        .map(|test| test.name.clone())
-        .collect();
-    names.sort();
-    names.dedup();
-    Ok(names)
+    Ok(findings)
 }
 
 const ADD: Case = Case {
@@ -651,4 +657,579 @@ fn reference_operands_do_not_reach_the_owned_impl() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
+    Ok(findings_of(case)?
+        .into_iter()
+        .map(|finding| finding.class)
+        .collect())
+}
+
+/// Relating the test says the operator runs, not that an assertion would
+/// notice the impl change. A result built from the impl's own tokens
+/// (`Money(..)`) is observed by the test's `Money(..)` operands and reads
+/// `exposed`; one built through `Self(..)` shares no token with the assertion,
+/// so the credit is unconfirmed and the gap stays withheld rather than turning
+/// into an "add a test" signal for code the test pins.
+#[test]
+fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> {
+    let confirmed = with_body(
+        ADD,
+        "confirmed",
+        "assert_eq!(Money(2) + Money(3), Money(5));",
+    );
+    assert_eq!(classes(&confirmed)?, [ExposureClass::Exposed]);
+
+    let unconfirmed = Case {
+        label: "self_constructor",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let findings = findings_of(&unconfirmed)?;
+    let got: Vec<_> = findings
+        .iter()
+        .map(|finding| finding.class.clone())
+        .collect();
+    if got != [ExposureClass::StaticUnknown] {
+        return Err(format!("self_constructor: got {got:?}"));
+    }
+    let limit = findings[0].static_limit_kind.map(|kind| kind.as_str());
+    assert_eq!(limit, Some("rust_implicit_call_unresolved"));
+
+    // A result bound under the method's own name is not a call: the operator
+    // still reaches the impl, no assertion confirms the changed line, and the
+    // gap stays withheld.
+    let bound_as_method_name = Case {
+        label: "bound_as_add",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "let add = Money(2) + Money(3);\n    assert_eq!(add, Money(5));",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&bound_as_method_name)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A second test that only exercises the operator is no more confirming.
+    let two_operator_tests = Case {
+        label: "two_operator_tests",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod more {
+    use super::*;
+
+    #[test]
+    fn second_operator_use() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&two_operator_tests)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A test that names the method decided reach itself, so the finding is
+    // judged by its own evidence, not withheld as syntax-only.
+    let one_named_call = Case {
+        label: "one_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod named {
+    use super::*;
+
+    #[test]
+    fn named_call() {
+        let sum = Money(1).add(Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
+
+    // A path call on another type is not a call of this impl: still syntax-only (#10551).
+    let other_type_path = Case {
+        label: "other_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Wrapper::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&other_type_path)?, [ExposureClass::StaticUnknown]);
+
+    // A longer method name is not the owner (#10551).
+    let longer_method_path = Case {
+        label: "longer_method_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::address(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&longer_method_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A type whose name merely ends in the impl type is another type (#10551).
+    let longer_type_path = Case {
+        label: "longer_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = MyMoney::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&longer_type_path)?, [ExposureClass::StaticUnknown]);
+
+    // Another trait's `add` on the same type is not a call of this impl (#10551).
+    let other_trait_path = Case {
+        label: "other_trait_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = <Money as Audit>::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&other_trait_path)?, [ExposureClass::StaticUnknown]);
+
+    // A path inside `stringify!` is text, never evaluated (#10551).
+    let stringified_path = Case {
+        label: "stringified_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let _ = stringify!(Money::add(1, 2));\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&stringified_path)?, [ExposureClass::StaticUnknown]);
+
+    // An inherent `add` wins `Money::add(..)`, so the call is not this trait impl (#10551).
+    let inherent_method_wins = Case {
+        label: "inherent_method_wins",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "impl Money {\n    pub fn add(a: Money, b: Money) -> Money {\n        Money(a.0 + b.0)\n    }\n}\n
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&inherent_method_wins)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A module path with blanks (or a masked comment) is still another module's `Money` (#10551).
+    let blanked_module_path = Case {
+        label: "blanked_module_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = crate::other:: Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&blanked_module_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A `Money` the test imports from elsewhere is not the impl type (#10551).
+    let imported_type_path = Case {
+        label: "imported_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        use crate::other::Money;\n        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&imported_type_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A `Money` the test declares itself is not the impl type (#10551).
+    let redeclared_type_path = Case {
+        label: "redeclared_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        struct Money;\n        let sum = Money::add(1, 1);\n        assert_eq!(sum, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&redeclared_type_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A path call that asserts nothing lifts only the withholding: the finding stays an unconfirmed `weakly_exposed`, it does not borrow evidence (#10551).
+    let path_call_without_assertion = Case {
+        label: "path_call_without_assertion",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let _ = Money::add(Money(1), Money(1));
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&path_call_without_assertion)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // The related rows are capped at eight for display; a path call among the
+    // cut rows cannot be seen, so the result must not depend on test names:
+    // renaming only the path-call test leaves the class unchanged (#10551).
+    let crowded_path_call_last = Case {
+        label: "crowded_path_call_last",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod crowded {
+    use super::*;
+
+    #[test]
+    fn a01_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a02_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a03_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a04_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a05_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a06_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a07_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn zz_pathed() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&crowded_path_call_last)?,
+        [ExposureClass::StaticUnknown]
+    );
+    let crowded_path_call_first = Case {
+        label: "crowded_path_call_first",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod crowded {
+    use super::*;
+
+    #[test]
+    fn a01_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a02_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a03_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a04_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a05_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a06_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a07_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a00_pathed() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&crowded_path_call_first)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // `Type::method(..)` names the owner like `.method(..)`, so the finding is judged by that test's own evidence (#10551).
+    let type_path_call = Case {
+        label: "type_path_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&type_path_call)?, [ExposureClass::WeaklyExposed]);
+
+    // `<Type as Trait>::method(..)` names the owner too (#10551).
+    let qualified_path_call = Case {
+        label: "qualified_path_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = <Money as Add>::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&qualified_path_call)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // Same-named tests in different inline modules are different tests. The
+    // later one calls the method and observes the sum, so the finding is
+    // judged by that test too (it was once dropped as a duplicate by name).
+    let same_name_named_call_later = Case {
+        label: "same_name_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let other = Money(2).add(Money(3));\n        assert_eq!(other.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_named_call_later)?,
+        [ExposureClass::Exposed]
+    );
+
+    // The row for the later test must resolve to that test's own body: an
+    // earlier operator-only test of the same name must not stand in for a
+    // later one that calls `.add(` and confirms nothing.
+    let same_name_unconfirmed_named_call_later = Case {
+        label: "same_name_unconfirmed_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(r.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_unconfirmed_named_call_later)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // A finding whose infection is not read has a different missing leg: the
+    // changed line sits behind a branch the test's operands never take.
+    let branch_not_driven = Case {
+        label: "branch_not_driven",
+        signature: "type Output = Money;\n    fn add(self, other: Money) -> Money",
+        old_line: "        if self.0 > 100 { Money(self.0 + other.0) } else { Money(0) }",
+        new_line: "        if self.0 > 100 { Money(other.0 + self.0) } else { Money(0) }",
+        test_body: "assert_eq!(Money(2) + Money(3), Money(0));",
+        ..ADD
+    };
+    assert_eq!(classes(&branch_not_driven)?, [ExposureClass::WeaklyExposed]);
+
+    // The same impl is a gap when the test never exercises the operator.
+    let unexercised = Case {
+        label: "self_constructor_unexercised",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "assert_eq!(Money(5), Money(5));",
+        ..ADD
+    };
+    let got = classes(&unexercised)?;
+    assert!(
+        !got.contains(&ExposureClass::StaticUnknown),
+        "no operator use is a real gap: {got:?}"
+    );
+    Ok(())
 }
