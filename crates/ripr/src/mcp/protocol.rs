@@ -31,7 +31,7 @@ pub(super) const GAP_RESOURCE_TEMPLATE: &str = "ripr://gap/{canonical_id}";
 /// tool cannot reach in this slice stay named (reserved) so the wire
 /// contract is stable when the owning slice lands; each tool description
 /// says which codes it can actually return.
-fn failure_vocabulary() -> Vec<&'static str> {
+pub(super) fn failure_vocabulary() -> Vec<&'static str> {
     let mut codes = vec![
         "workspace_unavailable",
         "analysis_failed",
