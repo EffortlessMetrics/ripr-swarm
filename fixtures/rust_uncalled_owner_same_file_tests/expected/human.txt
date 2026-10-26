@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged
     - infection no: No test reaches the changed owner, so no test can activate this change
     - 9 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast probe:src_lib.rs:return_value:672a64b9
   ripr context --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast --at probe:src_lib.rs:return_value:672a64b9
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value); run `ripr repair probe:src_lib.rs:return_value:672a64b9 --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: return_value; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --at src/lib.rs:6 --kind return_value
 

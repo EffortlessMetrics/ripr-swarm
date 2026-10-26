@@ -58,6 +58,13 @@ const PARSE_WORKER_UNAVAILABLE: &str =
 /// Typed refusal when the worker thread died (for example an oxc panic).
 const PARSE_WORKER_FAILED: &str = "static limit parse_worker_failed: TypeScript parse worker thread failed; syntax facts unavailable";
 
+/// Whether `reason` (an `Err` from [`parse_on_worker`]) means the worker thread
+/// could not run, which depends on the environment rather than on the source.
+/// The nesting-budget refusal is deterministic and returns false.
+pub(crate) fn is_worker_failure(reason: &str) -> bool {
+    reason == PARSE_WORKER_FAILED || reason.starts_with(PARSE_WORKER_UNAVAILABLE)
+}
+
 pub(crate) fn parse_error_reason(file: &Path, source: &str) -> Option<String> {
     parse_on_worker(file, source, |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();

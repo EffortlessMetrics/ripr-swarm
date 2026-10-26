@@ -48,10 +48,14 @@ pub(super) enum ChangedEffect {
 impl ChangedEffect {
     /// The changed line's effect, when it is one of the observable shapes.
     /// `old_line_text` is the line it replaced, when there is one.
+    /// `guard_entered` records that static evidence proved every strong related
+    /// call enters the guards around the line (#9833), which lets a write that
+    /// is not a direct body statement still count as run.
     pub(super) fn of(
         line_text: &str,
         old_line_text: Option<&str>,
         owner: &PythonOwner,
+        guard_entered: bool,
     ) -> Option<Self> {
         let line = line_text.trim();
         let context_dunder = matches!(owner.name.as_str(), "__enter__" | "__exit__");
@@ -60,12 +64,17 @@ impl ChangedEffect {
             .direct_statements
             .iter()
             .any(|statement| statement == line);
+        // Guard entry (#9833) is proved for the method-call rows of a
+        // `self.attr` write; it does not widen a free function's module
+        // object write, which stays physically direct only.
+        let self_run = direct || guard_entered;
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
             // Only a statement written directly in the method body always
             // runs; a write under an `if`, `try` or loop may never run in
-            // the test (#9421, #9782), so it reads no effect.
-            && direct
+            // the test (#9421, #9782), so it reads no effect unless every
+            // strong call provably enters the guard (#9833).
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -81,7 +90,7 @@ impl ChangedEffect {
             // Only a statement written directly in the method body always
             // runs; one under an `if`, `try` or loop may never run in the
             // test, so it reads no effect (unknown facts fail closed).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -226,16 +235,21 @@ impl EffectReads {
             }
             ChangedEffect::CallOnParameter { .. } => {}
             ChangedEffect::ModuleField { object, attr } => {
-                reads.operands = test
-                    .imports
-                    .iter()
-                    .filter(|import| {
-                        import.imported == *object
-                            && import_source_module_matches_owner(import, owner, &test.file)
-                            && !test_rebinds_import_alias(test, &import.alias)
-                    })
-                    .map(|import| format!("{}.{attr}", import.alias))
-                    .collect();
+                // A test that assigns the object onto its module
+                // (`route.response = fake`) or writes a dynamic namespace
+                // reads a different object than the owner mutates.
+                if !test.constant_rebinding.assigns_attribute(object) {
+                    reads.operands = test
+                        .imports
+                        .iter()
+                        .filter(|import| {
+                            import.imported == *object
+                                && import_source_module_matches_owner(import, owner, &test.file)
+                                && !test_rebinds_import_alias(test, &import.alias)
+                        })
+                        .map(|import| format!("{}.{attr}", import.alias))
+                        .collect();
+                }
             }
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
@@ -299,7 +313,7 @@ impl EffectReads {
 
 /// `self.attr.append(value)` and the like: the collection attribute a method
 /// records into.
-fn self_attribute_mutation(line: &str) -> Option<&str> {
+pub(super) fn self_attribute_mutation(line: &str) -> Option<&str> {
     let (callee, _) = statement_call(line)?;
     let rest = callee.strip_prefix("self.")?;
     let (attr, mutator) = rest.split_once('.')?;
@@ -313,7 +327,7 @@ fn self_attribute_mutation(line: &str) -> Option<&str> {
 }
 
 /// `self.attr = value` or `self.attr op= value`: the written attribute.
-fn self_attribute_write(line: &str) -> Option<&str> {
+pub(super) fn self_attribute_write(line: &str) -> Option<&str> {
     attribute_write_after(line.strip_prefix("self.")?)
 }
 
@@ -372,7 +386,7 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
 /// its own name, an import alias, or a module-qualified spelling. A method is
 /// called only on a local bound to its class (rule 9), so a same-named method
 /// of another class does not count.
-fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+pub(super) fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
     let names = owner_call_names(test, owner);
     let mut calls: Vec<(usize, &str)> = names
         .iter()

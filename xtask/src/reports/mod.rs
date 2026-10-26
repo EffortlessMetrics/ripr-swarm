@@ -164,6 +164,7 @@ pub(crate) use python_repair_trust::python_repair_trust;
 pub(crate) use real_crate_dogfood::real_crate_dogfood;
 pub(crate) use receipts::{receipts, receipts_write};
 pub(crate) use recommendation::recommendation_calibration;
+pub(crate) use release::candidate_harness::live_head::producer::run as release_manifest_proposal;
 pub(crate) use release::release_readiness;
 pub(crate) use release_control::release_control;
 pub(crate) use release_denominator::release_denominator;

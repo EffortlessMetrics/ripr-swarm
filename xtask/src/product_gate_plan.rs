@@ -23,7 +23,6 @@ pub(crate) const TEST_RUNNER_CONTRACT: &str = "canonical_nextest_plus_cargo_doc"
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ProductGateId {
     Formatting,
-    WorkspaceCheck,
     AllFeaturesCheck,
     Clippy,
     WorkspaceTests,
@@ -42,7 +41,6 @@ impl ProductGateId {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Formatting => "product.rust.formatting",
-            Self::WorkspaceCheck => "product.rust.workspace_check",
             Self::AllFeaturesCheck => "product.rust.all_features_check",
             Self::Clippy => "product.rust.clippy",
             Self::WorkspaceTests => "product.rust.workspace_tests",
@@ -218,14 +216,6 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             "does not prove runtime behavior",
         ),
         gate(
-            ProductGateId::WorkspaceCheck,
-            ProductGateRole::Required,
-            rust.clone(),
-            "cargo check --workspace --all-targets",
-            "the workspace type-checks",
-            "does not prove tests observe changed behavior",
-        ),
-        gate(
             ProductGateId::AllFeaturesCheck,
             ProductGateRole::Required,
             rust.clone(),
@@ -238,8 +228,8 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateRole::Required,
             rust.clone(),
             "cargo clippy --workspace --all-targets -- -D warnings",
-            "the configured lint contract holds",
-            "does not prove runtime behavior",
+            "the workspace type-checks (the same unit set `cargo check --workspace --all-targets` builds) and the configured lint contract holds",
+            "does not prove runtime behavior or tests observing changed behavior",
         ),
         gate(
             ProductGateId::WorkspaceTests,

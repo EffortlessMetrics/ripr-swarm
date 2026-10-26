@@ -314,6 +314,36 @@ Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.
 
+The call-site lexer behind direct owner calls and helper edges hides comment,
+string and docstring text. A backslash continues an ordinary string over the
+next line break, which may be CRLF, so a quoted `"""` on the continuation line
+opens nothing and a call there stays hidden. The `{...}` replacement fields of
+a triple-quoted f-string (prefix `f`, `F`, `rf`, `fr`, any case) are code: a
+call on a line of a multiline field is visible, while the string's own text, a
+`{{` escape, a string nested in a field (single-line or a complete
+different-delimiter triple-quoted literal, newlines and braces included), the
+literal format-spec text after a field's top-level `:` (only a nested `{...}`
+inside the spec is code again), and a field not closed before the string ends
+stay hidden (#8787). A backslash before a brace in an f-string is a literal
+character on its own and the brace lexes normally. A nested f-string literal (up
+to four levels) in a field has its own replacement fields scanned by the same
+rules, so only real field code is visible; its own text, `{{`, spec text, and a
+plain or `b` nested literal are hidden locally while a later call in the same
+field stays visible. The scanner gives up and hides the rest of the text only
+for a `#` comment in field expression text (Python 3.12), the string's own
+delimiter nested in a field (3.12), a single-line f-string with a field of its
+own inside a field (3.12 same-quote nesting), a field or nested literal that is
+not closed, and nesting deeper than four levels. A colon that may or may not be
+the spec colon hides. The triple-quoted scanning here gives up and hides
+rather than inventing a call for the cases above. Known limits: inside
+triple-quoted f-strings a replacement field on the same line as the opening
+quote is hidden by the line-prefix quote check, and a real call after a field the
+scanner gave up on is hidden too (misses). Separately, and not changed by this
+change, top-level single-line f-strings that use Python 3.12 same-quote nesting
+(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
+replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
+call (#9230).
+
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
 is related, with the weak `fixture_owner_call` relation, when that fixture's
@@ -369,12 +399,31 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target, or
-  not the whole bound value, is not credited. A `:` ends a target position only
-  when it closes a compound-statement header whose brackets balance outside
-  string literals and comments (`if ")": ( r), x = ...` rebinds, a dict value
-  `{"k": (r), 1}` does not); a header split across lines is a known limit: a
-  one-line-suite rebind after it is not seen and the receiver stays credited. Extra, keyword, starred or trailing-comma
+  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
+  (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
+  is not credited, as is an augmented assignment after a header or `;`
+  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  mentions the name other than as a dotted value or class pattern (`case (r):`,
+  `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
+  demoted too, a deliberate miss). Within one
+  bracketed target, a comment, a backslash continuation or a run of blanks
+  before the name, its closing bracket or the `=` / `in` / `as` after it, and
+  a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
+  A `for` or `as` inside a string or after a `#` comment is text, so
+  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  them closed by this: a multi-line tuple target whose earlier elements sit on
+  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
+  (the credit-keeping direction); and a dict key at the start of a continuation
+  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
+  (a miss). A `:` ends a target
+  position only when it closes a compound-statement header whose brackets
+  balance outside string literals (single, double and tripled quotes, escaped
+  quotes) and comments (`if ")": ( r), x = ...` and
+  `if x == '''it's''': ( r), x = ...` rebind, a dict value `{"k": (r), 1}` does
+  not). A header whose brackets do not balance, or that is split across
+  lines, is not read as a header, so a one-line-suite rebind after it is not
+  seen and the receiver stays credited (the credit-keeping direction, a known
+  limit). Extra, keyword, starred or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
@@ -393,6 +442,43 @@ comments, strings, and docstrings:
   adapter does not see;
 - module-level owner: a local bound by an import of, or from, the owner
   module.
+
+A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
+an oracle-eligible relation, only to a test whose straight-line `assert`
+provably holds under the old literal and fails under the new one. The module
+binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
+namespace writer), the edit is the file's only changed line, no test file
+writes the attribute, and the test keeps its imported names. Reader functions
+must retain their binding too: same-module walrus/attribute replacements and
+workspace foreign writes withhold the reader's credit. Attribute targets come
+from the parsed statement tree, including parenthesized, unpacked, annotated,
+loop/context and spaced targets; comparison reads and annotations without values
+are not writes. An unparseable foreign source retains word-based write uncertainty;
+references to its module name, malformed test/initializer/conftest files, hidden
+loader spellings or package export uncertainty withhold credit globally. An
+unreferenced malformed production module alone does not erase exact credit.
+The workspace word index is bounded; overflow withholds credit. This is a bounded
+source read, not a complete import or reflective-execution graph. The assertion
+reads `NAME` itself or calls a module function with literal arguments whose
+body is one `return` expression over its parameters, literals and `NAME`; a
+name, call, operator or value kind outside that bounded evaluator decides
+nothing and the edit keeps the `missing_import_graph` abstention. A value no
+assertion distinguishes is never graded as a gap. A function defined under a
+decided module-level `if sys.version_info >= (3, 0):` condition (the only
+decided shapes are Python 2/3 version tuples, with `sys` the single plain
+import) is an ordinary function owner when its name has no other live
+binding (including walrus replacements), and no module-source write or
+uncertainty may replace `sys.version_info`, including an annotated attribute
+target. A definition in the dead arm stays with the `<module>` abstention.
+The workspace pass also withholds conditional-derived owners when another file
+may replace the callable or `sys.version_info`. Physical continuation indentation
+never makes a trailing `return` safe before the asserted value read; ordinary
+multiline setup remains eligible. A generator test lends no executed-body credit.
+Formatted strings remain uncertain in this bounded admission because their
+expressions can carry generator syntax. Statement identity uses the reported
+source assertion, independently of the boolean oracle's normalized gate text.
+Preceding assertions must evaluate true under the same bounded old/new scope
+before a later assertion can supply the value-flip credit.
 
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
@@ -679,6 +765,17 @@ can show:
   emit `decorator_indirection`, so a memoized owner with a direct exact test is
   credited and a twin whose test misses the change remains a gap, while `@retry`
   stays limited
+- a corpus row (`py-shapes-decorator-wrapped-return`) and unit tests proving a
+  workspace-local forwarding decorator does not emit `decorator_indirection`
+  (#9619). Accepted: a bare `@name` over a module-level `def name(fn)` bound
+  once in the owner's file whose wrapper takes only `*args`/`**kwargs`, may run
+  side-effect calls that neither touch the arguments nor call or reset `fn`
+  (plain `fn.__name__`-style reads are allowed), is optionally decorated by
+  plain `functools.wraps(fn)`, and ends with `return fn(*args[, **kwargs])`.
+  Rejected, keeping the limit: called or grouped decorator spellings,
+  transforming, swallowing or retrying wrappers, `yield`/`await`, a wrapper
+  name or parameter that shadows `fn`, rebound, imported or method-scoped
+  decorators, and repo-mode classification (no owner source)
 - fixtures proving the first repair classes carry activation-level missing
   discriminators for predicate boundaries, return values, exception paths,
   field/object values, and output/log/call effects

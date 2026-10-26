@@ -1,6 +1,6 @@
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -8,4 +8,4 @@ impl Wrapper {
+@@ -10,4 +10,4 @@ impl Wrapper {
      fn get(&self) -> u32 {
 -        self.inner.get()
 +        { let v = self.inner.get(); v }

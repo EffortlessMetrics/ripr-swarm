@@ -22,14 +22,13 @@ const PORTFOLIO: &[&str] = &[
     "Dependency policy",
     "Process policy",
     "Network policy",
-    "Workspace and all-target check",
     "All-features ripr target check",
     "Strict workspace Clippy",
-    "Required Rust tests",
-    "Required Rust doctests",
     "Golden output contracts",
     "Fixture contracts",
     "Verdict corpora",
+    "Required Rust tests",
+    "Required Rust doctests",
     "PR evidence",
 ];
 
@@ -460,7 +459,7 @@ mod tests {
         result
     }
     #[test]
-    fn terminal_success_requires_all_seventeen_native_command_rows() -> Result<(), String> {
+    fn terminal_success_requires_all_sixteen_native_command_rows() -> Result<(), String> {
         let root = env::temp_dir().join(format!("contabo-complete-{}", std::process::id()));
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let result = (|| {
@@ -476,7 +475,7 @@ mod tests {
                 rows.push(command_row(&step, code, 1));
             }
             let incomplete = root.join("incomplete.json");
-            assert!(retain_terminal_commands(&json!({}), &rows[..16], 0, &incomplete).is_err());
+            assert!(retain_terminal_commands(&json!({}), &rows[..15], 0, &incomplete).is_err());
             assert!(!incomplete.exists());
             let complete = root.join("complete.json");
             retain_terminal_commands(&json!({"subject":"fixture"}), &rows, 0, &complete)?;
@@ -484,7 +483,7 @@ mod tests {
                 serde_json::from_slice(&fs::read(&complete).map_err(|error| error.to_string())?)
                     .map_err(|error| error.to_string())?;
             assert_eq!(receipt["disposition"], "product_pass");
-            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(17));
+            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(16));
             assert!(
                 receipt["steps"]
                     .as_array()
@@ -572,7 +571,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
         let steps = portfolio(&source)?;
-        assert_eq!(steps.len(), 17);
+        assert_eq!(steps.len(), 16);
         assert!(
             steps
                 .iter()

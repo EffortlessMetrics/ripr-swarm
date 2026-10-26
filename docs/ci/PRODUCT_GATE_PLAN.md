@@ -17,7 +17,6 @@ product meaning.
 | Canonical gate | Current command | Role | Surface |
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
-| `product.rust.workspace_check` | `cargo check --workspace --all-targets` | required | Rust |
 | `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
@@ -30,6 +29,13 @@ product meaning.
 | `product.repository.network_policy` | `cargo xtask check-network-policy` | required | repository policy |
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
+
+`product.rust.clippy` also carries the plain workspace type-check. `cargo clippy
+--workspace --all-targets` and `cargo check --workspace --all-targets` build the
+identical 523-unit set (same targets, features and profile; verified with
+`cargo ... -Zunstable-options --unit-graph`), so a separate `product.rust.workspace_check`
+step only repeated the compile of the workspace crates (about 2.2 minutes of a
+hosted run) and was removed in #10341. A type error fails Clippy.
 
 The Rust test contract is `canonical_nextest_plus_cargo_doc` (#3825,
 `TEST_RUNNER_CONTRACT` in `xtask/src/product_gate_plan.rs`). It is

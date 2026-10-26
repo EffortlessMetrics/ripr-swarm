@@ -1360,6 +1360,37 @@ pub(crate) fn test_reaches_through_chain(
     reached.then_some(chain)
 }
 
+/// Whether `body` opens a raw string (`r"`, `r#"`, `br"`, `cr##"`). The
+/// `r` must start the token: the `r` ending an identifier or an ordinary
+/// literal (`"other"`, `"user"`) is not an opener, and `r#parse` is a raw
+/// identifier, not a raw string. A literal that merely contains `r#"` still
+/// matches, which only refuses (missed credit), never credits.
+fn has_raw_string_opener(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    bytes.iter().enumerate().any(|(index, &byte)| {
+        if byte != b'r' {
+            return false;
+        }
+        // A `b` or `c` prefix belongs to the opener, not to an identifier.
+        let token_start = match index.checked_sub(1).map(|at| bytes[at]) {
+            Some(b'b' | b'c') => index - 1,
+            _ => index,
+        };
+        if token_start
+            .checked_sub(1)
+            .is_some_and(|at| is_ident(bytes[at]))
+        {
+            return false;
+        }
+        let mut next = index + 1;
+        while bytes.get(next) == Some(&b'#') {
+            next += 1;
+        }
+        bytes.get(next) == Some(&b'"')
+    })
+}
+
 /// Evaluate a helper's return value over bound exact inputs (#3296,
 /// the boolean/return predicate family). V1 supports a body whose
 /// final expression is a bare binding established by simple single-line
@@ -1411,6 +1442,39 @@ pub(crate) fn helper_return_value(
             continue;
         }
         let cleaned = trimmed.trim_end_matches(';').trim();
+        // Masking blanks a string literal, so a line that is one whole
+        // literal reads empty here; it is the tail, not a skipped line.
+        if cleaned.is_empty() && strict_literal(raw_line.trim().trim_end_matches(';')).is_some() {
+            // Masking also blanks the interior of a multi-line raw string,
+            // and an `async` body or an early `return` makes the last
+            // literal something other than the value the call yields.
+            let word = |name: &str| {
+                masked
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|token| token == name)
+            };
+            // A `;` makes it a discarded expression statement, not the
+            // value the helper yields; the binding tail below decides.
+            if raw_line.trim().ends_with(';') {
+                continue;
+            }
+            if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
+                || has_raw_string_opener(&helper.body)
+                // Masking blanks block-comment text exactly like a string,
+                // so a quoted line inside `/* ... */` would read as a tail.
+                || helper.body.contains("/*")
+                || word("async")
+                || word("return")
+                || tail.is_some()
+            {
+                return None;
+            }
+            if tail.is_some() {
+                return None;
+            }
+            tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
+            continue;
+        }
         if cleaned.is_empty()
             || cleaned.starts_with("//")
             || cleaned.starts_with('#')
@@ -1431,6 +1495,17 @@ pub(crate) fn helper_return_value(
         tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
     }
     let tail = tail?;
+    // A helper whose tail is one strict literal returns it whatever its
+    // inputs are (`fn pick(_kind: &str) -> &'static str { "alpha" }`).
+    // Only a whole-token literal counts, so no operation is evaluated.
+    if let Some(literal) =
+        strict_literal(&tail).filter(|text| super::match_transfer::is_single_literal(text))
+    {
+        return match super::value_transfer::evaluate_initializer(&literal, inputs) {
+            super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
+            _ => None,
+        };
+    }
     let is_identifier = !tail.is_empty()
         && tail
             .chars()

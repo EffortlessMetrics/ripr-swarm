@@ -30,7 +30,7 @@ pub(super) enum AgentCommand {
     Repair(AgentRepairOptions),
 }
 
-use crate::app::gap_bound_repair::GAP_BOUND_REPAIR_GAP_PREFIX;
+use crate::app::gap_bound_repair::{GAP_BOUND_REPAIR_GAP_PREFIX, PYTHON_GAP_BOUND_PREFIX};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentStartOptions {
@@ -473,9 +473,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let phase = phase.unwrap_or(AgentRepairPhase::Before);
 
     // A gap-bound start (#9103, RIPR-SPEC-0311) selects its subject by
-    // canonical TypeScript gap id and the diff base `ripr check` printed.
-    // It is exclusive with `--seam-id` and belongs to the before phase: the
-    // after and verify phases select the recorded attempt.
+    // canonical TypeScript or Python gap id and the diff base `ripr check`
+    // printed. It is exclusive with `--seam-id` and belongs to the before
+    // phase: the after and verify phases select the recorded attempt. It is
+    // the unbound start for both languages; the governed Python repair-trust
+    // binding (RIPR-SPEC-0176) stays seam-scoped.
     if seam_id.is_some() && gap_id.is_some() {
         return Err("agent repair takes either --seam-id or --gap-id".to_string());
     }
@@ -488,12 +490,12 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         }
         if !crate::app::gap_bound_repair::is_gap_bound_subject(gap) {
             return Err(match crate::app::task_first::non_rust_item_language(gap) {
-                Some(language) if language != "TypeScript" => format!(
-                    "agent repair --gap-id `{gap}` is not a TypeScript gap: {}",
+                Some(language) if !matches!(language, "TypeScript" | "Python") => format!(
+                    "agent repair --gap-id `{gap}` is not a TypeScript or Python gap: {}",
                     crate::app::task_first::no_seam_inventory_reason(language, "")
                 ),
                 _ => format!(
-                    "agent repair --gap-id accepts only a canonical TypeScript preview gap (`{GAP_BOUND_REPAIR_GAP_PREFIX}<id>`) as `ripr check` prints it; got `{gap}`"
+                    "agent repair --gap-id accepts only a canonical TypeScript preview gap (`{GAP_BOUND_REPAIR_GAP_PREFIX}<id>`) or Python gap (`{PYTHON_GAP_BOUND_PREFIX}<file>:...`) as `ripr check` prints it; got `{gap}`"
                 ),
             });
         }
@@ -1794,28 +1796,33 @@ mod tests {
     }
 
     const TS_GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+    const PY_GAP: &str =
+        "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20";
 
     #[test]
     fn agent_repair_gap_id_parses_a_gap_bound_before_start() -> Result<(), String> {
-        let command = parse_agent_args(&args(&[
-            "repair", "--gap-id", TS_GAP, "--base", "HEAD~1", "--root", "repo", "--phase", "before",
-        ]))?;
-        let AgentCommand::Repair(options) = command else {
-            return Err("expected a repair command".to_string());
-        };
-        if options.gap_id.as_deref() != Some(TS_GAP)
-            || options.base.as_deref() != Some("HEAD~1")
-            || options.seam_id.is_some()
-            || options.phase != AgentRepairPhase::Before
-        {
-            return Err(format!("gap-bound options not parsed: {options:?}"));
+        for gap in [TS_GAP, PY_GAP] {
+            let command = parse_agent_args(&args(&[
+                "repair", "--gap-id", gap, "--base", "HEAD~1", "--root", "repo", "--phase",
+                "before",
+            ]))?;
+            let AgentCommand::Repair(options) = command else {
+                return Err("expected a repair command".to_string());
+            };
+            if options.gap_id.as_deref() != Some(gap)
+                || options.base.as_deref() != Some("HEAD~1")
+                || options.seam_id.is_some()
+                || options.phase != AgentRepairPhase::Before
+            {
+                return Err(format!("gap-bound options not parsed: {options:?}"));
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn agent_repair_gap_id_is_exclusive_and_typescript_only() -> Result<(), String> {
-        let cases: [(Vec<&str>, &str); 7] = [
+    fn agent_repair_gap_id_is_exclusive_and_typescript_or_python_only() -> Result<(), String> {
+        let cases: [(Vec<&str>, &str); 9] = [
             (
                 vec![
                     "repair",
@@ -1836,13 +1843,21 @@ mod tests {
                 vec![
                     "repair",
                     "--gap-id",
-                    "gap:python:python_preview:1a2b3c4d",
+                    "gap:perl:lib/Pricing.pm:discount:predicate",
                     "--base",
                     "b",
                 ],
                 "covers Rust files only",
             ),
             (vec!["repair", "--gap-id", TS_GAP], "requires --base <ref>"),
+            (
+                vec!["repair", "--gap-id", "gap:python:pricing/core.py:units>=20"],
+                "requires --base <ref>",
+            ),
+            (
+                vec!["repair", "--gap-id", "gap:python:", "--base", "b"],
+                "accepts only a canonical TypeScript preview gap",
+            ),
             (
                 vec!["repair", "--seam-id", "seam:x", "--base", "b"],
                 "--base is only valid with --gap-id",

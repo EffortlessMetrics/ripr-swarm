@@ -5,6 +5,8 @@ struct Wrapper {
 }
 
 impl Wrapper {
+    fn peek(&self) -> u32 { self.get() }
+
     fn get(&self) -> u32 {
         { let v = self.inner.get(); v }
     }
