@@ -1640,7 +1640,6 @@ fn dependency_edge_admits_owner_call(
             owner,
             test,
             &callable_dependency_names,
-            &file_level_imports,
             &stripped_file,
             same_name.definitions,
         )
@@ -1745,10 +1744,11 @@ fn type_path_call_admits_owner(
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
-    file_level_imports: &str,
     stripped_file: &str,
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
+    let file_level_imports = file_level_use_text(stripped_file);
+    let file_level_imports = file_level_imports.as_str();
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
@@ -10759,7 +10759,8 @@ fn crate_c_score_test() {
         }
         // The owner's crate bringing in a foreign type of the same name still
         // refuses the glob spelling.
-        for body in ["use crate_a::*; LevelFilter::current()"] {
+        {
+            let body = "use crate_a::*; LevelFilter::current()";
             let mut index = level_filter_index(body, Vec::new());
             with_source(
                 &mut index,
@@ -10931,7 +10932,8 @@ fn crate_c_score_test() {
         );
         // #9619: the file's one glob of the owner's dependency spells the
         // same type.
-        for body in ["use crate_a::*; assert_eq!(Gauge::reading(), 42)"] {
+        {
+            let body = "use crate_a::*; assert_eq!(Gauge::reading(), 42)";
             assert_eq!(
                 narrowed_gauge_related(&owner, body, Vec::new(), &[SPARE], false),
                 vec![RelationReason::DirectOwnerCall],
