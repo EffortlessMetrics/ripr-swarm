@@ -1165,9 +1165,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `direct` (unchanged).
 14. Error owner, `with pytest.raises(KeyError, match='empty'): perr('')`:
     `exact_error_variant` / strong, `exposed`, `direct` through the owner
-    identity token `perr` (the first credit branch; the class is unchanged,
-    and `changed_sink_token` applies only when the oracle does not name
-    the owner).
+    identity token `perr` (the first successful credit branch, before
+    `changed_sink_token`; the exposure classification remains `exposed`).
+    This example exercises owner-identity credit, not changed-sink-token
+    credit; the exception class changes as specified above.
 15. Error owner, `with pytest.raises(KeyError): perr('')`: `broad_error` /
     weak, `weakly_exposed` (unchanged).
 16. Error owner, `assert perr('1') == 1` only: `weakly_exposed`
