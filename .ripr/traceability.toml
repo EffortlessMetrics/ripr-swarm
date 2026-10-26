@@ -16926,6 +16926,7 @@ tests = [
 fixtures = [
   "fixtures/python_caplog_alias_in_literal",
   "fixtures/python_caplog_alias_same_line_mask",
+  "fixtures/python_caplog_alias_assertion_store",
   "fixtures/python_caplog_alias_late_binding",
   "fixtures/python_caplog_custom_fixture",
   "fixtures/python_caplog_renamed_fixture",
