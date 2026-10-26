@@ -8107,6 +8107,50 @@ mod tests {
     }
 
     #[test]
+    fn committed_empty_repo_exposure_refuses_non_object_corpus() -> Result<(), String> {
+        let report_for = |corpus: Value| -> Result<GapDecisionLedgerReport, String> {
+            let mut source = complete_source(0);
+            source["source_subject"]["corpus"] = corpus;
+            source["artifact"]["content_sha256"] =
+                serde_json::json!(crate::agent::artifact::CONTENT_SHA256_PLACEHOLDER);
+            let commitment =
+                crate::agent::artifact::recompute_content_commitment(&source.to_string())?;
+            source["artifact"]["content_sha256"] = serde_json::json!(commitment);
+            let contents = source.to_string();
+            assert_eq!(
+                crate::agent::artifact::recompute_content_commitment(&contents)?,
+                commitment,
+                "the malformed-corpus control must pass content commitment verification"
+            );
+            Ok(build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+                records_path: "committed.json".to_string(),
+                records_json: Ok(contents),
+            }))
+        };
+        // Zero converted seams is a valid complete run, not a malformed input.
+        let complete = report_for(test_corpus())?;
+        assert_eq!(complete.status, "no_records");
+        assert!(complete.records.is_empty());
+        assert!(complete.analysis_coverage.is_some());
+        for corpus in [
+            Value::Null,
+            serde_json::json!("rust_workspace"),
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!([]),
+        ] {
+            let malformed = report_for(corpus.clone())?;
+            assert_eq!(malformed.status, "no_records");
+            assert!(malformed.records.is_empty());
+            assert!(malformed.analysis_coverage.is_none(), "{corpus}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn the_top_level_analysis_inputs_are_the_only_source_of_the_input_identity() {
         let records = vec![record_with_id("gap:a")];
         // Valid identity only inside source_subject.corpus, no top-level field.
