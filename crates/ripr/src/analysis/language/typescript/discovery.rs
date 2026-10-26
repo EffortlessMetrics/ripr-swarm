@@ -717,7 +717,8 @@ mod tests {
     /// dangling link all still are.
     #[cfg(unix)]
     #[test]
-    fn discovery_does_not_count_non_source_file_links_but_counts_every_other_link() {
+    fn discovery_does_not_count_non_source_file_links_but_counts_every_other_link()
+    -> std::io::Result<()> {
         use std::os::unix::fs::symlink;
         let workspace = TempWorkspace::new("link-nonsource");
         workspace.write("src/sum.ts", "export const sum = 1;\n");
@@ -725,31 +726,34 @@ mod tests {
         workspace.write("real/linked.test.ts", "test('x', () => {});\n");
         let root = &workspace.0;
         workspace.write("docs/guide.md", "# guide\n");
-        let make = |target: &str, link: &str| symlink(root.join(target), root.join(link)).is_ok();
-        assert!(make("README.md", "docs/index.md"));
+        symlink(root.join("README.md"), root.join("docs/index.md"))?;
         let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
             scan.skipped_links, 0,
             "a markdown file link hides no source and must not be disclosed"
         );
 
-        assert!(make("real/linked.test.ts", "linked.test.ts"));
+        symlink(
+            root.join("real/linked.test.ts"),
+            root.join("linked.test.ts"),
+        )?;
         let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "a source-named file link is counted");
 
-        assert!(make("real", "docs/real.md"));
+        symlink(root.join("real"), root.join("docs/real.md"))?;
         let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
             scan.skipped_links, 2,
             "a directory link is counted even under a non-source name"
         );
 
-        assert!(make("missing.md", "docs/dangling.md"));
+        symlink(root.join("missing.md"), root.join("docs/dangling.md"))?;
         let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
             scan.skipped_links, 3,
             "a dangling link cannot be shown harmless and is counted"
         );
+        Ok(())
     }
 
     /// A Unix socket is neither dir, file, nor link, so before the
