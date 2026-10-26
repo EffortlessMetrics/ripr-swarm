@@ -2119,6 +2119,64 @@ fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
 }
 
 #[test]
+fn nested_factor_reorder_guidance_requires_order_sensitive_operands() -> Result<(), String> {
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(3,7,(21,)), (4,8,(32,))])\ndef test_area(a,b,want):\n    assert area(a,b) == want\n";
+    let finding = classify_finding(
+        "def area(a,b):\n    return (b * a,)\n",
+        2,
+        "    return (a * b,)",
+        table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|text| text.contains("varies") || text.contains("do not vary"))
+    );
+    Ok(())
+}
+
+#[test]
+fn float_table_factor_reorder_does_not_gain_static_credit() -> Result<(), String> {
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(1.5, 2.0, 3.0), (-4.0, 2.0, -8.0)]");
+    let finding = classify_finding(AREA, 2, "    return a * b", &table)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn quoted_hash_does_not_mask_a_factor_reorder() -> Result<(), String> {
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(3, 7, (21, '#'))]");
+    let finding = classify_finding(
+        "def area(a,b):\n    return b * a, '#'\n",
+        2,
+        "    return a * b, '#'",
+        &table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
 fn a_changed_factor_still_reads_an_unvaried_table_operand() -> Result<(), String> {
     // Row (3, 7): `a * b` and `b * 3` agree only because a is 3, so the table
     // does not vary the changed operand and must not credit.
