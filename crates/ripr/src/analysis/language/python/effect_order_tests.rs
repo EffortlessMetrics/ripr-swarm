@@ -306,3 +306,34 @@ fn effect_order_helpers_do_not_launder_argument_evaluation_order() -> Check {
     );
     Ok(())
 }
+
+#[test]
+fn effect_order_mock_inspection_follows_argument_evaluation() -> Check {
+    let file = Path::new("shop/route.py");
+    let source = "def notify(sender):\n    sender.send(\"new\")\n    return \"old\"\n";
+    let owners = extract_owners(file, source);
+    for (body, exposed) in [
+        ("sender.send.assert_called_once_with(notify(sender))", true),
+        (
+            "sender.send(\"old\"); sender.send.assert_called_once_with(\"old\"); notify(sender)",
+            false,
+        ),
+    ] {
+        let test_source = format!(
+            "from shop.route import notify\nfrom unittest.mock import Mock\n\ndef test_it():\n    sender = Mock()\n    {body}\n"
+        );
+        let facts = extract_source_facts(Path::new("tests/test_route.py"), &test_source);
+        let found = classify_change_with_source(
+            file,
+            2,
+            "    sender.send(\"new\")",
+            Some("    sender.send(\"old\")"),
+            &owners,
+            &facts.tests,
+            Some(source),
+        )
+        .ok_or("expected changed mock-call finding")?;
+        assert_eq!(found.class == ExposureClass::Exposed, exposed, "{body}");
+    }
+    Ok(())
+}

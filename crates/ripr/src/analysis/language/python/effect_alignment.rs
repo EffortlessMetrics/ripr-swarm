@@ -335,7 +335,7 @@ impl EffectReads {
         let before_assertion = call_end <= usize::from(range.start());
         // A helper can capture a field in an argument before another argument
         // calls the owner. Its synthesized comparison is not that call's read.
-        if helper_derived && !before_assertion {
+        if helper_derived && !before_assertion && self.mocked_calls.is_empty() {
             return false;
         }
         let compared = compared_operands(assertion);
@@ -362,7 +362,9 @@ impl EffectReads {
                 return true;
             }
         }
-        before_assertion
+        // Mock inspection happens after its expected arguments are evaluated.
+        // An owner call inside those arguments can therefore precede it.
+        call_end <= usize::from(range.end())
             && self
                 .mocked_calls
                 .iter()
