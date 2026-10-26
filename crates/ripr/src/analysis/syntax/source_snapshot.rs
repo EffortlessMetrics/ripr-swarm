@@ -48,6 +48,13 @@ pub(crate) struct SourceScopes {
     pub(crate) modules: Vec<ModuleScope>,
 }
 
+/// The fragment memo trades memory for CPU only for small, repeated fragments
+/// (assertion operands, synthetic helper bodies). Larger texts and entries past
+/// the cap are parsed transiently, so a repo-scale scan cannot grow the memo
+/// with every distinct test body.
+const FRAGMENT_MEMO_MAX_TEXT_BYTES: usize = 2048;
+const FRAGMENT_MEMO_MAX_ENTRIES: usize = 4096;
+
 #[derive(Default)]
 pub(crate) struct SourceSyntaxMemos {
     files: Mutex<BTreeMap<PathBuf, SnapshotSlot>>,
@@ -70,13 +77,18 @@ impl std::fmt::Debug for SourceSyntaxMemos {
 
 impl SourceSyntaxMemos {
     pub(crate) fn parse_fragment(&self, text: &str) -> Option<Parse<SourceFile>> {
+        if text.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES {
+            return parse_clean_source_file(text);
+        }
         match self.fragments.lock() {
             Ok(mut fragments) => {
                 if let Some(parse) = fragments.get(text) {
                     return parse.clone();
                 }
                 let parse = parse_clean_source_file(text);
-                fragments.insert(text.to_string(), parse.clone());
+                if fragments.len() < FRAGMENT_MEMO_MAX_ENTRIES {
+                    fragments.insert(text.to_string(), parse.clone());
+                }
                 parse
             }
             Err(_) => parse_clean_source_file(text),
@@ -488,6 +500,26 @@ mod tests {
             Ok(())
         })?;
         assert_eq!(memos.fragments.lock().map_err(|e| e.to_string())?.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn fragment_memo_is_bounded_by_entry_count_and_text_size() -> Result<(), String> {
+        let memos = SourceSyntaxMemos::default();
+        let large = format!("fn big() {{ {} }}", "let a = 1; ".repeat(300));
+        assert!(large.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES);
+        assert!(memos.parse_fragment(&large).is_some());
+        assert_eq!(memos.fragments.lock().map_err(|e| e.to_string())?.len(), 0);
+        for n in 0..FRAGMENT_MEMO_MAX_ENTRIES + 10 {
+            assert!(memos.parse_fragment(&format!("fn f{n}() {{}}")).is_some());
+        }
+        assert_eq!(
+            memos.fragments.lock().map_err(|e| e.to_string())?.len(),
+            FRAGMENT_MEMO_MAX_ENTRIES
+        );
+        // Past the cap a fragment still parses; an already-memoized one is shared.
+        assert!(memos.parse_fragment("fn past_the_cap() {}").is_some());
+        assert!(memos.parse_fragment("fn f0() {}").is_some());
         Ok(())
     }
 
