@@ -2670,16 +2670,37 @@ fn checks_helper() {
                 "#[test]\nfn t() { assert_eq!(f(\"é\"), 1); }\n",
             ),
         ];
+        let mut with_probe_shapes = 0;
         for (path, text) in sources {
-            let facts =
+            let mut facts =
                 crate::analysis::rust_index::summarize_file(PathBuf::from(path), text.to_string());
             assert!(!facts.functions.is_empty(), "{path} parsed no functions");
+            // Reach the branches the parser may leave unset: an owned
+            // (foreign allocation) body encodes inline, and the two
+            // probe-shape fields are skipped on the wire only when false or
+            // absent.
+            facts.functions[0].body = SourceText::owned("fn foreign() {}".to_string());
+            if let Some(shape) = facts.probe_shapes.first_mut() {
+                shape.value_consumed = true;
+                shape.source_lines = Some((1, 2));
+            }
+            let borrowed = serde_json::to_string(&facts)?;
+            assert!(borrowed.contains("\"fn foreign() {}\""), "{path}");
             assert_eq!(
-                serde_json::to_string(&facts)?,
+                borrowed,
                 serde_json::to_string(&FileFactsWire::from(&facts))?,
                 "{path}"
             );
+            if !facts.probe_shapes.is_empty() {
+                with_probe_shapes += 1;
+                assert!(borrowed.contains("\"value_consumed\":true"), "{path}");
+                assert!(borrowed.contains("\"source_lines\":[1,2]"), "{path}");
+            }
         }
+        assert!(
+            with_probe_shapes > 0,
+            "no source reached the probe-shape branches"
+        );
         Ok(())
     }
 
