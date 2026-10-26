@@ -318,6 +318,28 @@ fn a_table_and_a_call_chain_holding_a_literal_stay_unknown() -> Result<(), Strin
 }
 
 #[test]
+fn a_call_chain_holding_a_literal_stays_unknown_when_spaced_before_its_parentheses()
+-> Result<(), String> {
+    let test = two_row_table_then(
+        "    assert_eq!(initial(&std::env::var (\"WHO\").unwrap_or_default ()), 'B');\n",
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_in_one_test_and_a_call_chain_in_another_stay_unknown() -> Result<(), String> {
+    let mut test = table(&BOTH_SIDES[..2], ASSERT_ROW);
+    test.push_str(
+        "\n#[test]\nfn from_env() {\n    assert_eq!(initial(&std::env::var(\"WHO\").unwrap_or_default()), 'B');\n}\n",
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
 fn a_table_and_a_converted_literal_call_still_credit() -> Result<(), String> {
     let test = two_row_table_then("    assert_eq!(initial(&\"Bob\".to_string()), 'B');\n");
     let findings = guard_findings(NEW, &test)?;

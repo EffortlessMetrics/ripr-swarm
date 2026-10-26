@@ -1065,6 +1065,12 @@ fn admits_closed_form(
         if calls > 1 && !every_owner_call_reads_a_row(owner, test, index) {
             return false;
         }
+        // The cell reader takes a literal it finds inside a call chain as the
+        // argument (#10484), so a call that runs one is no row even when it
+        // is the test's only owner call.
+        if !every_owner_call_argument_is_plain(owner, test) {
+            return false;
+        }
     }
     // Every row must sit on a line that carries a strong assertion, so an
     // unasserted call (`let _ = initial("")`) is not an input row.
@@ -4541,7 +4547,13 @@ fn argument_text_calls_nothing(call_text: &str, owner_name: &str) -> bool {
     let Some(start) = masked.find(owner_name) else {
         return false;
     };
-    let mut arguments = masked[start + owner_name.len()..].replace("String::from(", "(");
+    // Rust allows whitespace before a call's parenthesis (`var ("WHO")`), so
+    // judge the text with it removed.
+    let mut arguments: String = masked[start + owner_name.len()..]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    arguments = arguments.replace("String::from(", "(");
     for conversion in [".to_string()", ".to_owned()", ".into()"] {
         arguments = arguments.replace(conversion, "");
     }
@@ -4556,6 +4568,14 @@ fn argument_text_calls_nothing(call_text: &str, owner_name: &str) -> bool {
     })
 }
 
+/// True when no owner call in `test` has an argument that runs a call of its
+/// own (see [`argument_text_calls_nothing`]).
+fn every_owner_call_argument_is_plain(owner: &FunctionSummary, test: &TestSummary) -> bool {
+    test.body_calls()
+        .filter(|call| call.name == owner.name)
+        .all(|call| argument_text_calls_nothing(&call.text, &owner.name))
+}
+
 /// True when each owner call in `test` yields at least one input row on its
 /// own, so a call whose argument ripr cannot read is never hidden behind the
 /// extra rows another call's table supplies.
@@ -4568,24 +4588,23 @@ fn every_owner_call_reads_a_row(
     test.body_calls()
         .filter(|call| call.name == owner.name)
         .all(|target| {
-            argument_text_calls_nothing(&target.text, &owner.name)
-                && !owner_call_parameter_values_where(
-                    &[test],
-                    &owner.name,
-                    is_free(owner),
-                    &parameters,
-                    |candidate_test, call| {
-                        std::ptr::eq(call, target)
-                            && super::call_identity::qualified_owner_calls_resolve(
-                                index,
-                                owner,
-                                candidate_test,
-                                &call.text,
-                            )
-                    },
-                    &ReceiverParameters::reading_text_cells(true),
-                )
-                .is_empty()
+            !owner_call_parameter_values_where(
+                &[test],
+                &owner.name,
+                is_free(owner),
+                &parameters,
+                |candidate_test, call| {
+                    std::ptr::eq(call, target)
+                        && super::call_identity::qualified_owner_calls_resolve(
+                            index,
+                            owner,
+                            candidate_test,
+                            &call.text,
+                        )
+                },
+                &ReceiverParameters::reading_text_cells(true),
+            )
+            .is_empty()
         })
 }
 
