@@ -24,15 +24,19 @@ fn context_assignments_are_singletons_even_when_values_agree() -> Result<(), Str
     );
     let problems = |text: &str| {
         let mut problems = Vec::new();
-        check_context(text, &options, 2, "control", &mut problems);
+        check_context(text, &options, 2, 1, "control", &mut problems);
         problems
     };
     assert!(problems(&valid).is_empty());
-    assert!(
-        problems(&format!("{valid}shards=4/4 verified\n"))
-            .iter()
-            .any(|why| why.contains("`shards` is reserved"))
-    );
+    for key in ["shards", "verified_attempts"] {
+        for text in [format!("{valid}{key}=1\n"), format!("{key}=1\n{valid}")] {
+            assert!(
+                problems(&text)
+                    .iter()
+                    .any(|why| why.contains(&format!("`{key}` is reserved")))
+            );
+        }
+    }
     // Value text may contain '=', while verbose version metadata uses ':' and
     // can repeat across tools. Neither changes scalar key cardinality.
     assert!(
@@ -248,5 +252,226 @@ fn expected_inputs_are_committed_blobs_not_dirty_files_or_consensus() -> Result<
     let missing = commit("missing workflow")?;
     refuses(&missing)?;
     fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn attempt_blobs() -> Vec<String> {
+    ['1', '2', '3', '4']
+        .map(|c| c.to_string().repeat(40))
+        .to_vec()
+}
+
+fn attempt_options(root: &Path, attempt: u32) -> Options {
+    Options {
+        dir: root.join("in"),
+        artifact: "integration".to_string(),
+        attempt: attempt.to_string(),
+        repository: "o/r".to_string(),
+        sha: "a".repeat(40),
+        run_id: "7".to_string(),
+        shards: 2,
+        out: root.join("out"),
+    }
+}
+
+fn put_attempt(root: &Path, shard: u32, attempt: u32) -> Result<PathBuf, String> {
+    let dir = root
+        .join("in")
+        .join(format!("integration-nextest-shard-{shard}-{attempt}"));
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let put =
+        |name: &str, text: String| fs::write(dir.join(name), text).map_err(|err| err.to_string());
+    put(&format!("shard-{shard}.status"), "0\n".to_string())?;
+    put(&format!("list-{shard}.txt"), format!("b{shard} case\n"))?;
+    put(
+        "junit.xml",
+        format!(
+            "<testsuites tests='1'><!-- <testsuite decoy> --><testsuite tests='1'><testcase classname='b{shard}' name='case'/><system-out><![CDATA[<testsuite retained>]]></system-out></testsuite></testsuites>"
+        ),
+    )?;
+    put(
+        "run-context.txt",
+        format!(
+            "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/2\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/2\ncargo-nextest 0.9\nrustc 1.95\ncargo 1.95\n{INPUT_HEADER}\n{}\nnextest_exit=0\n",
+            "a".repeat(40),
+            attempt_blobs().join("\n")
+        ),
+    )?;
+    if shard == 1 {
+        put("list-all.txt", "b1 case\nb2 case\n".to_string())?;
+    }
+    Ok(dir)
+}
+
+#[test]
+fn attempt_selection_preserves_xml_hashes_and_honest_disclosure() -> Result<(), String> {
+    for (label, verifying, selected, disclosure) in [
+        ("mixed", 2, [1, 2], Some("1,2")),
+        ("all-reused", 2, [1, 1], Some("1")),
+        ("fresh", 2, [2, 2], None),
+        ("selected-full-list", 3, [2, 3], Some("2,3")),
+    ] {
+        let root = crate::tests::temp_dir(&format!("receipt-integration-{label}"));
+        for shard in 1..=2 {
+            let old = put_attempt(&root, shard, 1)?;
+            if selected[(shard - 1) as usize] > 1 {
+                fs::write(old.join(format!("shard-{shard}.status")), "1\n")
+                    .map_err(|err| err.to_string())?;
+                if shard == 1 {
+                    fs::write(old.join("list-all.txt"), "poisoned old workspace\n")
+                        .map_err(|err| err.to_string())?;
+                }
+            }
+            put_attempt(&root, shard, selected[(shard - 1) as usize])?;
+        }
+        let outcome = verify(&attempt_options(&root, verifying), Ok(attempt_blobs()));
+        assert!(
+            outcome.problems.is_empty(),
+            "{label}: {:?}",
+            outcome.problems
+        );
+        assert!(
+            outcome
+                .context
+                .lines()
+                .any(|line| line == format!("run_attempt={verifying}"))
+        );
+        let got: Vec<&str> = outcome
+            .context
+            .lines()
+            .filter_map(|line| line.strip_prefix("verified_attempts="))
+            .collect();
+        assert_eq!(got, disclosure.into_iter().collect::<Vec<_>>(), "{label}");
+        for (index, attempt) in selected.iter().enumerate() {
+            assert!(
+                outcome.summary.contains(&format!(
+                    "shard {}: listed 1, junit tests 1 (attempt {attempt})",
+                    index + 1
+                )),
+                "{}",
+                outcome.summary
+            );
+        }
+        assert_eq!(parse_junit(&outcome.junit)?.identities.len(), 2);
+        assert_eq!(
+            outcome
+                .junit
+                .matches("<![CDATA[<testsuite retained>]]>")
+                .count(),
+            2
+        );
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_latest_attempt_never_falls_back_to_older_green_evidence() -> Result<(), String> {
+    for label in [
+        "red",
+        "missing-status",
+        "wrong-attempt",
+        "wrong-checkout",
+        "wrong-run",
+        "duplicate",
+        "wrong-blob",
+        "malformed-xml",
+        "tool-mismatch",
+        "wrong-list",
+    ] {
+        let root = crate::tests::temp_dir(&format!("receipt-latest-{label}"));
+        put_attempt(&root, 1, 1)?;
+        put_attempt(&root, 2, 1)?;
+        let latest = put_attempt(&root, 2, 2)?;
+        let context = latest.join("run-context.txt");
+        let text = fs::read_to_string(&context).map_err(|err| err.to_string())?;
+        match label {
+            "red" => fs::write(latest.join("shard-2.status"), "1\n"),
+            "missing-status" => fs::remove_file(latest.join("shard-2.status")),
+            "wrong-attempt" => fs::write(&context, text.replace("run_attempt=2", "run_attempt=1")),
+            "wrong-checkout" => fs::write(
+                &context,
+                text.replace(
+                    &format!("checkout_sha={}", "a".repeat(40)),
+                    &format!("checkout_sha={}", "b".repeat(40)),
+                ),
+            ),
+            "wrong-run" => fs::write(&context, text.replace("run_id=7", "run_id=8")),
+            "duplicate" => fs::write(&context, format!("checkout_sha=wrong\n{text}")),
+            "wrong-blob" => fs::write(&context, text.replace(&attempt_blobs()[0], &"f".repeat(40))),
+            "malformed-xml" => fs::write(latest.join("junit.xml"), "<testsuites>broken"),
+            "tool-mismatch" => fs::write(&context, text.replace("rustc 1.95", "rustc different")),
+            "wrong-list" => fs::write(latest.join("list-2.txt"), "forged subject\n"),
+            _ => return Err(format!("unknown fixture variant: {label}")),
+        }
+        .map_err(|err| err.to_string())?;
+        let outcome = verify(&attempt_options(&root, 2), Ok(attempt_blobs()));
+        assert!(
+            !outcome.problems.is_empty(),
+            "{label} fell back to old green evidence"
+        );
+        assert!(
+            outcome.summary.contains("attempt 2"),
+            "{label}: {}",
+            outcome.summary
+        );
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn aggregate_attempt_disclosure_cannot_come_from_source_shards() -> Result<(), String> {
+    for selected in [[1, 1], [1, 2], [2, 2]] {
+        let root = crate::tests::temp_dir("receipt-reserved-attempts");
+        for (index, attempt) in selected.iter().enumerate() {
+            let dir = put_attempt(&root, index as u32 + 1, *attempt)?;
+            let path = dir.join("run-context.txt");
+            let text = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+            fs::write(
+                path,
+                text.replace(
+                    INPUT_HEADER,
+                    &format!("verified_attempts=99\n{INPUT_HEADER}"),
+                ),
+            )
+            .map_err(|err| err.to_string())?;
+        }
+        let outcome = verify(&attempt_options(&root, 2), Ok(attempt_blobs()));
+        for shard in 1..=2 {
+            assert!(
+                outcome.problems.iter().any(|why| why.contains(&format!(
+                    "shard {shard}: run-context key `verified_attempts` is reserved"
+                ))),
+                "{:?}",
+                outcome.problems
+            );
+        }
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn future_zero_and_non_attempt_artifacts_are_not_selected() -> Result<(), String> {
+    let root = crate::tests::temp_dir("receipt-ignored-attempts");
+    put_attempt(&root, 1, 1)?;
+    put_attempt(&root, 2, 1)?;
+    for suffix in ["3", "0", "not-an-attempt"] {
+        fs::create_dir_all(
+            root.join("in")
+                .join(format!("integration-nextest-shard-2-{suffix}")),
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    let outcome = verify(&attempt_options(&root, 2), Ok(attempt_blobs()));
+    assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+    assert!(
+        outcome
+            .context
+            .lines()
+            .any(|line| line == "verified_attempts=1")
+    );
+    fs::remove_dir_all(root).map_err(|err| err.to_string())?;
     Ok(())
 }

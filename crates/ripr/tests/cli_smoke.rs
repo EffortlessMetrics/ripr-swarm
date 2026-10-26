@@ -27,6 +27,8 @@ mod candidate_config_recovery;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
+#[path = "cli_smoke/cli_value_contracts.rs"]
+mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
 mod closed_stderr;
 #[path = "common/mod.rs"]
@@ -7903,6 +7905,134 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
     assert!(agent_brief_json.contains(seam_id));
 
     std::fs::remove_dir_all(out_dir)?;
+    Ok(())
+}
+
+/// #10537: an unknown `--seam-id` on `agent start` is a typed refusal (exit
+/// 3), like `agent card`, `agent stub` and `agent packet`. The controls pin
+/// that the mapping is cause-specific: the known seam still succeeds and an
+/// unusable root still exits 2.
+#[test]
+fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
+-> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = unique_temp_workspace("agent-start-unknown-seam");
+    let out = out_dir
+        .to_str()
+        .ok_or("workflow output path should be utf-8")?;
+
+    let unknown = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "no-such-seam",
+        "--out",
+        out,
+    ])?;
+    assert_eq!(
+        unknown.status.code(),
+        Some(3),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+    assert!(unknown.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("agent start seam_id no-such-seam was not found"),
+        "{stderr}"
+    );
+    assert!(!out_dir.join("workflow.json").exists());
+
+    // Control: the known seam still succeeds on the same root.
+    let known = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_success(&known);
+
+    // Control: an operational failure (missing root) stays exit 2.
+    let missing_root = out_dir.join("does-not-exist");
+    let missing_root = missing_root.to_str().ok_or("path should be utf-8")?;
+    let failed = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        missing_root,
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_eq!(failed.status.code(), Some(2));
+
+    std::fs::remove_dir_all(out_dir)?;
+    Ok(())
+}
+
+/// #10537 review: a KNOWN seam withheld by agent policy is not an unknown
+/// seam. `agent start` keeps the plain failure (exit 2), as `agent packet`
+/// does for the same case; only an id absent from the inventory exits 3.
+#[test]
+fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, diff) = agent_brief_sample_workspace("agent-start-config-hidden")?;
+    let root_path = root.display().to_string();
+    let diff = diff.display().to_string();
+    let brief = run_ripr(&[
+        "agent", "brief", "--root", &root_path, "--diff", &diff, "--json",
+    ]);
+    assert_success(&brief);
+    let seam_id = json_string_field(&String::from_utf8_lossy(&brief.stdout), "seam_id")
+        .ok_or("expected brief output to include a seam_id")?;
+
+    // Control: before the policy hides it, the seam starts successfully.
+    let visible = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        &seam_id,
+    ]);
+    assert_success(&visible);
+
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )?;
+    let hidden = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        &seam_id,
+    ]);
+    assert_eq!(
+        hidden.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&hidden.stderr)
+    );
+    assert!(String::from_utf8_lossy(&hidden.stderr).contains("hidden by config"));
+
+    // Discriminator: a truly absent id under the same config exits 3.
+    let absent = run_ripr(&[
+        "agent",
+        "start",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "no-such-seam",
+    ]);
+    assert_eq!(absent.status.code(), Some(3));
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -26596,6 +26726,73 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
         "--json",
     ]);
     assert_success(&default);
+
+    // A path-equivalent spelling names exactly the accepted directory; only
+    // genuinely different directories stay refused (#10542).
+    let dotted = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "./target/ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&dotted);
+    let trailing_slash = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/workflow/",
+        "--json",
+    ]);
+    assert_success(&trailing_slash);
+    // A `..` that pops only real directories is still genuine equivalence.
+    let parent_pop = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/../ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&parent_pop);
+
+    // #10624 review: a symlink before `..` resolves differently on the
+    // filesystem than lexically (`alias/..` lands in the symlink target's
+    // parent), so the spelling must stay refused instead of silently
+    // reading the default directory. Unix only: symlink creation needs
+    // elevation on Windows and the production guard is Unix-only too.
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(root.join("other"))
+            .map_err(|err| format!("create other: {err}"))?;
+        std::fs::create_dir_all(root.join("target/ripr"))
+            .map_err(|err| format!("create target/ripr: {err}"))?;
+        std::os::unix::fs::symlink(root.join("other"), root.join("target/ripr/alias"))
+            .map_err(|err| format!("create alias symlink: {err}"))?;
+        let trick = run_ripr(&[
+            "agent",
+            "status",
+            "--root",
+            &root_str,
+            "--out",
+            "target/ripr/alias/../workflow",
+            "--json",
+        ]);
+        if trick.status.success() {
+            return Err(
+                "agent status --out with a symlink before `..` must fail closed".to_string(),
+            );
+        }
+        let stderr = String::from_utf8_lossy(&trick.stderr);
+        if !stderr.contains("is not supported") {
+            return Err(format!("expected a named --out refusal; got:\n{stderr}"));
+        }
+    }
 
     ignore_remove_dir_all(&root);
     Ok(())

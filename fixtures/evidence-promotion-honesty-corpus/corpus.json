@@ -5,6 +5,246 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_wrapper_macro_bang_bidi_whitespace_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_macro_bang_bidi_whitespace",
+      "vector": "rust_lexer_whitespace_after_macro_bang_hides_early_returning_invocation",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_macro_bang_bidi_whitespace_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_macro_bang_bidi_whitespace",
+      "vector": "rust_lexer_whitespace_after_macro_bang_hides_early_returning_invocation",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_unicode_macro_suffix_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_unicode_macro_suffix",
+      "vector": "non_ascii_user_macro_name_ends_in_a_standard_macro_name",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_unicode_macro_suffix_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_unicode_macro_suffix",
+      "vector": "non_ascii_user_macro_name_ends_in_a_standard_macro_name",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_crate_alias_logging_macro_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_crate_alias_logging_macro",
+      "vector": "crate_alias_routes_qualified_logging_path_to_early_returning_user_macro",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_crate_alias_logging_macro_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_crate_alias_logging_macro",
+      "vector": "crate_alias_routes_qualified_logging_path_to_early_returning_user_macro",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_closure_shadowed_callee_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_closure_shadowed_callee",
+      "vector": "wrapper_calls_a_local_closure_that_shadows_the_private_helper",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_closure_shadowed_callee_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_closure_shadowed_callee",
+      "vector": "wrapper_calls_a_local_closure_that_shadows_the_private_helper",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_user_macro_guard_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_user_macro_guard",
+      "vector": "wrapper_runs_crate_local_logging_named_macro_that_returns_early",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_user_macro_guard_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_user_macro_guard",
+      "vector": "wrapper_runs_crate_local_logging_named_macro_that_returns_early",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_wrapper_boolean_return_discarded",
       "language": "rust",
       "tier": "pure",
@@ -795,6 +1035,35 @@
           "type": "expected_oracle",
           "kind": "exact_value",
           "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "typescript_namespace_pick_never_renames_an_inactive_member",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_namespace_inactive_pick",
+      "vector": "skipped_runner_member_renamed_off_a_require_namespace_cannot_register",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
         }
       ]
     },
@@ -13703,6 +13972,484 @@
           "type": "expected_class",
           "class": "propagation_unknown"
         }
+      ]
+    },
+    {
+      "id": "python_table_bool_key_get_fallback",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_bool_key_get_fallback",
+      "vector": "unsupported_bool_key_is_unknown_not_a_missing_key_in_get_fallback",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_missing_key_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_missing_key_credit",
+      "vector": "missing_integer_key_reads_the_changed_get_fallback",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_parenthesized_foreign_store",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_parenthesized_foreign_store",
+      "vector": "parenthesized_dict_binding_is_watched_for_foreign_stores",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_parenthesized_store_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_parenthesized_store_removed",
+      "vector": "parenthesized_dict_without_a_foreign_store_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_scalar_get_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_scalar_get_receiver",
+      "vector": "get_on_a_non_table_receiver_is_unknown_not_the_default",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_subscript_method_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_subscript_method_call",
+      "vector": "method_call_on_a_subscripted_table_value_is_a_possible_write",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_effect_order_guarded_before_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_effect_order_guarded_before_call",
+      "vector": "field_observer_before_owner_call_on_same_physical_line",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "python_effect_order_module_before_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_effect_order_module_before_call",
+      "vector": "field_observer_before_owner_call_on_same_physical_line",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_direct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_direct",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_shadowed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_shadowed",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_primitive_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_primitive_shadow",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_method_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_method_shadow",
+      "vector": "extension_trait_intercepts_pin_as_mut_before_owner_poll",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_associated_macro",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_associated_macro",
+      "vector": "hidden_associated_method_and_counterfeit_standard_import_root",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_counterfeit_import_root",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_counterfeit_import_root",
+      "vector": "hidden_associated_method_and_counterfeit_standard_import_root",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "python_table_continued_foreign_store",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_continued_foreign_store",
+      "vector": "dict_after_a_semicolon_continuation_is_watched_for_foreign_stores",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_continued_store_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_continued_store_removed",
+      "vector": "continued_dict_without_a_foreign_store_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_reexport_reflection",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reexport_reflection",
+      "vector": "reflective_store_through_a_reexported_module_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reexport_no_reflection",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reexport_no_reflection",
+      "vector": "reexported_table_without_reflection_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_code_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_code_replacement",
+      "vector": "reader_code_replacement_withholds_table_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_code_replacement_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_code_replacement_removed",
+      "vector": "reader_without_code_replacement_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_scalar_code_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_scalar_code_replacement",
+      "vector": "scalar_reader_code_replacement_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_scalar_code_replacement_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_scalar_code_replacement_removed",
+      "vector": "scalar_reader_without_code_replacement_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_call_chain_literal_input_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_call_chain_literal_input",
+      "vector": "literal_inside_helper_call_read_as_owner_input_row",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "python_table_reflection_unconnected",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_unconnected",
+      "vector": "reflection_outside_the_tables_import_component_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_helper_argument",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_helper_argument",
+      "vector": "reflective_helper_connected_through_a_test_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_dynamic_import",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_dynamic_import",
+      "vector": "reflective_dynamic_import_makes_reach_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_multiline_import",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_multiline_import",
+      "vector": "parenthesized_import_continuation_links_the_reexported_module",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_exec",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_exec",
+      "vector": "evaluated_code_makes_reach_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_import_delimiters",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_import_delimiters",
+      "vector": "brackets_in_strings_do_not_end_an_import_statement",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     }
   ]

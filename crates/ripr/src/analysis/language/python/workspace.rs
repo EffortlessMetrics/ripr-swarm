@@ -35,21 +35,24 @@ pub(super) fn owner_for_changed_line<'a>(
 /// declarations (#7386): directories are still pruned at the excluded-name
 /// boundary, except an ancestor of a declared hand-written file, which stays
 /// reachable so the declared file is read and indexed.
+#[cfg(test)]
 pub(super) fn collect_workspace_python_files_with_handwritten(
     root: &Path,
     handwritten: &[String],
 ) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    visit_workspace_with_handwritten(root, root, handwritten, &mut out);
+    visit_workspace_with_handwritten(root, root, handwritten, &mut |file| out.push(file));
     out.sort();
     out
 }
 
+/// Streams each admitted file to `sink` in directory order, so a caller
+/// that bounds what it keeps never holds the whole walk (#10594).
 pub(super) fn visit_workspace_with_handwritten(
     root: &Path,
     dir: &Path,
     handwritten: &[String],
-    out: &mut Vec<PathBuf>,
+    sink: &mut dyn FnMut(PathBuf),
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -76,7 +79,7 @@ pub(super) fn visit_workspace_with_handwritten(
             Err(_) => continue,
         };
         if file_type.is_dir() {
-            visit_workspace_with_handwritten(root, &path, handwritten, out);
+            visit_workspace_with_handwritten(root, &path, handwritten, sink);
         } else if file_type.is_file() {
             let adapter = PythonAdapter;
             if adapter.accepts_path(&path)
@@ -84,7 +87,7 @@ pub(super) fn visit_workspace_with_handwritten(
                 && (!crate::config::is_detectable_excluded_python_path(&relative)
                     || crate::config::is_declared_handwritten_python_path(handwritten, &relative))
             {
-                out.push(relative);
+                sink(relative);
             }
         }
     }

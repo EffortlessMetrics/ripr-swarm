@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 27: src/geometry.py imports os, the changed line `pos.x + 2` does not use it, and test_shift asserts 3 exactly, so the edit fails. ripr reports static_unknown with missing_import_graph (limited, acceptable); the spec removes the limit, which would credit exposed.",
+  "reasoning": "RIPR-SPEC-0238 example 27: src/geometry.py imports os, the changed line `pos.x + 2` does not use it, and test_shift asserts 3 exactly, so the edit fails. ripr credits it exposed because the import is matched as a whole name.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "limited",

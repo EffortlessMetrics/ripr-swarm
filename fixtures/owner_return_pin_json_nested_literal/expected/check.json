@@ -41,32 +41,21 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses strong whole object equality oracle: assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(()));", "source function argument value _params = \"text\" at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses strong whole object equality oracle: assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(()));"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks"],
       "missing": ["No exact error variant discriminator was detected"],
       "assertion_texts": {
-        "4": "fn checks() { assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(())); }"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 4,
-            "value": "_params = \"text\"",
-            "context": "function_argument"
-          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
-        {
-          "line": 4,
-          "value": "_params = \"text\"",
-          "context": "function_argument"
-        }
       ],
       "missing_discriminators": [
       ],
@@ -125,32 +114,21 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:4 checks uses strong whole object equality oracle: assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(()));", "source function argument value _params = \"text\" at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:4 checks uses strong whole object equality oracle: assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(()));"],
       "flow_sinks": [
         {"kind":"return_value","text":"Ok(())","line":5}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: Ok(())", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
-        "4": "fn checks() { assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(())); }"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 4,
-            "value": "_params = \"text\"",
-            "context": "function_argument"
-          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
-        {
-          "line": 4,
-          "value": "_params = \"text\"",
-          "context": "function_argument"
-        }
       ],
       "missing_discriminators": [
       ],
@@ -209,32 +187,21 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses strong whole object equality oracle: assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(()));", "source function argument value _params = \"text\" at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses strong whole object equality oracle: assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(()));"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
-        "4": "fn checks() { assert_eq!(did_save_params(METHOD, &json!({\"text\":null})), Ok(())); }"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 4,
-            "value": "_params = \"text\"",
-            "context": "function_argument"
-          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
-        {
-          "line": 4,
-          "value": "_params = \"text\"",
-          "context": "function_argument"
-        }
       ],
       "missing_discriminators": [
       ],
