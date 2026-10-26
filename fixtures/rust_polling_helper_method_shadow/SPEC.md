@@ -2,6 +2,23 @@
 
 Spec: RIPR-SPEC-0197
 
-The owner changes by an equivalent arithmetic rewrite. A visible trait's immutable `as_mut` receiver intercepts the canonical helper before its owner poll. Exactly one return-value finding must remain `static_unknown`; the honesty corpus forbids promotion independently of goldens.
+## Given
 
-The matched native control compiles correct and wrong owner variants, lists exactly one declared test, and observes that the subject starts and the interception marker appears. Both processes exit zero before a terminal libtest result: there is zero completed-test evidence. The genuine helper control separately completes one test and rejects the wrong return. Compilation, process exit, subject completion, and static classification are distinct evidence.
+The async owner's return changes from `p + p / 10` to `p / 10 + p`, an equivalent arithmetic rewrite. A visible extension trait intercepts the helper through an immutable as_mut receiver before the standard mutable receiver.
+
+## When
+
+`cargo xtask fixtures rust_polling_helper_method_shadow` runs the public analyzer and compares JSON and human output. The independent evidence-promotion honesty corpus pins the literal expected class. The matched `owner_pin_execution::polling_helper` controls separately compile correct and deliberately wrong owner variants from these exact sources.
+
+## Then
+
+Exactly one `return_value` finding on line 2 reads `static_unknown`. JSON and full human output agree. Existing unresolved-executor rules may choose their named limitation before one another; bound-expectation controls separately isolate the indirect-owner refusal.
+
+Correct and wrong owner variants each declare and start one test, print the interception marker, then exit zero without a terminal libtest result. There is zero completed-test evidence.
+
+## Must Not
+
+- Promote an unresolved helper, primitive, import root, method, or macro expansion.
+- Treat compilation failure, an empty subject inventory, or zero process exit before test completion as a passing discriminator.
+- Compute the expected classification from the analyzer decision being tested.
+- Claim generalized async execution or acceptance of other #9478 shapes.
