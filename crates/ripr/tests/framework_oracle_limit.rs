@@ -1158,6 +1158,39 @@ fn fixture_receiver_unread_old_pipeline_supplies_no_pin() -> Result<(), String> 
 }
 
 #[test]
+fn fixture_receiver_cfg_rows_do_not_supply_literal_data() -> Result<(), String> {
+    let source =
+        include_str!("../../../fixtures/fixture_receiver_unread_data/input/src/cfg_rows.rs");
+    let edit = diff(
+        4,
+        "        self.items.iter().map(|(value, _)| value).sum()",
+        "        self.items.iter().map(|(_, value)| value).sum()",
+    );
+    withheld(source, &edit, 4, "cfg removes the separating row")?;
+    let empty = source
+        .replace(", (7, 7)", "")
+        .replace("cfg_total(), 7", "cfg_total(), 0");
+    withheld(&empty, &edit, 4, "cfg removes every row")
+}
+
+#[test]
+fn fixture_receiver_raw_rival_method_does_not_pin_the_owner() -> Result<(), String> {
+    let source =
+        include_str!("../../../fixtures/fixture_receiver_unread_data/input/src/raw_owner.rs");
+    let edit = diff(
+        4,
+        "        self.items.iter().map(|(value, _)| value).sum()",
+        "        self.items.iter().map(|(_, value)| value).sum()",
+    );
+    withheld(
+        source,
+        &edit,
+        4,
+        "raw by-value method wins receiver dispatch",
+    )
+}
+
+#[test]
 fn fixture_receiver_equivalent_binding_edits_keep_degenerate_literals() -> Result<(), String> {
     let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
     for (values, expected) in [

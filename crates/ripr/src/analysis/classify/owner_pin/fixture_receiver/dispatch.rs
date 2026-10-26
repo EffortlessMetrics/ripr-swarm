@@ -2,7 +2,7 @@
 //! This gate deliberately withholds unread imports and macro-supplied methods;
 //! it does not attempt general Rust method resolution.
 
-use crate::analysis::classify::owner_pin::item_nesting_with_impl;
+use crate::analysis::classify::owner_pin::indexed_item_nesting;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -21,6 +21,18 @@ impl FixtureDispatch {
     pub(super) fn establish(owner: &FunctionSummary, index: &RustIndex) -> Option<Self> {
         if !owner.attrs.is_empty()
             || !owner.impl_attrs.is_empty()
+            // A by-value trait method can win over the inherent &self owner.
+            // Raw spelling does not make it a different dispatch target.
+            || index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    function.item.has_self_param
+                        && normal_name(&function.name) == normal_name(&owner.name)
+                })
+                .take(2)
+                .count()
+                != 1
             || index.functions().iter().any(|function| {
                 function.item.has_self_param
                     && matches!(
@@ -35,7 +47,7 @@ impl FixtureDispatch {
             return None;
         }
         let facts = index.files().get(&owner.file)?;
-        let owner_modules = closed_scope(owner, &facts.source, None)?;
+        let owner_modules = closed_scope(owner, &facts.source, None, index)?;
         Some(Self {
             file: owner.file.clone(),
             owner_modules,
@@ -49,7 +61,7 @@ impl FixtureDispatch {
         let Some(facts) = index.files().get(&helper.file) else {
             return false;
         };
-        closed_scope(helper, &facts.source, Some(&self.owner_modules)).is_some()
+        closed_scope(helper, &facts.source, Some(&self.owner_modules), index).is_some()
     }
 }
 
@@ -62,8 +74,15 @@ fn closed_scope(
     function: &FunctionSummary,
     source: &str,
     safe_super: Option<&[String]>,
+    index: &RustIndex,
 ) -> Option<Vec<String>> {
-    let scope = item_nesting_with_impl(source, &function.name, function.start_line, true)?;
+    let scope = indexed_item_nesting(
+        index,
+        &function.file,
+        &function.name,
+        function.start_line,
+        true,
+    )?;
     let parse = parse_clean_source_file(source)?;
     let unread = parse.tree().syntax().descendants().any(|node| {
         let is_use = ast::Use::can_cast(node.kind());

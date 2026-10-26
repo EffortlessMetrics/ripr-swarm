@@ -219,8 +219,10 @@ impl FixtureReceiver {
             return None;
         }
         let source = &index.files().get(&test.file)?.source;
-        if super::item_nesting(source, &helper.name, helper.start_line)?.modules
-            != super::item_nesting(source, &test.name, test.start_line)?.modules
+        if super::indexed_item_nesting(index, &helper.file, &helper.name, helper.start_line, false)?
+            .modules
+            != super::indexed_item_nesting(index, &test.file, &test.name, test.start_line, false)?
+                .modules
             || super::file_renames_to(source, &helper_name)
         {
             return None;
@@ -266,7 +268,14 @@ impl FixtureReceiver {
         let ast::Expr::ArrayExpr(elements) = expression(&tokens)? else {
             return None;
         };
-        if elements.semicolon_token().is_some() {
+        // Attributes inside vec!'s token tree can remove a tuple or field.
+        // Source literals then do not describe the constructed receiver data.
+        if elements.semicolon_token().is_some()
+            || elements
+                .syntax()
+                .descendants()
+                .any(|node| ast::Attr::can_cast(node.kind()))
+        {
             return None;
         }
         let mut count = 0;

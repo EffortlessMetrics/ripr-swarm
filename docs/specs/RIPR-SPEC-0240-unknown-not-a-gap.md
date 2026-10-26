@@ -420,7 +420,9 @@ non-ignored related test matches one of these shapes:
   projected component is `u32`. A unique, unattributed zero-argument helper
   in the test's own file and module returns only that record literal, with a
   nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
-  Each numeric component must be literal. The paired old expression must also
+  Each numeric component must be literal. Attributes anywhere inside the
+  vector data withhold credit: a cfg-pruned tuple cannot supply a live row or
+  separate projected sums. The paired old expression must also
   be the same-field, same-arity `iter().map(tuple projection).sum()` pipeline,
   with a projected `u32` column. Unknown or other old pipelines (including
   product-to-sum changes) supply no new credit. Equal projected positions are
@@ -431,7 +433,9 @@ non-ignored related test matches one of these shapes:
   must differ. Equal aggregate totals (including cross-row cancellation) or
   overflow withhold the pin. This is an edit-specific activation check, not
   evaluation of arbitrary helpers or hypothetical alternative reductions.
-  Pipeline dispatch also fails closed
+  The indexed receiver method matching the owner must be unique after raw-name
+  normalization; a competing by-value trait method can win dispatch over the
+  inherent borrowed owner even when spelled with `r#`. Pipeline dispatch also fails closed
   for indexed receiver methods named `iter`, `map`, `sum` or `to_string`, an indexed
   `no_implicit_prelude` declaration, or imports, extern crates and item macro
   invocations (including trait/impl associated items) in the owner module
