@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The spec's own edit on the corpus pin: src/parse.rs:272 in op() changed from Some(&b'=') to Some(&b'>'), so '>=' no longer parses as GreaterEq and req(\">= 1.0.0\") fails; test_greater_than, test_parse, test_multiple, test_digit_after_wildcard and test_leading_digit_in_pre_and_build fail. Distinct from semver-op-greater-eq, which is a behavior-preserving operand swap on the same line carrying the equivalent mutant; this case puts the behavior change itself in the diff. ripr reports static_unknown on both findings (helper_chain_uniqueness: `comparator` is not unique) and lists no related test, an acceptable abstention; it does not reproduce the spec's listed test_comparator_parse miss. Spec cells: RIPR-SPEC-0224 example 1.",
+  "reasoning": "The spec's own edit on the corpus pin: src/parse.rs:272 in op() changed from Some(&b'=') to Some(&b'>'), so '>=' no longer parses as GreaterEq and req(\">= 1.0.0\") fails; test_greater_than, test_parse, test_multiple, test_digit_after_wildcard and test_leading_digit_in_pre_and_build fail. Distinct from semver-op-greater-eq, which is a behavior-preserving operand swap on the same line carrying the equivalent mutant; this case puts the behavior change itself in the diff. ripr reports static_unknown on both findings (helper_chain_uniqueness: `comparator` is not unique) and lists no related test, an acceptable abstention; it does not reproduce the spec's listed test_comparator_parse miss. It covers no spec example; RIPR-SPEC-0224 example 1 is waived because no case yet produces its named miss.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b",
     "full_checkout_verdict": "limited",
@@ -41,8 +41,5 @@
       "static_unknown"
     ],
     "excerpt_parity": "matched"
-  },
-  "spec_examples": [
-    "RIPR-SPEC-0224#1"
-  ]
+  }
 }

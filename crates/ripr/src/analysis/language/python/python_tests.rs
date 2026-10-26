@@ -3736,6 +3736,27 @@ fn contains_dynamic_dispatch_detects_registry_indexed_call() {
 }
 
 #[test]
+fn contains_dynamic_dispatch_reads_getattr_as_a_bare_call_name() {
+    assert!(contains_dynamic_dispatch("    return getattr(x, 'a')"));
+    // A space before `(` is still a call (RIPR-SPEC-0238 example 33).
+    assert!(contains_dynamic_dispatch("    return getattr (x, 'a')"));
+    assert!(contains_dynamic_dispatch(
+        "    return builtins.getattr(x, 'a')"
+    ));
+    // Another identifier ending in `getattr` is not the builtin (example 28).
+    assert!(!contains_dynamic_dispatch("    return my_getattr(x)"));
+    assert!(!contains_dynamic_dispatch("    return getattr_default"));
+}
+
+#[test]
+fn contains_metaprogramming_reads_type_and_setattr_calls_with_a_space() {
+    assert!(contains_metaprogramming("    return type (x)"));
+    assert!(contains_metaprogramming("    setattr (o, 'a', 1)"));
+    assert!(!contains_metaprogramming("    return content_type(x)"));
+    assert!(!contains_metaprogramming("    return type_name(x)"));
+}
+
+#[test]
 fn contains_dynamic_import_detects_runtime_import_calls() {
     assert!(contains_dynamic_import(
         "    return importlib.import_module(module_name).handle(payload)"
@@ -4002,6 +4023,35 @@ fn line_uses_imported_symbol_matches_attribute_access_on_imported_alias() {
     ));
     // A bare identifier with no dot and no call form should not match.
     assert!(!line_uses_imported_symbol("    unrelated", &imports));
+}
+
+/// RIPR-SPEC-0238 rule 8: an imported name is read as a token. `pos.x` and
+/// `repos(` merely end in `os`; a real use, a use after an operator or
+/// bracket, and an f-string field still count.
+#[test]
+fn an_import_alias_is_matched_as_a_whole_name() {
+    let os = vec![PythonImport {
+        imported: "os".to_string(),
+        alias: "os".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    return pos.x + 2",
+        "    return repos(x)",
+        "    return other.os.getcwd()",
+        "    return cosmos.get(x)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &os), "{line}");
+    }
+    for line in [
+        "    return os.getcwd()",
+        "    return x + os.cpu_count()",
+        "    return (os.getcwd())",
+        "    return f\"{os.getcwd()}\"",
+        "    return os(x)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &os), "{line}");
+    }
 }
 
 /// `file=sys.stderr` on a `print` names a standard stream; any other `sys`
