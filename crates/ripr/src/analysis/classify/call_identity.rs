@@ -1168,7 +1168,6 @@ impl OwnerCallIdentity {
         // the owner's module; unresolved trait/import dispatch grants no reach.
         if tree.syntax().descendants().any(|node| {
             ast::Trait::can_cast(node.kind())
-                || ast::TraitAlias::can_cast(node.kind())
                 || ast::UseTree::cast(node).is_some_and(|item| item.rename().is_some())
         }) {
             return false;
