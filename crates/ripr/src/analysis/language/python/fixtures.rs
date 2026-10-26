@@ -10,12 +10,15 @@
 //! (`@pytest.fixture(name=...)`) is not recorded.
 
 use super::admission::PythonAssertionAdmission;
+use super::module_constants::mentions_identifier;
 use super::owners_tests::{decorator_names, test_imports};
 use super::related_tests::{import_source_module_matches_owner, test_body_binds_local};
 use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFixtureDef, PythonFramework, PythonImport, PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
-use rustpython_parser::ast::{Constant, Expr, Ranged, Stmt, UnaryOp};
+use rustpython_parser::ast::{Constant, Expr, Mod, Ranged, Stmt, UnaryOp};
+use rustpython_parser::text_size::TextRange;
+use rustpython_parser::{Mode, parse};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -68,6 +71,7 @@ pub(super) fn collect_fixture_defs(
                     imports: test_imports(file, module_imports, body),
                     literal_construction: None,
                     isolated: false,
+                    scope_imports: Vec::new(),
                 });
             }
             continue;
@@ -80,6 +84,7 @@ pub(super) fn collect_fixture_defs(
             imports: test_imports(file, module_imports, body),
             literal_construction: literal_construction(stmt, statements, source, &aliases),
             isolated: false,
+            scope_imports: Vec::new(),
         });
     }
     defs
@@ -339,7 +344,7 @@ fn module_binding_count(statements: &[Stmt], source: &str, name: &str) -> Option
                 }
             }
             other => {
-                if mentions_word(&text_for_range(source, other.range()), name) {
+                if mentions_identifier(&text_for_range(source, other.range()), name) {
                     bound.push(name.to_string());
                 }
             }
@@ -349,29 +354,38 @@ fn module_binding_count(statements: &[Stmt], source: &str, name: &str) -> Option
     Some(count)
 }
 
-/// Whether `text` spells `word` as a whole identifier (string contents
-/// included: `request.getfixturevalue("account")` names the fixture too).
-fn mentions_word(text: &str, word: &str) -> bool {
-    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    text.match_indices(word).any(|(start, _)| {
-        !text[..start].chars().next_back().is_some_and(is_ident)
-            && !text[start + word.len()..]
-                .chars()
-                .next()
-                .is_some_and(is_ident)
-    })
-}
-
 /// What a module can do to a fixture instance besides its recorded plain
-/// fixtures: the text of every other fixture-decorated def (renamed with
-/// `name=`, so not recorded) and of every `pytest_*` hook, and whether the
-/// module can bring in fixtures this walk cannot read (a star import or a
-/// `pytest_plugins` declaration).
+/// fixtures (#9619), read for the test's module and every `conftest.py` up
+/// its chain before a literal-construction fixture counts as isolated.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct FixtureSideEffects {
+    /// Text, decorators included, of every fixture-decorated def that is not
+    /// recorded as a plain fixture (a `name=` override) and of every
+    /// top-level compound statement; a fixture name it spells is reachable.
     pub(super) texts: Vec<String>,
+    /// Names the module binds at top level: an import or assignment of a
+    /// fixture name in a nearer conftest replaces the resolved fixture.
+    pub(super) bound: Vec<String>,
+    /// `from M import y` imports other than pytest's own: an imported name
+    /// may be a fixture (an autouse one included) that pytest registers.
+    pub(super) from_imports: Vec<PythonImport>,
+    /// The module can reach every fixture value without naming one, or bring
+    /// in fixtures this walk cannot read: a star import, `pytest_plugins`,
+    /// `pytestmark`, any `pytest_*` hook, a fixture that walks the request
+    /// (`getfixturevalue`, `fixturenames`, `funcargs`, `node`), a `global`
+    /// rebinding inside a def, or a module that only partly parsed.
     pub(super) opaque: bool,
 }
+
+/// Request and item attributes through which a fixture reaches other
+/// fixtures' values without spelling their names.
+const REQUEST_WALKS: [&str; 5] = [
+    "getfixturevalue",
+    "fixturenames",
+    "funcargs",
+    "node",
+    "_fixturemanager",
+];
 
 pub(super) fn collect_fixture_side_effects(
     source: &str,
@@ -379,69 +393,168 @@ pub(super) fn collect_fixture_side_effects(
     module_imports: &[PythonImport],
 ) -> FixtureSideEffects {
     let aliases = fixture_aliases(module_imports);
-    let mut side = FixtureSideEffects::default();
+    let mut side = FixtureSideEffects {
+        from_imports: module_imports
+            .iter()
+            .filter(|import| {
+                !import.source_module.is_empty()
+                    && !matches!(import.source_module.as_str(), "pytest" | "pytest_asyncio")
+            })
+            .cloned()
+            .collect(),
+        ..FixtureSideEffects::default()
+    };
     for stmt in statements {
-        let (name, decorators) = match stmt {
-            Stmt::FunctionDef(function) => (function.name.as_str(), &function.decorator_list),
-            Stmt::AsyncFunctionDef(function) => (function.name.as_str(), &function.decorator_list),
+        match stmt {
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {
+                let (name, decorators) = match stmt {
+                    Stmt::FunctionDef(function) => {
+                        (function.name.as_str(), &function.decorator_list)
+                    }
+                    Stmt::AsyncFunctionDef(function) => {
+                        (function.name.as_str(), &function.decorator_list)
+                    }
+                    Stmt::ClassDef(class) => (class.name.as_str(), &class.decorator_list),
+                    _ => continue,
+                };
+                side.bound.push(name.to_string());
+                // A def's range starts at `def`; its decorators come first.
+                let start = decorators
+                    .iter()
+                    .map(|decorator| decorator.range().start())
+                    .chain(std::iter::once(stmt.range().start()))
+                    .min()
+                    .unwrap_or_else(|| stmt.range().start());
+                let text = text_for_range(source, TextRange::new(start, stmt.range().end()));
+                let fixture_shaped = decorator_names(decorators)
+                    .iter()
+                    .any(|decorator| decorator.ends_with("fixture") || aliases.contains(decorator));
+                side.opaque |= name.starts_with("pytest_")
+                    || mentions_identifier(&text, "global")
+                    || (fixture_shaped
+                        && REQUEST_WALKS
+                            .iter()
+                            .any(|walk| mentions_identifier(&text, walk)));
+                if fixture_shaped && !is_plain_fixture(source, decorators, &aliases) {
+                    side.texts.push(text);
+                }
+            }
+            Stmt::Import(import) => {
+                for alias in &import.names {
+                    side.bound.push(alias.asname.as_ref().map_or_else(
+                        || alias.name.split('.').next().unwrap_or_default().to_string(),
+                        |local| local.to_string(),
+                    ));
+                }
+            }
             Stmt::ImportFrom(import) => {
-                side.opaque |= import.names.iter().any(|alias| alias.name.as_str() == "*");
-                continue;
+                for alias in &import.names {
+                    side.opaque |= alias.name.as_str() == "*";
+                    side.bound
+                        .push(alias.asname.as_ref().unwrap_or(&alias.name).to_string());
+                }
+            }
+            Stmt::Assign(_) | Stmt::AnnAssign(_) | Stmt::AugAssign(_) | Stmt::Expr(_) => {
+                match stmt {
+                    Stmt::Assign(assign) => {
+                        for target in &assign.targets {
+                            target_names(target, &mut side.bound);
+                        }
+                    }
+                    Stmt::AnnAssign(assign) => target_names(&assign.target, &mut side.bound),
+                    Stmt::AugAssign(assign) => target_names(&assign.target, &mut side.bound),
+                    _ => {}
+                }
+                let text = text_for_range(source, stmt.range());
+                side.opaque |= ["pytest_plugins", "pytestmark", "globals", "setattr"]
+                    .iter()
+                    .any(|name| mentions_identifier(&text, name));
             }
             other => {
-                side.opaque |=
-                    mentions_word(&text_for_range(source, other.range()), "pytest_plugins");
-                continue;
+                let text = text_for_range(source, other.range());
+                side.opaque |= ["pytest_plugins", "pytestmark", "global"]
+                    .iter()
+                    .any(|name| mentions_identifier(&text, name));
+                side.texts.push(text);
             }
-        };
-        let fixture_shaped = decorator_names(decorators)
-            .iter()
-            .any(|decorator| decorator.ends_with("fixture") || aliases.contains(decorator));
-        if (fixture_shaped && !is_plain_fixture(source, decorators, &aliases))
-            || name.starts_with("pytest_")
-        {
-            side.texts.push(text_for_range(source, stmt.range()));
         }
     }
     side
 }
 
+/// The side effects the workspace pass records for one parsed file: a file
+/// with parse limitations may hold fixtures this walk never saw.
+pub(super) fn side_effects_of(
+    facts: &super::source_facts::PythonSourceFacts,
+) -> FixtureSideEffects {
+    let mut side = facts.fixture_side_effects.clone();
+    side.opaque |= !facts.limitations.is_empty();
+    side
+}
+
 /// Mark each attached literal-construction fixture that nothing else visible
-/// to the test can reach (#9619): no other fixture or hook in the test's
-/// module or its `conftest.py` chain names it (an autouse fixture that takes
-/// `account` could deposit into it before the test runs), every chain
-/// conftest that exists was read, and none of those files is opaque. A
-/// third-party plugin fixture that requests the name is outside what a
-/// workspace read can see.
+/// to the test can reach (#9619), and record the `from` imports of its scope
+/// (the test's module and every `conftest.py` up its chain) for the owner
+/// check. A fixture is isolated when every chain conftest that exists was
+/// read, no scope file is opaque, no other fixture or statement in the scope
+/// spells its name (an autouse fixture that takes `account` could deposit
+/// into it first), and no scope file but its own binds the name (a nearer
+/// conftest's `from helpers import account` replaces it). A third-party
+/// plugin fixture outside the workspace is not visible to this read.
 pub(super) fn mark_isolated_fixture_defs(
     tests: &mut [PythonTest],
     defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
     side_by_file: &BTreeMap<PathBuf, FixtureSideEffects>,
     mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
 ) {
+    // Tests of one file share a scope, so the answer is per (file, fixture).
+    type Scope = (bool, Vec<(PathBuf, PythonImport)>);
+    let mut cache: BTreeMap<(PathBuf, PathBuf, String), Scope> = BTreeMap::new();
     for test in tests {
         let test_file = test.file.clone();
         for def in &mut test.fixture_defs {
             if def.literal_construction.is_none() {
                 continue;
             }
-            let (name, def_file, binding) =
-                (def.name.clone(), def.file.clone(), def.binding.clone());
-            let mut scope = std::iter::once(test_file.clone()).chain(conftest_chain(&test_file));
-            def.isolated = scope.all(|file| {
-                if file != test_file && is_unreadable_conftest(&file) {
-                    return false;
-                }
-                let side = side_by_file.get(&file);
-                !side.is_some_and(|side| {
-                    side.opaque || side.texts.iter().any(|text| mentions_word(text, &name))
-                }) && !defs_by_file.get(&file).is_some_and(|defs| {
-                    defs.iter().any(|other| {
-                        !(other.file == def_file && other.binding == binding)
-                            && mentions_word(&other.body_text, &name)
-                    })
+            let key = (test_file.clone(), def.file.clone(), def.binding.clone());
+            let (isolated, scope_imports) = cache
+                .entry(key)
+                .or_insert_with(|| {
+                    let mut scope_imports = Vec::new();
+                    let isolated = std::iter::once(test_file.clone())
+                        .chain(conftest_chain(&test_file))
+                        .all(|file| {
+                            if file != test_file && is_unreadable_conftest(&file) {
+                                return false;
+                            }
+                            if let Some(side) = side_by_file.get(&file) {
+                                scope_imports.extend(
+                                    side.from_imports
+                                        .iter()
+                                        .map(|import| (file.clone(), import.clone())),
+                                );
+                                if side.opaque
+                                    || side
+                                        .texts
+                                        .iter()
+                                        .any(|text| mentions_identifier(text, &def.name))
+                                    || (file != def.file && side.bound.contains(&def.name))
+                                {
+                                    return false;
+                                }
+                            }
+                            !defs_by_file.get(&file).is_some_and(|defs| {
+                                defs.iter().any(|other| {
+                                    !(other.file == def.file && other.binding == def.binding)
+                                        && mentions_identifier(&other.body_text, &def.name)
+                                })
+                            })
+                        });
+                    (isolated, scope_imports)
                 })
-            });
+                .clone();
+            def.isolated = isolated;
+            def.scope_imports = scope_imports;
         }
     }
 }
@@ -453,9 +566,10 @@ pub(super) fn mark_isolated_fixture_defs(
 /// body would give it, so the fixture hides no discriminator or expected
 /// value, and the fixture name is a receiver bound to the owner class.
 /// Shared by the `unresolved_pytest_fixture` limit and receiver identity
-/// (`related_tests.rs`). Module-level tests only (a class-level fixture override is not
-/// recorded), and the test must not rebind the parameter or have its module
-/// bind the name over a conftest fixture.
+/// (`related_tests.rs`). Module-level tests only (a class-level fixture
+/// override is not recorded), and the test must not rebind the parameter,
+/// carry a decorator other than a pytest mark, or have its module bind the
+/// name over a conftest fixture.
 pub(super) fn literal_owner_instance_fixture(
     test: &PythonTest,
     owner: &PythonOwner,
@@ -471,7 +585,10 @@ pub(super) fn literal_owner_instance_fixture(
     let Some((class, _)) = owner.qualified_name.rsplit_once('.') else {
         return false;
     };
-    if class.contains('.') || test_body_binds_local(test, fixture) {
+    if class.contains('.')
+        || test_body_binds_local(test, fixture)
+        || !injected_parameter(test, fixture)
+    {
         return false;
     }
     let Some(def) = test.fixture_defs.iter().find(|def| def.name == fixture) else {
@@ -483,13 +600,44 @@ pub(super) fn literal_owner_instance_fixture(
     {
         return false;
     }
+    // A test decorator other than a pytest mark may swap the argument.
     def.isolated
+        && test
+            .decorators
+            .iter()
+            .all(|decorator| decorator.starts_with("pytest.mark."))
         && def.literal_construction.as_deref() == Some(class)
         && def.imports.iter().any(|import| {
             import.imported == class
                 && import.alias == class
                 && import_source_module_matches_owner(import, owner, &def.file)
         })
+        // Any other imported name in the scope could be a fixture pytest
+        // registers; only the owner's own module is trusted not to be.
+        && def
+            .scope_imports
+            .iter()
+            .all(|(file, import)| import_source_module_matches_owner(import, owner, file))
+}
+
+/// Whether the test's signature takes `fixture` as a parameter pytest
+/// injects: a positional or keyword parameter without a default. pytest
+/// leaves `account=FakeAccount(100)` alone, so the default is what runs.
+fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
+    let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-signature>")
+    else {
+        return false;
+    };
+    let args = match module.body.first() {
+        Some(Stmt::FunctionDef(function)) => &function.args,
+        Some(Stmt::AsyncFunctionDef(function)) => &function.args,
+        _ => return false,
+    };
+    args.posonlyargs
+        .iter()
+        .chain(&args.args)
+        .chain(&args.kwonlyargs)
+        .any(|arg| arg.def.arg.as_str() == fixture && arg.default.is_none())
 }
 
 /// Attach to every test the fixture definitions its parameters name.

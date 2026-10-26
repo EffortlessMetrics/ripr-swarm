@@ -2,7 +2,9 @@
 //! names a pytest fixture whose body calls the owner is related with
 //! reach-only evidence and never earns an oracle or `exposed`.
 
-use super::fixtures::{FixtureSideEffects, attach_fixture_defs, mark_isolated_fixture_defs};
+use super::fixtures::{
+    FixtureSideEffects, attach_fixture_defs, mark_isolated_fixture_defs, side_effects_of,
+};
 use super::source_facts::extract_source_facts;
 use super::source_utils::is_test_file;
 use super::*;
@@ -23,7 +25,7 @@ pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<Python
         if !facts.fixtures.is_empty() {
             defs.insert(PathBuf::from(path), facts.fixtures.clone());
         }
-        side.insert(PathBuf::from(path), facts.fixture_side_effects.clone());
+        side.insert(PathBuf::from(path), side_effects_of(&facts));
         if is_test_file(Path::new(path)) {
             tests.extend(facts.tests);
         } else {

@@ -3,11 +3,15 @@
 //! (#9619, `py-fixtures-deposit`). Every other fixture shape, and any way the
 //! instance can differ from the inlined construction, keeps the limit.
 
+use super::fixtures::{attach_fixture_defs, mark_isolated_fixture_defs, side_effects_of};
 use super::fixtures_tests::workspace;
+use super::source_facts::extract_source_facts;
+use super::source_utils::is_test_file;
 use super::*;
+use std::collections::BTreeMap;
 use std::path::Path;
 
-const SHOP: &str = "class Account:\n    def __init__(self, balance):\n        self.balance = balance\n\n    def deposit(self, amount):\n        self.balance += amount\n\n\nclass Ledger:\n    def __init__(self, balance):\n        self.balance = balance\n";
+const SHOP: &str = "class Account:\n    def __init__(self, balance):\n        self.balance = balance\n\n    def deposit(self, amount):\n        self.balance += amount\n\n    def close(self):\n        self.balance = 0\n\n\nclass Ledger:\n    def __init__(self, balance):\n        self.balance = balance\n";
 
 const CONFTEST: &str = "import pytest\n\nfrom shop import Account\n\n\n@pytest.fixture\ndef account():\n    return Account(100)\n";
 
@@ -226,12 +230,228 @@ fn a_test_that_does_not_read_the_fixture_as_built_keeps_the_limit() -> Result<()
             format!("from helpers import account\n\n\n{TEST}"),
         ),
         (
+            "defaulted parameter",
+            TEST.replace("(account):", "(account=Account(0)):"),
+        ),
+        (
             "class-level test",
             "class TestShop:\n    def test_deposit_through_fixture(self, account):\n        account.deposit(50)\n        assert account.balance == 150\n".to_string(),
         ),
     ];
     for (case, test) in cases {
         assert_fixture_limited(&with_files(CONFTEST, &test)?, case);
+    }
+    Ok(())
+}
+
+fn assert_all_limited(cases: &[(&str, String, String)]) -> Result<(), String> {
+    for (case, conftest, test) in cases {
+        assert_fixture_limited(&with_files(conftest, test)?, case);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nearer_binding_of_the_fixture_name_keeps_the_limit() -> Result<(), String> {
+    // pytest takes the nearest definition; an import, an assignment or a
+    // renamed `name="account"` def that `resolve` does not record still wins.
+    let nearer = |unit_conftest: &str| {
+        classify_deposit(&[
+            ("shop/__init__.py", SHOP),
+            ("tests/conftest.py", CONFTEST),
+            ("tests/unit/conftest.py", unit_conftest),
+            ("tests/unit/test_shop.py", TEST),
+        ])
+    };
+    for (case, unit_conftest) in [
+        ("nearer conftest import", "from helpers.fx import account\n"),
+        (
+            "nearer conftest assignment",
+            "import helpers\n\naccount = helpers.stub_fixture\n",
+        ),
+        (
+            "nearer renamed override",
+            "import pytest\n\n\n@pytest.fixture(name=\"account\")\ndef _stub():\n    return StubAccount()\n",
+        ),
+    ] {
+        assert_fixture_limited(&nearer(unit_conftest)?, case);
+    }
+    // The control: an unrelated nearer conftest leaves the fixture resolved.
+    let control =
+        nearer("import pytest\n\n\n@pytest.fixture\ndef ledger_name():\n    return \"main\"\n")?;
+    assert_eq!(control.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_override_or_parametrize_in_the_test_module_keeps_the_limit() -> Result<(), String> {
+    assert_all_limited(&[
+        (
+            "renamed override in the test module",
+            CONFTEST.to_string(),
+            format!(
+                "import pytest\n\n\n@pytest.fixture(name=\"account\")\ndef _stub():\n    return StubAccount()\n\n\n{TEST}"
+            ),
+        ),
+        (
+            "renamed override later in the same conftest",
+            format!(
+                "{CONFTEST}\n\n@pytest.fixture(name=\"account\")\ndef _stub():\n    return StubAccount()\n"
+            ),
+            TEST.to_string(),
+        ),
+        (
+            "module pytestmark parametrize",
+            CONFTEST.to_string(),
+            format!(
+                "import pytest\n\npytestmark = pytest.mark.parametrize(\"account\", [None])\n\n\n{TEST}"
+            ),
+        ),
+        (
+            "imported fixture in the test module",
+            CONFTEST.to_string(),
+            format!("from helpers import primed\n\n\n{TEST}"),
+        ),
+        (
+            "star import in the test module",
+            CONFTEST.to_string(),
+            format!("from helpers import *\n\n\n{TEST}"),
+        ),
+        (
+            "custom decorator on the test",
+            CONFTEST.to_string(),
+            format!("from helpers import swap\n\n\n@swap\n{TEST}"),
+        ),
+    ])
+}
+
+#[test]
+fn a_fixture_or_hook_that_reaches_every_value_keeps_the_limit() -> Result<(), String> {
+    let cases = [
+        (
+            "hook over every funcarg",
+            "def pytest_runtest_call(item):\n    for value in item.funcargs.values():\n        value.deposit(1)\n",
+        ),
+        (
+            "fixture setup hook",
+            "def pytest_fixture_setup(fixturedef, request):\n    return None\n",
+        ),
+        (
+            "autouse fixture over every requested name",
+            "@pytest.fixture(autouse=True)\ndef primed(request):\n    for name in request.fixturenames:\n        request.getfixturevalue(name)\n",
+        ),
+        (
+            "global rebinding of the class",
+            "def configure():\n    global Account\n    Account = object\n",
+        ),
+        (
+            "imported autouse fixture",
+            "from helpers.autouse import primed\n",
+        ),
+    ];
+    for (case, extra) in cases {
+        assert_fixture_limited(&with_conftest(&format!("{CONFTEST}\n\n{extra}"))?, case);
+    }
+    // The same from a conftest further up the chain, and from an upper
+    // conftest that only declares plugins or star-imports.
+    for (case, upper) in [
+        ("upper hook", "def pytest_runtest_call(item):\n    pass\n"),
+        (
+            "upper pytest_plugins",
+            "pytest_plugins = [\"bank_plugin\"]\n",
+        ),
+        ("upper star import", "from helpers import *\n"),
+    ] {
+        let finding = classify_deposit(&[
+            ("shop/__init__.py", SHOP),
+            ("conftest.py", upper),
+            ("tests/conftest.py", CONFTEST),
+            ("tests/test_shop.py", TEST),
+        ])?;
+        assert_fixture_limited(&finding, case);
+    }
+    Ok(())
+}
+
+#[test]
+fn the_alias_guard_refuses_a_same_named_class_from_another_module() -> Result<(), String> {
+    // `Account` here is `bank.Account`; the owner's class is bound as `A`.
+    let conftest = CONFTEST.replace(
+        "from shop import Account\n",
+        "from shop import Account as A\nfrom bank import Account\n",
+    );
+    assert_fixture_limited(&with_conftest(&conftest)?, "aliased owner class");
+    Ok(())
+}
+
+#[test]
+fn a_partly_parsed_or_unread_conftest_keeps_the_limit() -> Result<(), String> {
+    let broken = format!("{CONFTEST}\n\ndef broken(:\n");
+    assert_fixture_limited(&with_conftest(&broken)?, "partly parsed conftest");
+
+    // An upper conftest that exists but was never read.
+    let files = [
+        ("shop/__init__.py", SHOP),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_shop.py", TEST),
+    ];
+    let mut owners = Vec::new();
+    let mut tests = Vec::new();
+    let mut defs: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+    let mut side = BTreeMap::new();
+    for (path, source) in files {
+        let facts = extract_source_facts(Path::new(path), source);
+        if !facts.fixtures.is_empty() {
+            defs.insert(PathBuf::from(path), facts.fixtures.clone());
+        }
+        side.insert(PathBuf::from(path), side_effects_of(&facts));
+        if is_test_file(Path::new(path)) {
+            tests.extend(facts.tests);
+        } else {
+            owners.extend(facts.owners);
+        }
+    }
+    attach_fixture_defs(&mut tests, &defs);
+    mark_isolated_fixture_defs(&mut tests, &defs, &side, |conftest| {
+        conftest == Path::new("conftest.py")
+    });
+    let finding = classify_change(
+        Path::new("shop/__init__.py"),
+        6,
+        "        self.balance = self.balance + amount",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the changed deposit line must classify".to_string())?;
+    assert_fixture_limited(&finding, "unread upper conftest");
+    Ok(())
+}
+
+#[test]
+fn the_fixture_reads_like_the_inlined_construction_for_other_assertions() -> Result<(), String> {
+    // Receiver identity: whatever the inlined form concludes for an
+    // assertion on another receiver, or a call of another method, the
+    // fixture form concludes too.
+    let bodies = [
+        "    account.deposit(50)\n    other = Account(0)\n    assert other.balance == 150\n",
+        "    account.close()\n    assert account.balance == 0\n",
+        "    account.deposit(50)\n    assert account.balance > 0\n",
+    ];
+    for body in bodies {
+        let inline = classify_deposit(&[
+            ("shop/__init__.py", SHOP),
+            (
+                "tests/test_shop.py",
+                &format!(
+                    "from shop import Account\n\n\ndef test_d():\n    account = Account(100)\n{body}"
+                ),
+            ),
+        ])?;
+        let fixture = with_files(
+            CONFTEST,
+            &format!("from shop import Account\n\n\ndef test_d(account):\n{body}"),
+        )?;
+        assert_eq!(fixture.class, inline.class, "{body}");
     }
     Ok(())
 }

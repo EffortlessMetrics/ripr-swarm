@@ -466,6 +466,9 @@ struct PythonFixtureDef {
     /// Set when attached: no other fixture or hook visible to the test names
     /// this fixture, so the test receives the instance exactly as built.
     isolated: bool,
+    /// Set when attached: the `from` imports of the test's module and its
+    /// conftest chain, by importing file; each must be the owner's module.
+    scope_imports: Vec<(PathBuf, PythonImport)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -914,9 +917,7 @@ impl PythonAdapter {
                 if !facts.fixtures.is_empty() {
                     fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
                 }
-                let mut side = facts.fixture_side_effects.clone();
-                // A partly parsed module may hold fixtures this walk never saw.
-                side.opaque |= !facts.limitations.is_empty();
+                let side = fixtures::side_effects_of(&facts);
                 if side != fixtures::FixtureSideEffects::default() {
                     fixture_side_by_file.insert(relative.clone(), side);
                 }

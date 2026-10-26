@@ -4554,6 +4554,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 imports: Vec::new(),
                 literal_construction: None,
                 isolated: false,
+                scope_imports: Vec::new(),
             });
         }
         tests

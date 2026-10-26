@@ -1,5 +1,6 @@
 use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::fixtures::literal_owner_instance_fixture;
 use super::source_utils::normalized_path;
 use super::{
     PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
@@ -2805,7 +2806,7 @@ fn instance_bound_receivers(
         .map(|(class, _)| class);
     if owner_class == Some(class) {
         for fixture in &test.fixtures {
-            if super::fixtures::literal_owner_instance_fixture(test, owner, fixture)
+            if literal_owner_instance_fixture(test, owner, fixture)
                 && contains_attribute_call(&test.body_text, fixture, method)
                 && !receivers.contains(fixture)
             {

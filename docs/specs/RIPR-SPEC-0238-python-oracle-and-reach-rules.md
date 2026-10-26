@@ -410,18 +410,27 @@ This order is the existing behavior and is normative:
   non-parametrized pytest test that calls the owner and uses a
   non-auxiliary fixture in its body. A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
-  of a method owner's class (#9619, `py-fixtures-deposit`): a single
-  argument-free `@pytest.fixture` (function scope, no `params=`, no
-  `autouse=`) on a synchronous def with no parameters whose body is an
-  optional docstring and `return C(<literals>)`, where `C` is the owner's
-  class imported under its own name from the owner's module, and the
-  fixture's file binds neither the fixture name nor `C` a second time
-  and has no star import. No other fixture or `pytest_*` hook in the
-  test's module or its `conftest.py` chain may name the fixture, every
-  chain conftest that exists must have been read and parsed, no file in
-  that scope may star-import or declare `pytest_plugins`, the test must
-  not rebind the parameter, and the test's module must not bind the name
-  over a conftest fixture. Any other shape keeps the limit;
+  of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
+  is a single argument-free fixture decorator (`@pytest.fixture`,
+  `@fixture`, an imported alias or `@pytest_asyncio.fixture`: function
+  scope, no `params=`, no `autouse=`) on a synchronous def with no
+  parameters whose body is an optional docstring and
+  `return C(<literals>)`. `C` is the owner's class imported under its own
+  name from the owner's module, and the fixture's file binds neither the
+  fixture name nor `C` a second time. The test takes the fixture as a
+  parameter without a default, does not rebind it, and carries no
+  decorator other than a pytest mark. In its scope (the test's module and
+  every `conftest.py` up its chain): every chain conftest that exists was
+  read and parsed; no other fixture, renamed `name=` fixture (decorators
+  included) or top-level compound statement spells the fixture name; no
+  file but the fixture's own binds the name by import or assignment;
+  every `from` import comes from the owner's module or pytest; and no file
+  star-imports, declares `pytest_plugins` or `pytestmark`, defines a
+  `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
+  `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
+  The fixture parameter then counts as a receiver bound to the owner class.
+  Any other shape keeps the limit; a third-party plugin fixture outside
+  the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
@@ -1365,9 +1374,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     non-literal or starred argument, another class, a class from another
     module, a renamed import, a second binding of the class or the
     fixture name, a star import, `pytest_plugins`, another fixture or hook
-    (here or up the chain) that names `account`, a test that rebinds it,
-    a test module that binds it and a class-level test all keep
-    `static_unknown`, `unresolved_pytest_fixture` (unchanged).
+    (here or up the chain) that names `account`, a nearer conftest that
+    imports or assigns `account` or overrides it with `name="account"`,
+    `pytestmark`, a `pytest_*` hook, a fixture that walks
+    `request.fixturenames`, an imported fixture name, a defaulted
+    parameter, a test decorator, a test that rebinds it, a test module
+    that binds it and a class-level test all keep `static_unknown`,
+    `unresolved_pytest_fixture` (unchanged).
 
 ## Test Mapping
 
