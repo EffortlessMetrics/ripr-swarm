@@ -65,6 +65,10 @@ pub(crate) struct GapRepairRoute {
     pub(crate) finding_id: String,
     pub(crate) gap_id: String,
     pub(crate) base: String,
+    /// Tracked production files that differ from HEAD in the analyzed tree
+    /// (#10698). The start refuses to begin while any exist, so the check
+    /// screen prints their commit before the start. Empty on a clean tree.
+    pub(crate) uncommitted_files: Vec<String>,
 }
 
 /// Why the check pipeline offered no repair start for its selected finding
@@ -304,6 +308,22 @@ impl FindingNavigation {
             shell_arg(&route.base),
             self.repair_suffix
         )
+    }
+
+    /// The commit step that must precede the gap-bound start when check
+    /// analyzed uncommitted production edits (#10698): the start refuses
+    /// while tracked production files differ from HEAD.
+    pub(crate) fn gap_repair_prerequisite(&self, route: &GapRepairRoute) -> Option<String> {
+        if route.uncommitted_files.is_empty() {
+            return None;
+        }
+        let files = route
+            .uncommitted_files
+            .iter()
+            .map(|file| shell_arg(file))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!("git commit -m \"<message>\" -- {files}"))
     }
 
     /// The `ripr repair` start for one seam identity. Repair reads the live

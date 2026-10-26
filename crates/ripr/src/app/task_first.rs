@@ -860,7 +860,31 @@ fn gap_bound_route(
         finding_id: finding.id.clone(),
         gap_id: record.canonical_gap_id,
         base: base.to_string(),
+        uncommitted_files: uncommitted_production_files(&output.root),
     })
+}
+
+/// Tracked production files that differ from HEAD (staged or not), the state
+/// the gap-bound start refuses to begin from (#10698). A test file is not
+/// listed: the start allows its focused test to be dirty. If Git cannot
+/// answer, no file is named and the start's own refusal stays the backstop.
+fn uncommitted_production_files(root: &Path) -> Vec<String> {
+    let Ok(output) = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["diff", "--name-only", "-z", "HEAD", "--"],
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    ) else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty() && !crate::analysis::is_test_surface_path(path))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The gap-bound start the default human `ripr check` would print for this
@@ -2276,6 +2300,59 @@ pub(crate) mod tests {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// #10698: the files check names for the commit step are exactly the
+    /// tracked production files that differ from HEAD, so the printed start
+    /// is never one the before phase refuses for a dirty tree.
+    #[test]
+    fn uncommitted_production_files_lists_dirty_tracked_production_only() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-task-first-dirty-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        let root = root
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))?;
+        let _guard = TempRootGuard { root: root.clone() };
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        for (file, text) in [
+            ("pricing.py", "x = 1\n"),
+            ("tests/test_pricing.py", "y = 1\n"),
+        ] {
+            std::fs::write(root.join(file), text)
+                .map_err(|error| format!("write {file} failed: {error}"))?;
+        }
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+
+        // Clean tree: nothing to commit, so the start prints bare.
+        assert!(uncommitted_production_files(&root).is_empty());
+
+        // A dirty test file is allowed by the start; a dirty production
+        // file (unstaged, then staged) is what it refuses.
+        std::fs::write(root.join("tests/test_pricing.py"), "y = 2\n")
+            .map_err(|error| format!("write test failed: {error}"))?;
+        assert!(uncommitted_production_files(&root).is_empty());
+        std::fs::write(root.join("pricing.py"), "x = 2\n")
+            .map_err(|error| format!("write production failed: {error}"))?;
+        assert_eq!(uncommitted_production_files(&root), ["pricing.py"]);
+        run_git(&root, &["add", "pricing.py"])?;
+        assert_eq!(uncommitted_production_files(&root), ["pricing.py"]);
         Ok(())
     }
 
