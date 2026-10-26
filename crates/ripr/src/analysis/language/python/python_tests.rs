@@ -3736,6 +3736,27 @@ fn contains_dynamic_dispatch_detects_registry_indexed_call() {
 }
 
 #[test]
+fn contains_dynamic_dispatch_reads_getattr_as_a_bare_call_name() {
+    assert!(contains_dynamic_dispatch("    return getattr(x, 'a')"));
+    // A space before `(` is still a call (RIPR-SPEC-0238 example 33).
+    assert!(contains_dynamic_dispatch("    return getattr (x, 'a')"));
+    assert!(contains_dynamic_dispatch(
+        "    return builtins.getattr(x, 'a')"
+    ));
+    // Another identifier ending in `getattr` is not the builtin (example 28).
+    assert!(!contains_dynamic_dispatch("    return my_getattr(x)"));
+    assert!(!contains_dynamic_dispatch("    return getattr_default"));
+}
+
+#[test]
+fn contains_metaprogramming_reads_type_and_setattr_calls_with_a_space() {
+    assert!(contains_metaprogramming("    return type (x)"));
+    assert!(contains_metaprogramming("    setattr (o, 'a', 1)"));
+    assert!(!contains_metaprogramming("    return content_type(x)"));
+    assert!(!contains_metaprogramming("    return type_name(x)"));
+}
+
+#[test]
 fn contains_dynamic_import_detects_runtime_import_calls() {
     assert!(contains_dynamic_import(
         "    return importlib.import_module(module_name).handle(payload)"
@@ -3914,7 +3935,7 @@ fn visit_workspace_returns_silently_when_directory_is_unreadable() {
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
         &[],
-        &mut out,
+        &mut |file| out.push(file),
     );
     assert!(out.is_empty());
 }

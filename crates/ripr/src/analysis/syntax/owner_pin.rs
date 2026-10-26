@@ -2244,6 +2244,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     // that binds the value name `Err` anywhere may route that return to an
     // `Ok`, so its guards are never twin candidates (#7130 review).
     let err_bound = file_binds_value_name(parse.tree().syntax(), "Err");
+    let process_names = StdProcessNames::of_file(parse.tree().syntax());
     for module in parse
         .tree()
         .syntax()
@@ -2471,7 +2472,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     .is_some_and(|owner| owner == *function.syntax())
             })
             .map(|expression| expression.syntax().text_range().start())
-            .chain(root_divergence_start(&function))
+            .chain(root_divergence_start(&function, &process_names))
             .min();
         let assertions = admitted_assertions(candidates, &function, first_return);
         let helper_assertions = if is_test_function(&function) {
@@ -2515,8 +2516,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
 /// belongs to an inner loop, closure or async block does not leave the outer
 /// loop (#8983); a labeled `break` leaves it when the label is its own or an
 /// enclosing one.
-fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
-    let process = StdProcessNames::of(function);
+fn root_divergence_start(function: &ast::Fn, process: &StdProcessNames) -> Option<TextSize> {
     function
         .body()?
         .stmt_list()?
@@ -2617,14 +2617,22 @@ struct StdProcessNames {
     leaves: Vec<String>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test witness: whole-file import scans this thread has paid.
+    static STD_PROCESS_NAME_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl StdProcessNames {
-    fn of(function: &ast::Fn) -> Self {
+    /// Read once per file: every function of a file sees the same imports, and
+    /// walking the whole tree per function made a file of many tests cost the
+    /// product of its test count and its size.
+    fn of_file(root: &SyntaxNode) -> Self {
+        #[cfg(test)]
+        STD_PROCESS_NAME_SCANS.with(|count| count.set(count.get() + 1));
         let mut names = Self {
             modules: Vec::new(),
             leaves: Vec::new(),
-        };
-        let Some(root) = function.syntax().ancestors().last() else {
-            return names;
         };
         let mut leaves = Vec::new();
         for import in root.descendants().filter_map(ast::Use::cast) {
@@ -5970,5 +5978,43 @@ mod skipping_table_tests {
             BodyFingerprint::of("n = 13;")
         );
         assert_ne!(BodyFingerprint::of("é"), BodyFingerprint::of("ab"));
+    }
+}
+
+#[cfg(test)]
+mod process_names_scan_tests {
+    use super::*;
+
+    /// The std-process imports are a property of the file. Reading them per
+    /// function walked the whole tree once per test, so a file of many tests
+    /// cost the product of its test count and its size.
+    #[test]
+    fn a_file_of_many_tests_reads_its_process_imports_once() {
+        let mut source = String::from("use std::process as p;\n");
+        for index in 0..40 {
+            source.push_str(&format!(
+                "#[test]\nfn t{index}() {{\n    assert_eq!(f({index}), {index});\n}}\n"
+            ));
+        }
+        STD_PROCESS_NAME_SCANS.with(|count| count.set(0));
+        let pins = owner_pin_assertions(&source, TRUSTED_MACRO_NAMES);
+        assert!(pins.parsed);
+        assert_eq!(STD_PROCESS_NAME_SCANS.with(std::cell::Cell::get), 1);
+    }
+
+    /// The per-file read must still see a renamed `std::process` for every
+    /// test: a root `p::exit(0)` ends the test before a later assertion.
+    #[test]
+    fn a_renamed_process_import_still_ends_each_test_before_its_assertions() {
+        let source = "use std::process as p;\n#[test]\nfn a() {\n    p::exit(0);\n    assert_eq!(f(1), 1);\n}\n#[test]\nfn b() {\n    assert_eq!(f(2), 2);\n}\n";
+        let pins = owner_pin_assertions(source, TRUSTED_MACRO_NAMES);
+        let admitted = |name: &str| {
+            pins.functions
+                .iter()
+                .find(|(key, _)| key.2 == name)
+                .map(|(_, function)| function.assertions.values().filter(|v| v.is_ok()).count())
+        };
+        assert_eq!(admitted("a"), Some(0), "{:?}", pins.functions.keys());
+        assert_eq!(admitted("b"), Some(1), "{:?}", pins.functions.keys());
     }
 }

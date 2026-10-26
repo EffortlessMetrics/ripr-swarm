@@ -1688,3 +1688,64 @@ fn resource_budget_failure_reports_bytes_budget_and_recovery() -> Result<(), Str
     );
     Ok(())
 }
+
+/// #10518/#10539: the JSON-RPC code is coarse by contract and consumers branch
+/// on `error.data.code`. `docs/interop/mcp.md` tabulates every kind; this test
+/// keeps that table equal to the shared vocabulary (`failure_vocabulary`, the
+/// owner of the enumerated kinds) and to what `resource_failure` answers.
+#[test]
+fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Result<(), String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/interop/mcp.md");
+    let doc =
+        std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let mut rows: Vec<(String, String)> = Vec::new();
+    for line in doc.lines() {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // `| code | jsonrpc | class | recovery |` splits into 6 cells.
+        if cells.len() != 6 || !cells[1].starts_with('`') || !cells[2].starts_with('`') {
+            continue;
+        }
+        let code = cells[1].trim_matches('`').to_string();
+        let jsonrpc = cells[2].trim_matches('`').to_string();
+        if !jsonrpc.starts_with("-32") {
+            continue;
+        }
+        rows.push((code, jsonrpc));
+    }
+    if rows.is_empty() {
+        return Err("docs/interop/mcp.md lost its error-code table".to_string());
+    }
+    let mut documented: Vec<&str> = rows.iter().map(|(code, _)| code.as_str()).collect();
+    documented.sort_unstable();
+    let before = documented.len();
+    documented.dedup();
+    if documented.len() != before {
+        return Err("docs error table lists a data.code twice".to_string());
+    }
+    // `id_ambiguous` is emitted only by the resource-id route, so it rides
+    // `resource_failure` without being in the tool failure-schema vocabulary.
+    let mut vocabulary = protocol::failure_vocabulary();
+    vocabulary.push(workspace::CODE_ID_AMBIGUOUS);
+    vocabulary.sort_unstable();
+    if documented != vocabulary {
+        return Err(format!(
+            "docs/interop/mcp.md error table {documented:?} drifted from the failure vocabulary {vocabulary:?}"
+        ));
+    }
+    for code in vocabulary {
+        let jsonrpc = rows
+            .iter()
+            .find(|(documented, _)| documented == code)
+            .map(|(_, jsonrpc)| jsonrpc.as_str())
+            .ok_or_else(|| format!("{code} missing from docs table"))?;
+        let failure = workspace::AttemptFailure::new(code, "d", "r");
+        let error = resource_failure("gap", &failure, None);
+        if error.code.0.to_string() != jsonrpc {
+            return Err(format!(
+                "docs say {code} answers {jsonrpc}, resource_failure answers {}",
+                error.code.0
+            ));
+        }
+    }
+    Ok(())
+}
