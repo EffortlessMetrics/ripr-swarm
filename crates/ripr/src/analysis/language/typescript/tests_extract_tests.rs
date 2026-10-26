@@ -1588,7 +1588,7 @@ fn skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local() {
     for body in [
         "for (const it of [globalThis.it]) { it('live', () => {}); }",
         "for (let it = globalThis.it; flag;) { it('live', () => {}); break; }",
-        "for (const key in values) { const it = globalThis.it; it('live', () => {}); }",
+        "for (let it in values) { it = globalThis.it; it('live', () => {}); }",
         "try { throw globalThis.it; } catch (it) { it('live', () => {}); }",
         "switch (1) { case 1: const it = globalThis.it; case 2: it('live', () => {}); }",
     ] {
