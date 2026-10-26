@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0247-ex09-empty-inline-snapshot",
+  "subject_id": "authored-ts-spec0247-9snap",
+  "diff": "cases/jest-spec0247-ex09-empty-inline-snapshot.diff",
+  "anchor": {
+    "file": "src/summary.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_empty_inline_snapshot",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.15, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return `${n} item(s)`;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: `toMatchInlineSnapshot()` with no argument stores no expected text, so jest writes the edited output into the test file on the first run and passes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`summary(2)` returns `2 items`; the edit returns `2 item(s)`. The test asserts `expect(summary(2)).toMatchInlineSnapshot()` with no stored snapshot, so there is nothing to compare against and jest records whatever the owner returns. RIPR-SPEC-0247 example 9: `toMatchInlineSnapshot()` reads `snapshot` / medium, `weakly_exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "8b84459",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0247#9"
+  ]
+}
