@@ -290,6 +290,10 @@ fn a_local_binding_in_an_arrow_row_adds_no_test() -> Result<(), String> {
             "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { let gate = |_: u32| true; assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
         ),
         (
+            "a for pattern",
+            "    struct Decoy;\n    impl Decoy {\n        #[allow(non_snake_case)]\n        fn Gate(_: u32) -> bool { true }\n    }\n    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { for gate in [Decoy::Gate] { assert_eq!(gate($input), $want); } } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
+        ),
+        (
             "a static supplied by a tt",
             "    type G = fn(u32) -> bool;\n    macro_rules! gate_cases {\n        ($($kind:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $kind gate: G = |_| true; #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { static ten_is_open => (10, true) }\n",
         ),

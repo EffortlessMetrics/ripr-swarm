@@ -961,7 +961,8 @@ fn match_rows(
 }
 
 /// Words that can bring another callable named like the changed owner into
-/// scope: a module, an import, a binding, an item or a second function.
+/// scope: a module, an import, a binding, a pattern, an item or a second
+/// function. A `|` (closure parameters, which bind a name) is refused too.
 const SCOPE_WORDS: &[&str] = &[
     "mod",
     "use",
@@ -975,10 +976,15 @@ const SCOPE_WORDS: &[&str] = &[
     "impl",
     "extern",
     "macro_rules",
+    "for",
+    "match",
 ];
 
 /// Whether one substituted row declares a scope word or more than one `fn`.
 fn text_defines_nested_scope(text: &str) -> bool {
+    if text.contains('|') {
+        return true;
+    }
     let mut functions = 0;
     for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
         if SCOPE_WORDS.contains(&word) {
@@ -1454,6 +1460,18 @@ mod tests {
             (
                 "a static in the body",
                 "static gate: fn(u32) -> bool = |_| true; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a closure parameter in the body",
+                "#[test] fn $name() { assert_eq!((|gate: fn(u32) -> bool| gate($v))(|_| true), $w); }",
+            ),
+            (
+                "a for pattern in the body",
+                "#[test] fn $name() { for gate in [|_: u32| true] { assert_eq!(gate($v), $w); } }",
+            ),
+            (
+                "a match pattern in the body",
+                "#[test] fn $name() { match 0 { gate => assert_eq!(gate($v), $w) } }",
             ),
             (
                 "a second fn in the body",
