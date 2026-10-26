@@ -500,6 +500,62 @@ rejects a `language` filter that is not a language wire string (`rust`,
 `typescript`, `javascript`, `python`, `perl`) with Invalid Params listing the
 allowed values, instead of returning an indistinguishable empty page.
 
+### Reading errors: the JSON-RPC code is coarse by contract
+
+A `tools/call` typed failure is a successful JSON-RPC response whose result has
+`isError: true` and the `failure` block above; it is not a JSON-RPC error. A
+`resources/read` typed failure is a JSON-RPC error whose `error.data` carries the
+same typed state. In both, the JSON-RPC `error.code` is deliberately coarse
+(#9854): it separates only "the id you asked for does not exist" from "the
+server is in a state or bound that this request cannot satisfy". Do not branch
+retry, refresh, or give-up behavior on `error.code`. Branch on `error.data.code`
+(the stable typed kind) and follow `error.data.recovery` (one sentence naming
+the next step). `error.data.detail` is bounded human text, and
+`error.data.current_snapshot_id` is present on snapshot-aware reads. The
+`error.message` sentence is `unavailable <kind> resource: <data.code>`.
+
+The server owns this mapping in one place (`resource_failure`); the table below
+lists every `data.code` kind in the shared vocabulary and the JSON-RPC code a
+`resources/read` of that kind answers. A test keeps this table equal to the
+vocabulary and to the mapping, so a new or removed kind fails the build until
+this table is updated.
+
+| `data.code` | resources/read `error.code` | Class | Typical recovery |
+| --- | --- | --- | --- |
+| `item_not_found` | `-32002` | identity miss | the id is not in the current snapshot; re-list with `ripr_list_gaps` |
+| `attempt_not_found` | `-32002` | identity miss | the attempt/receipt id does not exist; list attempts |
+| `no_snapshot` | `-32603` | retryable after refresh | call `ripr_refresh`, then retry |
+| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh |
+| `analysis_in_flight` | `-32603` | retryable after wait | another attempt is running; wait and retry |
+| `superseded` | `-32603` | retryable after refresh | the transaction's snapshot is no longer current; refresh and re-prepare |
+| `result_too_large` | `-32603` | bound; narrow the request | use paging, filters, or a smaller window; retrying unchanged cannot succeed |
+| `budget_overflow` | `-32603` | bound; narrow the request | the card exceeds its detail budget; use `ripr agent card` |
+| `incomplete_inventory` | `-32603` | state; not retryable as-is | the repo-wide seam inventory is truncated or unverified |
+| `seam_not_found` | `-32603` | state; not an id miss | no owner-discriminated seam binds the item |
+| `id_ambiguous` | `-32603` | state; change the id form | the raw id resolves two ways; use the canonical id |
+| `identity_unnameable` | `-32603` | state; not retryable as-is | no portable workspace identity can be named |
+| `attempt_invalid` | `-32603` | state; not retryable as-is | a durable manifest fails canonical validation |
+| `workspace_unavailable` | `-32603` | operator action | restart with `ripr mcp --stdio --root <repository>` |
+| `analysis_failed` | `-32603` | operator action | fix the named cause or pass `base`, then `ripr_refresh` |
+| `unsupported_profile` | `-32603` | operator action | the client profile is not supported |
+| `config_invalid` | `-32603` | operator action | repair `ripr.toml`, then `ripr_refresh` |
+| `stale_inventory` | `-32603` | retryable after refresh | re-list the attempt inventory |
+| `policy_omitted` | `-32603` | named, unreachable here | reserved for wire stability |
+| `witness_unavailable` | `-32603` | named, unreachable here | reserved for wire stability |
+| `workspace_ambiguous` | `-32603` | reserved | reserved for a later slice |
+| `static_limitation` | `-32603` | reserved | reserved for a later slice |
+| `cancelled` | `-32603` | reserved | reserved for a later slice |
+
+Genuine invariant failures are different: the server could not build or
+serialize a result it should always be able to build (`serialize workspace
+status`, `serialize resource`, `serialize typed failure`, `invalid status
+projection`) or a response exceeded the transport byte cap. These answer
+`-32603` with no `error.data.code` (the byte-cap fallback carries only
+`maxResponseBytes`). The absence of `error.data.code` is how a consumer tells an
+invariant failure from a typed state; it is not retryable by refreshing, and is
+a server defect worth reporting. Tool argument shape violations stay standard
+Invalid Params (`-32602`).
+
 ## What it does not do
 
 It does not edit source, execute verify commands or mutation testing, run
