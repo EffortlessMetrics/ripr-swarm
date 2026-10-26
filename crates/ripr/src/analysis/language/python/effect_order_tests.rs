@@ -297,13 +297,56 @@ fn effect_order_does_not_borrow_a_read_from_a_discarded_conjunct() -> Check {
 }
 
 #[test]
-fn effect_order_helpers_do_not_launder_argument_evaluation_order() -> Check {
+fn effect_order_helper_capture_does_not_gain_effect_channel_credit() -> Check {
     let helper = "\ndef assert_equal(actual, expected):\n    assert actual == expected\n";
     let body = "def test_it():\n    rec = Recorder()\n    assert_equal(rec.last, rec.note(\"error\") or None)";
-    assert_ne!(
-        finding(false, body, false, helper)?.class,
+    let captured = finding(false, body, false, helper)?;
+    // The shared effect reader must not treat a captured argument as a later
+    // field read. The separate legacy owner-result branch still credits this
+    // implicit-None result: a known residual, requiring propagation semantics.
+    assert_eq!(captured.class, ExposureClass::Exposed);
+    assert_eq!(
+        captured.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_owner_method_on_bound_receiver")
+    );
+    let after = "def test_it():\n    rec = Recorder()\n    assert_equal(rec.note(\"error\") or \"error\", rec.last)";
+    assert_eq!(
+        finding(false, after, false, helper)?.class,
         ExposureClass::Exposed
     );
+
+    // A blanket helper refusal would lose a real discriminator when the
+    // owner returns the changed field after its write.
+    let source = SOURCE
+        .replace("self.last = None", "self.last = \"error\"")
+        .replace(
+            "            self.last = \"fault\"",
+            "            self.last = \"fault\"\n        return self.last",
+        );
+    let file = Path::new("shop/route.py");
+    let mut owners = extract_owners(file, &source);
+    apply_class_facts(&mut owners);
+    let test_file = Path::new("tests/test_route.py");
+    let test_source = format!(
+        "from shop.route import Recorder\n{helper}\ndef test_it():\n    rec = Recorder()\n    assert_equal(rec.last, rec.note(\"error\"))\n"
+    );
+    let facts = extract_source_facts(test_file, &test_source);
+    let mut tests = facts.tests;
+    apply_helper_assertions(
+        &mut tests,
+        &BTreeMap::from([(test_file.to_path_buf(), facts.helper_module)]),
+    );
+    let retained = classify_change_with_source(
+        file,
+        10,
+        "            self.last = \"fault\"",
+        Some("            self.last = \"error\""),
+        &owners,
+        &tests,
+        Some(&source),
+    )
+    .ok_or("expected returned-field finding")?;
+    assert_eq!(retained.class, ExposureClass::Exposed);
     Ok(())
 }
 

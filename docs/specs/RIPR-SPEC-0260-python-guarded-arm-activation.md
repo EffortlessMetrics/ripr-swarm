@@ -152,7 +152,12 @@ an earlier semicolon-separated assertion does not observe a later call. The
 retention interval belongs to the assertion that earns credit, so an earlier
 assertion cannot lend retention to a later masked read. Resolved assertion
 helpers keep the exact helper-call span; argument evaluation does not establish
-that a field captured before the owner call observes its changed value.
+that a field captured before the owner call observes its changed value. This
+ordering rule governs the effect-channel credit. The separate owner-result
+identity branch is not a propagation proof: a helper comparison that mentions
+the owner can still be credited there even when its result is implicit `None`.
+That inherited limitation is retained rather than refusing genuine comparisons
+whose owner returns the changed field.
 
 ## Required Evidence
 
