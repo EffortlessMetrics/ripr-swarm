@@ -11138,3 +11138,89 @@ fn caplog_snapshot_stores_in_assertions_abstain() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn caplog_snapshot_native_statement_bounds_reject_extra_uses() -> Result<(), String> {
+    for tail in [
+        "msgs[0] = \"low balance: 5\"; assert (\n        \"low balance: 5\" in msgs\n    )",
+        "tag = \"é\"; msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+        "assert \"low balance: 5\" in msgs; del msgs",
+        "assert \"low balance: 5\" in msgs; assert \"low balance: 5\" in msgs",
+        "assert any(\"low balance: 5\" in msgs for msgs in [[\"low balance: 5\"]])",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_valid_reads_keep_levels_absence_and_membership_semantics() -> Result<(), String>
+{
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    tag = \"é\"; assert (\n        \"low balance: 5\" in msgs\n    ), \"capture\""
+        ));
+        for body in [test.clone(), test.replace('\n', "\r\n"), test.replace(
+            "    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False",
+            "    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False",
+        )] {
+            for changed in [
+                "log.warning(\"balance low: %s\", balance)",
+                "log.info(\"low balance: %s\", balance)",
+            ] {
+                assert_eq!(classify_log_text_edit(AUDIT_OWNER, changed, &body)?, (ExposureClass::Exposed, None), "{read}: {body}");
+            }
+            let suffix = if read == "messages" { ExposureClass::Exposed } else { ExposureClass::WeaklyExposed };
+            assert_eq!(classify_log_text_edit(AUDIT_OWNER, "log.warning(\"low balance: %s (retry)\", balance)", &body)?, (suffix, None), "{read}: {body}");
+        }
+        let absence = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    assert \"deprecated warning\" not in msgs"
+        ));
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &absence)?,
+            (ExposureClass::Exposed, None),
+            "{read} absence"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_record_aliases_keep_native_comprehension_reads() -> Result<(), String> {
+    for assertion in [
+        "assert any(\"low balance\" in r.message for r in msgs)",
+        "assert any(r.getMessage() == \"low balance: 5\" for r in msgs)",
+        "assert \"low balance: 5\" in [r.message for r in msgs]",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.records\n    {assertion}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    let test = captured_records_test(
+        "msgs = caplog.records\n    assert not any(r.message == \"deprecated warning\" for r in msgs)",
+    );
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
