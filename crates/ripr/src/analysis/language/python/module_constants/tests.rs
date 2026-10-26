@@ -330,6 +330,58 @@ fn mock_patching_in_a_test_file_counts_as_a_dynamic_writer() {
     ));
 }
 
+#[test]
+fn dynamic_namespace_writers_unresolve_owner_constants() -> Result<(), String> {
+    for writer in [
+        "importlib.reload(pricing)",
+        "pricing.__setattr__('DISCOUNT_THRESHOLD', 5)",
+        "delattr(pricing, 'DISCOUNT_THRESHOLD')",
+    ] {
+        let source = format!(
+            "import importlib\nimport src.pricing as pricing\nDISCOUNT_THRESHOLD = 10_000\n{writer}\n{OWNER}"
+        );
+        let owners = extract_owners(Path::new("src/pricing.py"), &source);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "discounted_total")
+            .ok_or("fixture must parse discounted_total")?;
+        assert!(owner.module_constants.is_empty(), "{writer}");
+    }
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_writers_unresolve_test_constants() -> Result<(), String> {
+    for writer in [
+        "importlib.reload(pricing)",
+        "pricing.__setattr__('DISCOUNT_THRESHOLD', 5)",
+        "mp.delattr(pricing, 'DISCOUNT_THRESHOLD')",
+    ] {
+        let tests = format!(
+            "import importlib\nimport src.pricing as pricing\nfrom src.pricing import DISCOUNT_THRESHOLD, discounted_total\n\ndef test_mixed(monkeypatch):\n    mp = monkeypatch\n    {writer}\n    assert discounted_total(20_000) == 18_000\n    assert discounted_total(DISCOUNT_THRESHOLD) == 9_000\n"
+        );
+        let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", &tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{writer}");
+        assert!(discriminators(&finding).is_empty(), "{writer}");
+    }
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookalikes_keep_constants_resolved() {
+    for writer in [
+        "my_reload(pricing)",
+        "pricing.my__setattr__('x', 5)",
+        "mp.my_delattr(pricing, 'x')",
+    ] {
+        assert_eq!(
+            visible_constants(&format!("DISCOUNT_THRESHOLD = 10_000\n{writer}\n")),
+            threshold(),
+            "{writer}"
+        );
+    }
+}
+
 /// `walrus_target_names` finds exactly the names `walrus_targets` accepts,
 /// on every name drawn from the text and on names that are not in it.
 #[test]

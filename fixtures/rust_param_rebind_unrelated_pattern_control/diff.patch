@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+     let (a, _) = (7usize, 0usize);
+     let _ = a;
+     let m = n * 2;
+-    if m == 39 {
++    if m == 40 {
+         return 0;
+     }
+     1

@@ -1,0 +1,22 @@
+{
+  "case_id": "py-props-loop-tuple-target",
+  "subject_id": "authored-py-pytest-properties",
+  "origin": "authored",
+  "anchor": "props/core.py:22",
+  "behavior_family": "returned_value",
+  "test_shape": "pytest_loop_identity_property_tuple_target",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

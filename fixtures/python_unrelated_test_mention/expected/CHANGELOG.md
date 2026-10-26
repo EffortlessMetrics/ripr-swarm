@@ -589,3 +589,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unrelated_test_mention (23)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless python_unrelated_test_mention --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

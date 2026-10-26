@@ -359,9 +359,10 @@ findings, per-language file counts, and `language_runs` partial-run
 disclosure — no seam renderer reconstructs Python semantics.
 
 Diff mode bounds the Python workspace walk the same way the TypeScript
-adapter does: at most 800 discovered `.py` files
-(`RIPR_PYTHON_MAX_WORKSPACE_FILES`, aligned with the repo-mode
-`RIPR_MAX_REPO_INDEX_FILES` default), a 16 MiB per-file read cap
+adapter does: at most 4000 discovered `.py` files
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`, sized so a Django-sized workspace
+completes; the repo-mode `RIPR_MAX_REPO_INDEX_FILES` working set is a
+separate bound), a 16 MiB per-file read cap
 (`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
 budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
 and unreadable changed files are named typed limitations on the diff

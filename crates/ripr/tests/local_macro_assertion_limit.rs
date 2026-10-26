@@ -165,3 +165,80 @@ fn the_witness_comes_from_the_directly_related_test() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_generated_test_case_comparison_beside_a_proximity_oracle_keeps_its_limit() -> Result<(), String>
+{
+    // `#[test_case(4 => 12)]` generates the comparison on `rows`, which calls
+    // the owner behind an opaque no-op macro; the only recognized oracle sits
+    // in an unrelated test. That used to read as a bare `weakly_exposed` gap
+    // although the generated assertion fails when the owner changes.
+    let noop = "    macro_rules! note {\n        () => {\n            ()\n        };\n    }\n\n";
+    let rows = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        note!();\n        surcharge(base)\n    }\n\n";
+    let found = findings(&format!("{noop}{rows}{OTHER_PIN}"))?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    // The plain-argument form generates no comparison, so nothing is limited.
+    let plain = rows.replace("100 => 110", "100, 110");
+    let found = findings(&format!("{noop}{plain}{OTHER_PIN}"))?;
+    if found.iter().any(limited) {
+        return Err(format!(
+            "a row without `=>` must not be limited: {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_comparison_on_a_constant_return_is_not_a_limit() -> Result<(), String> {
+    // The owner is called, but `rows` returns a literal, so the generated
+    // `=> 110` comparison cannot notice a changed owner. Calling that "an
+    // unreadable comparison" would hide the missing discriminator (#10302).
+    let constant = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
+    let found = findings(constant)?;
+    if found.is_empty() || found.iter().any(limited) {
+        return Err(format!(
+            "a constant-return generated comparison must stay a gap: {:?}",
+            summary(&found)
+        ));
+    }
+    if found
+        .iter()
+        .any(|f| f.class == ripr::ExposureClass::StaticUnknown)
+    {
+        return Err(format!(
+            "the unlimited finding must not read static_unknown: {:?}",
+            summary(&found)
+        ));
+    }
+    // The same row returning the owner's value keeps the named limit.
+    let live = constant.replace("let _ = surcharge(base);\n        110", "surcharge(base)");
+    let found = findings(&live)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_predicate_beside_a_constant_return_keeps_the_limit() -> Result<(), String> {
+    // `with` runs a predicate of its own, which can read state the owner
+    // changed even though the row returns a literal.
+    let with = "    #[test_case(100 => with |_: u32| assert_eq!(surcharge(100), 110))]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
+    let found = findings(with)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "a `with` predicate must keep the generated-comparison limit: {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}

@@ -16,9 +16,31 @@ use super::{
     is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
-use crate::domain::SourceCurrentness;
+use crate::analysis::probes::{collision_ordinals, collision_rank_key, normalize_expression};
+use crate::domain::{Probe, SourceCurrentness};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeInclusive;
+
+/// The probe id before any `.N` collision ordinal; a fingerprint is hex, so a
+/// dot followed by digits is always an ordinal.
+fn base_probe_id(id: &str) -> &str {
+    match id.rsplit_once('.') {
+        Some((base, ordinal))
+            if !ordinal.is_empty() && ordinal.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            base
+        }
+        _ => id,
+    }
+}
+
+/// A deleted-line finding awaiting its collision ordinal.
+struct PendingDeleted {
+    finding: Finding,
+    original_probe: Probe,
+    origins: crate::value_origins::ValueOrigins,
+    key: [u8; 32],
+}
 
 /// What the old side of one changed file says about its removed lines.
 pub(super) struct OldSideRanges<'a> {
@@ -35,7 +57,7 @@ pub(super) type NewSource<'a> = Option<&'a str>;
 /// One base-side finding per removed behavior line that no added line pairs
 /// with. `counterparts` is the file's one pairing
 /// (`ChangedFile::aligned_counterparts`); `findings` holds the file's
-/// candidate-side findings so a repeated probe id gets an ordinal suffix.
+/// candidate-side findings so a repeated probe id numbers after them.
 #[allow(
     clippy::too_many_arguments,
     reason = "deleted-line inputs plus explicit producer origin context"
@@ -64,7 +86,8 @@ pub(super) fn deleted_line_findings_with_value_origins(
         .collect();
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
-        *ids.entry(finding.probe.id.0.clone()).or_default() += 1;
+        *ids.entry(base_probe_id(&finding.probe.id.0).to_string())
+            .or_default() += 1;
     }
     // A paired line is the candidate side's record, not this deletion's, so
     // it does not use up the one record a run inside a kept statement gets.
@@ -73,7 +96,7 @@ pub(super) fn deleted_line_findings_with_value_origins(
             && is_removed_behavior_line(removed, old_side)
             && !opens_only_brackets(&removed.text)
     });
-    let mut out = Vec::new();
+    let mut pending: Vec<PendingDeleted> = Vec::new();
     for removed in &changed.removed_lines {
         if paired.contains(&removed.line)
             || statement_lines.fragments.contains(&removed.line)
@@ -130,10 +153,39 @@ pub(super) fn deleted_line_findings_with_value_origins(
         };
         finding.probe.before = Some(removed.text.clone());
         finding.probe.after = None;
-        let count = ids.entry(finding.probe.id.0.clone()).or_default();
-        *count += 1;
-        if *count > 1 {
-            finding.probe.id.0 = format!("{}.{}", finding.probe.id.0, count);
+        let key = collision_rank_key(
+            &finding.probe.id.0,
+            &owner.symbol_id().0,
+            &normalize_expression(&removed.text),
+        );
+        pending.push(PendingDeleted {
+            finding,
+            original_probe,
+            origins: finding_origins,
+            key,
+        });
+    }
+    // Probes sharing an eight-hex base id are told apart by ordinal. Rank
+    // them by payload digest rather than diff order, so the same two lines
+    // keep their ids whichever order the diff lists them in (#8838).
+    let entries: Vec<(&str, [u8; 32])> = pending
+        .iter()
+        .map(|record| (record.finding.probe.id.0.as_str(), record.key))
+        .collect();
+    let ordinals = collision_ordinals(&entries);
+    let mut out = Vec::new();
+    for (record, ordinal) in pending.into_iter().zip(ordinals) {
+        let PendingDeleted {
+            mut finding,
+            original_probe,
+            origins: mut finding_origins,
+            ..
+        } = record;
+        // Candidate-side findings keep the unsuffixed id, so a deleted one
+        // numbers after them.
+        let ordinal = ordinal + ids.get(&finding.probe.id.0).copied().unwrap_or(0) as u32;
+        if ordinal > 1 {
+            finding.probe.id.0 = format!("{}.{ordinal}", finding.probe.id.0);
             finding.id = finding.probe.id.0.clone();
         }
         finding_origins.rebind_probe(&original_probe, &finding.probe);

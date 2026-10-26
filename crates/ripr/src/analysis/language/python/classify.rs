@@ -25,20 +25,24 @@ use super::related_tests::{
     sort_related_candidates, verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
-use super::sink_alignment::{CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old};
+use super::sink_alignment::{
+    CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
+};
 use super::static_limits::{
-    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
-    unpinned_equality_dunder_limit,
+    LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
+    module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
+use super::type_guard::removed_type_guard_credit;
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
 use crate::analysis::diff::lines_look_alike;
+use crate::analysis::probes::{collision_ordinals, collision_rank_key};
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -402,6 +406,8 @@ pub(super) fn classify_change_for_owner_with_value_origins(
             &focus,
         )
     });
+    let literal_pair = owner_source
+        .and_then(|source| enclosing_literal_pair(source, line, line_text, old_line_text));
     let alignment = classify_sink_alignment_with_old(
         owner,
         line_text,
@@ -409,6 +415,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         &related,
         all_tests,
         guard_entered,
+        literal_pair.as_ref(),
     );
     let alignment = match module_value.first() {
         Some(credit) => SinkAlignment {
@@ -421,6 +428,34 @@ pub(super) fn classify_change_for_owner_with_value_origins(
                 test_file: credit.test.file.clone(),
                 text: credit.assertion.text.clone(),
                 kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
+    // A removed `isinstance` operand guard on `__eq__`, observed by a test that
+    // compares an instance with a foreign literal (#9619).
+    let type_guard = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            removed_type_guard_credit(
+                owner,
+                old_line_text,
+                line_text,
+                owner_source.unwrap_or(""),
+                &related_candidates,
+            )
+        })
+        .flatten();
+    let alignment = match &type_guard {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_removed_type_guard".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::RelationalCheck,
             }),
         },
         None => alignment,
@@ -440,8 +475,20 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         log_evidence.as_ref(),
         &focus,
         owner,
+        owner_source.unwrap_or(""),
         &related_candidates,
     )
+    // A pinned lambda body edit is read by the module-value credit.
+    .filter(|limit| module_value.is_empty() || limit.evidence != LAMBDA_LIMIT_EVIDENCE)
+    .or_else(|| {
+        module_object_rebind_limit(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            alignment.credited.as_ref().filter(|_| alignment.observes()),
+        )
+    })
     .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
     .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
     .or_else(|| {
@@ -495,6 +542,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         .map(|test| test.oracle_strength.rank())
         .chain(mock_pins_changed_call.then(|| OracleStrength::Strong.rank()))
         .chain((!module_value.is_empty()).then(|| OracleStrength::Strong.rank()))
+        .chain(type_guard.is_some().then(|| OracleStrength::Strong.rank()))
         .max()
         .unwrap_or(0);
     let strongest_kind = alignment
@@ -1339,6 +1387,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
             line_text,
             old_line_text,
             guard_entered,
+            literal_pair: literal_pair.as_ref(),
             focus: &focus,
             boundary_fact: crate::domain::input_boundary_fact(
                 &missing_discriminators,
@@ -1519,4 +1568,44 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         origins.record(&finding, files);
     }
     Some(finding)
+}
+
+/// Number a file's candidate-side findings that share a probe id (#10450).
+/// The id's eight-hex fingerprint can collide for different lines, and
+/// identical lines at one owner share it outright. Rank each group by full
+/// payload digest so the numbering does not follow diff order, leave the
+/// first unsuffixed, and move any value-origin receipts to the renamed probe.
+pub(super) fn number_colliding_candidates(
+    findings: &mut [Finding],
+    value_origins: &mut crate::value_origins::ValueOrigins,
+) {
+    let keys: Vec<[u8; 32]> = findings
+        .iter()
+        .map(|finding| {
+            collision_rank_key(
+                &finding.probe.id.0,
+                finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .map_or("", |owner| owner.0.as_str()),
+                &normalize_expression(&finding.probe.expression),
+            )
+        })
+        .collect();
+    let entries: Vec<(&str, [u8; 32])> = findings
+        .iter()
+        .zip(&keys)
+        .map(|(finding, key)| (finding.probe.id.0.as_str(), *key))
+        .collect();
+    let ordinals = collision_ordinals(&entries);
+    for (finding, ordinal) in findings.iter_mut().zip(ordinals) {
+        if ordinal <= 1 {
+            continue;
+        }
+        let original = finding.probe.clone();
+        finding.probe.id.0 = format!("{}.{ordinal}", finding.probe.id.0);
+        finding.id = finding.probe.id.0.clone();
+        value_origins.rebind_probe(&original, &finding.probe);
+    }
 }
