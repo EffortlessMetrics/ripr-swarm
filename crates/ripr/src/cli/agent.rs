@@ -1384,7 +1384,7 @@ mod tests {
                     "0",
                     "--json",
                 ],
-                "--cancel-after-ms",
+                "--cancel-after-ms requires a positive integer; got \"0\"",
             ),
         ] {
             let error = parse_agent_verify_execute_options(&args(&argv))
