@@ -174,6 +174,25 @@ fn check_source(case: &Case, source: &str) -> Result<[ExposureClass; 2], String>
             .filter(|f| f.probe.location.line == 3 && f.probe.family == family)
             .collect();
         assert_eq!(findings.len(), 1, "{}: {family:?}", case.name);
+        if matches!(
+            case.name,
+            "ignored"
+                | "reason_ignore"
+                | "broad_panic"
+                | "raw_broad_panic"
+                | "qualified_ignore"
+                | "ignored_inverse_panic"
+        ) {
+            let finding = findings[0];
+            assert_eq!(finding.related_tests.len(), 1, "{}: {family:?}", case.name);
+            let related = &finding.related_tests[0];
+            assert_eq!(related.name, "parse_checks_bad");
+            assert_eq!(related.oracle_kind.as_str(), "unknown");
+            assert_eq!(related.oracle_strength.as_str(), "none");
+            assert!(related.oracle.as_deref().is_none_or(str::is_empty));
+            assert_eq!(finding.ripr.reveal.observe.state.as_str(), "no");
+            assert_eq!(finding.ripr.reveal.discriminate.state.as_str(), "no");
+        }
         classes.push(findings[0].class.clone());
     }
     classes
@@ -307,5 +326,71 @@ fn expected_panic_matches_cannot_credit_an_unresolved_panic_source() -> Result<(
     for source in controls {
         assert_eq!(check_source(&case, &source)?, case.matches, "{source}");
     }
+    Ok(())
+}
+
+#[test]
+fn expected_panic_message_must_be_established_before_matches_credit() -> Result<(), String> {
+    let case = Case {
+        name: "mismatched_expected_message",
+        attributes: r#"#[should_panic(expected = "required message")]"#,
+        body: r#"assert!(matches!(parse("bad"), Err(Fault::Bad)), "different message");"#,
+        matches: [StaticUnknown, StaticUnknown],
+        equality: [ReachableUnrevealed, ReachableUnrevealed],
+    };
+    let actual = check(&case, false)?;
+    assert_eq!(actual, case.matches);
+    let findings: Vec<_> = ["error_path", "return_value"].into_iter().zip(actual).map(|(family, class)| {
+        serde_json::json!({"case":"mismatched_expected_message","classification":class,"probe":{"family":family}})
+    }).collect();
+    let actual = serde_json::json!({"kind":"matches_eligibility_test_projection","summary":{"findings":2},"findings":findings});
+    let expected: serde_json::Value = serde_json::from_str(include_str!("../../../fixtures/evidence-promotion-honesty-corpus/reports/rust-matches-panic-message.json")).map_err(|e|e.to_string())?;
+    assert_eq!(actual, expected);
+    for body in [
+        r#"assert!(matches!(parse("bad"), Err(Fault::Bad)));"#,
+        r#"assert!(matches!(parse("bad"), Err(Fault::Bad)), "{}", "required message");"#,
+    ] {
+        let unresolved = Case { body, ..case };
+        assert_eq!(check(&unresolved, false)?, [StaticUnknown, StaticUnknown]);
+    }
+    Ok(())
+}
+
+#[test]
+fn expected_panic_literal_substrings_preserve_inverse_undercredit() -> Result<(), String> {
+    let case = Case {
+        name: "literal_substring",
+        attributes: r##"#[should_panic(expected = r#"oracle mismatch"#)]"##,
+        body: r#"assert!(matches!(parse("bad"), Err(Fault::Other)), "prefix oracle mismatch suffix");"#,
+        matches: [ReachableUnrevealed, WeaklyExposed],
+        equality: [ReachableUnrevealed, ReachableUnrevealed],
+    };
+    assert_eq!(check(&case, false)?, case.matches);
+    Ok(())
+}
+
+#[test]
+fn discriminating_tail_panic_remains_a_deliberate_static_refusal() -> Result<(), String> {
+    let case = Case {
+        name: "distinct_tail_panic",
+        attributes: r#"#[should_panic(expected = "tail oracle")]"#,
+        body: r#"assert!(matches!(parse("bad"), Err(Fault::Bad)), "mismatch"); panic!("tail oracle");"#,
+        matches: [ReachableUnrevealed, ReachableUnrevealed],
+        equality: [ReachableUnrevealed, ReachableUnrevealed],
+    };
+    assert_eq!(check(&case, false)?, case.matches);
+    Ok(())
+}
+
+#[test]
+fn compound_dead_matches_assertion_does_not_credit_return_or_error() -> Result<(), String> {
+    let case = Case {
+        name: "compound_dead_assertion",
+        attributes: "",
+        body: r#"let _ = parse("bad"); loop { break; assert!(matches!(parse("bad"), Err(Fault::Bad))); }"#,
+        matches: [ReachableUnrevealed, ReachableUnrevealed],
+        equality: [ReachableUnrevealed, ReachableUnrevealed],
+    };
+    assert_eq!(check(&case, false)?, case.matches);
     Ok(())
 }

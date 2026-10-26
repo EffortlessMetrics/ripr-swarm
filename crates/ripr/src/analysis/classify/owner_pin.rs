@@ -2332,7 +2332,7 @@ impl AssertionRefusal {
             Self::ValueGuard { condition, subject } => format!(
                 "an earlier `if {condition} {{ return; }}` spares the value the assertion expects, so whether the assertion runs depends on the value of `{subject}`, which ripr does not evaluate"
             ),
-            Self::ExpectedPanicUnresolved => "the expected-panic matches check may pass through another panic in its owner, arguments or returned value, which ripr cannot exclude".into(),
+            Self::ExpectedPanicUnresolved => "the expected-panic matches check has an unresolved panic source or expected diagnostic, which ripr cannot establish".into(),
             Self::MacroBinding { name, site } => match site {
                 None => format!("`{name}!` may be redefined somewhere in the workspace"),
                 Some((path, site)) => {
@@ -14004,6 +14004,7 @@ fn bounded_matches_panic_owner(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<()> {
+    matches_panic_diagnostic(test, assertion)?;
     let owner_id = probe.owner.as_ref()?;
     let mut owners = index
         .functions()
@@ -14097,6 +14098,68 @@ fn bounded_matches_panic_owner(
         })
     {
         return None;
+    }
+    Some(())
+}
+
+/// A named expected panic must accept the assertion's diagnostic. Otherwise
+/// both outcomes can fail the harness, despite opposite matches! values.
+/// Only a literal custom diagnostic without formatting is read here; implicit
+/// diagnostics and formatted messages remain outside this bounded admission.
+fn matches_panic_diagnostic(test: &TestSummary, assertion: &OracleFact) -> Option<()> {
+    fn literal_string(text: &str) -> Option<String> {
+        let parsed = parse_clean_source_file(&format!("fn t() {{ {text} }}"))?;
+        let function = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)?;
+        let body = function.body()?.stmt_list()?;
+        if body.statements().next().is_some() {
+            return None;
+        }
+        let ast::Expr::Literal(literal) = body.tail_expr()? else {
+            return None;
+        };
+        let ast::LiteralKind::String(value) = literal.kind() else {
+            return None;
+        };
+        value.value().ok().map(|value| value.into_owned())
+    }
+
+    for attribute in &test.attrs {
+        let parsed = parse_clean_source_file(&format!("{attribute}\nfn t() {{}}"))?;
+        let attr = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Attr::cast)?;
+        if attr.simple_name().as_deref() != Some("should_panic") || attr.as_simple_atom().is_some()
+        {
+            continue;
+        }
+        let (_, expected) = attr.as_simple_call()?;
+        let expected = expected.syntax().text().to_string();
+        let (key, value) = group_inner(&expected, '(', ')')?.trim().split_once('=')?;
+        if key.trim() != "expected" {
+            return None;
+        }
+        let expected = literal_string(value.trim().trim_end_matches(',').trim())?;
+        let parsed = parse_clean_source_file(&format!("fn t() {{ {} }}", assertion.text))?;
+        let call = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroCall::cast)?;
+        let arguments = call.token_tree()?.syntax().text().to_string();
+        let arguments = split_top_level_arguments(group_inner(&arguments, '(', ')')?)?;
+        let [_, message] = arguments.as_slice() else {
+            return None;
+        };
+        let message = literal_string(message)?;
+        if message.contains(['{', '}']) || !message.contains(&expected) {
+            return None;
+        }
     }
     Some(())
 }

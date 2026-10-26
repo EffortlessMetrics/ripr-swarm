@@ -123,7 +123,9 @@ the actual free owner directly returns a unit error variant, its inputs are
 literal strings, its matches pattern is an unguarded unit error variant, and
 the returned enum passes the existing declared-variant and expansion admission
 and has no non-plain
-destructor. Its inverted success condition
+destructor. A named `should_panic(expected = ...)` additionally requires a custom
+string-literal assertion diagnostic without formatting that contains the expected
+text; implicit, formatted or mismatched diagnostics remain unresolved. Its inverted success condition
 can distinguish two results. Other owners, arguments or destructors may supply
 an independent expected panic; unresolved cases withhold credit as an analyzer
 limit. The attribute alone does not establish a missing discriminator. This

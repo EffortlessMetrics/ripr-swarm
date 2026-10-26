@@ -28,6 +28,9 @@ mod effect_assertions;
 #[path = "owner_pin_execution/function_pointer.rs"]
 mod function_pointer;
 
+#[path = "owner_pin_execution/matches_panic.rs"]
+mod matches_panic;
+
 struct Scratch(PathBuf);
 
 impl Scratch {

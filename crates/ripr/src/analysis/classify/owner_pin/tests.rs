@@ -12967,3 +12967,35 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }
+
+#[test]
+fn matches_admission_preserves_source_assertion_cardinality() {
+    for attributes in [
+        "",
+        "#[ignore]",
+        "#[ignore = \"slow\"]",
+        "#[should_panic]",
+        "#[should_panic(expected = \"oracle mismatch\")]",
+    ] {
+        let source = format!(
+            "enum Fault {{ Bad, Other }}\nfn parse(_: &str) -> Result<(), Fault> {{ Err(Fault::Bad) }}\n#[test]\n{attributes}\nfn parse_checks_bad() {{ assert!(matches!(parse(\"bad\"), Err(Fault::Other)), \"oracle mismatch\"); }}\n"
+        );
+        let index = index(&[(LIB, &source)]);
+        assert_eq!(index.tests().len(), 1, "{attributes}");
+        let test = index.tests().at(0);
+        assert_eq!(test.assertions.len(), 1, "{attributes}");
+        assert!(test.assertions[0].text.starts_with("assert!(matches!"));
+        let strict = owner_pin_assertions(&source, &assertion_context_macros());
+        let matches = owner_pin_matches_assertions(&source, &assertion_context_macros());
+        // Admission queries cannot drop, duplicate, or rewrite extraction facts.
+        for admission in [&strict, &matches, &strict] {
+            let _ = admission.refusal(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (test.assertions[0].line, &test.assertions[0].text),
+                &BTreeSet::new(),
+            );
+            assert_eq!(test.assertions.len(), 1);
+        }
+    }
+}
