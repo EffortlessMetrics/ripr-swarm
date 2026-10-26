@@ -1233,8 +1233,8 @@ otherwise the parameter stays unresolved as before:
   the same fixture counts) or rebinds the class, by rule 5's receiver checks.
 
 A fixture that does more than construct (a second statement, a dependency
-on another fixture, a factory call, a seeded instance), a worker-scoped or
-`auto` tuple, an override with `test.use`, and a merged or twice-extended
+on another fixture, a factory call, a statement that seeds the instance), a worker-scoped or
+`auto` tuple, an override with `test.use` (any spelling), and a merged or twice-extended
 test leave the parameter unresolved: the instance the test sees may not be
 the fresh one the constructor builds.
 

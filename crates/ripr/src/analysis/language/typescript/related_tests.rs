@@ -1900,12 +1900,7 @@ pub(crate) fn receiver_owner_call_relation(
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
     for binding in test.scope_bindings.iter() {
-        // A destructured fixture parameter is the binding itself, not a
-        // declaration that shadows it: scan the body after the parameters.
-        let body = binding
-            .parameter_end
-            .and_then(|end| test.body_text.get(end..))
-            .unwrap_or(&test.body_text);
+        let body = binding_scan_body(test, binding);
         if binding
             .constructed_by
             .as_ref()
@@ -1960,8 +1955,14 @@ pub(crate) fn owner_method_receiver_names(
                     .constructed_by
                     .as_ref()
                     .is_some_and(|constructor| constructor_names.contains(constructor))
-                    && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-                    && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+                    && !local_identifier_declared_in_test_body(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
+                    && !super::tests_extract::identifier_written_in(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
                 {
                     push_unique_string(&mut receivers, binding.name.clone());
                 }
@@ -1974,6 +1975,16 @@ pub(crate) fn owner_method_receiver_names(
         }
         _ => Vec::new(),
     }
+}
+
+/// The text a shadow or write scan of `binding` covers. A destructured
+/// fixture parameter is the binding itself, not a declaration that shadows
+/// it, so its scan starts after the parameter list.
+fn binding_scan_body<'t>(test: &'t TypeScriptTest, binding: &TypeScriptScopeBinding) -> &'t str {
+    binding
+        .parameter_end
+        .and_then(|end| test.body_text.get(end..))
+        .unwrap_or(&test.body_text)
 }
 
 pub(crate) fn class_method_owner_call_relation(

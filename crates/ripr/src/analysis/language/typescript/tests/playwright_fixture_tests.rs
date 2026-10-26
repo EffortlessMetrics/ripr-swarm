@@ -106,7 +106,10 @@ fn a_fixture_that_does_more_than_construct_binds_nothing() {
 #[test]
 fn a_file_that_overrides_or_merges_fixtures_binds_nothing() {
     for (label, extra) in [
-        ("a use override", "test.use({ cart: seeded });"),
+        ("a use override", "test.use(overrides);"),
+        ("a spaced use override", "test.use (overrides);"),
+        ("an optional-call use override", "test.use?.(overrides);"),
+        ("a bracketed use override", "test[\"use\"](overrides);"),
         ("a second extend", "const other = test.extend({});"),
         ("a merge", "const merged = mergeTests(test, other);"),
     ] {
@@ -169,4 +172,56 @@ fn a_test_not_imported_from_playwright_binds_nothing() {
 fn a_class_rebound_in_the_file_binds_nothing() {
     let source = spec(PLAIN, &format!("Cart.prototype.add = spy;\n{USES}"));
     assert_eq!(constructors(&source, "cart"), vec![None]);
+}
+
+mod relation {
+    use super::super::super::owners::extract_owners;
+    use super::super::super::related_tests::receiver_owner_call_relation;
+    use super::{PLAIN, spec};
+    use crate::analysis::language::typescript::tests_extract::extract_tests;
+    use std::path::Path;
+
+    const CART: &str = "export class Cart {\n  private cents: number[] = [];\n  add(amount: number): void {\n    this.cents.push(amount);\n  }\n}\n";
+
+    /// Whether the registration at `index` of `tests` reaches `Cart.add`
+    /// through the receiver relation.
+    fn reaches_add(tests: &str, index: usize) -> bool {
+        let owners = extract_owners(Path::new("src/cart.ts"), CART);
+        let adds: Vec<_> = owners.iter().filter(|owner| owner.name == "add").collect();
+        assert_eq!(adds.len(), 1, "the fixture class has one `add` owner");
+        let extracted = extract_tests(Path::new("test/cart.spec.ts"), &spec(PLAIN, tests));
+        adds.iter()
+            .any(|owner| receiver_owner_call_relation(&extracted[index], owner, None, None))
+    }
+
+    const ADDS: &str = "test(\"adds\", ({ cart }) => {\n  cart.add(250);\n});";
+
+    #[test]
+    fn a_call_through_the_fixture_parameter_reaches_the_method() {
+        assert!(reaches_add(ADDS, 0));
+        assert!(reaches_add(
+            "test(\"adds\", ({ cart: basket }) => {\n  basket.add(250);\n});",
+            0
+        ));
+    }
+
+    #[test]
+    fn a_body_that_shadows_or_writes_the_parameter_does_not() {
+        for (label, tests) in [
+            (
+                "a local declaration",
+                "test(\"adds\", ({ cart }) => {\n  {\n    const cart = other();\n    cart.add(250);\n  }\n});",
+            ),
+            (
+                "a hook that takes the fixture first",
+                "test.beforeEach(({ cart }) => {\n  cart.add(1);\n});\ntest(\"adds\", ({ cart }) => {\n  cart.add(250);\n});",
+            ),
+            (
+                "a later local class of the same name",
+                "class Cart {}\ntest(\"adds\", ({ cart }) => {\n  cart.add(250);\n});",
+            ),
+        ] {
+            assert!(!reaches_add(tests, 0), "{label}");
+        }
+    }
 }

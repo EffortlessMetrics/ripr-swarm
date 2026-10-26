@@ -138,12 +138,19 @@ impl PlaywrightFixtures {
     }
 }
 
-/// One extend per file, no `mergeTests`, no `test.use` override. Text-level
-/// on purpose: a mention in a comment only withholds.
+/// One extend per file, no `mergeTests`, no `test.use` override in any
+/// spelling (`.use (`, `.use?.(`, `["use"]`, a bare reference). Text-level on
+/// purpose: a mention in a comment only withholds.
 fn file_is_unmerged(source: &str) -> bool {
+    let uses_override = source.match_indices(".use").any(|(at, _)| {
+        !source[at + ".use".len()..]
+            .starts_with(|ch: char| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    });
     source.matches(".extend").count() == 1
         && !source.contains("mergeTests")
-        && !source.contains(".use(")
+        && !uses_override
+        && !source.contains("[\"use\"]")
+        && !source.contains("['use']")
 }
 
 /// The extended test's name is declared once and never reassigned or
