@@ -4,39 +4,37 @@
 //! `assert_eq!(order.lines, expected.lines)` runs `Line::eq` for every element
 //! (or the `eq` of a field type `Line` embeds). A derived `eq` compares every
 //! field, so a changed pushed field fails the assertion. A hand-written `eq`
-//! may ignore the field, compare it case-insensitively, or compare only a key,
+//! may ignore the field, compare it case-insensitively, or compare a key only,
 //! and then the same mutant passes. The static reading cannot evaluate `eq`,
 //! so the pushed-literal credit is withheld whenever the pushed element type,
 //! or a type it embeds, has a hand-written `PartialEq`.
 //!
 //! The scan is textual and fails closed: a pushed literal whose type has no
 //! `struct`/`enum` definition in the workspace (macro-generated, aliased,
-//! `Self`) is treated as lenient.
+//! `Self`, a foreign type that only shares a variant name) is treated as
+//! lenient.
 
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::rust_index::{FunctionSummary, RustIndex};
-use crate::domain::Probe;
+use crate::analysis::rust_index::RustIndex;
 use std::collections::BTreeSet;
 
 /// How many levels of embedded field types are followed.
 const MAX_EMBEDDING_DEPTH: usize = 4;
 
-/// Whether the element type `owner` pushes at `probe` may compare leniently:
-/// it, or a type its definition embeds, has a hand-written `PartialEq`, or the
-/// element type cannot be resolved to a definition.
-pub(super) fn pushed_element_may_compare_leniently(
-    owner: &FunctionSummary,
-    probe: &Probe,
-    index: &RustIndex,
-) -> bool {
-    let Some(candidates) = pushed_literal_type_names(owner, probe) else {
+/// Whether the element type of the pushed literal `literal` (`Line`,
+/// `Event::Shipped`, `model::Line`) may compare leniently: it, or a type its
+/// definition embeds, has a hand-written `PartialEq`, or the element type
+/// cannot be resolved to a workspace definition.
+pub(super) fn pushed_element_may_compare_leniently(literal: &str, index: &RustIndex) -> bool {
+    let Some(element) = element_type_names(literal) else {
         return true;
     };
     let lenient = handwritten_partial_eq_types(index);
     let mut defined = false;
     let mut visited = BTreeSet::new();
-    let mut frontier = candidates;
-    for _ in 0..=MAX_EMBEDDING_DEPTH {
+    let mut frontier = vec![element.type_name.clone()];
+    frontier.extend(element.variant);
+    for depth in 0..=MAX_EMBEDDING_DEPTH {
         let mut next = Vec::new();
         for name in frontier {
             if lenient.contains(&name) {
@@ -53,7 +51,11 @@ pub(super) fn pushed_element_may_compare_leniently(
                     continue;
                 }
                 if let Some(body) = item_body(&mask_comments_and_strings(raw), &name) {
-                    defined = true;
+                    // Only the element type itself proves the literal is a
+                    // workspace type: a variant name can collide with an
+                    // unrelated struct (`foreign::Event::Shipped` beside a
+                    // local `struct Shipped`).
+                    defined |= depth == 0 && name == element.type_name;
                     next.extend(identifiers(body).filter(|ident| is_type_like(ident)));
                 }
             }
@@ -66,44 +68,32 @@ pub(super) fn pushed_element_may_compare_leniently(
     !defined
 }
 
-/// The one or two trailing path segments of the struct literal handed to the
-/// `push(` that encloses `probe` (`Line` for `Line { .. }`, `Event`/`Shipped`
-/// for `Event::Shipped { .. }`). `None` when no such literal is found.
-fn pushed_literal_type_names(owner: &FunctionSummary, probe: &Probe) -> Option<Vec<String>> {
-    let masked = mask_comments_and_strings(owner.body.as_str());
-    let probe_line = probe.location.line.checked_sub(owner.start_line)?;
-    literal_type_names_at(&masked, probe_line)
+/// The element type a pushed literal builds, and its variant when the literal
+/// is `Enum::Variant { .. }`.
+struct ElementType {
+    type_name: String,
+    variant: Option<String>,
 }
 
-/// [`pushed_literal_type_names`] over the masked owner body, with the probe on
-/// zero-based line `probe_line`.
-fn literal_type_names_at(masked: &str, probe_line: usize) -> Option<Vec<String>> {
-    let lines: Vec<&str> = masked.lines().collect();
-    let upto = probe_line.min(lines.len().checked_sub(1)?);
-    let (line_index, call_end) = (0..=upto).rev().find_map(|at| {
-        lines[at]
-            .rfind(".push(")
-            .map(|call| (at, call + ".push(".len()))
-    })?;
-    let argument = lines[line_index].get(call_end..)?.trim_start();
-    let path_len = argument
-        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
-        .unwrap_or(argument.len());
-    let path = &argument[..path_len];
-    if path.is_empty() || !argument[path_len..].trim_start().starts_with('{') {
+/// Names the type of the literal path: module segments (lowercase) are
+/// skipped, `Self` is unresolvable, and two trailing type-like segments read
+/// as `Enum::Variant`.
+fn element_type_names(literal: &str) -> Option<ElementType> {
+    let types: Vec<&str> = literal
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .filter(|segment| is_type_like(segment))
+        .collect();
+    if types.contains(&"Self") {
         return None;
     }
-    let segments: Vec<&str> = path.split("::").filter(|part| !part.is_empty()).collect();
-    if segments.contains(&"Self") {
-        return None;
-    }
-    let tail = segments.len().saturating_sub(2);
-    Some(
-        segments[tail..]
-            .iter()
-            .map(|segment| (*segment).to_string())
-            .collect(),
-    )
+    let tail = types.len().saturating_sub(2);
+    let types = &types[tail..];
+    let type_name = (*types.first()?).to_string();
+    Some(ElementType {
+        type_name,
+        variant: types.get(1).map(|variant| (*variant).to_string()),
+    })
 }
 
 /// Self-type names of every hand-written `impl PartialEq .. for T` in the
@@ -133,8 +123,9 @@ fn handwritten_partial_eq_types(index: &RustIndex) -> BTreeSet<String> {
 }
 
 /// The text between the delimiters of `struct name { .. }`, `struct name(..)`
-/// or `enum name { .. }` in masked `source`; `None` when it declares neither
-/// (or a unit struct, which embeds nothing).
+/// or `enum name { .. }` in masked `source`, past any generic parameters and
+/// `where` clause (`struct Line<F: Fn() + PartialEq> { .. }`); `None` when it
+/// declares neither (a unit struct embeds nothing and reads as empty).
 fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
     ["struct", "enum"].iter().find_map(|keyword| {
         let needle = format!("{keyword} {name}");
@@ -151,7 +142,12 @@ fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
             if !before_ok || !after_ok {
                 return None;
             }
-            let open = after.find(['{', '(', ';'])?;
+            let after = skip_generics(after);
+            let open = if after.trim_start().starts_with('(') {
+                after.find('(')?
+            } else {
+                after.find(['{', ';'])?
+            };
             let (open_ch, close_ch) = match after.as_bytes()[open] {
                 b'{' => ('{', '}'),
                 b'(' => ('(', ')'),
@@ -171,6 +167,31 @@ fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
             None
         })
     })
+}
+
+/// `text` past a leading balanced `<..>` generic parameter list, when there is
+/// one (`->` inside a bound does not close it).
+fn skip_generics(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with('<') {
+        return text;
+    }
+    let mut depth = 0usize;
+    let mut previous = ' ';
+    for (offset, ch) in trimmed.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' if previous != '-' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &trimmed[offset + 1..];
+                }
+            }
+            _ => {}
+        }
+        previous = ch;
+    }
+    text
 }
 
 fn identifiers(text: &str) -> impl Iterator<Item = String> + '_ {
@@ -199,25 +220,15 @@ mod tests {
     }
 
     #[test]
-    fn literal_type_names_follow_the_enclosing_push() {
-        let names = |body: &str, line: usize| literal_type_names_at(body, line);
-        let plain = "fn add(&mut self) {\n    self.lines.push(Line { sku: s, qty });\n}";
-        assert_eq!(names(plain, 1), Some(vec!["Line".to_string()]));
-        let split = "fn add(&mut self) {\n    self.lines.push(Line {\n        sku: s,\n    });\n}";
-        assert_eq!(names(split, 2), Some(vec!["Line".to_string()]));
-        let variant = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: s });\n}";
-        assert_eq!(
-            names(variant, 1),
-            Some(vec!["Event".to_string(), "Shipped".to_string()])
-        );
-        // `Self`, a call or a binding is not a literal the scan can resolve.
-        for body in [
-            "fn add(&mut self) {\n    self.lines.push(Self { sku: s });\n}",
-            "fn add(&mut self) {\n    self.lines.push(make(s));\n}",
-            "fn add(&mut self) {\n    let l = Line { sku: s };\n}",
-        ] {
-            assert_eq!(names(body, 1), None, "{body}");
-        }
+    fn item_body_skips_generic_bounds_and_where_clauses() {
+        let generic = "struct Line<F: Fn() + PartialEq> { sku: Sku, callback: F }";
+        assert!(item_body(generic, "Line").is_some_and(|body| body.contains("Sku")));
+        let arrow = "struct Line<F: Fn() -> u8> { sku: Sku, callback: F }";
+        assert!(item_body(arrow, "Line").is_some_and(|body| body.contains("Sku")));
+        let bounded = "struct Line<F> where F: Fn() { sku: Sku, callback: F }";
+        assert!(item_body(bounded, "Line").is_some_and(|body| body.contains("Sku")));
+        let tuple = "struct Pair<T>(Sku, T);";
+        assert!(item_body(tuple, "Pair").is_some_and(|body| body.contains("Sku")));
     }
 
     #[test]
@@ -227,5 +238,25 @@ mod tests {
             item_body("pub(crate) struct Line { a: u8 }", "Line"),
             Some(" a: u8 ")
         );
+    }
+
+    #[test]
+    fn element_type_names_separate_the_type_from_its_variant() {
+        let names = |literal: &str| {
+            element_type_names(literal).map(|element| (element.type_name, element.variant))
+        };
+        assert_eq!(names("Line"), Some(("Line".to_string(), None)));
+        assert_eq!(names("model::Line"), Some(("Line".to_string(), None)));
+        assert_eq!(
+            names("Event::Shipped"),
+            Some(("Event".to_string(), Some("Shipped".to_string())))
+        );
+        assert_eq!(
+            names("foreign::Event::Shipped"),
+            Some(("Event".to_string(), Some("Shipped".to_string())))
+        );
+        assert_eq!(names("Self"), None);
+        assert_eq!(names("Self::Shipped"), None);
+        assert!(names("lower::path").is_none());
     }
 }

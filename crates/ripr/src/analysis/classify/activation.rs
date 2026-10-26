@@ -3838,7 +3838,7 @@ pub(in crate::analysis) fn pushed_literal_path(
 ) -> Option<String> {
     let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
         .and_then(|call| call.impl_type());
-    super::propagation_witness::pushed_literal_collection_path(
+    let site = super::propagation_witness::pushed_literal_site(
         owner.body.as_str(),
         owner.start_line,
         probe.location.line,
@@ -3849,10 +3849,11 @@ pub(in crate::analysis) fn pushed_literal_path(
                     .map(str::to_string)
             })
         },
-    )
+    )?;
     // A hand-written `PartialEq` may ignore the pushed field, so the whole
     // collection equality that confirms it is not evidence for it.
-    .filter(|_| !super::custom_eq::pushed_element_may_compare_leniently(owner, probe, index))
+    (!super::custom_eq::pushed_element_may_compare_leniently(&site.literal, index))
+        .then_some(site.path)
 }
 
 /// #7131: whether `assertion` compares the whole field collection `path`
