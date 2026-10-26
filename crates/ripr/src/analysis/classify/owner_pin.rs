@@ -13411,6 +13411,90 @@ fn named_or_slice(
     Some(ReceiverType::Named(base.to_string()))
 }
 
+/// #9638: the workspace type name a test's receiver expression is established to
+/// be a value of, by the owner-pin receiver reader: a plain identifier the
+/// test binds only by `let [mut] x [: T] = <constructor of T>;`, or an inline
+/// constructor expression (`Pool::default()`, `Pool { .. }`). `None` when the
+/// type is not established (a std or external type, a rebound name, a
+/// foreign or aliased import of the type, a non-`Self` constructor), so the
+/// caller must fail closed.
+pub(in crate::analysis) fn test_receiver_named_type(
+    test: &TestSummary,
+    receiver: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+) -> Option<String> {
+    let files = index.files();
+    let test_source: Option<&str> = files
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    let imports_foreign = |_: &Path, name: &str| {
+        test_source.is_none_or(|source| {
+            super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
+        })
+    };
+    let syntax = OwnerPinSyntax::default();
+    let receiver = receiver.trim();
+    let typed = if is_plain_identifier(receiver) {
+        test_receiver_type(
+            test,
+            receiver,
+            test_source,
+            index,
+            &imports_foreign,
+            owner,
+            &syntax,
+        )
+    } else {
+        binding_type(
+            &format!("= {receiver}"),
+            test,
+            test_source,
+            index,
+            &imports_foreign,
+            owner,
+            &syntax,
+        )
+    };
+    match typed? {
+        // The receiver reader resolves a bare type name. Two workspace types
+        // (or a type and an alias) of one name, in any module or file, make
+        // the name ambiguous (`alt::Pool` imported over the real `Pool`), so
+        // identity is not established.
+        ReceiverType::Named(name) if workspace_type_name_count(&name, index) == 1 => Some(name),
+        ReceiverType::Named(_) | ReceiverType::ByteSlice => None,
+    }
+}
+
+/// How many `struct`, `enum`, `union` or `type` items named `name` the
+/// workspace declares, across every module and file. The per-name table is
+/// built once per index (every file masked once), then looked up.
+fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
+    index
+        .call_identity_memos
+        .type_name_counts(|| {
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+            for facts in index.files().values() {
+                let masked = mask_comments_and_strings(&facts.source);
+                for keyword in ["struct", "enum", "union", "type"] {
+                    for offset in whole_word_offsets(&masked, keyword) {
+                        let rest = masked[offset + keyword.len()..].trim_start();
+                        let end = rest
+                            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                            .unwrap_or(rest.len());
+                        if end > 0 {
+                            *counts.entry(rest[..end].to_string()).or_default() += 1;
+                        }
+                    }
+                }
+            }
+            counts
+        })
+        .get(name)
+        .copied()
+        .unwrap_or(0)
+}
+
 /// The owner's identity, for the #6957 shadow exemption: the owner's own
 /// scope holds the production declaration, so it is not a test-local
 /// shadow. The single-file check resolves the scope in the test file's own

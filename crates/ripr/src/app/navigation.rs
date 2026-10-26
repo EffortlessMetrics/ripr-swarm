@@ -164,10 +164,12 @@ impl RepairRouteRefusal {
                 if observed_boundary {
                     // #10622: the input is already there; only the assertion
                     // is weak, so do not say the boundary evidence is missing.
-                    let others: Vec<&str> = missing
+                    // #10644: plain phrases for the human reader; the machine
+                    // `missing` list stays internal.
+                    let others: Vec<String> = missing
                         .iter()
                         .filter(|item| !super::task_first::is_boundary_value_discriminator(item))
-                        .map(|item| item.as_str())
+                        .map(|item| super::task_first::humanize_route_evidence(item))
                         .collect();
                     let also = if others.is_empty() {
                         String::new()
@@ -186,11 +188,17 @@ impl RepairRouteRefusal {
                      safe test target; follow the Next step above, then rerun `ripr check`"
                         .to_string()
                 } else {
+                    // #10644: name each missing fact in plain words on this
+                    // human screen; the underlying list keeps internal codes.
+                    let plain: Vec<String> = missing
+                        .iter()
+                        .map(|item| super::task_first::humanize_route_evidence(item))
+                        .collect();
                     format!(
                         "no repair start offered: ripr cannot build a repair packet for this \
                          finding yet because it is still missing: {}; follow the Next step \
                          above, then rerun `ripr check`",
-                        missing.join("; ")
+                        plain.join("; ")
                     )
                 }
             }
@@ -672,9 +680,9 @@ mod tests {
         .advisory(gate);
         assert!(
             unobserved.contains(
-                "still missing: producer-owned missing discriminator fact: boundary_value"
-            ),
-            "unobserved boundary keeps the generic wording: {unobserved}"
+                "still missing: a test assertion that pins the changed boundary value exactly"
+            ) && !unobserved.contains("producer-owned missing discriminator fact"),
+            "unobserved boundary renders the plain phrase, not the internal code: {unobserved}"
         );
         let observed = RepairRouteRefusal::Ineligible {
             reason: "repair route not ready".to_string(),

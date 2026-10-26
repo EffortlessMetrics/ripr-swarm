@@ -1,0 +1,47 @@
+{
+  "case_id": "forwarder-hop-name-collision",
+  "subject_id": "authored-forwarder-hop",
+  "diff": "cases/forwarder-hop-name-collision.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 60
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "false_credit_trap",
+  "hard_case": "Two types define a method named `fold`: `Wing::fold` forwards to the changed owner, `Fin::fold` is unrelated. The only test calls `Fin::fold`.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "wanted >= 4",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: no test calls `Wing`, so the changed owner never runs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test calls `fin.fold(4)`, a method of `Fin`, and nothing calls `Wing`. The bare name `fold` is also the forwarder of the changed owner, so a name-only reading would pair the test with the owner; it must not. 0 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, passes it too. Spec cells: RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "4228803",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#11"
+  ]
+}
