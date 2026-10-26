@@ -15,14 +15,15 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn create() -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        let temporary = std::env::temp_dir();
+        std::fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!(
             "ripr-spec-b-bindings-{}-{}",
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        let scratch = Self(root);
-        std::fs::create_dir_all(&scratch.0).map_err(|error| error.to_string())?;
-        Ok(scratch)
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        Ok(Self(root))
     }
 }
 
