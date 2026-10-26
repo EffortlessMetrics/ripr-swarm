@@ -215,6 +215,14 @@ covers ranges that only delete files, change submodule pointers or touch ripr
 artifacts, so deletion-only, submodule and excluded-artifact ranges still carry
 no assurance that no behavior changed.
 
+A submodule with uncommitted changes counts as a submodule pointer change too.
+Git renders it as an adjacent `-Subproject commit <sha>` and
+`+Subproject commit <sha>-dirty` pair with no `160000` mode or `index` header,
+so the parser recognizes that pair when no header called the section a regular
+file. Such a diff gets the skipped-submodule notice and never the "non-source
+file" explanation, and a document that quotes a commit line is not mistaken for
+a gitlink (#10648).
+
 ### Non-claims
 
 - This spec does NOT change the exit code or gate authority.
