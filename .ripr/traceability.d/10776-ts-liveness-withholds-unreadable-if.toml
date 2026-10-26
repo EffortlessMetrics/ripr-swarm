@@ -1,0 +1,8 @@
+# Registers the unreadable changed-if withholding controls (#10776) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_withholds_a_one_line_changed_if",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_withholds_a_changed_if_in_a_nested_function",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_leaves_a_changed_ternary_alone",
+]

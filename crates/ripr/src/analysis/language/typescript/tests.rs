@@ -15781,11 +15781,12 @@ fn branch_return_expressions_keeps_plain_nesting_and_blanked_literals() {
     );
 }
 
-/// #7433 through the liveness decision: at the boundary input the real pair is
-/// 1/2, so pinning `3` is dead. The misread pair 2/3 called that expectation
-/// live, which let a dead pin witness the boundary.
+/// #7433 / #10776 through the liveness decision: at the boundary input the
+/// real pair is 1/2, so pinning `3` is dead. The scan cannot read a one-line
+/// changed `if`, and the witness has already credited the pin, so the check
+/// withholds (`Some(false)`) rather than leave a dead pin standing.
 #[test]
-fn expected_side_is_live_gives_up_on_a_one_line_changed_if() {
+fn expected_side_is_live_withholds_a_one_line_changed_if() {
     let owner = TypeScriptOwner {
         source_text: Some(
             concat!(
@@ -15802,17 +15803,83 @@ fn expected_side_is_live_gives_up_on_a_one_line_changed_if() {
         params: vec!["s".to_string(), "admin".to_string()],
         ..boundary_witness_owner()
     };
+    for expected in ["3", "2", "1"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "        if (s === 404) { return 1; }",
+                "s",
+                "404",
+                &["404".to_string()],
+                expected,
+            ),
+            Some(false),
+            "pin {expected}: an unreadable branch pair cannot show the pin is live"
+        );
+    }
+}
+
+/// #10776: the same holds for a changed `if` inside a nested arrow, whose
+/// returns belong to the arrow, not the owner.
+#[test]
+fn expected_side_is_live_withholds_a_changed_if_in_a_nested_function() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    const pick = (n: number) => {\n",
+                "        if (n === 404) {\n",
+                "            return 1;\n",
+                "        }\n",
+                "        return 2;\n",
+                "    };\n",
+                "    return pick(s);\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
     assert_eq!(
         expected_side_is_live(
             &owner,
-            "        if (s === 404) { return 1; }",
-            "s",
+            "        if (n === 404) {",
+            "n",
             "404",
             &["404".to_string()],
-            "3",
+            "1",
         ),
-        None,
-        "a one-line changed if has no attributable branch pair"
+        Some(false)
+    );
+}
+
+/// #10776 control: a changed ternary is not an `if` statement. It has no
+/// branch pair to read, and its credit stands as before (`None`).
+#[test]
+fn expected_side_is_live_leaves_a_changed_ternary_alone() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function discount(quantity: number): number {\n",
+                "  return quantity > 10 ? 10 : 0;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["quantity".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  return quantity > 10 ? 10 : 0;",
+            "quantity",
+            "10",
+            &["10".to_string()],
+            "10",
+        ),
+        None
     );
 }
 

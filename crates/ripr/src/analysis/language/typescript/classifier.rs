@@ -4800,7 +4800,10 @@ pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
 /// `Some(false)` when it provably cannot (a dead test whose expectation is
 /// wrong under both behaviors, or equal under both); `None` when the check is not
 /// statically determinable (no owner body, unresolvable branches or bindings,
-/// non-numeric expectation) — the witness decision then stands unchanged.
+/// non-numeric expectation) — the witness decision then stands unchanged. The
+/// one exception is a changed `if` statement whose branch pair this scan cannot
+/// read (one-line, or nested in an arrow or `function`): that withholds
+/// (`Some(false)`), because a pin that cannot be shown live must not stand.
 ///
 /// The semantics are derived only from statically resolvable facts: the
 /// changed comparison's operator, the observed argument values bound to the
@@ -4836,6 +4839,19 @@ pub(crate) fn expected_side_is_live(
     let start = matching.next()?;
     if matching.next().is_some() {
         return None;
+    }
+    // A one-line or nested changed `if` has no branch pair this scan can read.
+    // The witness above already credited the pin, and a pair that cannot be
+    // read cannot show the pin is live, so withhold rather than let a dead pin
+    // stand (#10776). Only an `if` statement is held to this: a changed
+    // ternary or other expression has no branch pair to read in the first
+    // place, and its credit stands as before.
+    let head = lines[start].trim_start();
+    let is_if_statement = ["if (", "if(", "else if (", "else if(", "} else if"]
+        .iter()
+        .any(|form| head.starts_with(form));
+    if is_if_statement && changed_if_opens_its_own_body(&lines, start) != Some(true) {
+        return Some(false);
     }
     let (true_expr, false_expr) = branch_return_expressions(&lines, start)?;
     let lhs = comparison_operand_value(left, owner, arguments)?;
