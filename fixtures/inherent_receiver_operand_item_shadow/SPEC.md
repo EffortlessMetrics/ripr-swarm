@@ -19,8 +19,9 @@ fixture's diff. The source also compiles as a native Rust test without dependenc
 
 Both private-owner findings remain `weakly_exposed`. The retained decoy has a
 strong whole-object-equality oracle but a low-confidence `weak_token_substring`
-relation. The honesty corpus independently checks the match-arm subject, expected
-row identity and refused direct-owner relation.
+relation. The honesty-corpus slice stacked on this fixture is intended to check the
+match-arm subject, expected row identity and refused direct-owner relation; this
+fixture slice does not carry that check.
 
 ## Must Not
 

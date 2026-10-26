@@ -1,8 +1,10 @@
 # Executable owner identity boundaries
 
-The 34 entries in `cases.json` bind complete native sources to expected repository
+The 50 entries in `cases.json` bind complete native sources to expected repository
 relations. `native_reaches` records the independent one-arm mutation result;
 `relation` records bounded static admission. Neither rewrites the other.
+`native_reaches` is evidence-packet documentation: no gate reads it, so a changed
+value is reviewed against the native replay and is not checked mechanically.
 
 | Hypothesis / controls | Native owner mutant | Repository full / compact | Diff |
 | --- | --- | --- | --- |
