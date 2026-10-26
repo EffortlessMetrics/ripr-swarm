@@ -165,6 +165,11 @@ pub(crate) struct HelperHop {
     /// import, a glob or `#[macro_use]`), so no bare macro in the caller
     /// is trusted to be transparent (#10351).
     pub(crate) transparent_macros_rebound: bool,
+    /// The `.unwrap_or_else(<path>)` handler paths in the caller's body whose
+    /// target is one workspace function that only diverges (#9638), so an
+    /// `Ok` value passes through that unwrap unchanged. Resolved once at hop
+    /// construction, where the index is in hand; empty when none qualifies.
+    pub(crate) diverging_handlers: Vec<String>,
 }
 
 /// The resolved chain for one helper. `stop_above` names the first
@@ -1000,6 +1005,7 @@ pub(crate) fn resolve_chain(
             receiver: None,
             through_macro: true,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+            diverging_handlers: diverging_handlers(caller, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1115,6 +1121,7 @@ fn chain_through_caller(
         receiver: None,
         through_macro: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: diverging_handlers(caller, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1455,6 +1462,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         receiver: Some(receiver.to_string()),
         through_macro: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: diverging_handlers(caller, index),
     })
 }
 
@@ -2661,7 +2669,12 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                     None => return false,
                 },
             };
-            caller_tail_forwards_call(&hop.caller, callee, &hop.call_text)
+            caller_tail_forwards_call(
+                &hop.caller,
+                callee,
+                &hop.call_text,
+                &hop.diverging_handlers,
+            )
                 // #10284: a caller that binds its callee's name
                 // (`let is_bulk = |_| true;`) calls the binding, and a
                 // user macro may expand to an early `return` the textual
@@ -2871,7 +2884,149 @@ fn receiver_is_whole_expression(receiver: &str) -> bool {
     false
 }
 
-fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: &str) -> bool {
+/// `<head>.unwrap_or_else(<handler>)` as `(head, handler)` when the call is the
+/// whole of `tail` (masked text).
+fn split_unwrap_or_else(tail: &str) -> Option<(&str, &str)> {
+    const NEEDLE: &str = ".unwrap_or_else(";
+    let tail = tail.trim();
+    let positions: Vec<usize> = tail.match_indices(NEEDLE).map(|(at, _)| at).collect();
+    positions.into_iter().rev().find_map(|at| {
+        let open = at + NEEDLE.len() - 1;
+        (matching_close(tail, open)? + 1 == tail.len())
+            .then(|| (tail[..at].trim_end(), tail[open + 1..tail.len() - 1].trim()))
+    })
+}
+
+/// The `.unwrap_or_else(<path>)` handlers in `caller`'s body that resolve to
+/// one workspace function which only diverges (#9638).
+fn diverging_handlers(caller: &FunctionSummary, index: &RustIndex) -> Vec<String> {
+    const NEEDLE: &str = ".unwrap_or_else(";
+    let body: &str = &caller.body;
+    if !body.contains("unwrap_or_else") {
+        return Vec::new();
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    if masked.len() != body.len() {
+        return Vec::new();
+    }
+    let mut handlers = Vec::new();
+    for (at, _) in masked.match_indices(NEEDLE) {
+        let open = at + NEEDLE.len() - 1;
+        let Some(close) = matching_close(&masked, open) else {
+            continue;
+        };
+        let path = masked[open + 1..close].trim();
+        if !handlers.iter().any(|known| known == path) && handler_diverges(path, caller, index) {
+            handlers.push(path.to_string());
+        }
+    }
+    handlers
+}
+
+/// Whether `path` (`name` or `Type::name`) names the one workspace function
+/// of its name, a free function or an inherent associated function of that
+/// type, that only diverges, with no local binding, rename or foreign import
+/// of the name in the caller's file. Module-qualified, generic and external
+/// paths, and every closure, are refused.
+fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> bool {
+    let segments: Vec<&str> = path.split("::").collect();
+    let (qualifier, name) = match segments.as_slice() {
+        [name] => (None, *name),
+        [qualifier, name] => (Some(*qualifier), *name),
+        _ => return false,
+    };
+    if !is_identifier(name)
+        || qualifier.is_some_and(|q| !is_identifier(q))
+        || !callee_is_unique(name, index)
+        || caller_rebinds_parameter(&caller.body, name)
+    {
+        return false;
+    }
+    let qualifier_type = match qualifier {
+        Some("Self") => match impl_self_type(caller) {
+            Some(own) => Some(own),
+            None => return false,
+        },
+        Some(other) => Some(other.to_string()),
+        None => None,
+    };
+    let Some(handler) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == name)
+    else {
+        return false;
+    };
+    let placed = match (&qualifier_type, &handler.item.container) {
+        (None, crate::analysis::facts::FunctionContainer::Free) => true,
+        (Some(ty), crate::analysis::facts::FunctionContainer::Inherent { .. }) => {
+            impl_self_type(handler).as_deref() == Some(ty.as_str())
+        }
+        _ => false,
+    };
+    if !placed || handler.source_role.is_evidence_role() {
+        return false;
+    }
+    let Some(file) = index.files().get(&caller.file) else {
+        return false;
+    };
+    let shadowed = |item: &str| {
+        super::reveal::flattened_use_paths(&file.source)
+            .iter()
+            .any(|import| import.alias.as_deref() == Some(item))
+            || super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                item,
+                &index.package_names,
+            )
+    };
+    if shadowed(name) || qualifier_type.as_deref().is_some_and(shadowed) {
+        return false;
+    }
+    function_only_diverges(handler, index)
+}
+
+/// Whether `function` can never return normally: its whole body is one
+/// unconditional `panic!`-family macro or process exit. A `-> !` signature is
+/// not read: a function returning `!` does not type-check as an
+/// `unwrap_or_else` handler for a value-returning forwarder.
+fn function_only_diverges(function: &FunctionSummary, index: &RustIndex) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let (Some(open), Some(close)) = (masked.find('{'), masked.rfind('}')) else {
+        return false;
+    };
+    if close <= open {
+        return false;
+    }
+    let statement = masked[open + 1..close].trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim();
+    let macro_call = ["panic!", "unreachable!", "unimplemented!", "todo!"]
+        .iter()
+        .find(|name| statement.starts_with(**name))
+        .is_some_and(|name| {
+            let rest = &statement[name.len()..];
+            rest.starts_with(['(', '[', '{'])
+                && matching_close(rest, 0).is_some_and(|end| end + 1 == rest.len())
+        });
+    if macro_call {
+        return !transparent_macro_name_rebound(&function.body, index);
+    }
+    ["std::process::abort", "std::process::exit"]
+        .iter()
+        .any(|name| {
+            statement.strip_prefix(name).is_some_and(|rest| {
+                rest.starts_with('(')
+                    && matching_close(rest, 0).is_some_and(|end| end + 1 == rest.len())
+            })
+        })
+}
+
+fn caller_tail_forwards_call(
+    caller: &FunctionSummary,
+    callee: &str,
+    call_text: &str,
+    diverging_handlers: &[String],
+) -> bool {
     let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     if masked.len() != body.len() || callee.is_empty() {
@@ -2913,6 +3068,18 @@ fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: 
     let lead = inner[tail_start..].len() - inner[tail_start..].trim_start().len();
     let Some(raw_tail) = raw_inner.get(tail_start + lead..tail_start + lead + tail.len()) else {
         return false;
+    };
+    // #9638: `<call>.unwrap_or_else(<handler>)` hands the call's `Ok` value
+    // through unchanged when the handler is a path to a workspace function
+    // that only diverges; any other handler substitutes a value.
+    let tail = match split_unwrap_or_else(tail) {
+        Some((head, handler)) => {
+            if !diverging_handlers.iter().any(|known| known == handler) {
+                return false;
+            }
+            head
+        }
+        None => tail,
     };
     if is_exact_call(tail, callee) {
         return true;
@@ -4057,6 +4224,7 @@ mod tests {
                 receiver: None,
                 through_macro: false,
                 transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         }
@@ -4377,6 +4545,7 @@ mod tests {
             receiver: None,
             through_macro: false,
             transparent_macros_rebound: false,
+            diverging_handlers: Vec::new(),
         };
         let chain = HelperChain {
             hops: vec![hop(lower.clone()), hop(upper)],
@@ -4460,6 +4629,7 @@ mod tests {
                     receiver: None,
                     through_macro: false,
                     transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 }],
                 stop_above: None,
             }

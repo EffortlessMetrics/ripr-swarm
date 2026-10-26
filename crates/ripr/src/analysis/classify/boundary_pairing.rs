@@ -2800,6 +2800,7 @@ mod tests {
                 receiver: None,
                 through_macro: false,
                 transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         }

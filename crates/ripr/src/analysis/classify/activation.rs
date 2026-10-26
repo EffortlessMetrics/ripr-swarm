@@ -10104,6 +10104,7 @@ assert_eq!(input.amount, 100);"#
                     receiver: None,
                     through_macro: false,
                     transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
@@ -10112,6 +10113,7 @@ assert_eq!(input.amount, 100);"#
                     receiver: None,
                     through_macro: false,
                     transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 },
             ],
             stop_above: None,

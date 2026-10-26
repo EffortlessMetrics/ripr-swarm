@@ -2046,3 +2046,170 @@ fn forwarder_method_called_from_a_member_of_a_root_package_is_not_related() -> R
     );
     Ok(())
 }
+
+// #9638 (tail slice): a forwarder that unwraps the owner's `Result` with a
+// handler that only diverges (`.unwrap_or_else(die)`) hands the owner's `Ok`
+// value through unchanged. Every other tail stays a transform and abstains.
+const DIVERGING_DIE: &str = "fn die<T>(_: Overflow) -> T {\n    panic!(\"overflow\")\n}\n";
+const UNWRAP_TESTS: &str =
+    "        assert_eq!(pool.grow(3), false);\n        assert_eq!(pool.grow(4), true);";
+
+fn unwrapping_forwarder(tail: &str) -> String {
+    format!("    pub fn grow(&mut self, wanted: usize) -> bool {{\n        {tail}\n    }}")
+}
+
+fn assert_unwrap_tail_not_credited(extra: &str, tail: &str) -> Result<(), String> {
+    let finding = forwarder_finding(extra, &unwrapping_forwarder(tail), UNWRAP_TESTS)?;
+    assert_ne!(finding["classification"], "exposed", "{tail}: {finding}");
+    // When the chain does resolve to the forwarder, the tail is the reason it
+    // abstains; an unresolved caller keeps its file-proximity reading.
+    if relation_of(&finding, "grow_pins_the_boundary") == Some("helper_owner_call") {
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{tail}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_value_substituting_handler_is_not_credited() -> Result<(), String> {
+    for tail in [
+        "self.try_grow(wanted).unwrap_or_else(|_| false)",
+        "self.try_grow(wanted).unwrap_or(false)",
+        "self.try_grow(wanted).unwrap_or_default()",
+        "self.try_grow(wanted).ok().unwrap_or(false)",
+        "self.try_grow(wanted).is_ok()",
+        "self.try_grow(wanted).unwrap()",
+        "self.try_grow(wanted).expect(\"grow\")",
+        "!self.try_grow(wanted).unwrap_or_else(die)",
+        "self.try_grow(wanted).map(|spilled| !spilled).unwrap_or_else(die)",
+        "self.try_grow(wanted).unwrap_or_else(die) && wanted > 100",
+        "let _ = self.try_grow(wanted).unwrap_or_else(die);\n        true",
+    ] {
+        assert_unwrap_tail_not_credited(DIVERGING_DIE, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_non_diverging_or_conditional_handler_is_not_credited() -> Result<(), String> {
+    for (extra, tail) in [
+        (
+            "fn soft<T: Default>(_: Overflow) -> T {\n    T::default()\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(soft)",
+        ),
+        (
+            "fn maybe<T: Default>(_: Overflow) -> T {\n    if std::env::var(\"STRICT\").is_ok() {\n        panic!(\"overflow\");\n    }\n    T::default()\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(maybe)",
+        ),
+        (
+            "fn early<T: Default>(_: Overflow) -> T {\n    return T::default();\n    #[allow(unreachable_code)]\n    panic!(\"overflow\")\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(early)",
+        ),
+        (
+            "fn guarded<T: Default>(_: Overflow) -> T {\n    let strict = false;\n    if strict {\n        panic!(\"overflow\");\n    } else {\n        T::default()\n    }\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(guarded)",
+        ),
+    ] {
+        assert_unwrap_tail_not_credited(extra, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_an_ambiguous_or_external_handler_is_not_credited() -> Result<(), String> {
+    let twin = "mod elsewhere {\n    pub fn die<T: Default>(_: super::Overflow) -> T {\n        T::default()\n    }\n}\n";
+    for (extra, tail) in [
+        // A second workspace function of the name.
+        (
+            format!("{DIVERGING_DIE}{twin}"),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        // A module-qualified or external path.
+        (
+            format!("{DIVERGING_DIE}{twin}"),
+            "self.try_grow(wanted).unwrap_or_else(elsewhere::die)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "self.try_grow(wanted).unwrap_or_else(std::process::abort)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "self.try_grow(wanted).unwrap_or_else(Default::default)",
+        ),
+        // A unique module-qualified path, a free fn named through a type, a
+        // renamed import and a handler that exists only in test code.
+        (
+            "mod util {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n".to_string(),
+            "self.try_grow(wanted).unwrap_or_else(util::die)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "self.try_grow(wanted).unwrap_or_else(Overflow::die)",
+        ),
+        (
+            format!("{DIVERGING_DIE}use std::mem::drop as die;\n"),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        (
+            "#[cfg(test)]\nmod helpers {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n".to_string(),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        // A user macro that replaces `panic!` makes the body non-diverging.
+        (
+            format!("macro_rules! panic {{\n    ($($t:tt)*) => {{ Default::default() }};\n}}\n{DIVERGING_DIE}"),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        // A local binding that shadows the handler name.
+        (
+            DIVERGING_DIE.to_string(),
+            "let die = |_: Overflow| false;\n        self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+    ] {
+        assert_unwrap_tail_not_credited(&extra, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_closure_handler_is_not_credited() -> Result<(), String> {
+    for tail in [
+        "self.try_grow(wanted).unwrap_or_else(|_| panic!(\"overflow\"))",
+        "self.try_grow(wanted).unwrap_or_else(|error| { drop(error); false })",
+        "self.try_grow(wanted).unwrap_or_else(|_| { let _quiet = 1; false })",
+        "self.try_grow(wanted).unwrap_or_else(|error| die(error))",
+    ] {
+        assert_unwrap_tail_not_credited(DIVERGING_DIE, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_diverging_workspace_handler_pairs_the_boundary_pin() -> Result<(), String> {
+    for (extra, tail) in [
+        (DIVERGING_DIE, "self.try_grow(wanted).unwrap_or_else(die)"),
+        (
+            "impl Overflow {\n    pub fn handle<T>(self) -> T {\n        panic!(\"overflow\")\n    }\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(Overflow::handle)",
+        ),
+        (
+            "fn die<T>(_: Overflow) -> T {\n    unreachable!(\"overflow\");\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        (
+            "fn die<T>(_: Overflow) -> T {\n    std::process::abort()\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+    ] {
+        let finding = forwarder_finding(extra, &unwrapping_forwarder(tail), UNWRAP_TESTS)?;
+        assert_eq!(
+            relation_of(&finding, "grow_pins_the_boundary"),
+            Some("helper_owner_call"),
+            "{tail}: {finding}"
+        );
+        assert_eq!(finding["classification"], "exposed", "{tail}: {finding}");
+    }
+    Ok(())
+}
