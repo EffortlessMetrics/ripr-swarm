@@ -2679,16 +2679,20 @@ fn checks_helper() {
             // (foreign allocation) body encodes inline, and the two
             // probe-shape fields are skipped on the wire only when false or
             // absent.
-            facts.functions[0].body = SourceText::owned("fn foreign() {}".to_string());
+            facts.functions[0].body = SourceText::owned("fn foreign() {}");
             if let Some(shape) = facts.probe_shapes.first_mut() {
                 shape.value_consumed = true;
                 shape.source_lines = Some((1, 2));
             }
             let borrowed = serde_json::to_string(&facts)?;
             assert!(borrowed.contains("\"fn foreign() {}\""), "{path}");
+            let owned = serde_json::to_string(&FileFactsWire::from(&facts))?;
+            assert_eq!(borrowed, owned, "{path}");
+            // Compare the twin itself, not only the `FileFacts` entry point
+            // that routes through it.
             assert_eq!(
-                borrowed,
-                serde_json::to_string(&FileFactsWire::from(&facts))?,
+                serde_json::to_string(&FileFactsWireRef::from(&facts))?,
+                owned,
                 "{path}"
             );
             if !facts.probe_shapes.is_empty() {

@@ -379,15 +379,27 @@ fn the_borrowing_encoder_writes_the_bytes_the_owned_wire_writes() -> Result<(), 
         include_str!("../../extract/mask.rs"),
         "mod m { #[cfg(unix)] fn a() { let x = 1; use std::fmt; b(); } fn b() {} }\nasync fn c() { || d(); }\n",
     ];
+    // Every optional row field is populated by some fixture, so a dropped or
+    // reordered field cannot hide behind `null` or `false`.
+    let mut populated = [false; 5];
     for text in sources {
         let scopes = module_item_scopes(text).ok_or_else(|| {
             <serde_json::Error as serde::de::Error>::custom("premise: the source parses")
         })?;
         assert!(!scopes.item_fns.is_empty());
+        populated[0] |= !scopes.direct_calls.is_empty();
+        populated[1] |= !scopes.bound_names.is_empty();
+        populated[2] |= !scopes.fns_with_local_use.is_empty();
+        populated[3] |= !scopes.fns_with_deferred_code.is_empty();
+        populated[4] |= !scopes.fns_with_cfg.is_empty();
         assert_eq!(
             serde_json::to_string(&scopes)?,
             serde_json::to_string(&ModuleItemScopesWire::from(scopes.clone()))?
         );
     }
+    assert_eq!(
+        populated, [true; 5],
+        "direct_calls, bound_names, local_use, deferred_code, cfg"
+    );
     Ok(())
 }
