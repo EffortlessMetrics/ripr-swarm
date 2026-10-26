@@ -32,6 +32,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach shipping: shipping_boundary
     - infection unknown: Predicate compares against constant FREE_SHIPPING; ripr cannot see its value statically or match it to a related test input (a same-file integer const, a…
     - 10 more detail line(s) in --format human-full

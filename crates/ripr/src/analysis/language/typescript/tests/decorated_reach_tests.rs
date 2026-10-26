@@ -16,11 +16,20 @@ const DECORATED_UNASSERTED: &str = "it('runs', () => {\n  new Ledger().add(2, 3)
 const ORDINARY_ARGS: &str = "it('registers', () => {\n  const args = [1, 2];\n  register({}, args);\n  expect(args).toEqual([1, 2]);\n});\n";
 
 fn audited_class(label: &str, tests: &str) -> Result<ExposureClass, String> {
+    audited_class_with(label, AUDITED, HEADER, tests)
+}
+
+fn audited_class_with(
+    label: &str,
+    lib: &str,
+    header: &str,
+    tests: &str,
+) -> Result<ExposureClass, String> {
     let root = ts_unique_tempdir(label)?;
-    ts_write_file(&root.join("src/audited.ts"), AUDITED)?;
+    ts_write_file(&root.join("src/audited.ts"), lib)?;
     ts_write_file(
         &root.join("tests/audited.test.ts"),
-        &format!("{HEADER}{tests}"),
+        &format!("{header}{tests}"),
     )?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -95,6 +104,52 @@ fn shadowed_or_replaced_receiver_gets_no_credit() -> Result<(), String> {
         if class == ExposureClass::Exposed {
             return Err(format!("{label}: credited a bypassed decorator"));
         }
+    }
+    Ok(())
+}
+
+const DEFAULT_CLASS: &str = "export default class Ledger {";
+
+fn default_export_lib() -> String {
+    AUDITED.replace("export class Ledger {", DEFAULT_CLASS)
+}
+
+#[test]
+fn aliased_constructor_import_credits_the_return_edit() -> Result<(), String> {
+    let header =
+        "import { it, expect } from 'vitest';\nimport { Ledger as Book } from '../src/audited';\n";
+    let asserted = "it('adds', () => {\n  expect(new Book().add(2, 3)).toBe(6);\n});\n";
+    let bound =
+        "it('adds', () => {\n  const b = new Book();\n  expect(b.add(2, 3)).toBe(6);\n});\n";
+    for (label, body) in [("alias-inline", asserted), ("alias-bound", bound)] {
+        let class = audited_class_with(label, AUDITED, header, body)?;
+        if class != ExposureClass::Exposed {
+            return Err(format!("{label}: expected Exposed, got {class:?}"));
+        }
+    }
+    // The alias names a different class: no credit.
+    let other = "import { it, expect } from 'vitest';\nimport { register as Book } from '../src/audited';\n";
+    let class = audited_class_with("alias-other", AUDITED, other, asserted)?;
+    if class == ExposureClass::Exposed {
+        return Err("a non-class alias credited the decorator".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn default_exported_class_credits_the_return_edit_under_any_local_name() -> Result<(), String> {
+    let lib = default_export_lib();
+    let header = "import { it, expect } from 'vitest';\nimport Book from '../src/audited';\n";
+    let asserted = "it('adds', () => {\n  expect(new Book().add(2, 3)).toBe(6);\n});\n";
+    let class = audited_class_with("default-export", &lib, header, asserted)?;
+    if class != ExposureClass::Exposed {
+        return Err(format!("default import: expected Exposed, got {class:?}"));
+    }
+    // A locally rebound default-import name constructs something else.
+    let shadow = "it('adds', () => {\n  const Book = class { add() { return 99; } };\n  expect(new Book().add(2, 3)).toBe(99);\n});\n";
+    let class = audited_class_with("default-shadow", &lib, header, shadow)?;
+    if class == ExposureClass::Exposed {
+        return Err("a rebound constructor credited the decorator".to_string());
     }
     Ok(())
 }

@@ -1,0 +1,34 @@
+//! A string-state scanner whose final state a caller compares.
+
+pub fn scan_string(input: &str) -> &'static str {
+    let mut state = "text";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            ("text", ' ') => "text",
+            ("text", _) => "word",
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    state
+}
+
+pub fn classify_string(input: &str) -> &'static str {
+    let final_state = scan_string(input);
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_string() {
+        assert_eq!(classify_string("ab"), "word");
+        assert_eq!(classify_string("ab "), "blank");
+    }
+}

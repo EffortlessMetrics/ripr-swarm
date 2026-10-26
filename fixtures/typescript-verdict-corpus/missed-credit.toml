@@ -2,7 +2,7 @@
 # accepted, one `[[entry]]` per row, sorted by case with a blank line between
 # blocks so PRs adding rows far apart merge cleanly; adjacent edits can still conflict (#10222). A row that newly
 # misses credit fails `verdict-corpus check` until it is fixed or accepted here
-# with a reason; an entry whose row credits again passes with a note to delete it.
+# with a reason; an entry whose row credits again fails `verdict-corpus check` until the entry is deleted (#10341).
 
 [[entry]]
 case = "deco-decorator-wrapper-value"
@@ -46,11 +46,11 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "mocha-before-hook-trimmed-name"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0246 Decision 9, re-decided 2026-10-26): crediting needs an evaluator of the hook's owner write, shared module state and test order, which static analysis cannot prove fail-closed. The abstain stays."
 
 [[entry]]
 case = "mocha-nested-context-added-price"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0246 Decision 9, re-decided 2026-10-26): crediting needs an evaluator of the hook's owner write, the accessor that reads it and hook exclusivity, which static analysis cannot prove fail-closed. The abstain stays."
 
 [[entry]]
 case = "node-t-mock-attempt-bound"
@@ -66,10 +66,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "shape-as-const-lookup-pinned-key"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "shape-barrel-namespace-reexport"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
