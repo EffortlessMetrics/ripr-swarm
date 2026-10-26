@@ -415,3 +415,16 @@ fn a_weak_assertion_alone_is_no_input_row() -> Result<(), String> {
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn a_table_loop_that_propagates_an_error_stays_unknown() -> Result<(), String> {
+    // `?` can leave the test before later rows run, like `return`.
+    let fallible = "use empty_guard::initial;\n\n#[test]\nfn initials() -> Result<(), ()> {\n    let cases = [(\"\", '?'), (\"ada\", 'A'), (\"Bob\", 'B')];\n    for (name, want) in cases {\n        might_fail()?;\n        assert_eq!(initial(name), want);\n    }\n    Ok(())\n}\n\nfn might_fail() -> Result<(), ()> {\n    Ok(())\n}\n";
+    let findings = guard_findings(NEW, fallible)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    // The same fallible table without the `?` statement still credits.
+    let plain = fallible.replace("        might_fail()?;\n", "");
+    let findings = guard_findings(NEW, &plain)?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
