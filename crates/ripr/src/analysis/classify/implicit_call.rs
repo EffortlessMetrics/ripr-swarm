@@ -994,6 +994,9 @@ struct TypePathOwner {
     /// The impl type has no other method of this name (inherent or another
     /// trait's), so `Type::name(..)` cannot resolve elsewhere.
     sole_method: bool,
+    /// No other impl of the same trait for this type defines the method
+    /// (`Add<f64>` beside `Add<Money>`), so `<Type as Trait>::name` names one.
+    trait_unique: bool,
 }
 
 fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePathOwner> {
@@ -1012,10 +1015,21 @@ fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePat
                 && impl_self_type_name(&function.id.0).as_deref() == Some(self_type.as_str())
         })
         .count();
+    let same_trait = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == owner.name
+                && impl_self_type_name(&function.id.0).as_deref() == Some(self_type.as_str())
+                && owner_trait_name(&function.id.0)
+                    .is_some_and(|other| other.rsplit("::").next() == Some(trait_name.as_str()))
+        })
+        .count();
     Some(TypePathOwner {
         self_type,
         trait_name,
         sole_method: same_name == 1,
+        trait_unique: same_trait == 1,
     })
 }
 
@@ -1061,6 +1075,9 @@ fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
     if rebinds_type_name(code, self_type) {
         return false;
     }
+    // A trait the test imports from elsewhere under the owner's trait name is
+    // another trait.
+    let trait_rebound = rebinds_type_name(code, &owner.trait_name);
     let unevaluated = stringified_ranges(code);
     code.match_indices(name).any(|(at, _)| {
         if unevaluated.iter().any(|range| range.contains(&at)) {
@@ -1088,10 +1105,18 @@ fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
                     return false;
                 };
                 !head.ends_with(word)
+                    && owner.trait_unique
+                    && !trait_rebound
                     && inner.split_once(" as ").is_some_and(|(ty, trait_path)| {
-                        ty.trim() == self_type
-                            && trait_path.trim().rsplit("::").next()
-                                == Some(owner.trait_name.as_str())
+                        // Bare, or a std/core operator path: a path through
+                        // another module may be a different trait of the
+                        // same name.
+                        let trait_path = trait_path.trim();
+                        let trait_path = trait_path
+                            .strip_prefix("std::ops::")
+                            .or_else(|| trait_path.strip_prefix("core::ops::"))
+                            .unwrap_or(trait_path);
+                        ty.trim() == self_type && trait_path == owner.trait_name
                     })
             })
     })
@@ -1255,6 +1280,7 @@ mod tests {
             self_type: "Money".into(),
             trait_name: "Add".into(),
             sole_method,
+            trait_unique: true,
         };
         assert!(calls_by_type_path(
             "Money::add(a, b)",
@@ -1319,6 +1345,30 @@ mod tests {
         ));
         assert!(!calls_by_type_path(
             "stringify!(Money::add(1, 2))",
+            "add",
+            &path_owner(true)
+        ));
+        // Another module's trait of the same name, an import of that trait, and
+        // a second impl of the same trait for the type are not this call.
+        assert!(!calls_by_type_path(
+            "<Money as other::Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "use other::Add; <Money as Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        let mut twice = path_owner(true);
+        twice.trait_unique = false;
+        assert!(!calls_by_type_path(
+            "<Money as Add>::add(a, b)",
+            "add",
+            &twice
+        ));
+        assert!(calls_by_type_path(
+            "<Money as core::ops::Add>::add(a, b)",
             "add",
             &path_owner(true)
         ));
