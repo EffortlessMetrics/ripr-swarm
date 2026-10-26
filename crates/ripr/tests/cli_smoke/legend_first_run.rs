@@ -110,6 +110,41 @@ fn a_forced_legend_is_not_a_first_run_and_a_run_without_a_digest_does_not_count(
     Ok(())
 }
 
+// Fanout members always carry the full legend and never consume the standalone
+// first run: the `--output-dir` branch returns before any legend logic, so a
+// refactor that moved it after that logic would record state here.
+#[test]
+fn fanout_members_keep_the_full_legend_and_record_no_first_run() -> TestResult {
+    let project = workspace("legend-fanout")?;
+    for label in ["first", "second"] {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&project),
+            &[
+                "check",
+                "--diff",
+                "change.diff",
+                "--quiet",
+                "--output-dir",
+                label,
+            ],
+        )?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let human = fs::read_to_string(project.join(label).join("human.txt"))?;
+        assert!(human.contains(LEGEND), "{label}: {human}");
+        assert!(!human.contains(POINTER), "{label}: {human}");
+    }
+    assert!(
+        !project.join("target/ripr/legend-seen").exists(),
+        "a fanout run must not record the standalone first run"
+    );
+    Ok(())
+}
+
 #[test]
 fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestResult {
     let project = workspace("legend-marker-dir")?;
@@ -124,8 +159,6 @@ fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestRes
     Ok(())
 }
 
-// A newline and a colon are not valid in a Windows directory name, so the
-// fixture can only be created on Unix.
 // A regular file where the `target/ripr` directory belongs makes the marker
 // write fail on every host and for every user (a read-only mode would not stop
 // root). The facts cache is redirected so the analysis itself still completes.
@@ -156,6 +189,8 @@ fn an_unwritable_output_tree_shows_the_full_legend_every_run() -> TestResult {
     Ok(())
 }
 
+// A newline and a colon are not valid in a Windows directory name, so the
+// fixture can only be created on Unix.
 #[cfg(unix)]
 #[test]
 fn a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend() -> TestResult {

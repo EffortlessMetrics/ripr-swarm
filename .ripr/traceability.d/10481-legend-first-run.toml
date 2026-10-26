@@ -9,6 +9,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/legend_first_run.rs::a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown",
   "crates/ripr/tests/cli_smoke/legend_first_run.rs::a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend",
   "crates/ripr/tests/cli_smoke/legend_first_run.rs::an_unwritable_output_tree_shows_the_full_legend_every_run",
+  "crates/ripr/tests/cli_smoke/legend_first_run.rs::fanout_members_keep_the_full_legend_and_record_no_first_run",
 ]
 code = [
   "crates/ripr/src/cli/commands/check.rs",
