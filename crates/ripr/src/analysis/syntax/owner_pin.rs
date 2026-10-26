@@ -2446,9 +2446,9 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .attrs()
                 .map(|attr| attr.syntax().text().to_string())
                 .collect::<Vec<_>>();
-            for oracle in crate::analysis::extract::arrow_row_oracles(
+            for oracle in crate::analysis::extract::arrow_row_oracles_for_fn(
                 &attrs,
-                &body_source,
+                &function,
                 lines.line(token.text_range().start()),
             ) {
                 assertions
@@ -3622,9 +3622,10 @@ fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
 /// row that calls the function with the row's values. Admitted only when
 /// `test_case` is the crate in the test's module, every parameter is a plain
 /// immutable binding, and every row holds exactly one scalar literal per
-/// parameter. The `=> expected` form (which wraps the body in a generated
-/// comparison), `matches`/`with` forms, `;` descriptions, string or computed
-/// values (which could call the owner) all refuse.
+/// parameter. The `=> literal` form (RIPR-SPEC-0231 rule 9, a generated
+/// comparison the fact producer reads as `assert_eq!`) is admitted when the
+/// body is one returned expression; `matches`/`with` forms, other `=>`
+/// shapes, string or computed values (which could call the owner) all refuse.
 fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
@@ -3640,7 +3641,7 @@ fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode)
             .map(|attr| attr.syntax().text().to_string())
             .collect::<Vec<_>>(),
         &attr.syntax().text().to_string(),
-        &function.syntax().text().to_string(),
+        &function,
     );
     extern_crate_path_holds(module, "test_case")
         && test_case_parameters(&function)

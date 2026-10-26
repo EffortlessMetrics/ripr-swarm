@@ -610,14 +610,17 @@ Two pattern terms are used below.
    macro appears in the source, so nothing above reads it. The producer
    synthesizes `assert_eq!(<returned expression>, <literal>)` once per
    `=> literal` row, keyed to the function's `fn` line, and the
-   RIPR-SPEC-0197 execution admission accepts exactly that synthesis. Both
-   hold only when all of these are true:
+   RIPR-SPEC-0197 execution admission accepts exactly that synthesis. The
+   producer is all or nothing per function: one unreadable row leaves every
+   row of the function unread. The reading holds only when all of these are
+   true:
    - the attribute is a trusted `test_case` (`use test_case::test_case`
      imported by the test's module, RIPR-SPEC-0197) and every row argument
      before the arrow is a scalar literal filling one parameter;
    - the text after the one top-level arrow is a plain literal: an integer
-     (optionally negated), `true`, `false`, or a string or character
-     without escapes. `matches`, `with`, `panics`, `it`, `is`, a call, an
+     (optionally negated, optionally suffixed), `true`, `false`, or a string
+     without escapes. A character stays unread, as it does after a written
+     `assert_eq!`. `matches`, `with`, `panics`, `it`, `is`, a call, an
      operator expression and a constant name all stay unread;
    - the function body is a single returned expression with no
      statements, so the compared value is what that expression yields, and
@@ -627,9 +630,9 @@ Two pattern terms are used below.
    goes through the same owner-call, hidden-input and observation checks as
    a written `assert_eq!`. A row whose literal does not match the owner's
    behavior is a failing test, not an invisible one, so it keeps the credit
-   a written `assert_eq!(.., wrong)` keeps. Any refused row leaves the
-   function exactly as before: unidentified, never a "has no assertion"
-   gap (#9478).
+   a written `assert_eq!(.., wrong)` keeps. Any unreadable row leaves the
+   whole function exactly as before: unidentified, never a "has no
+   assertion" gap (#9478).
 
 ### Reveal admission of an excluded sibling
 

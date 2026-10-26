@@ -136,6 +136,16 @@ fn a_matcher_or_predicate_expectation_is_not_a_literal_comparison() -> Result<()
 }
 
 #[test]
+fn a_character_expectation_is_not_read() -> Result<(), String> {
+    // A written `assert_eq!(bump(x), 'c')` earns no exact value either.
+    require_withheld(
+        "a character",
+        IMPORT,
+        &format!("    #[test_case(10 => 'c')]\n{BODY}"),
+    )
+}
+
+#[test]
 fn a_computed_expectation_is_not_read() -> Result<(), String> {
     for (label, rows) in [
         ("a call", "    #[test_case(10 => bump(10))]\n"),
@@ -182,4 +192,36 @@ fn a_row_argument_that_is_not_a_literal_is_not_read() -> Result<(), String> {
 fn a_parameter_count_that_the_row_does_not_fill_is_not_read() -> Result<(), String> {
     let body = "    fn rows(x: i64, y: i64) -> i64 {\n        bump(x)\n    }\n";
     require_withheld("a short row", IMPORT, &format!("{ROWS}{body}"))
+}
+
+#[test]
+fn every_plain_literal_spelling_is_credited() -> Result<(), String> {
+    for (label, rows) in [
+        ("negative integer", "    #[test_case(10 => -3)]\n"),
+        ("suffixed integer", "    #[test_case(10 => 12i64)]\n"),
+        ("boolean", "    #[test_case(10 => true)]\n"),
+        ("string", "    #[test_case(10 => \"ab\")]\n"),
+        ("named row", "    #[test_case(10 => 12 ; \"ten\")]\n"),
+        ("spaced attribute", "    #[test_case (10 => 12)]\n"),
+    ] {
+        if !credited(IMPORT, &format!("{rows}{BODY}"))? {
+            return Err(format!("a {label} expectation must be credited"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_function_with_one_unreadable_row_reads_none_of_its_rows() -> Result<(), String> {
+    let rows = "    #[test_case(10 => 12)]\n    #[test_case(20 => matches 22)]\n";
+    require_withheld("a mixed function", IMPORT, &format!("{rows}{BODY}"))
+}
+
+#[test]
+fn the_crate_qualified_attribute_is_read_like_the_imported_one() -> Result<(), String> {
+    let rows = "    #[test_case::test_case(10 => 12)]\n";
+    if !credited("", &format!("{rows}{BODY}"))? {
+        return Err("a qualified attribute must be credited".to_string());
+    }
+    Ok(())
 }
