@@ -169,15 +169,22 @@ fn expected_inputs_are_committed_blobs_not_dirty_files_or_consensus() -> Result<
         "replacement refs are not immutable inputs"
     );
     let tree = git(&root, &["rev-parse", &format!("{second}^{{tree}}")])?;
-    fs::remove_file(root.join(INPUT_PATHS[3])).map_err(|err| err.to_string())?;
-    let missing = commit("missing workflow")?;
-    for invalid in ["abc123".to_string(), "f".repeat(40), tree, missing] {
-        if let Ok(blobs) = expected_input_blobs(&root, &invalid) {
+    let refuses = |invalid: &str| -> Result<(), String> {
+        if let Ok(blobs) = expected_input_blobs(&root, invalid) {
             return Err(format!(
                 "resolved invalid checkout `{invalid}` to {blobs:?}"
             ));
         }
+        Ok(())
+    };
+    // Invalid revisions are challenged while HEAD has every required input:
+    // falling back to HEAD must not look like a missing-input rejection.
+    for invalid in ["abc123".to_string(), "f".repeat(40), tree] {
+        refuses(&invalid)?;
     }
+    fs::remove_file(root.join(INPUT_PATHS[3])).map_err(|err| err.to_string())?;
+    let missing = commit("missing workflow")?;
+    refuses(&missing)?;
     fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
     Ok(())
 }
