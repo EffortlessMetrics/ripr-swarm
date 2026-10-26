@@ -89,6 +89,44 @@ pub(crate) fn return_expressions_agree(
     .flatten()
 }
 
+/// The numbers the old and the new `return` expression evaluate to for the
+/// literal `arguments` bound to `params`, or `None` when either side or any
+/// argument is outside the supported subset or does not evaluate to a number.
+pub(crate) fn return_expression_numbers(
+    file: &Path,
+    old_expression: &str,
+    new_expression: &str,
+    params: &[String],
+    arguments: &[String],
+) -> Option<(f64, f64)> {
+    if params.is_empty() || params.len() != arguments.len() {
+        return None;
+    }
+    let old = old_expression.to_string();
+    let new = new_expression.to_string();
+    let params = params.to_vec();
+    let arguments = arguments.to_vec();
+    parse_on_worker(file, "", move |file, _source, allocator| {
+        let old = parse_expression(file, allocator, &old)?;
+        let new = parse_expression(file, allocator, &new)?;
+        let mut values = Vec::new();
+        for argument in &arguments {
+            let parsed = parse_expression(file, allocator, argument)?;
+            values.push(evaluate(&parsed.expression, &Vec::new(), 0)?);
+        }
+        let env: Env = params.iter().cloned().zip(values).collect();
+        match (
+            evaluate(&old.expression, &env, 0)?,
+            evaluate(&new.expression, &env, 0)?,
+        ) {
+            (Val::Num(old), Val::Num(new)) => Some((old, new)),
+            _ => None,
+        }
+    })
+    .ok()
+    .flatten()
+}
+
 /// Whether some probe input makes the two expressions evaluate to different
 /// values. Only numeric arguments are varied; others keep their asserted
 /// value. Bounded so an owner with many parameters stays cheap.

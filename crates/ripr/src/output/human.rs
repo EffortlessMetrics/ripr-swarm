@@ -965,7 +965,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         note.push_str(&format!(
             " This repo also has {lower_bound}{} Python test file(s) (for example {}); ripr does not link Python tests to Rust changes, so a change they alone cover reads as no static path. Check those tests with your Python test runner, or add a Rust test that observes the behavior.",
             python.count,
-            escape_terminal_display(&python.example)
+            escape_terminal_display(&super::path::path_display_lossy(&python.example))
         ));
     }
     out.push('\n');
@@ -7112,6 +7112,13 @@ mod tests {
             "exposed/weak = tests appear to notice it fully/partly",
             "unrevealed = tests reach it but nothing appears to notice",
             "no path = no test path found",
+            // #9244 item 4 (leftover jargon): the remaining words the Summary
+            // and Counts lines print.
+            "finding = a probe reported for review",
+            "unsuppressed = not hidden by your suppression policy",
+            "unknown = analysis limited, not a verdict",
+            "base-side = evidence from the old code, not an edit target",
+            "candidate line = changed line ripr considers for probes",
         ] {
             assert!(rendered.contains(meaning), "missing {meaning}:\n{rendered}");
         }
@@ -8611,7 +8618,7 @@ mod tests {
     fn python_tests(at_least: bool) -> Option<crate::analysis::UnlinkedPythonTests> {
         Some(crate::analysis::UnlinkedPythonTests {
             count: 124,
-            example: "tests/test_x.py".to_string(),
+            example: std::path::PathBuf::from("tests/test_x.py"),
             at_least,
         })
     }

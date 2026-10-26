@@ -830,7 +830,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     and the test never rebinds `caplog`. `caplog` must be pytest's own
     fixture: the test requests it as a parameter and no `@pytest.fixture`
     in its module or a `conftest.py` up its directory chain defines a
-    fixture of that name; otherwise the reading abstains. An assertion about
+    fixture of that name (including `@pytest.fixture(name="caplog")` and a decorator imported as an alias with
+    `from pytest import fixture as fx`, unless a later import, assignment, `def` or `class`
+    rebinds that name before the decorated def); otherwise the reading abstains. An assertion about
     unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
@@ -877,7 +879,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     unittest `assert*` method. The `else` and `finally` blocks
     are still read. A swallowed or dead assertion cannot notice a change, so
     it must not credit one (`py-trap-dead-branch`,
-    `py-trap-swallowed-assert`, #9691).
+    `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
+    `if None:` and `while False:` dead arms, tuple, bare and
+    `builtins.AssertionError` handlers, and the live `else` arm, `else` and
+    `finally` blocks and `fail`-calling handler that stay credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,
@@ -900,7 +905,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     not evaluate whether any other module is installed, so `importorskip`
     of it, or with `minversion` or `reason`, still abstains
     (`py-trap-module-skipped`, `py-trap-empty-table`,
-    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691; the `py-unrun-*`
+    cases add a module `pytestmark` skip, a module-level `pytest.skip`, an
+    `importorskip` of a missing module and an empty tuple table, which
+    abstain, and `xfail(False, reason=...)` and
+    `unittest.skipUnless(True, ...)`, which stay active and credited).
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
@@ -914,7 +923,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     literal, `n * 3`, a name bound outside a loop) still pins, and so does a
     chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
     `assertEqual` and helper forms keep their strength
-    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594; the
+    `py-props-*` cases add the reversed order, a tuple loop target and a
+    loop identity scored as gaps, and a chain, a literal expected value and
+    a name bound outside the loop credited).
 
 ### Verdict ladder
 
@@ -1152,8 +1164,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
 13. `assert other == 3` then `assert parse('1') == 2`: `exposed`,
     `direct` (unchanged).
 14. Error owner, `with pytest.raises(KeyError, match='empty'): perr('')`:
-    `exact_error_variant` / strong, `exposed`, `changed_sink_token`
-    (unchanged).
+    `exact_error_variant` / strong, `exposed`, `direct` through the owner
+    identity token `perr` (the first successful credit branch, before
+    `changed_sink_token`; the exposure classification remains `exposed`).
+    This example exercises owner-identity credit, not changed-sink-token
+    credit; the exception class changes as specified above.
 15. Error owner, `with pytest.raises(KeyError): perr('')`: `broad_error` /
     weak, `weakly_exposed` (unchanged).
 16. Error owner, `assert perr('1') == 1` only: `weakly_exposed`
@@ -1358,8 +1373,16 @@ and the test is `tests/test_subject.py`, which imports each owner from
   conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
   comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
-  (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
-  `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
+  (rule 16; the `py-offsets-*` cases add a `C - 1` and a `C + 1` operand
+  hit at the boundary value credited, a parametrize row at `threshold - 1`
+  credited, and inputs that miss the boundary value scored as gaps),
+  `py-fixtures-report-file`, `py-unittest-transfer-notify` and
+  `py-unittest-deposit-add` (rule 17; the `py-channels-*` cases add exact `capfd` and
+  local-after-owner `readouterr()` output, a file read back through the
+  written parameter, and an arithmetic-wrapped mock argument credited, and a
+  `capsys` read before the owner, stderr read as stdout, the other
+  parameter's file, `assert_called_with`, `assert_any_call`, an argument-free
+  or `ANY` mock assertion and an `abs(n)` rewrite scored as gaps), `py-pytest-tax-self-computed`
   (rule 18), and `py-hypothesis-passing-threshold` and
   `py-hypothesis-label-no-crash` (rule 19).
 - Planned: one `classify_change_with_old` test per acceptance example,

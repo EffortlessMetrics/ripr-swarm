@@ -291,6 +291,81 @@ fn an_exported_generator_named_by_path_reads_like_the_hand_written_test() -> Res
 }
 
 #[test]
+fn an_exported_generator_called_by_crate_path_needs_no_import() -> Result<(), String> {
+    let prefixed = BOUNDARY_ROWS.replace("gate_table!", "crate::gate_table!");
+    assert_ne!(prefixed, BOUNDARY_ROWS, "premise: the rows call the table");
+    let by_path = TempRepo::create(&layout(
+        "mod macros;\nmod cases;\n",
+        Some(&exported_table()),
+        &prefixed,
+    ))?
+    .predicate()?;
+    assert_eq!(by_path.class, ExposureClass::Exposed, "{by_path:?}");
+    assert_eq!(
+        related_names(&by_path),
+        vec!["nine_is_closed", "ten_is_open"],
+        "{by_path:?}"
+    );
+
+    // A bare call with no import could be a glob or extern-crate macro.
+    let bare_and_prefixed = format!("{prefixed}{BOUNDARY_ROWS}");
+    let mixed = TempRepo::create(&layout(
+        "mod macros;\nmod cases;\n",
+        Some(&exported_table()),
+        &bare_and_prefixed,
+    ))?
+    .predicate()?;
+    assert!(mixed.related_tests.is_empty(), "{mixed:?}");
+    Ok(())
+}
+
+#[test]
+fn an_exported_generator_named_in_a_use_group_reads_like_the_hand_written_test()
+-> Result<(), String> {
+    for import in [
+        "use crate::{gate_table};\n",
+        "use crate::{gate_table, UNRELATED};\n",
+        "use crate::{UNRELATED, gate_table,};\n",
+    ] {
+        let grouped = TempRepo::create(&layout(
+            "mod macros;\nmod cases;\npub const UNRELATED: u8 = 0;\n",
+            Some(&exported_table()),
+            &format!("{import}{BOUNDARY_ROWS}"),
+        ))?
+        .predicate()?;
+        assert_eq!(
+            grouped.class,
+            ExposureClass::Exposed,
+            "{import}: {grouped:?}"
+        );
+        assert_eq!(
+            related_names(&grouped),
+            vec!["nine_is_closed", "ten_is_open"],
+            "{import}: {grouped:?}"
+        );
+    }
+
+    // A renamed, glob or nested member is not a plain import of the generator.
+    for import in [
+        "use crate::{gate_table as table};\n",
+        "use crate::{gate_table, *};\n",
+        "use crate::{unrelated_helper, nested::gate_table};\n",
+    ] {
+        let unresolved = TempRepo::create(&layout(
+            "mod macros;\nmod cases;\n",
+            Some(&exported_table()),
+            &format!("{import}{BOUNDARY_ROWS}"),
+        ))?
+        .predicate()?;
+        assert!(
+            unresolved.related_tests.is_empty(),
+            "{import}: {unresolved:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_exported_generator_that_is_not_the_only_one_adds_no_test() -> Result<(), String> {
     let invoking = format!("use crate::gate_table;\n{BOUNDARY_ROWS}");
     for (label, extra) in [

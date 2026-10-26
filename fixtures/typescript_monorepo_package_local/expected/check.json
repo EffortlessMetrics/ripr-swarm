@@ -70,7 +70,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "missing_input",
-          "why": "no input this test passes was seen reaching the changed boundary"
+          "why": "no input this test passes was seen reaching `discountPct == 100`"
         }
       ],
       "typescript_preview_card": {

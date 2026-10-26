@@ -1,0 +1,19 @@
+//! The changed binding is reassigned before the equality.
+
+pub fn width_matches_reassigned(text: &str, width: usize) -> bool {
+    let mut end = text.len();
+    end = end.min(width);
+    end == width
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_clamped_end_is_compared_b_reassigned() {
+        assert!(width_matches_reassigned("abcd", 3));
+        assert!(width_matches_reassigned("abc", 3));
+        assert!(!width_matches_reassigned("ab", 3));
+    }
+}
