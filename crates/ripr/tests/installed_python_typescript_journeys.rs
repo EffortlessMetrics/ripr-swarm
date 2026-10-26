@@ -697,8 +697,18 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     std::fs::write(&production, format!("{original}\n// dirty\n"))
         .map_err(|error| format!("dirty production: {error}"))?;
     let (dirty_ok, dirty) = ripr(&decoy, &gap_start_args)?;
+    // #10698: while the production file is dirty, check names the commit step
+    // before the start that the refusal above proves it would refuse.
+    let (dirty_check_ok, dirty_check) =
+        ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     std::fs::write(&production, &original)
         .map_err(|error| format!("restore production: {error}"))?;
+    expect_exit(dirty_check_ok, true, "dirty check")?;
+    need(
+        &dirty_check,
+        "git commit -m \"<message>\" -- src/pricing.ts",
+        "check names the commit step on a dirty tree",
+    )?;
     expect_exit(dirty_ok, false, "dirty production start")?;
     need(
         &dirty,

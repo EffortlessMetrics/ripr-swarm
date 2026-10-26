@@ -71,6 +71,23 @@ pub(crate) struct GapRepairRoute {
     pub(crate) uncommitted_files: Vec<String>,
 }
 
+impl GapRepairRoute {
+    /// The commit step that must precede the gap-bound start when the analyzed
+    /// tree has uncommitted production edits (#10698). `None` on a clean tree.
+    pub(crate) fn commit_prerequisite(&self) -> Option<String> {
+        if self.uncommitted_files.is_empty() {
+            return None;
+        }
+        let files = self
+            .uncommitted_files
+            .iter()
+            .map(|file| shell_arg(file))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!("git commit -m \"<message>\" -- {files}"))
+    }
+}
+
 /// Why the check pipeline offered no repair start for its selected finding
 /// (#8729). Producer-owned at the decision site in
 /// `app::task_first::check_repair_route`, so the rendered advisory names
@@ -314,16 +331,7 @@ impl FindingNavigation {
     /// analyzed uncommitted production edits (#10698): the start refuses
     /// while tracked production files differ from HEAD.
     pub(crate) fn gap_repair_prerequisite(&self, route: &GapRepairRoute) -> Option<String> {
-        if route.uncommitted_files.is_empty() {
-            return None;
-        }
-        let files = route
-            .uncommitted_files
-            .iter()
-            .map(|file| shell_arg(file))
-            .collect::<Vec<_>>()
-            .join(" ");
-        Some(format!("git commit -m \"<message>\" -- {files}"))
+        route.commit_prerequisite()
     }
 
     /// The `ripr repair` start for one seam identity. Repair reads the live

@@ -1550,7 +1550,7 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
 fn pilot_python_repair_card_message(
     card: &PilotPythonCard,
     root_display: &str,
-    gap_start: Option<&str>,
+    gap_start: Option<&PilotGapStart>,
 ) -> String {
     let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
@@ -1559,8 +1559,9 @@ fn pilot_python_repair_card_message(
     // `ripr check` admits a gap-bound start for its selected Python finding
     // (#10373), so the warning must not say `agent repair` cannot run.
     if let Some(start) = gap_start {
+        let start = start.rendered();
         message.push_str(&format!(
-            "; `ripr check --root {root}` prints the gap-bound start `{start}` for its selected finding, which runs the delegated before/after loop for that gap. Run that start, or follow the card from `ripr first-pr --root {root}` by hand",
+            "; `ripr check --root {root}` prints the gap-bound start {start} for its selected finding, which runs the delegated before/after loop for that gap. Run that start, or follow the card from `ripr first-pr --root {root}` by hand",
             root = shell_arg(root_display)
         ));
         if let Some(verify) = &card.verify_command {
@@ -1913,7 +1914,7 @@ fn pilot_routed_gap_start(
     root: &Path,
     root_display: &str,
     routes: &PilotCheckRoutes,
-) -> Option<String> {
+) -> Option<PilotGapStart> {
     // No enabled route command means the warning never names `ripr check`
     // as a route, so no start claim is made and no analysis is run.
     if routes.commands.is_empty()
@@ -1925,18 +1926,47 @@ fn pilot_routed_gap_start(
         return None;
     }
     let route = crate::app::gap_bound_repair::default_check_gap_start(root)?;
-    Some(crate::app::gap_bound_repair::gap_bound_start_command(
-        root_display,
-        "",
-        &route.gap_id,
-        &route.base,
-    ))
+    Some(PilotGapStart::from_route(root_display, &route))
+}
+
+/// A gap-bound start with the commit step it needs on a dirty tree (#10698).
+/// The start refuses to begin while tracked production files differ from
+/// HEAD, so the pilot-routing messages name the commit the same way
+/// `ripr check` does instead of printing a bare start.
+struct PilotGapStart {
+    command: String,
+    prerequisite: Option<String>,
+}
+
+impl PilotGapStart {
+    fn from_route(root_display: &str, route: &crate::app::GapRepairRoute) -> Self {
+        Self {
+            command: crate::app::gap_bound_repair::gap_bound_start_command(
+                root_display,
+                "",
+                &route.gap_id,
+                &route.base,
+            ),
+            prerequisite: route.commit_prerequisite(),
+        }
+    }
+
+    /// The start in backticks, preceded by its commit step when one is needed.
+    fn rendered(&self) -> String {
+        match &self.prerequisite {
+            Some(commit) => format!(
+                "`{}` after first committing your production change with `{commit}` (the start refuses to begin while it is uncommitted)",
+                self.command
+            ),
+            None => format!("`{}`", self.command),
+        }
+    }
 }
 
 fn pilot_routed_to_check_message(
     routes: &PilotCheckRoutes,
     root_display: &str,
-    gap_start: Option<&str>,
+    gap_start: Option<&PilotGapStart>,
 ) -> String {
     let mut message =
         "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
@@ -1951,9 +1981,12 @@ fn pilot_routed_to_check_message(
         match gap_start {
             // `ripr check` admits a gap-bound start for its selected finding,
             // so the warning must not say it offers none (#10001).
-            Some(start) => message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start `{start}` for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
-            )),
+            Some(start) => {
+                let start = start.rendered();
+                message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+                ))
+            }
             None => message.push_str(&format!(
                 ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
             )),
@@ -2033,7 +2066,7 @@ fn legacy_next_command(
                 message: pilot_routed_to_check_message(
                     &routes,
                     root_display,
-                    pilot_routed_gap_start(root, root_display, &routes).as_deref(),
+                    pilot_routed_gap_start(root, root_display, &routes).as_ref(),
                 ),
             });
             // #5205/#5248 review: a packet can route preview files to check
@@ -2057,15 +2090,8 @@ fn legacy_next_command(
                     &card,
                     root_display,
                     crate::app::gap_bound_repair::default_check_gap_start(root)
-                        .map(|route| {
-                            crate::app::gap_bound_repair::gap_bound_start_command(
-                                root_display,
-                                "",
-                                &route.gap_id,
-                                &route.base,
-                            )
-                        })
-                        .as_deref(),
+                        .map(|route| PilotGapStart::from_route(root_display, &route))
+                        .as_ref(),
                 ),
             });
             // #5205/#5248 review: a Python card and a Rust exclusion
@@ -6645,6 +6671,54 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #10698: the pilot-routing messages print the gap-bound start bare on
+    /// a clean tree, but name the commit step first when the analyzed tree has
+    /// uncommitted production files, since the start refuses to begin then.
+    #[test]
+    fn pilot_routing_messages_name_the_commit_before_a_start_on_a_dirty_tree() -> Result<(), String>
+    {
+        let route = |uncommitted: &[&str]| crate::app::GapRepairRoute {
+            finding_id: "f".to_string(),
+            gap_id: "gap-1".to_string(),
+            base: "main".to_string(),
+            uncommitted_files: uncommitted.iter().map(|file| file.to_string()).collect(),
+        };
+        let routes = PilotCheckRoutes {
+            commands: vec!["ripr check --root .".to_string()],
+            enabled_languages: vec!["python".to_string()],
+            disabled_config_languages: Vec::new(),
+        };
+        let card = PilotPythonCard {
+            missing_discriminator: None,
+            verify_command: None,
+        };
+        let start = "ripr agent repair --gap-id gap-1 --base main --root . --phase before";
+        let clean = PilotGapStart::from_route(".", &route(&[]));
+        let dirty = PilotGapStart::from_route(".", &route(&["src/pricing.py"]));
+        let commit = "git commit -m \"<message>\" -- src/pricing.py";
+
+        let clean_routed = pilot_routed_to_check_message(&routes, ".", Some(&clean));
+        let clean_card = pilot_python_repair_card_message(&card, ".", Some(&clean));
+        for message in [&clean_routed, &clean_card] {
+            assert!(message.contains(&format!("`{start}`")), "{message}");
+            assert!(!message.contains("git commit"), "{message}");
+        }
+        let dirty_routed = pilot_routed_to_check_message(&routes, ".", Some(&dirty));
+        let dirty_card = pilot_python_repair_card_message(&card, ".", Some(&dirty));
+        for message in [&dirty_routed, &dirty_card] {
+            let start_at = message
+                .find(&format!("`{start}`"))
+                .ok_or_else(|| format!("start missing: {message}"))?;
+            assert!(
+                message[start_at..].contains(&format!(
+                    "first committing your production change with `{commit}`"
+                )),
+                "{message}"
+            );
+        }
         Ok(())
     }
 
