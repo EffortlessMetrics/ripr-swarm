@@ -465,7 +465,9 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup. One warning (#10347) fires when no
 `ripr` is on PATH and a project config (`.mcp.json`, `.vscode/mcp.json`,
-`.cursor/mcp.json`) launches it by bare name; the default human screen prints the
+`.cursor/mcp.json`) defines a server that launches it by bare name (`mcpServers`
+for `.mcp.json` and Cursor, `servers` for VS Code; JSONC comments are not
+parsed, so such a file is skipped); the default human screen prints the
 same text as a `~` line.
 
 ### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
@@ -737,6 +739,14 @@ When the producer-owned `analysis_outcome` is not complete (for example
 `ripr analysis incomplete` warning naming the outcome kind and each limitation
 with its recovery, and the clean `No static exposure findings found` notice is
 not printed.
+
+When the outcome is complete but carries advisory limitations (for example
+`eol_only_churn`, #4952), the stream instead starts with a
+`ripr analysis limitations` notice naming the outcome kind and each limitation
+with its recovery. The notice is a disclosure, not a scope reduction: the
+incomplete warning does not fire, on both the with-findings and the empty
+complete branches, and an empty complete stream still prints its
+`No static exposure findings found` notice (#10520).
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -1364,7 +1374,7 @@ A finding contains:
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
     "delta": "control",
-    "file": "src/lib.rs",
+    "file": "./src/lib.rs",
     "line": 88,
     "expression": "if amount >= discount_threshold {"
   },
@@ -1473,6 +1483,19 @@ A finding contains:
   "language": "rust"
 }
 ```
+
+**Path spelling.** The same source path is spelled differently per surface
+(and even per field). Join or key on paths only within one surface and one
+field; normalize across surfaces at this crosswalk:
+
+| Surface / field | Spelling | Rule |
+| --- | --- | --- |
+| Finding `probe.file` (this contract) | `./src/lib.rs` | `./`-prefixed for files under `--root`; files outside `--root` keep their portable spelling (`finding_location_text`, `crates/ripr/src/analysis/mod.rs`) |
+| Finding `related_tests[].file` (this contract) | `tests/pricing.rs` | repository-relative, no `./` (`output::path::display_path`) — deliberately different from `probe.file` within the same document |
+| Context Packet `probe.file` | `./src/lib.rs` | same `./`-prefixed finding location as Finding `probe.file` for files under `--root` (`ContextPacket::from_finding`; `display_path_text` only normalizes separators) |
+| SARIF `artifactLocation.uri` | `src/lib.rs` | `./` stripped, RFC 3986 percent-encoded (`crates/ripr/src/output/sarif.rs`) |
+| GitHub annotation `file=` | `src/lib.rs` | repository-relative, no `./` (`crates/ripr/src/output/path.rs`) |
+| Finding/gap IDs (`probe:…`, `gap:…`) | `src_lib.rs` / `src/lib.rs` | path embedded in the content-addressed ID; IDs are identity, never path-join inputs |
 
 The evidence-first fields are additive in schema `0.2`:
 
@@ -2368,7 +2391,8 @@ JSON fields:
   `rust_framework_oracle_unresolved`, or
   `rust_implicit_call_unresolved`, or
   `rust_caller_loop_selector_unresolved`, or
-  `rust_pinned_shape_unresolved`.
+  `rust_pinned_shape_unresolved`, or
+  `rust_indirect_owner_call_unresolved`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -2953,6 +2977,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_pinned_shape_unresolved` -- (RIPR-SPEC-0240, additive, #9440) A related, non-ignored test calls the owner directly and pins its whole result with an exact `assert_eq!`, but the changed code sits in a closure the call runs, a statement acting on the value the owner returns, the `else` exit of a `let ... else`, or the update of a zero-initialized loop accumulator the owner returns whose pin ripr cannot read as a non-empty literal input with a nonzero total (RIPR-SPEC-0360), none of which the owner-return pin reads. ripr does not resolve whether the pinned input runs the changed code, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
+- `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 
 Reserved `flow_sink` values:
@@ -3693,10 +3718,10 @@ an operational error (exit `2`).
 
 ### Gap-Bound Repair Start
 
-For a TypeScript finding whose repair packet is complete, `ripr check` prints
-`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
-line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
-`--base`, requires the same shared packet validator to accept the finding, and
+For a TypeScript or Python finding whose repair packet is complete,
+`ripr check` prints `ripr agent repair --gap-id <gap> --base <base> --phase
+before` as the start line (RIPR-SPEC-0311, #9103; Python #10373). The command
+re-runs the diff-scoped check against `--base`, requires the same shared packet validator to accept the finding, and
 otherwise refuses with "the repair packet is not ready" and writes nothing.
 A refused start restores the shared workflow artifacts to the bytes they had
 before the invocation (removing only files it created). On
@@ -3715,8 +3740,10 @@ the edit cage. Absence from the after snapshot is never closure. An open or abse
 gap is a typed refusal (exit 3) recorded against the attempt's retry budget; it
 stays `awaiting_edit`. A compliant finish issues the gap-bound receipt below; the
 closure is also the `verify.bound_gap` of the `repair_after_result` envelope.
-Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
-terminal reason. The static result is exposure evidence only; it does not
+Let-bound, imported and reach-barrier TypeScript variants stay unrouted. A
+Python gap's seam routes (`ripr repair`, `agent repair --seam-id`) keep the
+Rust-only seam reason and point at this start; a Python finding whose record
+the validator refuses is offered no start. The static result is exposure evidence only; it does not
 claim a runtime mutation outcome.
 
 ### Gap-Bound Receipt
@@ -18657,7 +18684,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.105",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.110",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19412,7 +19439,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.46",
+    "schema_version": "1.47",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19425,7 +19452,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.105",
+      "schema_version": "1.110",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (3)
+
+Reason:
+RIPR-SPEC-0122 integration: include the three explanatory summary-legend lines added on main; JSON, full human output and the RIPR-SPEC-0108 weak-class invariant are unchanged.
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

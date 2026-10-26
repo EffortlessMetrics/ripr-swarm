@@ -287,3 +287,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (25)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

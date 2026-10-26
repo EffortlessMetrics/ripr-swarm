@@ -93,7 +93,14 @@ pub(crate) enum RepairRouteRefusal {
     /// picks one silently.
     SeveralBindingSeams,
     /// The one binding seam failed the shared repair-admission gate.
-    Ineligible { reason: String },
+    Ineligible {
+        reason: String,
+        /// The gate's refusal kind, so the check screen words a not-ready
+        /// route without parsing `reason` (#9244).
+        kind: super::task_first::RefusalKind,
+        /// The producer-owned missing-evidence list behind a not-ready route.
+        missing: Vec<String>,
+    },
 }
 
 impl RepairRouteRefusal {
@@ -141,7 +148,26 @@ impl RepairRouteRefusal {
                  you choose"
                     .to_string()
             }
-            Self::Ineligible { reason } => {
+            Self::Ineligible {
+                kind: super::task_first::RefusalKind::RouteNotReady,
+                missing,
+                ..
+            } => {
+                if missing.is_empty() {
+                    "no repair start offered: ripr cannot build a repair packet for this \
+                     finding yet because the static evidence is not complete enough to name a \
+                     safe test target; follow the Next step above, then rerun `ripr check`"
+                        .to_string()
+                } else {
+                    format!(
+                        "no repair start offered: ripr cannot build a repair packet for this \
+                         finding yet because it is still missing: {}; follow the Next step \
+                         above, then rerun `ripr check`",
+                        missing.join("; ")
+                    )
+                }
+            }
+            Self::Ineligible { reason, .. } => {
                 format!("no repair start offered: {reason}; {}", gate())
             }
         }
@@ -424,6 +450,7 @@ fn navigation_args(
 
 #[cfg(test)]
 mod tests {
+    use super::super::task_first::RefusalKind;
     use super::*;
     use std::path::PathBuf;
 
@@ -577,6 +604,8 @@ mod tests {
         // The ineligible arm still routes to the full gate for its answer.
         let ineligible = RepairRouteRefusal::Ineligible {
             reason: "not a headline repair target".to_string(),
+            kind: RefusalKind::Other,
+            missing: Vec::new(),
         }
         .advisory(gate);
         assert!(
@@ -585,6 +614,52 @@ mod tests {
                 && ineligible.contains(gate)
                 && ineligible.contains("for the full gate's answer"),
             "advisory must name the state and the full-gate recovery: {ineligible}"
+        );
+        // #9244: a not-ready route states what the static evidence still
+        // lacks and the rerun, not "not ready" plus a gate pointer.
+        let not_ready = RepairRouteRefusal::Ineligible {
+            reason: "repair route not ready (missing evidence: boundary_value; activation)"
+                .to_string(),
+            kind: RefusalKind::RouteNotReady,
+            missing: vec!["boundary_value".to_string(), "activation".to_string()],
+        }
+        .advisory(gate);
+        assert_eq!(
+            not_ready,
+            "no repair start offered: ripr cannot build a repair packet for this finding yet \
+             because it is still missing: boundary_value; activation; follow the Next step \
+             above, then rerun `ripr check`"
+        );
+        assert!(
+            !not_ready.contains("repair route not ready")
+                && !not_ready.contains("ripr repair")
+                && !not_ready.contains("full gate's answer"),
+            "not-ready must not restate the refusal or route to the gate: {not_ready}"
+        );
+        let no_missing = RepairRouteRefusal::Ineligible {
+            reason: "repair route not ready".to_string(),
+            kind: RefusalKind::RouteNotReady,
+            missing: Vec::new(),
+        }
+        .advisory(gate);
+        assert!(
+            no_missing.contains("not complete enough to name a safe test target")
+                && !no_missing.contains("full gate's answer"),
+            "empty missing list must say the evidence is incomplete: {no_missing}"
+        );
+        // #9244: a refusal that is not a not-ready route (here the gate could
+        // not decide) keeps its reason and the gate pointer.
+        let unverified = RepairRouteRefusal::Ineligible {
+            reason: "the gate could not decide".to_string(),
+            kind: RefusalKind::Unverified,
+            missing: vec!["ignored".to_string()],
+        }
+        .advisory(gate);
+        assert!(
+            unverified.contains("the gate could not decide")
+                && unverified.contains(gate)
+                && !unverified.contains("still missing"),
+            "non-RouteNotReady kinds keep their reason and gate pointer: {unverified}"
         );
         // #9244: a finding with no canonical gap would get the same refusal
         // from the full gate, so the advisory names its own recovery.

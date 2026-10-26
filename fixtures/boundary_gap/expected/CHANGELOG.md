@@ -1167,6 +1167,20 @@ The same snapshots follow corpus cache generation 1.104 to 1.105 for
 (RIPR-SPEC-0117, #10298), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Exported macro_rules! crate-path calls classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.106 to 1.107 for
+top-level `crate::name!` calls to `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### `#[test_case]` literal rows classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.107 to 1.108 for
+literal-row `#[test_case]` bodies (RIPR-SPEC-0120, #10190), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
@@ -1244,3 +1258,36 @@ hashes only.
 The same snapshots follow corpus cache generation 1.103 to 1.104 for the
 returned loop-accumulator update (#6485), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
+
+### table-driven loop-accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.105 to 1.106 for the
+table-driven loop-accumulator pin (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### indirect owner call limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.108 to 1.109 for owners
+reached without a placeable call and the `cfg_attr` test reading
+(RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Exported macro_rules! grouped-import classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.109 to 1.110 for
+grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+## Pending — boundary_gap (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

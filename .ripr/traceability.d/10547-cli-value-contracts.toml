@@ -1,0 +1,20 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::diff_format_errors_preserve_exit_and_suggestions",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::diff_format_aliases_reach_revision_validation",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::pilot_format_help_agrees_with_accepted_values",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::doctor_profile_help_agrees_with_accepted_values",
+]
+code = [
+  "crates/ripr/src/cli/commands.rs::parse_diff_format",
+  "crates/ripr/src/cli/suggest.rs::unknown_value",
+  "crates/ripr/src/cli/commands/pilot.rs::parse_pilot_options",
+  "crates/ripr/src/cli/commands/doctor.rs::doctor",
+  "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/cli/execute.rs::execute",
+  "crates/ripr/src/cli/mod.rs::CommandError",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md",
+]

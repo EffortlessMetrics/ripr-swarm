@@ -19,7 +19,9 @@ mod implicit_effect;
 pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
 mod facade_reach;
 mod implicit_call;
+mod indirect_owner;
 mod infection;
+mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;
 mod match_transfer;
@@ -43,7 +45,7 @@ mod variant_field_pattern;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, signature_parameters, sort_value_facts,
+    local_boundary, macro_names_rebound, signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -88,17 +90,19 @@ pub(in crate::analysis) use helper_transfer::{
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
+pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
 pub(in crate::analysis) use infection::{
-    exercised_bool_chain_return_sink, infection_evidence_for_owner,
+    OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
+pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
 pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
     expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,
-    pin_scope_needs, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    pin_scope_needs, returned_closure_pin_required, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 #[cfg(test)]
