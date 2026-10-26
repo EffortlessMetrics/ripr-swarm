@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- A repository with a corrupt `.git/packed-refs` is no longer reported as having no commits yet; `ripr check` without `--base` now names Git's own error and the file to correct or restore (#10566).
+- Default-base failures distinguish genuinely unborn branches from damaged packed refs and corrupt or inaccessible HEAD refs. Damaged metadata now retains Git's reason and repository-repair identity instead of recommending a first commit (#10566).

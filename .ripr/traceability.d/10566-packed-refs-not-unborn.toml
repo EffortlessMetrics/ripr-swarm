@@ -3,6 +3,10 @@
 id = "RIPR-SPEC-0084"
 tests = [
   "crates/ripr/tests/hostile_repos.rs::corrupt_packed_refs_without_base_is_not_reported_as_unborn",
+  "crates/ripr/tests/hostile_repos.rs::corrupt_loose_refs_without_base_are_not_reported_as_unborn",
+  "crates/ripr/tests/hostile_repos.rs::looping_ref_without_base_is_not_reported_as_unborn",
+  "crates/ripr/tests/hostile_repos.rs::unreadable_ref_without_base_is_not_reported_as_unborn",
+  "crates/ripr/tests/hostile_repos.rs::repository_without_a_usable_base_refuses_with_a_route",
 ]
 code = [
   "crates/ripr/src/analysis/diff/load.rs",

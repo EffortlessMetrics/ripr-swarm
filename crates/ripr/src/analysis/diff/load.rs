@@ -1147,6 +1147,18 @@ fn missing_gitdir_target_message(root: &Path) -> Option<String> {
 /// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
 /// "not inside a Git work tree" (#6908).
 fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> Option<String> {
+    unreadable_repository_message_with_ref_repair(
+        root,
+        output,
+        CORRECT_NAMED_REPOSITORY_FILE_REPAIR,
+    )
+}
+
+fn unreadable_repository_message_with_ref_repair(
+    root: &Path,
+    output: &std::process::Output,
+    ref_repair: &str,
+) -> Option<String> {
     // Disk check first: Git names a missing gitdir as "not a git repository"
     // or "invalid gitfile", which #6911 left on the work-tree message.
     if let Some(message) = missing_gitdir_target_message(root) {
@@ -1171,7 +1183,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
     } else {
-        CORRECT_NAMED_REPOSITORY_FILE_REPAIR
+        ref_repair
     };
     Some(format!(
         "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
@@ -1315,14 +1327,51 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     ))
 }
 
-/// Repository facts that explain why no default base resolved and which
-/// `--base` would work: an unborn HEAD has nothing to diff, a shallow CI
-/// checkout never fetched its base branch, and a repository whose default
-/// branch is not `main`/`master` (`trunk`, `develop`) names its branches.
-/// Empty when none applies or Git cannot answer.
-/// The repair message when `HEAD` itself cannot be read because the
-/// repository is damaged (exit 128 with a `fatal:` line), or `None` when HEAD
-/// resolves, is merely unborn (a quiet exit 1), or Git could not answer.
+/// A quiet failed HEAD lookup is not enough to establish an unborn branch:
+/// loose-ref damage and inaccessible ref targets can also return silent exit 1.
+/// Git's recursive symbolic lookup distinguishes those without assuming a ref
+/// storage layout (including linked worktrees and reftable).
+enum FailedHead {
+    Unborn,
+    Unreadable(String),
+    Unknown,
+}
+
+fn classify_failed_head(
+    root: &Path,
+    head: &std::process::Output,
+    git_timeout: Option<Duration>,
+) -> FailedHead {
+    if let Some(message) = unreadable_repository_message(root, head) {
+        return FailedHead::Unreadable(message);
+    }
+    if head.status.code() != Some(1) || !head.stdout.is_empty() || !head.stderr.is_empty() {
+        return FailedHead::Unknown;
+    }
+    let Ok(symbolic) = crate::git::run_git_output_with_deadline(
+        root,
+        &["symbolic-ref", "--quiet", "HEAD"],
+        git_timeout,
+    ) else {
+        return FailedHead::Unknown;
+    };
+    if symbolic.status.success()
+        && symbolic.stderr.is_empty()
+        && symbolic.stdout.starts_with(b"refs/heads/")
+        && symbolic.stdout.len() > b"refs/heads/\n".len()
+    {
+        return FailedHead::Unborn;
+    }
+    const HEAD_REF_REPAIR: &str = "Inspect `HEAD` and the ref it names with `git symbolic-ref HEAD`; \
+        correct or restore the ref metadata and its read access, then re-run.";
+    match unreadable_repository_message_with_ref_repair(root, &symbolic, HEAD_REF_REPAIR) {
+        Some(message) => FailedHead::Unreadable(message),
+        None => FailedHead::Unknown,
+    }
+}
+
+/// The repair message when the HEAD lookup or its recursive symbolic-ref
+/// lookup establishes unreadable metadata, never when either cannot answer.
 fn damaged_head_message(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     let head = crate::git::run_git_output_with_deadline(
         root,
@@ -1333,11 +1382,19 @@ fn damaged_head_message(root: &Path, git_timeout: Option<Duration>) -> Option<St
     if head.status.success() {
         return None;
     }
-    unreadable_repository_message(root, &head)
+    match classify_failed_head(root, &head, git_timeout) {
+        FailedHead::Unreadable(message) => Some(message),
+        FailedHead::Unborn | FailedHead::Unknown => None,
+    }
 }
 
+/// Repository facts that explain why no default base resolved and which
+/// `--base` would work: an unborn HEAD has nothing to diff, a shallow CI
+/// checkout never fetched its base branch, and a repository whose default
+/// branch is not `main`/`master` (`trunk`, `develop`) names its branches.
+/// Empty when none applies or Git cannot answer.
 fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> String {
-    // Only a `rev-parse` that ran and answered "no" proves an unborn HEAD;
+    // A failed HEAD lookup needs the shared ref discriminator below;
     // a missing or timed-out Git proves nothing, so it adds no context.
     let Ok(head) = crate::git::run_git_output_with_deadline(
         root,
@@ -1347,16 +1404,13 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         return String::new();
     };
     if !head.status.success() {
-        // Exit 1 with no message is the unborn HEAD; exit 128 with a `fatal:`
-        // line is a damaged repository (a corrupt `packed-refs` answers this
-        // way), where "commit once" would name a repair that does not apply
-        // (#10566).
-        if let Some(message) = unreadable_repository_message(root, &head) {
-            return format!(" {message}");
-        }
-        return " This repository has no commits yet; commit once, then analyze uncommitted \
-                edits with `--base HEAD --worktree`."
-            .to_string();
+        return match classify_failed_head(root, &head, git_timeout) {
+            FailedHead::Unreadable(message) => format!(" {message}"),
+            FailedHead::Unborn => " This repository has no commits yet; commit once, then analyze \
+                uncommitted edits with `--base HEAD --worktree`."
+                .to_string(),
+            FailedHead::Unknown => String::new(),
+        };
     }
     if is_shallow_repository(root, git_timeout) {
         return " This is a shallow clone that did not fetch a base branch; fetch it with \

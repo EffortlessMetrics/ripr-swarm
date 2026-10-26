@@ -131,8 +131,17 @@ fails with a Git `fatal:` line (exit 128, for example a corrupt
 `.git/packed-refs`), the default-base failure is the unreadable-repository
 refusal: Git's own reason plus the repair naming the file to correct or
 restore, typed as an unusable repository root (`repository_root_unusable`),
-never "no commits yet" and never `base_unresolvable` (#10566). Only a quiet
-exit 1 reads as an unborn `HEAD`.
+never "no commits yet" and never `base_unresolvable` (#10566). A quiet exit 1
+alone does not establish an unborn `HEAD`: corrupt loose refs, recursive ref
+cycles and inaccessible refs can answer identically. The recursive
+`git symbolic-ref --quiet HEAD` probe must also successfully name a branch
+ref before the first-commit recovery is offered. Its fatal failures retain
+Git's reason, advise inspecting `HEAD` and restoring its referenced metadata
+or read access, and use `repository_root_unusable` with repair route
+`analysis/repository-root`. Unanswered or unexplained probes never justify a
+first-commit suggestion. A truly unborn branch retains `base_unresolvable`
+and `analysis/base-resolution`. Both refusals exit 2 and emit no consumable
+analysis. Concurrent ref mutation between probes is not a snapshot guarantee.
 
 This message explicitly says the analysis did not run (unlike "No probes
 found", which means the analysis ran and found nothing). It names the
@@ -313,6 +322,10 @@ Start-here action owns the remediation instead.
 - `crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent`
 - `crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out`
 - `crates/ripr/tests/hostile_repos.rs::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::corrupt_loose_refs_without_base_are_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::looping_ref_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::unreadable_ref_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::repository_without_a_usable_base_refuses_with_a_route`
 - `crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags`
 - `crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal`
 - `crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source`

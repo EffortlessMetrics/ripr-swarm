@@ -885,6 +885,31 @@ fn repository_without_a_usable_base_refuses_with_a_route() -> Result<(), String>
         return Err(format!("expected no-commits route\n{}", ran.stderr));
     }
 
+    assert_default_base_refusal_json(
+        &empty,
+        "base_unresolvable",
+        "analysis/base-resolution",
+        &["no commits yet", "commit once"],
+    )?;
+    // A valid symbolic-ref chain to an absent branch is also truly unborn.
+    git(
+        &empty,
+        &["symbolic-ref", "refs/heads/main", "refs/heads/first"],
+    )?;
+    let symbolic = ripr(&empty, &["check"], &[])?;
+    if symbolic.code != Some(2) || !symbolic.stderr.contains("no commits yet") {
+        return Err(format!(
+            "expected unborn symbolic branch recovery\n{}",
+            symbolic.stderr
+        ));
+    }
+    assert_default_base_refusal_json(
+        &empty,
+        "base_unresolvable",
+        "analysis/base-resolution",
+        &["no commits yet", "commit once"],
+    )?;
+
     let renamed = plain(&scratch, "trunk")?;
     git(&renamed, &["branch", "-m", "main", "trunk"])?;
     let ran = ripr(&renamed, &["check"], &[])?;
@@ -1110,6 +1135,161 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     Ok(())
 }
 
+/// Parse the public refusal rather than accepting identity words in prose.
+fn assert_default_base_refusal_json(
+    root: &Path,
+    identity: &str,
+    route: &str,
+    expected_message: &[&str],
+) -> Result<(), String> {
+    let ran = ripr(root, &["check", "--format", "json"], &[])?;
+    assert_sane(&ran, "default-base JSON refusal")?;
+    if ran.code != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(&ran.stdout)
+        .map_err(|e| format!("invalid refusal JSON: {e}\n{}", ran.stdout))?;
+    for (pointer, expected) in [
+        ("/analysis_scope/run_status", identity),
+        ("/analysis_scope/basis", identity),
+        ("/analysis_scope/limitation", identity),
+        ("/analysis_scope/repair_route", route),
+        ("/run_limitations/0/category", identity),
+        ("/run_limitations/0/run_status", identity),
+        ("/run_limitations/0/repair_route", route),
+    ] {
+        if value.pointer(pointer).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(format!("expected {pointer} = {expected}\n{}", ran.stdout));
+        }
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or_else(|| format!("missing refusal message\n{}", ran.stdout))?;
+    for needle in expected_message {
+        if !message.contains(needle) {
+            return Err(format!("JSON refusal missing {needle}\n{}", ran.stdout));
+        }
+    }
+    if value["analysis_scope"]["downstream_consumable"] != false
+        || value["run_limitations"][0]["downstream_consumable"] != false
+        || value["findings"].as_array().map(Vec::len) != Some(0)
+    {
+        return Err(format!("expected a non-consumable refusal\n{}", ran.stdout));
+    }
+    if identity == "repository_root_unusable"
+        && ["no commits yet", "commit once", "base_unresolvable"]
+            .iter()
+            .any(|needle| ran.stdout.contains(needle) || ran.stderr.contains(needle))
+    {
+        return Err(format!(
+            "damaged refs must not offer a base repair\n{}\n{}",
+            ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+fn assert_damaged_default_base(root: &Path, reason: &str) -> Result<(), String> {
+    let ran = ripr(root, &["check"], &[])?;
+    assert_sane(&ran, "damaged default-base refs")?;
+    if ran.code != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    for needle in [
+        reason,
+        "correct or restore",
+        "the analysis did not run",
+        "git symbolic-ref HEAD",
+        "read access",
+    ] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing {needle}\n{}", ran.stderr));
+        }
+    }
+    if ran.stderr.contains("no commits yet") || ran.stderr.contains("commit once") {
+        return Err(format!(
+            "damaged refs cannot be repaired by a commit\n{}",
+            ran.stderr
+        ));
+    }
+    assert_default_base_refusal_json(
+        root,
+        "repository_root_unusable",
+        "analysis/repository-root",
+        &[
+            reason,
+            "correct or restore",
+            "git symbolic-ref HEAD",
+            "read access",
+        ],
+    )
+}
+
+/// RIPR-SPEC-0084: a silent HEAD failure also occurs for corrupt loose refs
+/// and recursive symbolic-ref cycles, so exit 1 alone cannot justify a commit.
+#[test]
+fn corrupt_loose_refs_without_base_are_not_reported_as_unborn() -> Result<(), String> {
+    let scratch = Scratch::new("loose-default-base")?;
+    for (name, contents) in [
+        ("invalid", "garbage\n"),
+        ("cycle", "ref: refs/heads/feat\n"),
+    ] {
+        let root = plain(&scratch, name)?;
+        // Force the default-base failure arm; a healthy main would bypass it.
+        git(&root, &["branch", "-D", "main"])?;
+        fs::write(root.join(".git/refs/heads/feat"), contents)
+            .map_err(|e| format!("damage ref: {e}"))?;
+        assert_damaged_default_base(&root, "fatal: No such ref: HEAD")?;
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0084: a real inaccessible ref, without an invented Git response.
+#[cfg(unix)]
+#[test]
+fn looping_ref_without_base_is_not_reported_as_unborn() -> Result<(), String> {
+    let scratch = Scratch::new("loop-default-base")?;
+    let root = plain(&scratch, "loop")?;
+    git(&root, &["branch", "-D", "main"])?;
+    let reference = root.join(".git/refs/heads/feat");
+    fs::remove_file(&reference).map_err(|e| format!("remove ref: {e}"))?;
+    std::os::unix::fs::symlink("feat", &reference).map_err(|e| format!("loop ref: {e}"))?;
+    assert_damaged_default_base(&root, "fatal: No such ref: HEAD")
+}
+
+/// RIPR-SPEC-0084: permissions can also be hidden by quiet rev-parse.
+#[cfg(unix)]
+#[test]
+fn unreadable_ref_without_base_is_not_reported_as_unborn() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("unreadable-default-base")?;
+    let root = plain(&scratch, "unreadable")?;
+    git(&root, &["branch", "-D", "main"])?;
+    let reference = root.join(".git/refs/heads/feat");
+    let original = fs::metadata(&reference)
+        .map_err(|e| format!("ref metadata: {e}"))?
+        .permissions();
+    fs::set_permissions(&reference, fs::Permissions::from_mode(0))
+        .map_err(|e| format!("make ref unreadable: {e}"))?;
+    let result = (|| {
+        if fs::read(&reference).is_ok() {
+            eprintln!("permission control unavailable: this user can read a mode-000 ref");
+            return Ok(());
+        }
+        assert_damaged_default_base(&root, "fatal: No such ref: HEAD")
+    })();
+    fs::set_permissions(&reference, original)
+        .map_err(|e| format!("restore ref permissions: {e}"))?;
+    result
+}
+
 /// With no `--base`, a corrupt `packed-refs` must not read as an unborn HEAD:
 /// the repository has commits and "commit once" repairs nothing (#10566).
 #[test]
@@ -1131,19 +1311,12 @@ fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), St
     if ran.stderr.contains("no commits yet") {
         return Err(format!("wrong cause `no commits yet`\n{}", ran.stderr));
     }
-    // Structured consumers key their repair on the refusal identity: a damaged
-    // repository is an unusable root, not an unresolved base.
-    let json = ripr(&root, &["check", "--format", "json"], &[])?;
-    assert_sane(&json, "corrupt packed-refs, json")?;
-    if !json.stdout.contains("repository_root_unusable")
-        || json.stdout.contains("base_unresolvable")
-    {
-        return Err(format!(
-            "expected repository_root_unusable\n{}",
-            json.stdout
-        ));
-    }
-    Ok(())
+    assert_default_base_refusal_json(
+        &root,
+        "repository_root_unusable",
+        "analysis/repository-root",
+        &["fatal:", "garbage", "correct or restore it"],
+    )
 }
 
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
