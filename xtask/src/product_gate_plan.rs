@@ -23,7 +23,6 @@ pub(crate) const TEST_RUNNER_CONTRACT: &str = "canonical_nextest_plus_cargo_doc"
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ProductGateId {
     Formatting,
-    WorkspaceCheck,
     AllFeaturesCheck,
     Clippy,
     WorkspaceTests,
@@ -42,7 +41,6 @@ impl ProductGateId {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Formatting => "product.rust.formatting",
-            Self::WorkspaceCheck => "product.rust.workspace_check",
             Self::AllFeaturesCheck => "product.rust.all_features_check",
             Self::Clippy => "product.rust.clippy",
             Self::WorkspaceTests => "product.rust.workspace_tests",
@@ -218,14 +216,6 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             "does not prove runtime behavior",
         ),
         gate(
-            ProductGateId::WorkspaceCheck,
-            ProductGateRole::Required,
-            rust.clone(),
-            "cargo check --workspace --all-targets",
-            "the workspace type-checks",
-            "does not prove tests observe changed behavior",
-        ),
-        gate(
             ProductGateId::AllFeaturesCheck,
             ProductGateRole::Required,
             rust.clone(),
@@ -238,8 +228,8 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateRole::Required,
             rust.clone(),
             "cargo clippy --workspace --all-targets -- -D warnings",
-            "the configured lint contract holds",
-            "does not prove runtime behavior",
+            "the workspace type-checks (the same unit set `cargo check --workspace --all-targets` builds) and the configured lint contract holds",
+            "does not prove runtime behavior or tests observing changed behavior",
         ),
         gate(
             ProductGateId::WorkspaceTests,
@@ -555,6 +545,27 @@ mod tests {
         })
     }
 
+    /// The one condition a declared runner step may carry (#10507): the hosted caller
+    /// passes `test-shards: 4` and `rust-test-shards.yml` runs the same selection as
+    /// four partitions. Only the nextest row may carry it, spelled exactly, so the
+    /// doctest row and every other `if:` spelling stay rejected.
+    const SANCTIONED_SHARD_CONDITION: &str = "        if: inputs.test-shards == 1";
+
+    fn is_sanctioned_shard_condition(step: &[&str]) -> bool {
+        let conditions: Vec<_> = step
+            .iter()
+            .filter(|line| step_has_key(&[**line], "if"))
+            .collect();
+        let nextest_row = product_gate_definitions()
+            .into_iter()
+            .find(|gate| gate.id == ProductGateId::WorkspaceTests)
+            .map(|gate| gate.command)
+            .unwrap_or_default();
+        conditions.len() == 1
+            && *conditions[0] == SANCTIONED_SHARD_CONDITION
+            && step.iter().any(|line| line.trim().ends_with(nextest_row))
+    }
+
     /// Workflow lines with shell `\` continuations joined, so a runner split
     /// across lines is read as the command the shell executes.
     fn logical_lines(workflow: &str) -> Vec<String> {
@@ -632,7 +643,9 @@ mod tests {
             }
             let name = step[0].trim().trim_start_matches("- ");
             for key in ["if", "continue-on-error", "shell"] {
-                if step_has_key(&step, key) {
+                if step_has_key(&step, key)
+                    && !(key == "if" && is_sanctioned_shard_condition(&step))
+                {
                     violations.push(format!(
                         "required runner step `{name}` declares `{key}:`, so the row can be skipped, ignored, or run by another shell"
                     ));
@@ -744,6 +757,41 @@ mod tests {
             required_workflow_runner_violations(REQUIRED_WORKFLOW),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn shard_condition_is_sanctioned_only_on_the_nextest_row() {
+        // The real workflow carries the sanctioned condition on the nextest row.
+        assert!(REQUIRED_WORKFLOW.contains(SANCTIONED_SHARD_CONDITION));
+        let sanctioned_step = "        id: rust-tests\n        if: inputs.test-shards == 1\n";
+        assert_eq!(REQUIRED_WORKFLOW.matches(sanctioned_step).count(), 1);
+        for (from, to) in [
+            // Any other spelling or condition on the nextest row.
+            (
+                sanctioned_step,
+                "        id: rust-tests\n        if: always()\n",
+            ),
+            (
+                sanctioned_step,
+                "        id: rust-tests\n        \"if\": inputs.test-shards == 1\n",
+            ),
+            (
+                sanctioned_step,
+                "        id: rust-tests\n        if: inputs.test-shards == 1\n        continue-on-error: true\n",
+            ),
+            // The same condition on the doctest row.
+            (
+                "      - name: Required Rust doctests\n",
+                "      - name: Required Rust doctests\n        if: inputs.test-shards == 1\n",
+            ),
+        ] {
+            let edited = REQUIRED_WORKFLOW.replacen(from, to, 1);
+            assert_ne!(edited, REQUIRED_WORKFLOW, "fixture must change the step");
+            assert!(
+                !required_workflow_runner_violations(&edited).is_empty(),
+                "`{to}` was not rejected"
+            );
+        }
     }
 
     #[test]

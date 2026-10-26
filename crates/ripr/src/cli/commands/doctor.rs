@@ -120,7 +120,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
         language_detection_elapsed,
     );
     report.segments = environment.facts.segments.clone();
-    let binary = output::doctor_binary::probe_binary_identity();
+    let binary = output::doctor_binary::probe_binary_identity(&root);
     ok &= add_language_runtime_probes(
         &root,
         &detected,
@@ -178,7 +178,7 @@ fn doctor_json(
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
-    report.binary = Some(output::doctor_binary::probe_binary_identity());
+    report.binary = Some(output::doctor_binary::probe_binary_identity(root));
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ = add_language_runtime_probes(
         root,
@@ -198,6 +198,9 @@ fn doctor_json(
         language_detection_elapsed,
     );
     report.apply_environment(environment.facts);
+    if let Some(verdict) = mcp_config_verdict(root) {
+        report.add_mcp_config_check(verdict.ok, verdict.text);
+    }
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
     {
@@ -622,7 +625,13 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         lines.push(compact_tilde_line(&advisory));
     }
     for warning in &binary.warnings {
-        lines.push(format!("- warning: {}", display_text(warning)));
+        // #10347: a config that launches `ripr` by name with no `ripr` on PATH
+        // is an advisory repair signal, spelled like the other `~` advisories.
+        if binary.compact_path_advisory() == Some(warning.as_str()) {
+            lines.push(compact_tilde_line(warning));
+        } else {
+            lines.push(format!("- warning: {}", display_text(warning)));
+        }
     }
 
     // Compact passing groups, then leftover skip/advisory lines that tests
@@ -776,6 +785,14 @@ Point RIPR_CACHE_DIR at a writable directory.",
     }
     if let output::doctor::DoctorArtifactTracking::Tracked { warning } = &cache.artifact_tracking {
         lines.push(warning.clone());
+    }
+
+    if let Some(verdict) = mcp_config_verdict(root) {
+        lines.push(format!(
+            "{} {}",
+            if verdict.ok { "✓" } else { "~" },
+            verdict.text
+        ));
     }
 
     lines.extend(preview_language_enable_suggestions(
@@ -2765,11 +2782,47 @@ fn ripr_artifact_ignore(
     if present.is_empty() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let Some(uncovered) = uncovered_artifact_roots(root, &present) else {
+    // A Cargo project's repair preflight needs the whole build directory
+    // `target/` ignored (a child-only `/target/ripr/` rule is insufficient),
+    // so coverage of the default root is judged by `target/` itself and the
+    // advice names `/target/` (#9006).
+    let cargo_project = root.join("Cargo.toml").is_file();
+    let probe_roots = if cargo_project {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for relative in &present {
+            let probe = if analysis::artifact_root_pathspec(relative) == "target/ripr" {
+                PathBuf::from("target")
+            } else {
+                relative.clone()
+            };
+            if !roots.contains(&probe) {
+                roots.push(probe);
+            }
+        }
+        roots
+    } else {
+        present
+    };
+    let Some(uncovered) = uncovered_artifact_roots(root, &probe_roots) else {
         return DoctorArtifactIgnore::NotChecked;
     };
     if uncovered.is_empty() {
         return DoctorArtifactIgnore::Ignored;
+    }
+    // Only the repair prerequisite is unmet when a child-only rule already
+    // ignores ripr's own reports: do not claim `git add -A` would commit them.
+    if cargo_project
+        && uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])
+            .is_some_and(|child| child.is_empty())
+    {
+        return DoctorArtifactIgnore::Unignored {
+            warning: format!(
+                "~ ripr's own reports under target/ripr are ignored, but Rust repair \
+                 requires Cargo's whole build directory `target/` to be Git-ignored. \
+                 Add this line to .gitignore: {}",
+                artifact_gitignore_entries(&uncovered),
+            ),
+        };
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
@@ -3289,6 +3342,106 @@ fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -
     }
 }
 
+/// Largest `.mcp.json` doctor reads; a real one is a few hundred bytes.
+const MCP_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// What doctor found in a root's `.mcp.json` (#10347): whether it wires up
+/// `ripr mcp --stdio` the way `ripr init --mcp` writes it. Advisory only.
+struct McpConfigVerdict {
+    ok: bool,
+    text: String,
+}
+
+/// Judges `<root>/.mcp.json`; `None` when the file is absent (or not a regular
+/// file), because a project without MCP config has nothing to verify.
+fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
+    let path = root.join(".mcp.json");
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    let verdict = match crate::bounded_input::read_to_string_with_limit(&path, MCP_CONFIG_MAX_BYTES)
+    {
+        Err(error) => Err((
+            format!(".mcp.json could not be read ({error})"),
+            MCP_REPAIR_FIX_FILE,
+        )),
+        Ok(text) => mcp_config_problem(&text),
+    };
+    Some(match verdict {
+        Ok(()) => McpConfigVerdict {
+            ok: true,
+            text: ".mcp.json: `ripr` MCP server runs `ripr mcp --stdio`".to_string(),
+        },
+        Err((problem, repair)) => McpConfigVerdict {
+            ok: false,
+            text: format!(".mcp.json: {problem}; {repair}"),
+        },
+    })
+}
+
+/// Repair advice per failure category: `ripr init --mcp` refuses to touch a
+/// file that is not a JSON object with an object `mcpServers`, so those need a
+/// manual fix first.
+const MCP_REPAIR_FIX_FILE: &str = "fix or remove the file, then run `ripr init --mcp`";
+const MCP_REPAIR_INIT: &str = "run `ripr init --mcp`";
+const MCP_REPAIR_FORCE: &str = "run `ripr init --mcp --force` to replace the customized entry";
+
+/// `Ok` when the document has a `ripr` server whose command is `ripr` with
+/// args exactly `mcp --stdio` (the entry `ripr init --mcp` writes; `ripr mcp`
+/// rejects any other leading argument). `Err` carries the problem and repair.
+fn mcp_config_problem(text: &str) -> Result<(), (String, &'static str)> {
+    let document: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        (
+            format!("is not valid JSON ({})", display_text(&error.to_string())),
+            MCP_REPAIR_FIX_FILE,
+        )
+    })?;
+    if !document.is_object() {
+        return Err(("is not a JSON object".to_string(), MCP_REPAIR_FIX_FILE));
+    }
+    // `ripr init --mcp` adds a missing `mcpServers` key but refuses one that
+    // is not an object.
+    let Some(servers) = document.get("mcpServers") else {
+        return Err(("has no `mcpServers` object".to_string(), MCP_REPAIR_INIT));
+    };
+    let servers = servers.as_object().ok_or_else(|| {
+        (
+            "has an `mcpServers` that is not an object".to_string(),
+            MCP_REPAIR_FIX_FILE,
+        )
+    })?;
+    let entry = servers
+        .get("ripr")
+        .ok_or_else(|| ("has no `ripr` server entry".to_string(), MCP_REPAIR_INIT))?;
+    let command = entry.get("command").and_then(serde_json::Value::as_str);
+    let args = entry.get("args").and_then(serde_json::Value::as_array);
+    let exact = args.is_some_and(|args| {
+        args.len() == 2 && args[0].as_str() == Some("mcp") && args[1].as_str() == Some("--stdio")
+    });
+    if command == Some("ripr") && exact {
+        return Ok(());
+    }
+    let shown = args
+        .map(|args| {
+            args.iter()
+                .map(|arg| arg.as_str().map_or_else(|| arg.to_string(), str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Err((
+        format!(
+            "`ripr` server entry runs `{}`, not `ripr mcp --stdio`",
+            display_text(
+                &std::iter::once(command.unwrap_or("<no command>").to_string())
+                    .chain(shown)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        ),
+        MCP_REPAIR_FORCE,
+    ))
+}
+
 /// Workspace-relative Cargo config paths Cargo reads `[env]` from, in Cargo's
 /// own precedence order: the extensionless name wins when both exist ("If
 /// both files exist, Cargo will use the file without the extension", Cargo
@@ -3524,6 +3677,7 @@ mod tests {
             path_ripr_is_cargo_build_output: false,
             path_ripr_is_running_executable: None,
             warnings: Vec::new(),
+            missing_path_dependents: Vec::new(),
         }
     }
 
@@ -3620,6 +3774,54 @@ mod tests {
             verbose,
             passed,
         })
+    }
+
+    #[test]
+    fn default_screen_warns_when_config_launches_ripr_missing_from_path() {
+        // #10347: advisory `~` line on the default screen, quiet without a
+        // dependent config, and the exit decision (`passed`) is untouched.
+        let report = passing_report();
+        let environment = empty_environment();
+        let binary = quiet_binary().with_path_dependents(vec![".mcp.json".to_string()]);
+        let screen = |binary: &output::doctor_binary::DoctorBinaryIdentity, verbose: bool| {
+            render_doctor_human_screen(DoctorHumanScreen {
+                root: Path::new("."),
+                profile: output::doctor::DoctorProfile::Analysis,
+                report: &report,
+                config: &Ok(RiprConfig::default()),
+                environment: &environment,
+                binary,
+                verbose,
+                passed: true,
+            })
+        };
+        let lines = screen(&binary, false);
+        assert!(
+            lines.iter().any(
+                |line| line.starts_with("~ `ripr` is not on this shell's PATH")
+                    && line.contains(".mcp.json")
+            ),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed"),
+            "{lines:?}"
+        );
+        let verbose = screen(&binary, true);
+        assert!(
+            verbose
+                .iter()
+                .any(|line| line.starts_with("~ `ripr` is not on this shell's PATH")),
+            "{verbose:?}"
+        );
+        let quiet = screen(&quiet_binary().with_path_dependents(Vec::new()), false);
+        assert!(
+            !quiet
+                .iter()
+                .any(|line| line.contains("not on this shell's PATH")),
+            "{quiet:?}"
+        );
     }
 
     #[test]
@@ -5032,6 +5234,72 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_ignore_advises_the_whole_target_dir_for_a_cargo_project() -> Result<(), String>
+    {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-cargo-target");
+        std::fs::create_dir_all(root.join("target/ripr/pilot"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // The repair preflight needs `target/` itself ignored, so the advice
+        // for a Cargo project is `/target/`, not the child-only `/target/ripr/`.
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, "/target/", "{warning}");
+        // A child-only `/target/ripr/` rule (the old advice) does not satisfy
+        // the preflight, so doctor still flags it and names `/target/`.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored for a child-only rule".to_string());
+        };
+        assert!(warning.ends_with("/target/"), "{warning}");
+        assert!(!warning.contains("would commit"), "{warning}");
+        assert!(warning.contains("Rust repair requires"), "{warning}");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let build_output = crate::git::run_git_output_with_deadline(
+            &root,
+            &["check-ignore", "--no-index", "-q", "--", "target"],
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(build_output.status.code(), Some(0), "{build_output:?}");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-preemptive");
@@ -5778,6 +6046,127 @@ mod tests {
             "when both config names exist the extensionless redirect must win: {conflicting:?}"
         );
         assert_eq!(too_big, None);
+        Ok(())
+    }
+
+    fn mcp_verdict_for(name: &str, text: Option<&str>) -> Result<Option<(bool, String)>, String> {
+        let root = unique_command_test_dir(name);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        if let Some(text) = text {
+            std::fs::write(root.join(".mcp.json"), text)
+                .map_err(|err| format!("write .mcp.json: {err}"))?;
+        }
+        let verdict = mcp_config_verdict(&root).map(|verdict| (verdict.ok, verdict.text));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(verdict)
+    }
+
+    #[test]
+    fn mcp_config_verdict_accepts_what_init_writes_and_names_each_problem() -> Result<(), String> {
+        // Absent file: nothing to verify, no line.
+        assert_eq!(mcp_verdict_for("mcp-cfg-absent", None)?, None);
+
+        // The exact entry `ripr init --mcp` writes, beside another server.
+        let ok = mcp_verdict_for(
+            "mcp-cfg-ok",
+            Some(
+                r#"{"mcpServers":{"other":{"command":"x"},"ripr":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+            ),
+        )?;
+        assert!(
+            ok.as_ref()
+                .is_some_and(|(ok, text)| *ok && text.contains("runs `ripr mcp --stdio`")),
+            "{ok:?}"
+        );
+
+        let cases = [
+            ("mcp-cfg-bad-json", "{ not json", "is not valid JSON"),
+            (
+                "mcp-cfg-no-servers",
+                r#"{"mcpServers":[]}"#,
+                "`mcpServers` that is not an object",
+            ),
+            ("mcp-cfg-root-array", "[]", "is not a JSON object"),
+            ("mcp-cfg-no-key", "{}", "has no `mcpServers` object"),
+            (
+                "mcp-cfg-other-server",
+                r#"{"mcpServers":{"other":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+                "no `ripr` server entry",
+            ),
+            (
+                "mcp-cfg-wrong-args",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp"]}}}"#,
+                "runs `ripr mcp`, not `ripr mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-wrong-command",
+                r#"{"mcpServers":{"ripr":{"command":"/opt/ripr","args":["mcp","--stdio"]}}}"#,
+                "runs `/opt/ripr mcp --stdio`, not `ripr mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-extra-leading-arg",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["bogus","mcp","--stdio"]}}}"#,
+                "runs `ripr bogus mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-non-string-arg",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":[1,"mcp","--stdio"]}}}"#,
+                "runs `ripr 1 mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-no-command",
+                r#"{"mcpServers":{"ripr":{"args":["mcp","--stdio"]}}}"#,
+                "runs `<no command> mcp --stdio`",
+            ),
+        ];
+        for (name, text, expected) in cases {
+            let verdict = mcp_verdict_for(name, Some(text))?;
+            assert!(
+                verdict
+                    .as_ref()
+                    .is_some_and(|(ok, line)| !*ok && line.contains(expected)),
+                "{name}: {verdict:?}"
+            );
+        }
+        // Repair advice matches what `ripr init --mcp` can actually do.
+        for (name, text, advice) in [
+            ("mcp-cfg-fix-json", "{ not json", "fix or remove the file"),
+            (
+                "mcp-cfg-fix-servers",
+                r#"{"mcpServers":[]}"#,
+                "fix or remove the file",
+            ),
+            (
+                "mcp-cfg-fix-missing",
+                r#"{"mcpServers":{}}"#,
+                "run `ripr init --mcp`",
+            ),
+            ("mcp-cfg-fix-no-key", "{}", "run `ripr init --mcp`"),
+            ("mcp-cfg-fix-root", "[]", "fix or remove the file"),
+            (
+                "mcp-cfg-fix-custom",
+                r#"{"mcpServers":{"ripr":{"command":"x"}}}"#,
+                "`ripr init --mcp --force`",
+            ),
+        ] {
+            let verdict = mcp_verdict_for(name, Some(text))?;
+            assert!(
+                verdict
+                    .as_ref()
+                    .is_some_and(|(_, line)| line.contains(advice)),
+                "{name}: {verdict:?}"
+            );
+            // Advice that only needs `ripr init --mcp` must not tell the user
+            // to fix the file first (that wording also contains the command).
+            if !advice.contains("fix or remove") {
+                assert!(
+                    verdict
+                        .as_ref()
+                        .is_some_and(|(_, line)| !line.contains("fix or remove")),
+                    "{name}: {verdict:?}"
+                );
+            }
+        }
         Ok(())
     }
 

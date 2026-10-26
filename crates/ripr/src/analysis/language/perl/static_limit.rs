@@ -99,6 +99,21 @@ pub(super) fn for_change(
     projection
 }
 
+/// The strongest static limit named by the owner-less dynamic boundaries of
+/// `file_id`: top-level code the producer could not attribute to a sub.
+pub(super) fn file_scope_kind(packet: &PerlFactPacket, file_id: &str) -> Option<StaticLimitKind> {
+    let mut selected = None;
+    for boundary in &packet.dynamic_boundaries {
+        if boundary.owner_id.is_none()
+            && boundary.file_id == file_id
+            && let Some(kind) = boundary_kind(boundary.kind)
+        {
+            select_more_specific(&mut selected, kind);
+        }
+    }
+    selected
+}
+
 /// Map a producer boundary enum without consulting fixture names or messages.
 ///
 /// Broad Perl concepts map to the strongest shared category they actually earn.

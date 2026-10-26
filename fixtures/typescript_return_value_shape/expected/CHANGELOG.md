@@ -709,3 +709,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_return_value_shape (27)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless typescript_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_return_value_shape (28)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_return_value_shape (29)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_return_value_shape (30)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

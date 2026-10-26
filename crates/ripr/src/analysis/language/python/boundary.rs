@@ -49,12 +49,17 @@ use super::related_tests::{
     owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use std::collections::BTreeMap;
 
 /// One strong related call to the owner with the literal value each bound
 /// parameter takes (an explicit argument or a literal default).
 pub(super) struct PythonOwnerCallValues {
+    /// Test file the call was read from (#8389).
+    pub(super) file: std::path::PathBuf,
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) values: BTreeMap<String, String>,
@@ -79,6 +84,7 @@ pub(super) fn strong_owner_call_values(
     let rows = rows
         .into_iter()
         .map(|row| PythonOwnerCallValues {
+            file: row.file,
             line: row.line,
             text: row.text,
             values: row
@@ -224,7 +230,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -307,7 +313,7 @@ pub(super) fn python_boundary_evidence(
         }) {
             observed_new = true;
             observed_values.push(ValueFact {
-                file: None,
+                file: Some(row.file.clone()),
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
@@ -330,7 +336,7 @@ pub(super) fn python_boundary_evidence(
             {
                 observed_old = true;
                 observed_values.push(ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: format!(
                         "{} | {}; {}",
@@ -345,13 +351,9 @@ pub(super) fn python_boundary_evidence(
         }
     }
     let observed = observed_new || observed_old;
-    observed_values.sort_by(|a, b| {
-        a.line
-            .cmp(&b.line)
-            .then(a.value.cmp(&b.value))
-            .then(a.text.cmp(&b.text))
-    });
-    observed_values.dedup();
+    // Preserve distinct source files while collapsing exact duplicate facts
+    // and ordering tied rows deterministically (#8389).
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     // An operand that no strong call resolves (`item.on_hand`, a test local)
     // leaves the boundary unknown rather than missed: the test input may sit
@@ -1176,6 +1178,8 @@ pub(super) struct Binding {
 /// One analyzable call to the owner from a strong related test.
 #[derive(Clone, Debug)]
 pub(super) struct CallRow {
+    /// Test file the call was read from (#8389).
+    pub(super) file: std::path::PathBuf,
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) bindings: BTreeMap<String, Binding>,
@@ -1238,59 +1242,94 @@ pub(super) fn strong_owner_call_rows_with_gaps(
         if !strong {
             continue;
         }
-        // The test body, plus the call each callable-form exception assertion
-        // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
-        // calls `owner(20)`).
-        let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
-        sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
-            assertion
-                .callable_call
-                .as_deref()
-                .map(|call| (assertion.line, call))
-        }));
-        let mut candidate_rows = 0usize;
-        for name in owner_call_names(owner, candidate.test, method_call) {
-            for (first_line, text) in &sources {
-                for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                    let Some((bindings, case_arguments, elements)) =
-                        bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                    else {
-                        gaps = true;
-                        continue;
-                    };
-                    candidate_rows += 1;
-                    let line = first_line + text[..offset].matches('\n').count();
-                    // The call runs from its name to its closing parenthesis,
-                    // the byte after the arglist; whitespace between the name
-                    // and `(` is part of it.
-                    let arglist_end =
-                        arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
-                    let text = call_line_text(text, offset, arglist_end + 1 - offset);
-                    match (&candidate.test.parametrize, case_arguments.is_empty()) {
-                        (Some(parametrize), false) => {
-                            rows.extend(parametrize.cases.iter().map(|case| {
-                                parametrize_case_row(
-                                    line,
-                                    &text,
-                                    &bindings,
-                                    &elements,
-                                    &case_arguments,
-                                    case,
-                                )
-                            }));
-                        }
-                        _ => rows.push(CallRow {
-                            line,
-                            text,
-                            bindings,
-                            elements,
-                        }),
+        let (candidate_rows, candidate_gaps) =
+            candidate_call_rows(owner, constants, candidate, method_call, skip);
+        rows.extend(candidate_rows);
+        gaps |= candidate_gaps;
+    }
+    (rows, gaps)
+}
+
+/// The analyzable owner calls of one related test regardless of how strong
+/// its selected assertion is, for a rule that reads a weaker assertion
+/// (`caplog_text.rs`). None when any call of the test goes unbound or the
+/// test makes no recognized owner call.
+pub(super) fn owner_call_rows_for_candidate(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    candidate: &PythonRelatedCandidate<'_>,
+) -> Option<Vec<CallRow>> {
+    if owner.owner_kind != Some(OwnerKind::Function) || !candidate.relation.uses_oracle() {
+        return None;
+    }
+    let (rows, gaps) = candidate_call_rows(owner, constants, candidate, false, 0);
+    (!gaps && !rows.is_empty()).then_some(rows)
+}
+
+/// One related test's owner-call rows, and whether some call went unbound or
+/// none was recognized.
+fn candidate_call_rows(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    candidate: &PythonRelatedCandidate<'_>,
+    method_call: bool,
+    skip: usize,
+) -> (Vec<CallRow>, bool) {
+    let mut rows = Vec::new();
+    let mut gaps = false;
+    // The test body, plus the call each callable-form exception assertion
+    // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
+    // calls `owner(20)`).
+    let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
+    sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
+        assertion
+            .callable_call
+            .as_deref()
+            .map(|call| (assertion.line, call))
+    }));
+    let mut candidate_rows = 0usize;
+    for name in owner_call_names(owner, candidate.test, method_call) {
+        for (first_line, text) in &sources {
+            for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
+                let Some((bindings, case_arguments, elements)) =
+                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
+                else {
+                    gaps = true;
+                    continue;
+                };
+                candidate_rows += 1;
+                let line = first_line + text[..offset].matches('\n').count();
+                // The call runs from its name to its closing parenthesis,
+                // the byte after the arglist; whitespace between the name
+                // and `(` is part of it.
+                let arglist_end = arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
+                let text = call_line_text(text, offset, arglist_end + 1 - offset);
+                match (&candidate.test.parametrize, case_arguments.is_empty()) {
+                    (Some(parametrize), false) => {
+                        rows.extend(parametrize.cases.iter().map(|case| {
+                            parametrize_case_row(
+                                &candidate.test.file,
+                                line,
+                                &text,
+                                &bindings,
+                                &elements,
+                                &case_arguments,
+                                case,
+                            )
+                        }));
                     }
+                    _ => rows.push(CallRow {
+                        file: candidate.test.file.clone(),
+                        line,
+                        text,
+                        bindings,
+                        elements,
+                    }),
                 }
             }
         }
-        gaps |= candidate_rows == 0;
     }
+    gaps |= candidate_rows == 0;
     (rows, gaps)
 }
 
@@ -1511,6 +1550,7 @@ fn literal_elements(text: &str) -> Option<Vec<String>> {
 /// One call row per parametrize case: each paired owner parameter binds the
 /// case's argvalue when it is a literal and stays unresolved otherwise.
 fn parametrize_case_row(
+    file: &std::path::Path,
     line: usize,
     text: &str,
     bindings: &BTreeMap<String, Binding>,
@@ -1540,6 +1580,7 @@ fn parametrize_case_row(
         }
     }
     CallRow {
+        file: file.to_path_buf(),
         line,
         text: format!("{text} [parametrize {}]", shown.join(", ")),
         bindings,

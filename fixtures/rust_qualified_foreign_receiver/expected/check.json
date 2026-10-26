@@ -1,0 +1,172 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_qualified_foreign_receiver/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:c655ac63d26d435f5bd928789495c8aeca15f9b49414ed1d556f0bd1c0b59b63","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:c861ec7a",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.56,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:c861ec7a",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 18,
+        "expression": "(0, Some(self.remaining))"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: (0, Some(self.remaining))"},
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: (0, Some(self.remaining)) (line 18)", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));", "related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));", "source assertion argument value 3 at line 4", "source assertion argument value 3 at line 5", "source assertion argument value 3 at line 6", "source assertion argument value 3 at line 12", "source enum variant value ::WhileSome at line 12"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"(0, Some(self.remaining))","line":18}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: (0, Some(self.remaining))", "No assertion found on related tests", "No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "gap_withheld: reachable_unrevealed is not claimed; whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method (rust_implicit_call_unresolved)", "limitation_last_established_edge: reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "limitation_first_unresolved_edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "4": "assert_eq!(it.size_hint().1, Some(3));",
+        "5": "assert_eq!(it.size_hint().0, 3);",
+        "6": "assert_eq!(it.size_hint(), (3, Some(3)));",
+        "12": "assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 6,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "value": "::WhileSome",
+            "context": "enum_variant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 6,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "value": "::WhileSome",
+          "context": "enum_variant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 4,
+      "related_tests": [
+        {
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(it.size_hint().1, Some(3));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        },
+        {
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(it.size_hint().0, 3);",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        },
+        {
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(it.size_hint(), (3, Some(3)));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        },
+        {
+          "name": "unicode_module_receiver_is_not_the_local_type",
+          "file": "tests/size_hints.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`foreign_size_hint_is_observed` (tests/size_hints.rs:2), `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and uses it, and the language may call `size_hint` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `size_hint`, so it does not report a gap. Check that an assertion in that test would fail if `size_hint` returned the wrong value; add a test only if none does.",
+      "suggested_next_action": "`foreign_size_hint_is_observed` (tests/size_hints.rs:2), `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and uses it, and the language may call `size_hint` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `size_hint`, so it does not report a gap. Check that an assertion in that test would fail if `size_hint` returned the wrong value; add a test only if none does.",
+      "language": "rust",
+      "static_limit_kind": "rust_implicit_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method",
+        "kind": "rust_implicit_call_unresolved",
+        "last_established_edge": "reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

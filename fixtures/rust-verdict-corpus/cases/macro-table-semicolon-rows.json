@@ -1,0 +1,56 @@
+{
+  "case_id": "macro-table-semicolon-rows",
+  "subject_id": "authored-macro-table",
+  "diff": "cases/macro-table-semicolon-rows.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_boundary_separated",
+  "hard_case": "The table rows are `;`-separated `name: width, limit, want` arms of a `$(..);+` matcher, so each row's trailing expression ends at the separator.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "limit > width",
+        "mutated_line": "limit > width",
+        "outcome": "tests_failed",
+        "failing_test": "semicolon_at",
+        "equivalence_review": "not equivalent: 5 against a limit of 5 no longer fits"
+      },
+      {
+        "replacement": "limit + 1 >= width",
+        "mutated_line": "limit + 1 >= width",
+        "outcome": "tests_failed",
+        "failing_test": "semicolon_over",
+        "equivalence_review": "not equivalent: 6 against a limit of 5 now fits"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "semicolon_at: 5, 5, true and semicolon_over: 6, 5, false straddle the limit, so both mutants fail a generated test. Spec cell: RIPR-SPEC-0117 example 8.",
+  "labeling_observation": {
+    "ripr_commit": "a7437dbc7 + #6925 table expansion",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#8"
+  ]
+}

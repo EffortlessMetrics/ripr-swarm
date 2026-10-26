@@ -501,6 +501,15 @@ interprets it through the receipt owner (`output::agent_receipt`):
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
 
+One `agent status` call takes at most one successful worktree observation per
+(root, whole edit-cage policy) and reuses it for every finished attempt it
+reevaluates, so equal-policy attempts do not each rescan the worktree (#9823).
+A capture that fails is not retained. The observation is call-scoped: the next
+status call captures again, and an edit made between two readings inside one call
+is retained outside that call's shared observation until the next call. Each
+attempt keeps its own baseline, delta and verdict authority; receipt issuance,
+the after phase and MCP reads capture afresh.
+
 Repair inventories and Git currentness probes ignore the user's
 `diff.orderFile`: a dangling orderfile must not abort the before phase or the
 after phase, including when the focused test edit was committed between phases.
@@ -725,6 +734,8 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/src/cli/commands.rs::tests::agent_review_summary_rejects_missing_root_before_reading_artifacts`
 - `crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet`
+- `crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2`
+- `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`

@@ -1,0 +1,12 @@
+diff --git a/src/g_cfg_prod.rs b/src/g_cfg_prod.rs
+--- a/src/g_cfg_prod.rs
++++ b/src/g_cfg_prod.rs
+@@ -2,7 +2,7 @@
+ //! direct assertion pins; only the production predicate is a probe site.
+ 
+ pub fn weight_class(n: u32) -> &'static str {
+-    if n > 10 {
++    if 10 < n {
+         "heavy"
+     } else {
+         "light"

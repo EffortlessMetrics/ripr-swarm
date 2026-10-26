@@ -1,0 +1,6 @@
+use spec0048_4::should_retry;
+
+#[test]
+fn first_attempt_retries() {
+    assert!(should_retry(0));
+}

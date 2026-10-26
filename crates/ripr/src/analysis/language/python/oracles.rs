@@ -444,6 +444,22 @@ fn assertion_from_assert(
             "assert {}",
             assert_gate_expr(assert_stmt.test.as_ref(), source)
         ),
+        source_range: Some(assert_stmt.range),
+        observed_operands: assert_gate_values(assert_stmt.test.as_ref(), source)
+            .into_iter()
+            .flat_map(|value| match value {
+                Expr::Compare(compare) => std::iter::once(compare.left.as_ref())
+                    .chain(compare.comparators.iter())
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .map(|value| {
+                (
+                    text_for_range(source, value.range()).trim().to_string(),
+                    value.range(),
+                )
+            })
+            .collect(),
         line: line_for_range_start(source, assert_stmt.range),
         oracle_kind,
         oracle_strength,
@@ -517,11 +533,19 @@ fn is_literal_argument(expr: &Expr) -> bool {
 /// strength are kept: an owner named only in a weaker conjunct
 /// (`fee(10) > 0 and other == 5`) is not observed by the strong one.
 fn assert_gate_expr(expr: &Expr, source: &SourceText<'_>) -> String {
+    assert_gate_values(expr, source)
+        .into_iter()
+        .map(|value| text_for_range(source, value.range()).trim().to_string())
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+fn assert_gate_values<'a>(expr: &'a Expr, source: &SourceText<'_>) -> Vec<&'a Expr> {
     let Expr::BoolOp(bool_op) = expr else {
-        return text_for_range(source, expr.range()).trim().to_string();
+        return vec![expr];
     };
     if bool_op.op != ast::BoolOp::And {
-        return text_for_range(source, expr.range()).trim().to_string();
+        return vec![expr];
     }
     let strength = |value: &Expr| oracle_for_assert_expr(value, source).1.rank();
     let strongest = bool_op
@@ -534,9 +558,8 @@ fn assert_gate_expr(expr: &Expr, source: &SourceText<'_>) -> String {
         .values
         .iter()
         .filter(|value| strength(value) == strongest)
-        .map(|value| assert_gate_expr(value, source))
-        .collect::<Vec<_>>()
-        .join(" and ")
+        .flat_map(|value| assert_gate_values(value, source))
+        .collect()
 }
 
 fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAssertion> {
@@ -569,6 +592,8 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
             callable_call: Some(callable_call),
             helper_derived: false,
             text,
+            source_range: Some(call.range),
+            observed_operands: Vec::new(),
             line: line_for_range_start(source, call.range),
             oracle_kind,
             oracle_strength,
@@ -591,11 +616,43 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         gate_text,
         callable_call: None,
         helper_derived: false,
+        source_range: Some(call.range),
+        observed_operands: compared_operands(call)
+            .map(|(left, right)| {
+                [left, right]
+                    .into_iter()
+                    .map(|value| {
+                        (
+                            text_for_range(source, value.range()).trim().to_string(),
+                            value.range(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         line: line_for_range_start(source, call.range),
         oracle_kind,
         oracle_strength,
         oracle_shape,
         bare_bool_call: None,
+    })
+}
+
+/// `any(<test> for record in caplog.records)`: a membership check over the
+/// captured log records, the same output observation as `in caplog.text`.
+fn any_over_captured_records(call: &ast::ExprCall) -> bool {
+    expr_full_name(call.func.as_ref()).is_some_and(|name| name == "any")
+        && matches!(
+            call.args.as_slice(),
+            [Expr::GeneratorExp(generator)] if iterates_captured_records(&generator.generators)
+        )
+}
+
+/// Whether a comprehension loops over `caplog.records` itself. Looping over
+/// any other output (`result.stdout.splitlines()`) keeps its prior shape.
+fn iterates_captured_records(generators: &[ast::Comprehension]) -> bool {
+    generators.iter().any(|comprehension| {
+        expr_full_name(&comprehension.iter).as_deref() == Some("caplog.records")
     })
 }
 
@@ -618,6 +675,26 @@ fn oracle_for_assert_expr(
                 OracleStrength::Smoke,
                 PythonOracleShape::BroadSmokeAssertion,
             )),
+        // `assert not any(... for record in caplog.records)` reads the same
+        // captured records as the positive form, asserted absent.
+        Expr::UnaryOp(unary)
+            if unary.op == ast::UnaryOp::Not
+                && matches!(
+                    unary.operand.as_ref(),
+                    Expr::Call(call) if any_over_captured_records(call)
+                ) =>
+        {
+            (
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+                PythonOracleShape::OutputAssertion,
+            )
+        }
+        Expr::Call(call) if any_over_captured_records(call) => (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            PythonOracleShape::OutputAssertion,
+        ),
         Expr::Call(call) => {
             if expr_full_name(call.func.as_ref()).is_some_and(|name| name == "isinstance") {
                 (
@@ -760,6 +837,8 @@ fn compare_observes_field(compare: &ast::ExprCompare) -> bool {
 fn expr_observes_output(expr: &Expr) -> bool {
     expr_full_name(expr).is_some_and(|name| {
         name == "caplog.text"
+            || name == "caplog.messages"
+            || name == "caplog.records"
             || name == "capsys.readouterr.out"
             || name.ends_with(".output")
             || name.ends_with(".stdout")
@@ -780,6 +859,10 @@ fn expr_observes_output(expr: &Expr) -> bool {
                 || expr_observes_output(subscript.slice.as_ref())
         }
         Expr::BoolOp(bool_op) => bool_op.values.iter().any(expr_observes_output),
+        // `any(... for record in caplog.records)` and `[... for record in
+        // caplog.records]` read the captured records.
+        Expr::GeneratorExp(generator) => iterates_captured_records(&generator.generators),
+        Expr::ListComp(list) => iterates_captured_records(&list.generators),
         _ => false,
     }
 }

@@ -51,7 +51,7 @@
     {
       "release": "0.11.0",
       "path": "docs/release-candidates/0.11.0-live-head-selection.md",
-      "sha256": "79a819e10d1204ba37034780d16a9fc212378f378d3f7f16f9dc1d692884901a",
+      "sha256": "0468009ebfa11bbbab36f4184cae6292c37c0df389b6374d711802a166197e77",
       "schema_generation": "markdown_projection",
       "authority_issue": 2379,
       "state": "active_selection_template",

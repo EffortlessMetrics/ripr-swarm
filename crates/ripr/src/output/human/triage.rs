@@ -637,7 +637,9 @@ pub(crate) fn canonical_next_action_for_triage(
             Some(FindingDrillIn::Commands(navigation)) => navigation.list_command(),
             None => format!(
                 "ripr check --root {}",
-                shell_arg(&output.root.display().to_string())
+                shell_arg(&crate::agent::loop_commands::root_display(
+                    &output.root.display().to_string()
+                ))
             ),
         },
         check_case: Some(check_case_for_triage(triage, output)),
@@ -1341,6 +1343,7 @@ mod tests {
 
     fn test_output(findings: Vec<Finding>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),

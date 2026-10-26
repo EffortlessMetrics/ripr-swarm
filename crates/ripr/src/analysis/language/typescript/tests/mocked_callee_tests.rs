@@ -128,7 +128,7 @@ fn spec0243_ex24_mock_of_unimported_module_stays_exposed_without_observer_limita
     );
     let tests = extract_tests(Path::new("tests/lib.test.ts"), &source);
     assert_eq!(
-        tests.first().map(|test| test.mocks_in_file.clone()),
+        tests.first().map(|test| test.mocks_in_file.to_vec()),
         Some(vec!["../src/other".to_string()])
     );
     let owners = extract_owners(Path::new("src/lib.ts"), BASE_OWNER);
@@ -163,7 +163,7 @@ fn spec0243_ex31_mocked_changed_line_callee_reads_static_unknown() -> Result<(),
     );
     let tests = extract_tests(Path::new("tests/lib.test.ts"), &source);
     assert_eq!(
-        tests.first().map(|test| test.mocks_in_file.clone()),
+        tests.first().map(|test| test.mocks_in_file.to_vec()),
         Some(vec!["../src/other".to_string()])
     );
     assert_eq!(
@@ -301,7 +301,7 @@ fn spec0243_rule8_leaves_non_exposed_ladder_results_unchanged() -> Result<(), St
     );
     let tests = extract_tests(Path::new("tests/lib.test.ts"), &unresolved);
     assert_eq!(
-        tests.first().map(|test| test.mocks_in_file.clone()),
+        tests.first().map(|test| test.mocks_in_file.to_vec()),
         Some(vec![UNRESOLVED_MOCK_SPECIFIER.to_string()])
     );
     let finding = finding_for(&Subject {

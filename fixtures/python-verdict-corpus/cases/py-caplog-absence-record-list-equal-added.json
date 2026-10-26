@@ -1,0 +1,45 @@
+{
+  "case_id": "py-caplog-absence-record-list-equal-added",
+  "subject_id": "authored-py-pytest-caplog-absence",
+  "diff": "cases/py-caplog-absence-record-list-equal-added.diff",
+  "anchor": {
+    "file": "absence/audit.py",
+    "line": 29
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_caplog_record_list_absence_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "log.warning(\"trace id\")",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_audit.py::test_ship_does_not_log_a_trace",
+        "equivalence_review": "not equivalent: the logged message becomes the asserted-absent text"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "A record-message list holds whole messages, and the edit makes one equal the asserted-absent text.",
+  "labeling_observation": {
+    "ripr_commit": "9ca14aac",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

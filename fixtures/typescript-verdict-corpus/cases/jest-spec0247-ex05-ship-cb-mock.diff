@@ -1,0 +1,10 @@
+diff --git a/src/ship.ts b/src/ship.ts
+index 0000000..1111111 100644
+--- a/src/ship.ts
++++ b/src/ship.ts
+@@ -1,4 +1,4 @@
+ export function ship(notifier: { send(m: string): void }, cb: (m: string) => void): void {
+-  notifier.send("shipped");
++  notifier.send("shipped!");
+   cb("done");
+ }
