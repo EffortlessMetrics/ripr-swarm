@@ -108,9 +108,13 @@ all are required:
 - Stimulus (#9836). The original lexical literal-edit boundary remains an
   upper bound. Ordinary string tokens must validate and decode. The template
   retains identical ordered placeholder groups after Unicode/ASCII decoding;
-  doubled braces form fixed output. Exactly one fixed fragment differs and all
-  other source tokens, including arguments, stay unchanged. Equivalent decoded
-  spellings, cancelling edits across multiple fragments, argument-string edits
+  doubled braces form fixed output; a brace may be the fill character before an
+  alignment marker. Groups and fixed fragments compare by their written source.
+  Exactly one fixed fragment differs and all other source tokens, including
+  arguments and placeholder groups, stay unchanged; re-spelling fixed text prints
+  the same output and keeps the pin (corpus row `idiom-display-string-pin`),
+  while re-spelling a placeholder is a group edit and withholds.
+  Cancelling edits across multiple fragments, argument-string edits
   that precision can hide, malformed literals/groups and raw strings withhold
   credit. This is withhold-only and does not interpret the full format-specifier
   grammar. Public API controls and the real-producer honesty fixture discriminate

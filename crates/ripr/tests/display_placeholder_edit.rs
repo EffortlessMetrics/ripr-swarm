@@ -146,11 +146,13 @@ fn a_changed_placeholder_is_not_a_literal_only_edit() -> Result<(), String> {
 }
 
 #[test]
-fn decoded_placeholders_and_spelling_only_edits_withhold_credit() -> Result<(), String> {
+fn decoded_placeholder_edits_withhold_credit_but_spelling_only_rewrites_keep_it()
+-> Result<(), String> {
     for (before, after) in [
         (r"\u{7b}\u{7d}°C", r"\u{7b}:?\u{7d}°C"),
         (r"\x7b\x7d°C", r"\x7b0\x7d°C"),
-        ("{}°C", r"{}\u{b0}C"),
+        // No fixed fragment was edited: only the placeholder's spelling moved.
+        ("{}°C", r"\u{7b}\u{7d}°C"),
     ] {
         assert_ne!(
             class_after(before, after)?,
@@ -163,7 +165,10 @@ fn decoded_placeholders_and_spelling_only_edits_withhold_credit() -> Result<(), 
         format!("\u{7b}\u{7d}°C", 21),
         format!("\u{7b}:?\u{7d}°C", 21)
     );
+    assert_eq!(format!("{}°C", 21), format!("\u{7b}\u{7d}°C", 21));
+    // A spelling-only rewrite prints identical text, so the pin keeps its credit.
     assert_eq!(format!("{}°C", 21), format!("{}\u{b0}C", 21));
+    assert_eq!(class_after("{}°C", r"{}\u{b0}C")?, ExposureClass::Exposed);
     Ok(())
 }
 
