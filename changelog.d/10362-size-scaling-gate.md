@@ -1,2 +1,2 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Added `cargo xtask size-scaling --binary <path>`, which runs `ripr check` on generated Rust, Python and TypeScript files at 1x, 2x and 4x a base size and fails when cost grows faster than size, when the largest step exceeds a ceiling, or when a step ends abnormally (#10362). A step counts only when the report has a finding for the changed file and no limitation on the large one; each run measures a private copy of the binary and records its sha256.
