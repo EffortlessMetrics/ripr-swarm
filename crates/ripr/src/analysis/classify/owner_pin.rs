@@ -4125,7 +4125,13 @@ impl OwnerReturnPin {
                                                     .contains(&name)
                                             });
                                         (unwrap_wrapper.is_some() && imported)
-                                            .then(|| self.awaited_call_shape(call, &self.name))
+                                            .then(|| {
+                                                self.awaited_call_shape(
+                                                    poll_context,
+                                                    call,
+                                                    &self.name,
+                                                )
+                                            })
                                             .flatten()
                                             .map(|call| (call, true))
                                     })
