@@ -332,6 +332,11 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
 /// grammars are testable anywhere (#4378 pattern).
 pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
+    // A doctest example is synthesized under a path no file has (rule 26);
+    // pytest has no node for it, so no command is advertised.
+    if path.starts_with("tests/__doctest__/") {
+        return None;
+    }
     match test.framework {
         PythonFramework::Pytest => {
             let node = test.qualified_name.replace('.', "::");

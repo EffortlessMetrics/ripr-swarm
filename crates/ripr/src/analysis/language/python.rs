@@ -71,6 +71,8 @@ mod classify;
 mod conditional_defs;
 mod dataclass_default;
 mod deleted_lines;
+mod doctest_eval;
+mod doctest_tests;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
@@ -1099,6 +1101,28 @@ impl PythonAdapter {
                 owner.foreign_writes = foreign.clone();
             }
         }
+        // Doctest examples (RIPR-SPEC-0238 rule 26) are tests that live in a
+        // changed owner file; they need the file's old source to prove the
+        // example held before the edit.
+        for changed in &python_changed_files {
+            if is_test_file(&changed.path)
+                || absent_changed_paths.contains(&normalized_path(&changed.path))
+            {
+                continue;
+            }
+            let Some(new_source) = workspace_read.sources.get(&changed.path) else {
+                continue;
+            };
+            let Some(old_source) = reconstruct_old_source(new_source, changed) else {
+                continue;
+            };
+            all_tests.extend(doctest_tests::doctest_tests(
+                &changed.path,
+                new_source,
+                &old_source,
+                &options.root,
+            ));
+        }
         for test in &mut all_tests {
             if python_changed_files
                 .iter()
@@ -1414,3 +1438,6 @@ mod tests;
 
 #[cfg(test)]
 mod verdict_corpus_tests;
+
+#[cfg(test)]
+mod doctest_gate_tests;
