@@ -486,6 +486,22 @@ multiline setup remains eligible. A generator test lends no executed-body credit
 Formatted strings remain uncertain in this bounded admission because their
 expressions can carry generator syntax. Statement identity uses the reported
 source assertion, independently of the boolean oracle's normalized gate text.
+A one-line module-level dict literal of unique `str` or `int` keys and scalar
+values (#9619) is a constant of the same kind, read only by a module function
+through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
+itself, a `bool` lookup key, a missing key without a default, a computed or
+spread entry and a multi-line literal decide nothing. The table is mutable in
+place, so credit also requires that no source mention `NAME` other than as an
+import or export, a `.get` read or a subscript read on a line that binds
+nothing (the owning module's defining statement aside): a store through a
+subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
+f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`,
+`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
+module withholds credit. A reflective file that also imports modules withholds credit for every
+table, because the module it reflects over may be another file's re-export that no word of the
+file names. A definition after a `;` is discovered like one at the start of a line, so an explicit
+line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
@@ -750,6 +766,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   reaches: captured output, the file read back, a mock call pinned with
   arguments, or the field read through a bound receiver (RIPR-SPEC-0238
   rule 17).
+
+Effect-channel observations use native assertion and compared-operand spans.
+The owner call must finish before the operand is read, including statements at
+different columns on one line. Failure messages and weaker, discarded conjuncts
+cannot supply a later read for an earlier comparison. Resolved assertion helpers
+retain their call-site identity and require the owner to complete before their
+arguments are evaluated.
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
