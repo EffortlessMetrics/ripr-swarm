@@ -1561,8 +1561,9 @@ reason = "second"
         // Twenty `*a` wildcards against a forty-`a` name with no trailing
         // `b`: naive recursive backtracking explores ~C(40, 20) splits.
         // The matcher is O(pattern * subject), so doubling both quadruples
-        // the work; exponential backtracking is far beyond the factor.
-        crate::testing::scale::assert_growth_within("suppression globs", 10, 20, 8, |k| {
+        // the work and the factor sits above 4. Naive backtracking does not
+        // finish at these sizes, so it ends at the harness timeout.
+        crate::testing::scale::assert_growth_within("suppression globs", 300, 600, 6, |k| {
             let pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
             let path = format!("src/{}.rs", "a".repeat(2 * k));
             assert!(!path_glob_matches(&pattern, &path));

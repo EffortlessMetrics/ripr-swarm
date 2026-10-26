@@ -58,6 +58,22 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, CoreError> + Send + 'static,
 {
+    run_with_budget_and_grace(budget, CANCEL_GRACE, on_timeout, work)
+}
+
+/// [`run_with_budget`] with the cancellation grace as a parameter, so tests
+/// can exercise the grace wait with a short grace instead of the production
+/// 2 s.
+fn run_with_budget_and_grace<T, F>(
+    budget: Option<Duration>,
+    grace: Duration,
+    on_timeout: impl FnOnce(),
+    work: F,
+) -> Result<T, CoreError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, CoreError> + Send + 'static,
+{
     let Some(budget) = budget else {
         return work();
     };
@@ -88,7 +104,7 @@ where
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             token.cancel(AnalysisAbortKind::DeadlineExceeded);
-            let finished = rx.recv_timeout(CANCEL_GRACE).is_ok();
+            let finished = rx.recv_timeout(grace).is_ok();
             if !finished {
                 on_timeout();
             }
@@ -188,21 +204,57 @@ mod tests {
         assert_eq!(result, Ok(true));
     }
 
+    /// The production grace is a promise to callers: a cancelled worker gets
+    /// this long to settle before the refusal. The grace-wait test below runs
+    /// with a short injected grace, so this pins the real value.
+    #[test]
+    fn production_cancel_grace_is_two_seconds() {
+        assert_eq!(CANCEL_GRACE, Duration::from_secs(2));
+    }
+
     #[test]
     fn exhausted_budget_refuses_with_the_typed_timeout_and_no_result() -> Result<(), String> {
-        // The worker blocks until `release` is dropped, so it cannot finish on
-        // its own: getting a result back at all proves the budget, not the
-        // worker, ended the call. No wall-clock bound is involved.
-        let (release, parked) = std::sync::mpsc::channel::<()>();
-        let result: Result<u32, _> = run_with_budget(
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        // Outer containment: if the grace wait is broken into an unbounded
+        // wait for the worker, this releases the worker after a finite time
+        // so the run ends with a failed assertion instead of hanging.
+        const CONTAINMENT: Duration = Duration::from_secs(20);
+        // The worker parks until released, so it cannot finish inside the
+        // budget or the grace on its own. `on_timeout` runs only when the
+        // grace elapsed with the worker still parked, which is the deadline
+        // observation; it does not depend on how fast the runner is.
+        let (release, parked) = mpsc::channel::<()>();
+        let (done, done_rx) = mpsc::channel::<()>();
+        let watchdog_release = release.clone();
+        let watchdog = std::thread::spawn(move || {
+            if matches!(
+                done_rx.recv_timeout(CONTAINMENT),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                let _ = watchdog_release.send(());
+            }
+        });
+        let grace_elapsed_with_worker_parked = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&grace_elapsed_with_worker_parked);
+        let result: Result<u32, _> = run_with_budget_and_grace(
             Some(Duration::from_millis(50)),
-            || {},
+            Duration::from_millis(200),
+            move || observed.store(true, Ordering::SeqCst),
             move || {
                 let _ = parked.recv();
                 Ok(1)
             },
         );
-        drop(release);
+        let _ = done.send(());
+        let _ = release.send(());
+        let _ = watchdog.join();
+        assert!(
+            grace_elapsed_with_worker_parked.load(Ordering::SeqCst),
+            "the grace wait must expire with the worker still parked, not wait for it"
+        );
         let Err(error) = result else {
             return Err("a stuck worker must hit the budget".to_string());
         };

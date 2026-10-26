@@ -269,9 +269,11 @@ mod tests {
 
     #[test]
     fn pathological_star_patterns_finish_quickly() {
-        // O(pattern * subject): doubling both quadruples the work, while
-        // naive backtracking is exponential and far beyond the factor.
-        crate::testing::scale::assert_growth_within("pathological globs", 10, 20, 8, |k| {
+        // O(pattern * subject): doubling both quadruples the work, so the
+        // factor sits above 4. Naive backtracking is exponential and does not
+        // finish at these sizes, so it ends at the harness timeout rather
+        // than at this assertion.
+        crate::testing::scale::assert_growth_within("pathological globs", 300, 600, 6, |k| {
             let char_pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
             let long_name = format!("src/{}.rs", "a".repeat(2 * k));
             assert!(!path_glob_matches(&char_pattern, &long_name));
