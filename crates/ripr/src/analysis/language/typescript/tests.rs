@@ -9405,6 +9405,31 @@ const mod = require('../src/utils');
     assert!(mod_matches[0].namespace);
 }
 
+/// #10724: an ES import that binds the name `require` made the import scan
+/// re-derive its own `require` scope without end and overflow the stack.
+#[test]
+fn extract_imports_terminates_on_es_import_binding_require() {
+    let source = "import require from \"./b\";\n";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let imports = extract_imports_from_statements(&parse_result.program.body);
+
+    assert_eq!(
+        imports.len(),
+        1,
+        "the import is still recorded: {imports:?}"
+    );
+    assert_eq!(imports[0].local, "require");
+    assert_eq!(imports[0].source, "./b");
+    assert_eq!(imports[0].imported.as_deref(), Some("default"));
+
+    let control = "import r from \"./b\";\n";
+    let control_parse = Parser::new(&allocator, control, SourceType::ts()).parse();
+    let control_imports = extract_imports_from_statements(&control_parse.program.body);
+    assert_eq!(control_imports.len(), 1);
+    assert_eq!(control_imports[0].local, "r");
+}
+
 /// Re-export form: `export { x } from './y'` should be extracted as an import
 /// so that `import_source_matches_owner` can follow the re-export one hop.
 #[test]
