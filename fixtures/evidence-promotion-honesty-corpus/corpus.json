@@ -13704,6 +13704,84 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "python_table_bool_key_get_fallback",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_bool_key_get_fallback",
+      "vector": "unsupported_bool_key_is_unknown_not_a_missing_key_in_get_fallback",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_missing_key_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_missing_key_credit",
+      "vector": "missing_integer_key_reads_the_changed_get_fallback",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_parenthesized_foreign_store",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_parenthesized_foreign_store",
+      "vector": "parenthesized_dict_binding_is_watched_for_foreign_stores",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_parenthesized_store_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_parenthesized_store_removed",
+      "vector": "parenthesized_dict_without_a_foreign_store_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_scalar_get_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_scalar_get_receiver",
+      "vector": "get_on_a_non_table_receiver_is_unknown_not_the_default",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_subscript_method_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_subscript_method_call",
+      "vector": "method_call_on_a_subscripted_table_value_is_a_possible_write",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
     }
   ]
 }

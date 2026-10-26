@@ -24,3 +24,11 @@ tests = [
   "crates/ripr/src/analysis/language/python/table_reads_tests.rs::a_parenthesized_dict_definition_is_found",
   "crates/ripr/src/analysis/language/python/table_reads_tests.rs::a_method_call_on_a_subscripted_value_is_a_possible_write",
 ]
+fixtures = [
+  "fixtures/python_table_bool_key_get_fallback",
+  "fixtures/python_table_missing_key_credit",
+  "fixtures/python_table_parenthesized_foreign_store",
+  "fixtures/python_table_parenthesized_store_removed",
+  "fixtures/python_table_scalar_get_receiver",
+  "fixtures/python_table_subscript_method_call",
+]
