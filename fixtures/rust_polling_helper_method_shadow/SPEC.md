@@ -2,4 +2,6 @@
 
 Spec: RIPR-SPEC-0197
 
-The owner changes by an equivalent return-value rewrite. The direct polling helper must credit the exact equality; a helper binding or primitive that discards the future must not promote. The honesty corpus pins the return-value result independently of goldens. Matched `owner_pin_execution::polling_helper` controls compile these exact sources and require one executed test: a wrong tax return fails only for the direct helper. Compilation, static classification, and runtime discrimination remain separate evidence.
+The owner changes by an equivalent arithmetic rewrite. A visible trait's immutable `as_mut` receiver intercepts the canonical helper before its owner poll. Exactly one return-value finding must remain `static_unknown`; the honesty corpus forbids promotion independently of goldens.
+
+The matched native control compiles correct and wrong owner variants, lists exactly one declared test, and observes that the subject starts and the interception marker appears. Both processes exit zero before a terminal libtest result: there is zero completed-test evidence. The genuine helper control separately completes one test and rejects the wrong return. Compilation, process exit, subject completion, and static classification are distinct evidence.

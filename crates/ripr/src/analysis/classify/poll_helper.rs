@@ -119,7 +119,6 @@ fn polls_to_completion(function: &FunctionFact, index: &RustIndex) -> bool {
         .iter()
         .any(|template| matches_template(&tokens, &tokenize(template)))
         && standard_primitives(function, index)
-        && method_dispatch_is_closed(function, index)
 }
 
 /// Source spelling alone cannot establish Future/pin!/task primitive identity.
@@ -160,20 +159,6 @@ fn standard_primitives(function: &FunctionFact, index: &RustIndex) -> bool {
         return false;
     };
     if !supported_targeted_item_context(definition.syntax()) {
-        return false;
-    }
-    // A module-level invocation can emit unseen bindings. A local pin!
-    // definition is also a competing macro even with a canonical use.
-    if tree
-        .syntax()
-        .descendants()
-        .filter_map(ast::MacroCall::cast)
-        .any(|call| {
-            call.syntax().parent().is_some_and(|parent| {
-                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
-            })
-        })
-    {
         return false;
     }
     let tokens = tokenize(&mask_comments_and_strings(&function.body));
@@ -229,7 +214,7 @@ fn standard_primitives(function: &FunctionFact, index: &RustIndex) -> bool {
         }
         at += 1;
     }
-    true
+    method_dispatch_is_closed(function, index, &scopes)
 }
 
 fn primitive_module(name: &str) -> Option<&'static str> {
@@ -319,7 +304,11 @@ fn standard_import_from(
 /// Standard types do not close method lookup: an extension trait can take
 /// .as_mut() or .poll() before the standard implementation. Refuse competing
 /// definitions and unverified imports/expansions in the source ancestry.
-fn method_dispatch_is_closed(function: &FunctionFact, index: &RustIndex) -> bool {
+fn method_dispatch_is_closed(
+    function: &FunctionFact,
+    index: &RustIndex,
+    scopes: &NameScopes,
+) -> bool {
     if index
         .functions()
         .iter()
@@ -337,7 +326,8 @@ fn method_dispatch_is_closed(function: &FunctionFact, index: &RustIndex) -> bool
             if let Some(item) = ast::Use::cast(node.clone()) {
                 let imports = flattened_use_paths(&item.syntax().text().to_string());
                 if imports.is_empty() || !imports.iter().all(|import| {
-                    import.path.starts_with("std::") || import.path.starts_with("core::")
+                    (import.path.starts_with("std::") && standard_root("std", scopes, function, index))
+                        || (import.path.starts_with("core::") && standard_root("core", scopes, function, index))
                         || (import.path == "super::*" && item.syntax().ancestors().any(|ancestor| ast::Module::can_cast(ancestor.kind())))
                 }) { return false; }
             }
@@ -349,7 +339,9 @@ fn method_dispatch_is_closed(function: &FunctionFact, index: &RustIndex) -> bool
                 { return false; }
             }
             if let Some(call) = ast::MacroCall::cast(node) {
-                if call.syntax().parent().is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())) {
+                // Trait/impl member macros can hide methods from the function
+                // index too. Admit only explicit expression/statement contexts.
+                if call.syntax().parent().is_none_or(|parent| !ast::MacroExpr::can_cast(parent.kind()) && !ast::ExprStmt::can_cast(parent.kind())) {
                     return false;
                 }
             }

@@ -129,7 +129,12 @@ fn edited(lib: &str, before: &str, after: &str) -> Result<Vec<Finding>, String> 
 /// Some finding on the line carries the limit and none is still a gap.
 fn withheld(lib: &str, before: &str, after: &str, label: &str) -> Result<(), String> {
     let findings = edited(lib, before, after)?;
-    if findings.iter().any(is_gap) || !findings.iter().any(limited) {
+    if findings.iter().any(is_gap)
+        || findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed)
+        || !findings.iter().any(limited)
+    {
         return Err(format!(
             "{label}: expected the indirect-owner limit, got {:?}",
             summary(&findings)
@@ -830,4 +835,55 @@ fn a_sibling_attribute_expansion_cannot_lend_method_authority() -> Result<(), St
             "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
         );
     withheld(&lib, TAX_BEFORE, TAX_AFTER, "opaque sibling attribute")
+}
+
+#[test]
+fn associated_item_macros_cannot_hide_a_polling_method() -> Result<(), String> {
+    let lib =
+        include_str!("../../../fixtures/rust_polling_helper_associated_macro/input/src/lib.rs")
+            .replace(
+                "assert_eq!(block_on(add_tax(100)), 110);",
+                "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+            );
+    withheld(
+        &lib,
+        TAX_AFTER,
+        TAX_BEFORE,
+        "associated-item method expansion",
+    )
+}
+
+#[test]
+fn a_counterfeit_import_root_cannot_hide_a_polling_method() -> Result<(), String> {
+    let lib = include_str!(
+        "../../../fixtures/rust_polling_helper_counterfeit_import_root/input/src/lib.rs"
+    )
+    .replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110; assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    let repo = TempRepo::create(&lib, &diff(2, TAX_BEFORE, TAX_AFTER))?;
+    std::fs::create_dir_all(repo.root.join("src/tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        repo.root.join("src/tests/std.rs"),
+        include_str!(
+            "../../../fixtures/rust_polling_helper_counterfeit_import_root/input/src/tests/std.rs"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    let findings: Vec<_> = repo
+        .findings()?
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 2)
+        .collect();
+    assert!(!findings.is_empty(), "changed-owner subject must exist");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !is_gap(finding) && finding.class != ExposureClass::Exposed)
+            && findings.iter().any(limited),
+        "counterfeit import root: {:?}",
+        summary(&findings)
+    );
+    Ok(())
 }

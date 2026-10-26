@@ -251,7 +251,10 @@ wrong credits.
    `super::*` may deliver a verified parent primitive import. Competing
    `as_mut`/`poll` definitions, nonstandard/opaque imports (including anonymous
    trait imports), or opaque attribute expansion in the helper's source
-   ancestry leave method dispatch unresolved and refuse. These are conservative
+   ancestry leave method dispatch unresolved and refuse. Associated-item
+   macros are item expansion too; only expression/statement macro contexts
+   are admitted by this source closure. Every admitted `std`/`core` import
+   must also have a verified root, even when the helper uses the other root. These are conservative
    source-wide refusals; unrelated declarations can withhold credit.
    An assertion
    borrowed from another check helper does not supply this polling pin;
