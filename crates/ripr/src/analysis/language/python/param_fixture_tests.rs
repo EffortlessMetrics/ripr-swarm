@@ -207,6 +207,11 @@ fn a_test_that_does_not_unpack_the_rows_cleanly_keeps_the_limit() -> Result<(), 
             "    amount, fee = fee_case\n    def helper():\n        return amount\n",
         ),
         ("duplicate name", unpack, "    amount, amount = fee_case\n"),
+        (
+            "semicolon neighbour",
+            unpack,
+            "    amount, fee = fee_case; seen = 1\n",
+        ),
         ("defaulted parameter", "(fee_case):", "(fee_case=(99, 5)):"),
         (
             "name shadows a parameter",
@@ -350,5 +355,40 @@ fn a_parametrize_mark_does_not_resolve_the_tests_other_fixtures() -> Result<(), 
         ("tests/test_shop.py", DECORATED),
     ])?;
     assert_eq!(decorated.static_limit_kind, None);
+    Ok(())
+}
+
+#[test]
+fn a_one_element_tuple_target_unpacks_each_row() -> Result<(), String> {
+    // `amount, = fee_case` unpacks a one-tuple row; it never takes the whole
+    // row as the value, and a scalar row (a TypeError under pytest) is refused.
+    let test = TEST
+        .replace("    amount, fee = fee_case\n", "    amount, = fee_case\n")
+        .replace("== fee", "== 0");
+    let rows = "params=[(99, 5), (100, 0)], ids=[\"below\", \"at\"]";
+    let off = with_files(&CONFTEST.replace(rows, "params=[(50,), (60,)]"), &test)?;
+    assert_eq!(off.class, ExposureClass::WeaklyExposed);
+    assert_eq!(off.static_limit_kind, None);
+    let scalar = with_files(&CONFTEST.replace(rows, "params=[50, 60]"), &test)?;
+    assert_fixture_limited(&scalar, "scalar rows into a tuple target");
+    // An unpack sharing the `def` line is not rewritten: blanking it would
+    // leave a body that does not parse.
+    let one_line = TEST.replace(
+        "(fee_case):\n    amount, fee = fee_case\n",
+        "(fee_case): amount, fee = fee_case\n",
+    );
+    assert_ne!(one_line, TEST);
+    let (_, tests) = workspace(&[
+        ("shop/__init__.py", SHOP),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_shop.py", &one_line),
+    ]);
+    assert!(tests.iter().all(|test| test.parametrize.is_none()));
+    // A comment after the unpack keeps the read.
+    let commented = TEST.replace("= fee_case\n", "= fee_case  # one row\n");
+    assert_eq!(
+        with_files(CONFTEST, &commented)?.class,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

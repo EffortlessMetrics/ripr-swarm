@@ -203,6 +203,8 @@ fn literal_param_cases(
         return None;
     };
     let fixture = source.id.as_str();
+    // Only a bare name takes the whole row; `x, = fixture` unpacks it.
+    let bare = matches!(target, Expr::Name(_));
     let names: Vec<String> = match target {
         Expr::Name(name) => vec![name.id.to_string()],
         Expr::Tuple(tuple) => tuple
@@ -236,6 +238,24 @@ fn literal_param_cases(
         return None;
     }
     let range_of = |stmt: &Stmt| usize::from(stmt.range().start())..usize::from(stmt.range().end());
+    // The unpack is alone on its lines but for a comment (no `;` neighbour,
+    // no one-line def),
+    // so blanking it leaves a body that still parses.
+    let span = range_of(unpack);
+    let line_start = test.body_text[..span.start]
+        .rfind('\n')
+        .map_or(0, |at| at + 1);
+    let line_end = test.body_text[span.end..]
+        .find('\n')
+        .map_or(test.body_text.len(), |at| span.end + at);
+    if !test.body_text[line_start..span.start].trim().is_empty()
+        || !{
+            let after = test.body_text[span.end..line_end].trim();
+            after.is_empty() || after.starts_with('#')
+        }
+    {
+        return None;
+    }
     // Every later statement, nested scopes included, must leave the fixture
     // and the unpacked names alone.
     for stmt in rest {
@@ -249,7 +269,7 @@ fn literal_param_cases(
     let cases: Option<Vec<BTreeMap<String, String>>> = rows
         .iter()
         .map(|row| match (names.as_slice(), &row.elements) {
-            ([name], _) => Some(BTreeMap::from([(name.clone(), row.text.clone())])),
+            ([name], _) if bare => Some(BTreeMap::from([(name.clone(), row.text.clone())])),
             (names, Some(elements)) if elements.len() == names.len() => Some(
                 names
                     .iter()
