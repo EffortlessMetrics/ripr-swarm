@@ -121,6 +121,9 @@ official SDK transport:
   a signal observed during final projection converts an otherwise successful
   result to the typed cancellation, and a signal after that boundary belongs
   to the next attempt. Configuration refusals also settle the pending signal.
+  Repeated native death can bypass cooperative cleanup and leave active children;
+  it is an escape, not a cleanup guarantee. Process-group containment covers
+  descendants that remain in the owned group, not deliberate group/session escape.
   Later refreshes remain usable. Installation is serialized and idempotent.
   Only MCP attempt tokens opt into Unix process groups; captured analysis
   workers retain that choice and other callers preserve their prepared groups.

@@ -27,6 +27,7 @@ fn pause() {
 }
 
 struct PinnedProcess {
+    pid: u32,
     descriptor: OwnedFd,
     label: &'static str,
     reaped: bool,
@@ -34,6 +35,7 @@ struct PinnedProcess {
 
 impl PinnedProcess {
     fn open(pid: u32, label: &'static str) -> Result<Self, String> {
+        let raw_pid = pid;
         let pid = i32::try_from(pid)
             .ok()
             .and_then(Pid::from_raw)
@@ -41,6 +43,7 @@ impl PinnedProcess {
         let descriptor = pidfd_open(pid, PidfdFlags::empty())
             .map_err(|error| format!("pin {label}: {error}"))?;
         Ok(Self {
+            pid: raw_pid,
             descriptor,
             label,
             reaped: false,
@@ -655,18 +658,48 @@ fn arm(control: &Path, mode: &str) -> Result<(), String> {
     std::fs::write(control.join("mode"), format!("{mode}\n")).map_err(|error| error.to_string())
 }
 
-fn pin_marker(control: &Path, name: &'static str) -> Result<PinnedProcess, String> {
+fn pin_marker(
+    control: &Path,
+    name: &'static str,
+    parent: &PinnedProcess,
+) -> Result<PinnedProcess, String> {
     let deadline = Instant::now() + BUDGET;
     loop {
+        if Instant::now() >= deadline {
+            return Err(format!("fixture {name} did not acknowledge its live gate"));
+        }
+        parent.require_live()?;
         if let Ok(text) = std::fs::read_to_string(control.join(name))
             && let Ok(pid) = text.trim().parse::<u32>()
         {
             let pinned = PinnedProcess::open(pid, name)?;
+            // A pidfd pins identity only after open. A stale marker cannot
+            // authorize an unrelated process that reused the number before
+            // that open: require lineage to the live pinned fixture parent.
+            let file = File::open(format!("/proc/{pid}/status"))
+                .map_err(|error| format!("read {name} parent identity: {error}"))?;
+            let mut status = String::new();
+            file.take(64 * 1024 + 1)
+                .read_to_string(&mut status)
+                .map_err(|error| error.to_string())?;
+            if status.len() > 64 * 1024 {
+                return Err("fixture status exceeded its bound".into());
+            }
+            let observed_parent = status
+                .lines()
+                .find_map(|line| line.strip_prefix("PPid:"))
+                .and_then(|value| value.trim().parse::<u32>().ok());
+            if observed_parent != Some(parent.pid) {
+                return Err(format!("fixture {name} marker has no owned parent lineage"));
+            }
+            // If either process died while /proc was read, its old handle
+            // refuses even if that numeric /proc entry has since been reused.
             pinned.require_live()?;
+            parent.require_live()?;
+            if Instant::now() >= deadline {
+                return Err("fixture identity acquisition exceeded its deadline".into());
+            }
             return Ok(pinned);
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("fixture {name} did not acknowledge its live gate"));
         }
         pause();
     }
@@ -745,13 +778,13 @@ impl Harness {
             arm(&self.control, "block")?;
             session.begin_refresh(name, json!({}))?;
             self.trees.push(FixtureTree {
-                primary: pin_marker(&self.control, "primary")?,
+                primary: pin_marker(&self.control, "primary", &session.process.pinned)?,
                 descendant: None,
             });
             let tree = self.trees.last_mut().ok_or("tree missing")?;
             // The primary descriptor is retained before the descendant pin,
             // including every error return during the second handshake.
-            tree.descendant = Some(pin_marker(&self.control, "descendant")?);
+            tree.descendant = Some(pin_marker(&self.control, "descendant", &tree.primary)?);
             session.process.pinned.signal(signal)?;
             let document = completed_document(session.receive(name)?)?;
             cancelled_snapshot(&document, &baseline)?;
@@ -788,11 +821,11 @@ impl Harness {
         arm(&self.control, "early")?;
         session.begin_refresh("early-primary", json!({}))?;
         self.trees.push(FixtureTree {
-            primary: pin_marker(&self.control, "primary")?,
+            primary: pin_marker(&self.control, "primary", &session.process.pinned)?,
             descendant: None,
         });
         let tree = self.trees.last_mut().ok_or("early tree missing")?;
-        tree.descendant = Some(pin_marker(&self.control, "descendant")?);
+        tree.descendant = Some(pin_marker(&self.control, "descendant", &tree.primary)?);
         release_primary(&self.control)?;
         successful_snapshot(&completed_document(session.receive("early-primary")?)?)?;
         tree.require_product_settlement()?;
