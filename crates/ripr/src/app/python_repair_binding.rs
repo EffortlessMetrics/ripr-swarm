@@ -832,14 +832,8 @@ fn render_record(
     apply: Option<Value>,
 ) -> Result<Value, String> {
     let verified = identity.verified;
-    let driver_exe = std::env::current_exe().map_err(|error| {
-        format!("python repair-trust binding could not identify the running driver binary: {error}")
-    })?;
-    let driver_bytes = std::fs::read(&driver_exe).map_err(|error| {
-        format!(
-            "python repair-trust binding could not read the running driver binary {}: {error}",
-            driver_exe.display()
-        )
+    let driver_bytes = super::running_binary::read().map_err(|error| {
+        format!("python repair-trust binding could not read the running driver binary: {error}")
     })?;
     let allowed = identity
         .policy

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const CHILD_MODE: &str = "RIPR_BINDING_IMAGE_TEST_CHILD";
 const TEST: &str = "app::python_repair_binding::tests::driver_image::binding_retains_original_image_when_its_path_is_replaced";
 const COPY_NAME: &str = "copied-driver-test";
+const CHECKED_RECORD: &str = "checked-binding.json";
 
 struct Scratch(PathBuf);
 
@@ -43,7 +44,8 @@ fn child_record(mode: &str) -> Result<(), String> {
             "{mode}: binding did not retain the original executing image digest"
         ));
     }
-    Ok(())
+    let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+    std::fs::write(cwd.join(CHECKED_RECORD), bytes).map_err(|error| error.to_string())
 }
 
 #[test]
@@ -89,6 +91,16 @@ fn binding_retains_original_image_when_its_path_is_replaced() -> Result<(), Stri
         };
         if !status.success() {
             return Err(format!("{mode}: owned image test child failed: {status}"));
+        }
+        // Exit zero with a misspelled exact filter runs zero tests. Require the
+        // child's checked production record as evidence it reached the oracle.
+        let record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(scratch.0.join(CHECKED_RECORD))
+                .map_err(|error| format!("{mode}: no checked binding record: {error}"))?,
+        )
+        .map_err(|error| error.to_string())?;
+        if record["kind"] != super::BINDING_KIND {
+            return Err(format!("{mode}: child did not produce a binding record"));
         }
     }
     Ok(())
