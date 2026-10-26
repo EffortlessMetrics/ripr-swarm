@@ -526,7 +526,7 @@ f-string mention (multi-line included), a statement sharing a `;` line with an i
 `__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
 module withholds credit. A reflective file withholds credit for the tables of every module in its import
 component (files linked by an import word naming another file's stem or package `__init__.py`, in either
-direction, plus every `conftest.py` component; import statements are read across parenthesized and backslash continuations), because the module it reflects over may be another
+direction, plus every `conftest.py` component; import statements are read across parenthesized and backslash continuations by the lexer, so a bracket in a comment or string does not end one), because the module it reflects over may be another
 file's re-export, or be handed to it as an argument, with no word of the file naming it. A reflective
 file that also loads modules by a runtime name (`importlib`, `__import__`, `sys.modules`, `eval`, `exec`, `compile`, ...) withholds
 credit for every table. Reflection over modules outside that component keeps the credit. A definition after a `;` is discovered like one at the start of a line, so an explicit

@@ -11,4 +11,5 @@ fixtures = [
   "fixtures/python_table_reflection_dynamic_import",
   "fixtures/python_table_reflection_multiline_import",
   "fixtures/python_table_reflection_exec",
+  "fixtures/python_table_reflection_import_delimiters",
 ]

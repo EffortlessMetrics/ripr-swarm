@@ -417,24 +417,39 @@ const MODULE_LOADERS: [&str; 11] = [
     "__builtins__",
 ];
 
-/// Every word of the statements that mention `import`, whatever else they
-/// hold. A statement runs on through an open parenthesis or a trailing
-/// backslash, so `from . import (\n    settings as hub,\n)` is read whole.
+/// Every name of the logical statements that hold an `import` keyword. The
+/// lexer ends a statement, so a parenthesis or backslash continuation reads
+/// whole (`from . import (\n    settings as hub,\n)`) while a bracket inside
+/// a comment or string does not. A lexing error reads every word.
 fn import_words(source: &str) -> Vec<&str> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
     let mut words = Vec::new();
-    let mut open = 0i32;
-    let mut continued = false;
-    for line in source.lines() {
-        let in_statement = open > 0 || continued;
-        if in_statement || mentions_identifier(line, "import") {
-            words.extend(source_words(line));
-            open += line.matches('(').count() as i32 - line.matches(')').count() as i32;
-            open = open.max(0);
-            continued = line.trim_end().ends_with('\\');
-        } else {
-            open = 0;
-            continued = false;
+    let mut statement: Vec<&str> = Vec::new();
+    let mut imports = false;
+    for token in lex(source, Mode::Module) {
+        let Ok((tok, range)) = token else {
+            return source_words(source).collect();
+        };
+        match tok {
+            Tok::Newline | Tok::Semi => {
+                if imports {
+                    words.append(&mut statement);
+                }
+                statement.clear();
+                imports = false;
+            }
+            Tok::Import => imports = true,
+            Tok::Name { .. } => {
+                if let Some(text) = source.get(usize::from(range.start())..usize::from(range.end()))
+                {
+                    statement.push(text);
+                }
+            }
+            _ => {}
         }
+    }
+    if imports {
+        words.append(&mut statement);
     }
     words
 }

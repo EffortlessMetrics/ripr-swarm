@@ -4,7 +4,7 @@ Spec: RIPR-SPEC-0028
 
 ## Given
 
-A table module re-exported by a bridge whose parenthesized import names the module only on a continuation line. A second module reaches the table through the bridge with `getattr(hub, "RA" + "TES")` and stores the original price.
+A namespace package whose bridge re-exports the table module through a parenthesized import with a closing bracket in a comment. Only the bridge links the reflective store, loaded by conftest, to the table module; the test imports the table module alone. The store restores the original price.
 
 ## When
 

@@ -14294,6 +14294,19 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" }
       ]
+    },
+    {
+      "id": "python_table_reflection_import_delimiters",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_import_delimiters",
+      "vector": "brackets_in_strings_do_not_end_an_import_statement",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
     }
   ]
 }

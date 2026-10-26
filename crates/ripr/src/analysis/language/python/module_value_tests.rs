@@ -2284,20 +2284,24 @@ fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
     let test = silver_test("assert price(\"silver\") == 5");
     // The bridge names the owner only on the continuation line of a
     // parenthesized import.
-    let bridge = (
-        "hostile/bridge.py",
+    // Brackets inside a comment or a string do not end that statement early.
+    for bridge_source in [
         "from hostile import (\n    settings as hub,\n)\n",
-    );
-    let touch = (
-        "hostile/touch.py",
-        "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
-    );
-    assert_not_credited(&classify_table(
-        &source,
-        &[bridge, touch],
-        &test,
-        TABLE_NEW,
-    )?);
+        "from hostile import (  # )\n    settings as hub,\n)\n",
+        "MARKER = \")\"; from hostile import (\n    settings as hub,\n)\n",
+    ] {
+        let bridge = ("hostile/bridge.py", bridge_source);
+        let touch = (
+            "hostile/touch.py",
+            "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
+        );
+        assert_not_credited(&classify_table(
+            &source,
+            &[bridge, touch],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
     // Evaluated code can import any module, whatever the file names.
     for evaluated in [
         "import math\n\nexec(input())\n",

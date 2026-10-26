@@ -10,8 +10,8 @@ Changed file(s) by language: python = 1
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
-NOTE rates/table.py:1
-  id: probe:rates_table.py:python_preview:742c3f98
+NOTE hostile/settings.py:1
+  id: probe:hostile_settings.py:python_preview:f6277be6
 
 Changed
   after:  RATES = {"silver": 6}
@@ -19,7 +19,7 @@ Changed
 Probe
   family: predicate
   delta:  control
-  owner:  python:rates/table.py::<module>
+  owner:  python:hostile/settings.py::<module>
 
 Language
   language: python
@@ -35,7 +35,7 @@ Evidence
   - propagation unknown: Static limit `missing_import_graph` prevents a safe Python propagation claim
   - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
   - discriminator unknown: Static limit `missing_import_graph` prevents a safe Python discriminator claim
-  - related test tests/test_table.py:5 test_silver_price_after_the_store_runs uses no oracle
+  - related test tests/test_settings.py:4 test_silver_price_after_the_store_runs uses no oracle
 
 Weakness
   - Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the module; related tests are linked only by a name heuristic and the preview adapter does not follow top-level values into their use sites, so it does not grade this edit as a gap
@@ -48,8 +48,8 @@ Static limitation
   missing_import_graph — The import graph could not be resolved (for example a relative or dynamic import), so ripr cannot connect a test to this change.
   Next: Import the owner in the test by a static, absolute path (not a dynamic, computed or unresolved relative import) so ripr can connect the test to it.
 Drill in:
-  ripr explain --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast probe:rates_table.py:python_preview:742c3f98
-  ripr context --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast --at probe:rates_table.py:python_preview:742c3f98
+  ripr explain --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast probe:hostile_settings.py:python_preview:f6277be6
+  ripr context --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast --at probe:hostile_settings.py:python_preview:f6277be6
 
 
 Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to

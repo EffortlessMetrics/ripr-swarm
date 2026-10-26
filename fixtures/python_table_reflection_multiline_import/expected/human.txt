@@ -13,7 +13,7 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: preview language, advisory only
   Safe next action: static limitation `missing_import_graph` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
-  File: rates/table.py:1
+  File: hostile/settings.py:1
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
@@ -23,7 +23,7 @@ Start here:
     (a constant, decorator argument or conditional definition) that runs when a test imports the
     module; related tests are linked only by a name heuristic and the preview adapter does not
     follow top-level values into their use sites, so it does not grade this edit as a gap
-  Related test: tests/test_table.py:5 test_silver_price_after_the_store_runs
+  Related test: tests/test_settings.py:4 test_silver_price_after_the_store_runs
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -40,8 +40,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast probe:rates_table.py:python_preview:742c3f98
-  ripr context --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast --at probe:rates_table.py:python_preview:742c3f98
+  ripr explain --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast probe:hostile_settings.py:python_preview:f6277be6
+  ripr context --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast --at probe:hostile_settings.py:python_preview:f6277be6
   no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
