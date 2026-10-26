@@ -14107,6 +14107,150 @@
       ]
     },
     {
+      "id": "rust_polling_helper_direct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_direct",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_shadowed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_shadowed",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_primitive_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_primitive_shadow",
+      "vector": "polling_helper_binding_and_primitive_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_method_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_method_shadow",
+      "vector": "extension_trait_intercepts_pin_as_mut_before_owner_poll",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_associated_macro",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_associated_macro",
+      "vector": "hidden_associated_method_and_counterfeit_standard_import_root",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_polling_helper_counterfeit_import_root",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_polling_helper_counterfeit_import_root",
+      "vector": "hidden_associated_method_and_counterfeit_standard_import_root",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "python_table_continued_foreign_store",
       "language": "python",
       "tier": "pure",
@@ -14228,6 +14372,84 @@
           "type": "expected_class",
           "class": "infection_unknown"
         }
+      ]
+    },
+    {
+      "id": "python_table_reflection_unconnected",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_unconnected",
+      "vector": "reflection_outside_the_tables_import_component_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_helper_argument",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_helper_argument",
+      "vector": "reflective_helper_connected_through_a_test_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_dynamic_import",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_dynamic_import",
+      "vector": "reflective_dynamic_import_makes_reach_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_multiline_import",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_multiline_import",
+      "vector": "parenthesized_import_continuation_links_the_reexported_module",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_exec",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_exec",
+      "vector": "evaluated_code_makes_reach_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_table_reflection_import_delimiters",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_table_reflection_import_delimiters",
+      "vector": "brackets_in_strings_do_not_end_an_import_statement",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     }
   ]

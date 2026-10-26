@@ -1279,9 +1279,16 @@ grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
 (RIPR-SPEC-0117, #10298), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### polling helper owner pin classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.110 to 1.111 for an
+`async` owner called through a test-local polling helper (RIPR-SPEC-0197,
+#9478), with the same scope: generation, content commitment, dependent verify
+commitments and receipt byte hashes only.
+
 ### Arrow-separated macro_rules! table rows classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.110 to 1.111 for
+The same snapshots follow corpus cache generation 1.111 to 1.112 for
 `name => (..)` rows of a local `macro_rules!` test table (RIPR-SPEC-0117,
 #10298), with the same scope: generation, content commitment, dependent
 verify commitments and receipt byte hashes only.
