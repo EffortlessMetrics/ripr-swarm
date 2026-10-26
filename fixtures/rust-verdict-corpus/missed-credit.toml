@@ -386,23 +386,23 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "spec-b-0150-comment-only-family"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-destructured-binding"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-len-utf8-map-or"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-map-or-else"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-member-lookalike"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-missing-owner"
@@ -410,43 +410,43 @@ reason = "The LazyLock test discriminates both the default and mapped index, but
 
 [[entry]]
 case = "spec-b-0150-rfind-map-or-equality"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-shadowed-binding"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0150-string-only-family"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-closure-capture"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-comment-and-string-mention"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-macro-invocation"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-reassigned-binding"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-shadowed-binding"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-sibling-function"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0157-two-direct-uses"
-reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0158-dynamic-default"
