@@ -3165,6 +3165,14 @@ mod tests {
                 "pub fn value()->u32 { pick!(1_.0) }",
                 ["pub fn value()->u32 { pick!(1_", ".0) }"],
             ),
+            (
+                "pub fn value()->u32 { pick!(1.0) }",
+                ["pub fn value()->u32 { pick!(1.", "0) }"],
+            ),
+            (
+                "pub fn value()->u32 { pick!(1.e0) }",
+                ["pub fn value()->u32 { pick!(1.", "e0) }"],
+            ),
         ] {
             assert!(!is_behavior_neutral_rewrap(&split, &[joined]));
             assert!(!is_behavior_neutral_rewrap(&[joined], &split));
