@@ -2271,6 +2271,104 @@ pub(in crate::analysis) fn assertion_whole_collection_equality(
         .collect()
 }
 
+/// #7697: whether `assert_eq!` compares the field collection `path` of the
+/// binding that ran the owner against the same field of a second binding the
+/// test filled by hand. The second binding must start from a bare
+/// `Type::default()` / `Type::new()` and take only `push`/`extend`/`insert`
+/// calls: a helper or another method may build it through the owner, which
+/// the test text does not show, so both sides would change together.
+pub(in crate::analysis) fn assertion_compares_hand_built_field(
+    test_body: &str,
+    assertion_text: &str,
+    path: &str,
+    owner_name: &str,
+) -> bool {
+    let Some(payload) = macro_payload(assertion_text, "assert_eq").map(str::trim_start) else {
+        return false;
+    };
+    let Some(first) = first_call_argument(payload) else {
+        return false;
+    };
+    let Some(second) = payload
+        .strip_prefix(first.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix(','))
+        .and_then(first_call_argument)
+    else {
+        return false;
+    };
+    let (Some(a), Some(b)) = (
+        whole_collection_read(&first, path),
+        whole_collection_read(&second, path),
+    ) else {
+        return false;
+    };
+    if a.getter.is_some() || b.getter.is_some() || a.binding == b.binding {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(test_body);
+    let ran_owner = |binding: &str| masked.contains(&format!("{binding}.{owner_name}("));
+    let (a_ran, b_ran) = (ran_owner(&a.binding), ran_owner(&b.binding));
+    let expected = match (a_ran, b_ran) {
+        (true, false) => &b.binding,
+        (false, true) => &a.binding,
+        _ => return false,
+    };
+    binding_is_hand_built(&masked, expected)
+}
+
+/// `let [mut] binding = Type::default()|Type::new();` and every later
+/// `binding.` use is a field path, optionally ending in `push`, `extend` or
+/// `insert` calls.
+fn binding_is_hand_built(masked_body: &str, binding: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut declared = false;
+    for (at, _) in masked_body.match_indices(binding) {
+        if masked_body[..at].chars().next_back().is_some_and(is_ident)
+            || masked_body[at + binding.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+        {
+            continue;
+        }
+        let before = masked_body[..at].trim_end();
+        let rest = &masked_body[at + binding.len()..];
+        if before.ends_with("let") || before.ends_with("let mut") {
+            let Some(init) = rest.trim_start().strip_prefix('=') else {
+                return false;
+            };
+            let init = init.trim_start();
+            let end = init.find(';').unwrap_or(init.len());
+            let init = init[..end].trim();
+            let constructor = init
+                .strip_suffix("::default()")
+                .or_else(|| init.strip_suffix("::new()"))
+                .is_some_and(|ty| !ty.is_empty() && ty.chars().all(|ch| is_ident(ch) || ch == ':'));
+            if !constructor || declared {
+                return false;
+            }
+            declared = true;
+            continue;
+        }
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let segment_end = after_dot
+                .find(|ch: char| !(is_ident(ch) || ch == '.'))
+                .unwrap_or(after_dot.len());
+            let chain = &after_dot[..segment_end];
+            if after_dot[segment_end..].starts_with('(') {
+                let method = chain.rsplit('.').next().unwrap_or(chain);
+                if !matches!(method, "push" | "extend" | "insert") {
+                    return false;
+                }
+            }
+        } else {
+            // Passed or moved somewhere else (`helper(&mut expected)`).
+            return false;
+        }
+    }
+    declared
+}
+
 fn whole_collection_read(side: &str, path: &str) -> Option<FieldCollectionRead> {
     let mut bare = side.trim();
     bare = bare.strip_prefix('&').map_or(bare, str::trim);
@@ -4419,6 +4517,45 @@ mod tests {
             "assert!(c.count == 0);",
         ] {
             assert!(!assertion_expects_default_like(assertion), "{assertion}");
+        }
+    }
+
+    /// #7697: the expected collection must be filled by hand on a binding
+    /// that never ran the owner and was built only with `push`-style calls.
+    #[test]
+    fn hand_built_expected_collection_is_the_only_independent_side() {
+        let assertion = "assert_eq!(order.lines, expected.lines);";
+        let check = |body: &str, assertion: &str| {
+            assertion_compares_hand_built_field(body, assertion, "lines", "add")
+        };
+        let hand_built = "let mut order = Order::default();\n let mut expected = Order::default();\n expected.lines.push(Line { sku: \"A\".to_string() });\n order.add(\"a\", 1);";
+        assert!(check(hand_built, assertion));
+        assert!(check(
+            hand_built,
+            "assert_eq!(expected.lines, order.lines);"
+        ));
+        for body in [
+            // The expected side is built through the owner.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n expected.add(\"a\", 1);\n order.add(\"a\", 1);",
+            // A helper builds the expected side.
+            "let mut order = Order::default();\n let expected = fixture();\n order.add(\"a\", 1);",
+            // A helper receives the expected binding.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n fill(&mut expected);\n order.add(\"a\", 1);",
+            // A method other than a push builds it.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n expected.seed();\n order.add(\"a\", 1);",
+            // Neither side ran the owner.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n expected.lines.push(Line { sku: \"A\".to_string() });",
+        ] {
+            assert!(!check(body, assertion), "{body}");
+        }
+        // A getter, a literal or a helper call is not a plain read.
+        for text in [
+            "assert_eq!(order.lines(), expected.lines);",
+            "assert_eq!(order.lines, fixture().lines);",
+            "assert_eq!(order.lines, vec![Line { sku: \"A\".to_string() }]);",
+            "assert_ne!(order.lines, expected.lines);",
+        ] {
+            assert!(!check(hand_built, text), "{text}");
         }
     }
 
