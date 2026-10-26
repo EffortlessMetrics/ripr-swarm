@@ -1940,6 +1940,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json",
   "crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet",
+  "crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2",
+  "crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2",
   "crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots",
   "editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)",
   "editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions",
@@ -3822,6 +3824,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
+  "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -3947,6 +3950,9 @@ code = [
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/analysis/language/python/helper_inline.rs",
   "crates/ripr/src/analysis/language/python/related_tests.rs",
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+  "crates/ripr/src/analysis/language/python/helper_assertions.rs",
+  "crates/ripr/src/analysis/language/python/owners_tests.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md",
@@ -3972,6 +3978,7 @@ outputs = [
   "policy/dependency_allowlist.txt",
   ".ripr/traceability.toml",
   "metrics/capabilities.toml",
+  "fixtures/python_effect_order_module_before_call/expected/check.json",
 ]
 metrics = [
   "language_adapter_python_findings_preview",
@@ -8791,6 +8798,8 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_calls_through_trait_path_then_argument_type_decides",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_trait_path_call_to_a_function_without_self_then_name_only_relation",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
+  "fixtures/python_effect_order_guarded_before_call",
+  "fixtures/python_effect_order_module_before_call",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -8877,6 +8886,8 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md",
+  "fixtures/python_effect_order_guarded_before_call/expected/check.json",
+  "fixtures/python_effect_order_module_before_call/expected/check.json",
 ]
 metrics = [
   "evidence_promotion_honesty_charter_members",
@@ -9255,6 +9266,8 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::diff_packet_copies_complete_zero_outcome_and_digest",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::diff_packet_preserves_unsupported_outcome_as_incomplete",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::diff_packet_marks_missing_producer_outcome_incomplete",
+  "crates/ripr/src/output/github.rs::tests::render_discloses_complete_outcome_advisory_limitations",
+  "crates/ripr/src/output/github.rs::tests::render_discloses_empty_complete_outcome_advisory_limitations",
 ]
 code = [
   "crates/ripr/src/cli/commands.rs",
@@ -9304,6 +9317,7 @@ code = [
   "crates/ripr/src/output/agent_receipt.rs",
   "crates/ripr/src/cli/commands/agent.rs",
   "crates/ripr/src/output/agent_seam_packets.rs",
+  "crates/ripr/src/output/github.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md",
@@ -13102,6 +13116,11 @@ fixtures = [
   "fixtures/split_test_boundary_oracle",
   "fixtures/strong_boundary_oracle",
   "fixtures/rust_wrapper_boolean_return_discarded",
+  "fixtures/rust_wrapper_user_macro_guard",
+  "fixtures/rust_wrapper_closure_shadowed_callee",
+  "fixtures/rust_wrapper_crate_alias_logging_macro",
+  "fixtures/rust_wrapper_unicode_macro_suffix",
+  "fixtures/rust_wrapper_macro_bang_bidi_whitespace",
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
@@ -13119,6 +13138,16 @@ outputs = [
   "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md",
   "fixtures/rust_wrapper_boolean_return_discarded/expected/check.json",
   "fixtures/rust_wrapper_boolean_return_discarded/expected/human.txt",
+  "fixtures/rust_wrapper_user_macro_guard/expected/check.json",
+  "fixtures/rust_wrapper_user_macro_guard/expected/human.txt",
+  "fixtures/rust_wrapper_closure_shadowed_callee/expected/check.json",
+  "fixtures/rust_wrapper_closure_shadowed_callee/expected/human.txt",
+  "fixtures/rust_wrapper_crate_alias_logging_macro/expected/check.json",
+  "fixtures/rust_wrapper_crate_alias_logging_macro/expected/human.txt",
+  "fixtures/rust_wrapper_unicode_macro_suffix/expected/check.json",
+  "fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/check.json",
+  "fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/human.txt",
+  "fixtures/rust_wrapper_unicode_macro_suffix/expected/human.txt",
   "fixtures/split_test_boundary_oracle/expected/check.json",
   "fixtures/split_test_boundary_oracle/expected/human.txt"
 ]
@@ -18363,8 +18392,12 @@ tests = [
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::string_escape_spellings_are_not_compared_as_text",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_that_masks_the_edited_field_does_not_credit",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_rule_fails_open_when_the_result_is_read_otherwise",
+  "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
+  "fixtures/python_effect_order_guarded_before_call",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/effect_alignment.rs",
+  "crates/ripr/src/analysis/language/python/sink_alignment.rs",
   "crates/ripr/src/analysis/language/python/guard_credit.rs",
   "crates/ripr/src/analysis/language/python/arm_activation.rs",
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
@@ -18390,6 +18423,7 @@ outputs = [
   "fixtures/python_guarded_write_unicode_rebound/expected/check.json",
   "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md",
   "docs/OUTPUT_SCHEMA.md",
+  "fixtures/python_effect_order_guarded_before_call/expected/check.json",
 ]
 metrics = ["unit_test_pass_rate"]
 [[behavior]]

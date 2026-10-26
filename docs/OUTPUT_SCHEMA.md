@@ -740,6 +740,14 @@ When the producer-owned `analysis_outcome` is not complete (for example
 with its recovery, and the clean `No static exposure findings found` notice is
 not printed.
 
+When the outcome is complete but carries advisory limitations (for example
+`eol_only_churn`, #4952), the stream instead starts with a
+`ripr analysis limitations` notice naming the outcome kind and each limitation
+with its recovery. The notice is a disclosure, not a scope reduction: the
+incomplete warning does not fire, on both the with-findings and the empty
+complete branches, and an empty complete stream still prints its
+`No static exposure findings found` notice (#10520).
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
