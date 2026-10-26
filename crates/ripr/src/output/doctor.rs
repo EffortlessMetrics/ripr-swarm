@@ -72,6 +72,8 @@ pub(crate) enum DoctorFirstCommand {
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep pilot exploration.
     UnbornHead,
+    /// Git can read the work tree, but HEAD's metadata needs repair.
+    DamagedRefs,
     /// The `config` check failed: `ripr check` loads the same `ripr.toml`
     /// and would hit the same error. Name the config correction, not a
     /// check command (#8168).
@@ -157,6 +159,12 @@ impl DoctorFirstCommand {
         } else if report
             .checks
             .iter()
+            .any(|check| check.name == "git_head" && check.status == DoctorCheckStatus::Fail)
+        {
+            Self::DamagedRefs
+        } else if report
+            .checks
+            .iter()
             .any(|check| check.name == "git_head" && check.status == DoctorCheckStatus::Advisory)
         {
             // #5259: the work tree is real but `HEAD` is unborn, so no base
@@ -183,6 +191,7 @@ impl DoctorFirstCommand {
             Self::MissingRoot
             | Self::OutsideGit
             | Self::UnbornHead
+            | Self::DamagedRefs
             | Self::InvalidConfig
             | Self::FailedPrerequisites => None,
         }
@@ -235,6 +244,10 @@ impl DoctorFirstCommand {
             ],
             Self::FailedPrerequisites => vec![
                 "- Recommended first command: fix the `!` checks above, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
+            Self::DamagedRefs => vec![
+                "- Recommended first command: correct or restore the ref metadata and its read access using the Git check above, then rerun `ripr doctor`"
                     .to_string(),
             ],
             Self::OutsideGit => {
@@ -1370,6 +1383,10 @@ pub(crate) fn doctor_recovery_for_first_command(
             "config".to_string(),
             "correct `ripr.toml` so it loads, then rerun `ripr doctor`".to_string(),
         ),
+        DoctorFirstCommand::DamagedRefs => (
+            "git_head".to_string(),
+            "correct or restore the ref metadata and its read access using the Git check, then rerun `ripr doctor`".to_string(),
+        ),
         DoctorFirstCommand::FailedPrerequisites => {
             let failed_check = report
                 .checks
@@ -1607,32 +1624,6 @@ pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
             WorkTreeProbe::Outside
         },
     )
-}
-
-/// #5259: whether `HEAD` is unborn (the repository has no commits yet).
-/// Call only after [`work_tree_probe`] reported `Inside`: there, a
-/// `rev-parse --verify` that exits nonzero is git answering "no such
-/// revision", which is the unborn state. `false` when git could not answer
-/// (missing or timed-out git proves nothing, so doctor claims nothing) —
-/// the probe's absence must not read as "unborn" (#5398 review).
-fn unborn_head(root: &Path) -> bool {
-    probe_says_unborn(
-        crate::git::run_git_output_with_deadline(
-            root,
-            &["rev-parse", "--verify", "--quiet", "HEAD"],
-            Some(DOCTOR_TOOL_TIMEOUT),
-        )
-        .ok()
-        .map(|output| output.status.success()),
-    )
-}
-
-/// Pure three-arm verdict for [`unborn_head`]: `Some(true)` is git running
-/// and resolving HEAD (born), `Some(false)` is git running and refusing the
-/// revision (unborn), and `None` is a probe that never answered (spawn
-/// failure or deadline). Only the second arm claims unborn.
-fn probe_says_unborn(head_resolves: Option<bool>) -> bool {
-    head_resolves == Some(false)
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -1950,21 +1941,21 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     DoctorStatus::Pass,
                     Some(format!("inside a Git work tree at {}", human_path(root))),
                 );
-                // #5259: an unborn HEAD is a work tree that cannot produce a
-                // diff base, so the workspace is not ready for the default
-                // first command. Advisory (the work-tree check itself is
-                // true), and the evidence reuses the commit-first repair the
-                // check-time default-base error names. Only a `rev-parse`
-                // that ran and answered "no" proves unborn: inside a
-                // confirmed work tree that is exactly what nonzero means.
-                if unborn_head(root) {
-                    report.add_advisory_check(
+                // The shared discriminator keeps damaged refs distinct from
+                // a genuine unborn branch, even after a successful root probe.
+                match crate::analysis::probe_head_ref_state(root, Some(DOCTOR_TOOL_TIMEOUT)) {
+                    crate::analysis::HeadRefState::Unborn => report.add_advisory_check(
                         "git_head",
                         "this repository has no commits yet (unborn HEAD); `ripr check` has \
                          no base to diff — commit once first, then analyze uncommitted edits \
                          with `ripr check`"
                             .to_string(),
-                    );
+                    ),
+                    crate::analysis::HeadRefState::Unreadable(message) => {
+                        report.add_check("git_head", DoctorStatus::Fail, Some(message));
+                    }
+                    crate::analysis::HeadRefState::Resolved
+                    | crate::analysis::HeadRefState::Unknown => {}
                 }
             }
             Some(WorkTreeProbe::Refused(message)) => {
@@ -5874,24 +5865,17 @@ mod tests {
         Ok(())
     }
 
-    /// #5259 review: only a probe that RAN and answered "no" may claim
-    /// unborn; a probe that never answered (spawn failure, deadline) must
-    /// claim nothing, or a slow host would add a false `git_head` advisory
-    /// and reroute the first command in a healthy repository.
+    /// An unanswered probe must not add a false unborn advisory.
     #[test]
-    fn unborn_head_verdict_claims_nothing_when_the_probe_never_answered() {
-        assert!(
-            !probe_says_unborn(Some(true)),
-            "a resolving HEAD is born, not unborn"
-        );
-        assert!(
-            probe_says_unborn(Some(false)),
-            "git refusing the revision is the unborn state"
-        );
-        assert!(
-            !probe_says_unborn(None),
-            "a probe that never answered must not claim unborn"
-        );
+    fn unborn_head_verdict_claims_nothing_when_the_probe_never_answered() -> Result<(), String> {
+        let root = doctor_scope_root("unanswered-head", &[])?;
+        git_in(&root, &["init", "."])?;
+        let state = crate::analysis::probe_head_ref_state(&root, Some(Duration::ZERO));
+        let _ = std::fs::remove_dir_all(&root);
+        if !matches!(state, crate::analysis::HeadRefState::Unknown) {
+            return Err("an unanswered probe must not claim an unborn HEAD".to_string());
+        }
+        Ok(())
     }
 
     /// #5259: the UnbornHead recommendation names the commit-first repair

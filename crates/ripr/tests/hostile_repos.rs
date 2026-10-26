@@ -142,6 +142,10 @@ fn assert_sane(ran: &Ran, what: &str) -> Result<(), String> {
     if !matches!(ran.code, Some(0..=2)) {
         return Err(format!("{what}: exit {:?}\n{}", ran.code, ran.stderr));
     }
+    assert_no_panic(ran, what)
+}
+
+fn assert_no_panic(ran: &Ran, what: &str) -> Result<(), String> {
     if ran.stderr.contains("panicked at") || ran.stderr.contains("RUST_BACKTRACE") {
         return Err(format!("{what}: panic\n{}", ran.stderr));
     }
@@ -1228,7 +1232,96 @@ fn assert_damaged_default_base(root: &Path, reason: &str) -> Result<(), String> 
             "git symbolic-ref HEAD",
             "read access",
         ],
-    )
+    )?;
+    assert_doctor_damaged_refs(root, reason)
+}
+
+/// Doctor completes a diagnosis (exit 3), unlike check's refusal (exit 2).
+fn assert_doctor_damaged_refs(root: &Path, reason: &str) -> Result<(), String> {
+    let human = ripr(root, &["doctor"], &[])?;
+    assert_no_panic(&human, "doctor damaged refs")?;
+    if human.code != Some(3)
+        || !human.stdout.contains(reason)
+        || !human.stdout.contains("correct or restore")
+        || !human
+            .stdout
+            .contains("Recommended first command: correct or restore the ref metadata")
+        || !human.stdout.lines().any(|line| line.starts_with("! "))
+        || human.stdout.contains("commit once")
+        || human.stdout.contains("no commits yet")
+    {
+        return Err(format!(
+            "doctor must diagnose damaged refs, exit {:?}\n{}\n{}",
+            human.code, human.stdout, human.stderr
+        ));
+    }
+    let json = ripr(root, &["doctor", "--json"], &[])?;
+    assert_no_panic(&json, "doctor damaged refs JSON")?;
+    let value: serde_json::Value = serde_json::from_str(&json.stdout)
+        .map_err(|e| format!("invalid doctor JSON: {e}\n{}", json.stdout))?;
+    let head = value["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "git_head"))
+        .ok_or_else(|| format!("missing git_head check\n{}", json.stdout))?;
+    let evidence = head["evidence"].as_str().unwrap_or_default();
+    let action = &value["canonical_next_action"];
+    if json.code != Some(3)
+        || value["status"] != "fail"
+        || head["status"] != "fail"
+        || !evidence.contains(reason)
+        || !evidence.contains("correct or restore")
+        || action["stop"]["kind"] != "doctor_recovery"
+        || action["stop"]["check_name"] != "git_head"
+        || !action["stop"]["recovery_route"]
+            .as_str()
+            .is_some_and(|route| route.contains("ref metadata"))
+        || !action["command"].is_null()
+        || json.stdout.contains("commit once")
+        || json.stdout.contains("no commits yet")
+    {
+        return Err(format!(
+            "doctor must fail with metadata recovery\n{}\n{}",
+            json.stdout, json.stderr
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn doctor_distinguishes_healthy_and_unborn_heads() -> Result<(), String> {
+    let scratch = Scratch::new("doctor-head")?;
+    let root = plain(&scratch, "healthy")?;
+    for unborn in [false, true] {
+        if unborn {
+            git(&root, &["checkout", "--orphan", "first"])?;
+        }
+        let human = ripr(&root, &["doctor"], &[])?;
+        let json = ripr(&root, &["doctor", "--json"], &[])?;
+        let value: serde_json::Value = serde_json::from_str(&json.stdout)
+            .map_err(|e| format!("invalid doctor JSON: {e}\n{}", json.stdout))?;
+        let head = value["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == "git_head"));
+        let unborn_advisory = head.is_some_and(|check| {
+            check["status"] == "advisory"
+                && check["evidence"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("commit once"))
+        });
+        if human.code != Some(0)
+            || json.code != Some(0)
+            || value["status"] != "pass"
+            || unborn_advisory != unborn
+            || human.stdout.contains("commit once") != unborn
+            || !value["canonical_next_action"].is_null()
+        {
+            return Err(format!(
+                "wrong healthy/unborn doctor route ({unborn})\n{}\n{}",
+                human.stdout, json.stdout
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// RIPR-SPEC-0084: a silent HEAD failure also occurs for corrupt loose refs
@@ -1316,7 +1409,8 @@ fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), St
         "repository_root_unusable",
         "analysis/repository-root",
         &["fatal:", "garbage", "correct or restore it"],
-    )
+    )?;
+    assert_doctor_damaged_refs(&root, "fatal:")
 }
 
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is

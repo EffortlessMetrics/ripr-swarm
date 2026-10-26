@@ -143,6 +143,12 @@ first-commit suggestion. A truly unborn branch retains `base_unresolvable`
 and `analysis/base-resolution`. Both refusals exit 2 and emit no consumable
 analysis. Concurrent ref mutation between probes is not a snapshot guarantee.
 
+Doctor uses the same HEAD discriminator: damaged metadata is a failed
+`git_head` check with Git's reason and metadata/access recovery, never an
+unborn advisory. Its completed diagnosis exits 3 and its canonical action
+names `git_head` recovery without a runnable check command. A genuine unborn
+branch remains advisory and exits 0 when other checks pass (RIPR-SPEC-0007).
+
 This message explicitly says the analysis did not run (unlike "No probes
 found", which means the analysis ran and found nothing). It names the
 problem and the two remediation paths.
