@@ -89,31 +89,20 @@ entry instead.
 
 ## Step 0 — premise check (mandatory)
 
-Before any editing, the executor verifies the operating brief's
-premises against current repo state:
+Before editing or resuming, follow the root's
+[Start or resume a session](../../AGENTS.md#start-or-resume-a-session)
+instructions and the applicable repository skill. For a selected claim or
+existing PR, use [deliver-pr](../../.agents/skills/deliver-pr/SKILL.md) and its
+[continuation handoff](../../.agents/skills/deliver-pr/SKILL.md#continuation-handoff).
+Those procedures own premise checks and current work selection; this historical
+protocol does not add a separate startup gate or live-work manifest.
 
-1. `git fetch origin` and check whether `main` has advanced.
-2. `git status` and `git log --oneline origin/main..HEAD` to see what
-   is actually on the working branch.
-3. `cargo xtask check-goals` and `cargo xtask goals next` to see
-   the manifest's current "next item" (which may differ from the
-   brief).
-4. `gh pr list` to see open PRs that may already do part of the
-   requested work.
-5. Read the cited files at the cited line ranges; live source beats
-   paraphrased schema in any planning packet.
-
-When a premise is stale, the executor **stops, surfaces the delta,
-and asks for direction** rather than silently adapting the plan into
-something else. Stale premises that slip past Step 0 cause:
-
-- re-implementation of work that already shipped
-- silent path-locks where the executor picks a direction the owner
-  didn't choose
-- missed dependencies between concurrent PRs
-
-The cost of pausing for Step 0 is low. The cost of silently adapting
-a stale plan is a wasted PR or a misaligned campaign.
+Verify inherited plans against current source and native issue/PR evidence.
+Preserve the existing candidate owner, valid proof and surviving user limits,
+then resume at the earliest missing judgment. Correct a stale premise and
+continue within the authorized scope; a stale brief alone does not require the
+owner to restate recoverable context. Surface a genuinely missing authority or
+non-derivable decision to the delivery owner instead of silently expanding scope.
 
 ## "If authorized, proceed without re-asking"
 
