@@ -182,6 +182,9 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
+  --timeout SECS    Wall-clock budget for the analysis (default 600; 0
+                    disables). A timed-out run reports `analysis_timeout`
+                    and how to raise the budget.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
