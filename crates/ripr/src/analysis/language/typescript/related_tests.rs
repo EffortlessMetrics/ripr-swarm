@@ -1670,6 +1670,29 @@ fn module_entry_relation(
     // entry the test reaches is a decorated method.
     let mut decorated = false;
     let mut ordinary = false;
+    // A test that replaces the changed method, or a sibling on the chain to it,
+    // runs the replacement and not the class code (#9942): a spy that fabricates
+    // the value, an assignment on an instance or the prototype, or a
+    // `defineProperty`. A bare call-through spy still runs the real method.
+    let replaced = owner
+        .module_entries
+        .iter()
+        .any(|entry| entry.class_member.is_some())
+        && std::iter::once(owner.name.as_str())
+            .chain(
+                owner
+                    .module_entries
+                    .iter()
+                    .filter(|entry| entry.class_member.is_some())
+                    .map(|entry| entry.name.as_str()),
+            )
+            .any(|name| {
+                test_spies_owner_with_fabrication_for_owner(test, name, false)
+                    || class_entries::assigns_member_named(&test.body_text, name)
+            });
+    if replaced {
+        return None;
+    }
     for entry in &owner.module_entries {
         let entry_owner = module_entry_owner(owner, entry);
         if owner_call_relation(
