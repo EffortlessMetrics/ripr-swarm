@@ -4538,7 +4538,9 @@ fn method_entry_uses_plain_receiver(
         let Some(name) = pattern.name() else {
             return false;
         };
-        if pattern.pat().is_some() || !bindings.insert(name.text().to_string()) {
+        if pattern.pat().is_some()
+            || !bindings.insert(name.text().trim_start_matches("r#").to_string())
+        {
             return false;
         }
         lets += 1;

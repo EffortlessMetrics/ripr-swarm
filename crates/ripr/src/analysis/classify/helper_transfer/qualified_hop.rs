@@ -55,7 +55,9 @@ pub(super) fn qualified_free_hop(
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&call.text);
     let (qualifier, paren) = sole_qualified_call(&masked, callee_name)?;
-    if super::body_has_unresolved_macro_bindings(&caller.body, index) {
+    // A call token inside a macro need not execute, and its arguments may
+    // introduce bindings the ordinary syntax tree cannot resolve.
+    if super::caller_invokes_opaque_macro(&caller.body, true) {
         return None;
     }
     let source = index.files().get(&caller.file)?.source.to_string();

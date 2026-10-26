@@ -488,8 +488,10 @@ foreign unrenamed imports, sibling namesakes, aliases, generic self types and
 unreadable or generated bindings decline. Qualified type references and
 constructor calls in the test decline even beside a genuine unused import.
 Receiver bindings must be distinct plain top-level `let` bindings; nested,
-closure, destructuring and later shadow bindings remain unestablished. Unknown
-statement macros decline through the shared helper-transfer macro authority.
+closure, destructuring and later shadow bindings remain unestablished. The receiver route permits only unrebound bare standard assertion and `vec!`
+macros; pattern macros and stringified tokens establish no reach. Qualified-hop
+callers with any macro invocation decline. These checks share the helper-transfer
+macro binding and invocation authority, with a narrower entry allowlist.
 This bounded route intentionally does not infer factory return types or re-export
 chains. Non-ASCII qualified helper paths decline without slicing inside UTF-8.
 

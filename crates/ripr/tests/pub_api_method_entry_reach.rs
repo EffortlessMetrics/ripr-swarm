@@ -498,3 +498,33 @@ fn a_macro_argument_closure_does_not_borrow_an_outer_receiver_type() -> Result<(
     );
     assert_unrelated(&TempRepo::create(LIB, &tests)?)
 }
+
+#[test]
+fn a_matches_pattern_does_not_borrow_an_outer_receiver_type() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn pattern_receiver() {\n    let req: VersionReq = make_own();\n    assert!(matches!(make_foreign(), req if req.matches(&Version { major: 5 })));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn stringified_method_tokens_do_not_establish_reach() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn inert_method() {\n    let req: VersionReq = make_own();\n    assert_eq!(stringify!(req.matches(&Version { major: 5 })), \"text\");\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_raw_receiver_binding_is_the_same_shadowing_name() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn raw_shadow() {\n    let req: VersionReq = make_own();\n    let r#req = make_foreign();\n    assert!(req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn stringified_qualified_helper_tokens_do_not_establish_reach() -> Result<(), String> {
+    let lib = LIB.replace("        eval::matches_req(&self.comparators, version)", "        let _text = stringify!(eval::matches_req(&self.comparators, version));\n        false");
+    assert_unrelated(&TempRepo::create(&lib, &api_tests(LITERAL_RECEIVER))?)
+}

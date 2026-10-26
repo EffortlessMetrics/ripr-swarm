@@ -2588,10 +2588,23 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
         })
 }
 
-/// Unknown expansions can introduce bindings as well as control flow. The
-/// new identity-only entry routes share the forwarding macro authority.
+/// Method-entry reach permits only evaluated assertion/collection macros.
+/// Forwarding-transparent macros such as `matches!` can bind caller patterns,
+/// and `stringify!` never evaluates its tokens, so they establish no entry.
 pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) -> bool {
-    caller_invokes_opaque_macro(body, transparent_macro_name_rebound(body, index))
+    macro_invocation_is_unestablished(
+        body,
+        transparent_macro_name_rebound(body, index),
+        &[
+            "assert",
+            "assert_eq",
+            "assert_ne",
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "vec",
+        ],
+    )
 }
 
 /// Whether `body` invokes a macro whose expansion is not known to hold no
@@ -2601,6 +2614,10 @@ pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) 
 /// (`use crate as tracing;`) can route the path to an exported user macro,
 /// and ripr does not resolve path roots here (#10351).
 fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
+    macro_invocation_is_unestablished(body, transparent_macros_rebound, TRANSPARENT_STD_MACROS)
+}
+
+fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted: &[&str]) -> bool {
     // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
     // any other path before `!` and a delimiter is a macro path, even with
     // whitespace between (`bail ! (qty)` is valid Rust).
@@ -2626,8 +2643,7 @@ fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> 
         if PREFIX_KEYWORDS.contains(name) {
             return false;
         }
-        transparent_macros_rebound
-            || !TRANSPARENT_STD_MACROS.contains(&name.trim_start_matches("r#"))
+        macros_rebound || !permitted.contains(&name.trim_start_matches("r#"))
     })
 }
 
