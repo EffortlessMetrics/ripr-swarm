@@ -13704,6 +13704,26 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_call_chain_literal_input_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_call_chain_literal_input",
+      "vector": "literal_inside_helper_call_read_as_owner_input_row",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
     }
   ]
 }

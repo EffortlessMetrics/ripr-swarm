@@ -598,8 +598,17 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
                 "{pin}: {finding}"
             );
         } else {
+            // #10484: the call-built `max(10, 50)` is no longer read as the
+            // literal `10`, so the boundary stays a missing discriminator
+            // (weak infection) instead of being paired and then refused.
+            assert_eq!(
+                finding["classification"], "weakly_exposed",
+                "{pin}: {finding}"
+            );
             assert!(
-                discriminate_summary(&finding).contains("same_test_pairing_missing"),
+                finding["ripr"]["infect"]["summary"].as_str().is_some_and(
+                    |summary| summary.contains("equality-boundary discriminator is missing")
+                ),
                 "{pin}: {finding}"
             );
         }

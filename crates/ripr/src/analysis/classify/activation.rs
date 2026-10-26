@@ -270,7 +270,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_argument_values(test, argument) {
+            for value in owner_row_argument_values(test, argument, false) {
                 let value = parameters
                     .get(idx)
                     .map(|parameter| format!("{parameter} = {value}"))
@@ -6129,19 +6129,49 @@ fn strip_literal_wrappers(argument: &str) -> &str {
     loop {
         let before = text;
         text = text.strip_prefix('&').map_or(text, str::trim_start);
-        for suffix in [".to_string()", ".to_owned()", ".into()"] {
-            text = text.strip_suffix(suffix).map_or(text, str::trim_end);
+        for method in ["to_string", "to_owned", "into"] {
+            text = strip_empty_method_call(text, method);
         }
-        if let Some(inner) = text
-            .strip_prefix("String::from(")
-            .and_then(|rest| rest.strip_suffix(')'))
-        {
-            text = inner.trim();
-        }
+        text = strip_string_from(text);
         if text == before {
             return text;
         }
     }
+}
+
+/// `receiver.method()` with Rust's permitted whitespace around the dot, the
+/// name and the empty parentheses, reduced to `receiver`.
+fn strip_empty_method_call<'a>(text: &'a str, method: &str) -> &'a str {
+    let Some(rest) = text.trim_end().strip_suffix(')') else {
+        return text;
+    };
+    let Some(rest) = rest.trim_end().strip_suffix('(') else {
+        return text;
+    };
+    let Some(rest) = rest.trim_end().strip_suffix(method) else {
+        return text;
+    };
+    rest.trim_end()
+        .strip_suffix('.')
+        .map_or(text, str::trim_end)
+}
+
+/// `String::from(inner)` with whitespace allowed between its tokens, reduced
+/// to `inner`.
+fn strip_string_from(text: &str) -> &str {
+    let rest = text.trim_start();
+    let Some(rest) = rest.strip_prefix("String").map(str::trim_start) else {
+        return text;
+    };
+    let Some(rest) = rest.strip_prefix("::").map(str::trim_start) else {
+        return text;
+    };
+    let Some(rest) = rest.strip_prefix("from").map(str::trim_start) else {
+        return text;
+    };
+    rest.strip_prefix('(')
+        .and_then(|inner| inner.trim_end().strip_suffix(')'))
+        .map_or(text, str::trim)
 }
 
 /// Whether every group in `text` passes its contents through as values: a
@@ -9529,6 +9559,9 @@ assert_eq!(input.amount, 100);"#
             ("\"Bob\".to_owned()", "\"Bob\""),
             ("\"Bob\".into()", "\"Bob\""),
             ("String::from(\"Bob\")", "\"Bob\""),
+            ("String :: from (\"Bob\")", "\"Bob\""),
+            ("\"Bob\".to_string ()", "\"Bob\""),
+            ("\"Bob\" . into ( )", "\"Bob\""),
             ("&String::from(\"Bob\")", "\"Bob\""),
             ("Some(10)", "10"),
             ("Some(\"Bob\")", "\"Bob\""),
