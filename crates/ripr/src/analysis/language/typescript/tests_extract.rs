@@ -217,6 +217,14 @@ fn extract_tests_expanding_suite_factories(
             admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
             ..TestScope::default()
         };
+        scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
+            &ret.program.body,
+            source,
+            &imports,
+        );
+        if let Some(fixtures) = &scope.fixtures {
+            scope.sites.extend(fixtures.sites.iter().copied());
+        }
         // One line index per source; every test and assertion line is a
         // binary search against it rather than a rescan from byte 0.
         collect_tests_from_statements(
@@ -1154,10 +1162,26 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
+            let mut parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
+            // A destructured Playwright fixture that constructs a class binds
+            // its local name to that class (SPEC-0243 rule 23).
+            let mut provided_names: Vec<String> = Vec::new();
+            let mut parameter_end = None;
+            if let (Some(fixtures), Some(call)) = (&scope.fixtures, statement_call(stmt))
+                && let Some(provided) = fixtures.parameters_of(call)
+            {
+                for (name, class) in provided.bindings {
+                    if let Some(entry) = parameters.iter_mut().find(|entry| entry.0 == name) {
+                        entry.1 = ScopeValue::Constructed(class);
+                        provided_names.push(name);
+                    }
+                }
+                parameter_end = Some(provided.parameter_end - call.span.start as usize);
+                scope.sites.extend(provided.sites);
+            }
             // Tests with no parameters of their own see the same scope, so
             // they share one resolved list (#10017).
             test.scope_bindings = if parameters.is_empty() {
@@ -1165,7 +1189,13 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                     .get_or_insert_with(|| scope.resolve_with(Vec::new()).into())
                     .clone()
             } else {
-                scope.resolve_with(parameters).into()
+                let mut resolved = scope.resolve_with(parameters);
+                for binding in &mut resolved {
+                    if provided_names.contains(&binding.name) {
+                        binding.parameter_end = parameter_end;
+                    }
+                }
+                resolved.into()
             };
             test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
             if !scope.guards.is_empty() {
@@ -1341,6 +1371,8 @@ pub(crate) struct TestScope {
     /// The unevaluated `if` conditions the statements being walked sit
     /// under, outermost first (#10438).
     guards: Vec<String>,
+    /// The fixtures a Playwright `base.extend` constructs (SPEC-0243 rule 23).
+    fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1444,6 +1476,7 @@ impl TestScope {
                     // `levels` is the test's own parameters, then the
                     // enclosing levels innermost first; the last is the file.
                     file_level: depth > 0 && depth == levels.len() - 1,
+                    parameter_end: None,
                 });
             }
         }

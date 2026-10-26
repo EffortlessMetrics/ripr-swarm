@@ -26,6 +26,19 @@ exercised boundary from a missing one.
   generic call or macro (`std::env::var("WHO").unwrap_or_default()`,
   `make_name("Bob")`) is that call's operand, so the call contributes no row and
   a boundary that depends on it reads as the result of a call.
+  Arithmetic over the test's own literal bindings is the number it computes, so
+  it is a row (`score(base + 1)` after `let base = 9;`): the argument is only
+  decimal literals and at least one binding, `+ - * / %` and parentheses, and every binding
+  is declared by exactly one pattern in the test body (the `let`), which
+  ends before the first place the argument is written, is not `mut`, is never
+  assigned, and has a plain decimal initializer (a suffixed,
+  separated, signed, fractional, text or computed initializer is not read).
+  The shared evaluator folds it and fails closed on a leading sign, overflow,
+  underflow, division by zero or a value at or above `i32::MAX`. A call,
+  method, cast, macro, reference or bound that is not a literal binding
+  keeps the argument unread. A binding that a `for` pattern, a closure
+  parameter, an `if let` or a match arm reuses is a second pattern and is
+  not folded.
 - The value lattice is typed (`Str`, `Char`, `Bool`, `Index`, option
   forms, `CharSeq`); every exact result carries per-step provenance
   (operation family, receiver/argument rendering, chain depth) and the
@@ -365,9 +378,22 @@ exercised boundary from a missing one.
     that transforms the result (`method-hop-transformed-result`) and a
     helper that drops it (`method-hop-unobserved-result`), both
     `propagation_unknown`.
+21. Accept: `let base = 9;` with `score(base + 1)` and `score(base)` against
+    `10 <= qty` reached through `order_discount`: the first argument folds to
+    `10`, the second reads `9`, and the boundary is observed
+    (`grid-bindings-computed-arg`).
+22. Reject: a binding that may hold another value at the call: `mut`, a second
+    `let`, a `for` pattern, a closure parameter, an `if let` and an assignment
+    each keep the argument unread (`spec0158-fold-mutable-binding`,
+    `spec0158-fold-shadowed-binding`).
+23. Reject: an operand that is not a plain decimal binding or literal: a call,
+    a method, a cast, a suffixed literal, a text or fractional or computed
+    initializer, an unbound name, or arithmetic that underflows keeps the
+    argument unread (`spec0158-fold-call-operand`).
 
 ## Test Mapping
 
+`analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
 `analysis/classify/value_transfer.rs` `tests`;
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,
@@ -410,6 +436,8 @@ the #3295 family fixtures.
 ## Implementation Mapping
 
 - `analysis/classify/value_transfer.rs` — the typed evaluator.
+- `analysis/classify/argument_fold.rs` — the test-side argument fold; the row
+  reader (`owner_row_argument_values`) consumes it.
 - `analysis/classify/activation.rs` — exact operand resolution and the
   boundary/missing-discriminator wiring; char-literal extraction in
   `scalar_values`; the method hop's receiver cell and `self.<index>`

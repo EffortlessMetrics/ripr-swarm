@@ -65,6 +65,7 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     assertion: &OracleFact,
     chain: &HelperChain,
     activation: &ActivationEvidence,
+    test: &TestSummary,
 ) -> bool {
     let Some(hop) = chain.hops.last() else {
         return false;
@@ -82,7 +83,7 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
         && assertion.strength == OracleStrength::Strong
         && whole_call
         && chain_forwards_owner_result(&owner.name, chain)
-        && assertion_names_one_entry_call(owner, name, assertion)
+        && assertion_names_one_entry_call(owner, name, assertion, Some(test))
         && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
 }
 
@@ -245,7 +246,7 @@ fn test_pairs_boundary_input_with_oracle(
             // a wrapper's.
             || (assertion_is_discriminating(assertion)
                 && forwarding_entry.is_some_and(|(entry, test_activation)| {
-                    assertion_names_one_entry_call(owner, entry, assertion)
+                    assertion_names_one_entry_call(owner, entry, assertion, Some(test))
                         && assertion_observes_boundary_entry_call(
                             owner,
                             entry,
@@ -263,6 +264,7 @@ fn assertion_names_one_entry_call(
     owner: &FunctionSummary,
     entry: &str,
     assertion: &OracleFact,
+    test: Option<&TestSummary>,
 ) -> bool {
     let subject = assertion_subject(&assertion.text);
     let entry_calls = owner_call_argument_lists(&subject, entry);
@@ -271,10 +273,15 @@ fn assertion_names_one_entry_call(
     // `order_discount(10 * 2)`), so every entry argument must be a whole
     // literal, identifier or path, as on the owner-call path.
     entry_calls.len() == 1
-        && entry_calls[0]
-            .1
-            .iter()
-            .all(|argument| argument_is_activation_fallback_shape(argument.trim()))
+        && entry_calls[0].1.iter().all(|argument| {
+            let argument = argument.trim();
+            argument_is_activation_fallback_shape(argument)
+                    // RIPR-SPEC-0158 #21: activation binds the folded value,
+                    // not a scalar buried in the arithmetic.
+                    || test.is_some_and(|test| {
+                        super::argument_fold::folded_argument(&test.body, argument).is_some()
+                    })
+        })
         && owner_call_count(&assertion.text, entry) == 1
         && owner_call_count(&assertion.text, &owner.name) == 0
 }
@@ -1160,7 +1167,11 @@ fn pairing_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
     if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
     }
-    Vec::new()
+    // RIPR-SPEC-0158 #21: arithmetic over the test's own literal bindings is
+    // the whole argument's value, exactly as the literal it computes would be.
+    super::argument_fold::folded_argument(&test.body, trimmed)
+        .into_iter()
+        .collect()
 }
 
 fn argument_is_direct_pairing_shape(argument: &str) -> bool {

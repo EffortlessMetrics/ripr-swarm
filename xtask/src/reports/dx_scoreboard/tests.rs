@@ -4598,9 +4598,9 @@ fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), Stri
         .filter(|entry| entry.language() == "python")
         .collect();
     let ids: Vec<_> = python.iter().map(|entry| entry.id.as_str()).collect();
-    if ids != ["click-python", "poetry-python"] {
+    if ids != ["click-python", "poetry-python", "pandas-python"] {
         return Err(format!(
-            "expected click and poetry Python rows, got {ids:?}"
+            "expected click, poetry and pandas Python rows, got {ids:?}"
         ));
     }
     let shas: Vec<_> = python.iter().map(|entry| entry.sha.as_str()).collect();
@@ -4608,14 +4608,17 @@ fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), Stri
         != [
             "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e",
             "a416efd1be6b6787019e751e7c4f6fa1a0911050",
+            "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc",
         ]
     {
         return Err(format!(
             "Python pins moved off the commits verified to edit Python and its test: {shas:?}"
         ));
     }
-    if python[0].heavy || !python[1].heavy {
-        return Err("click must be the light Python row and poetry the heavy one".to_string());
+    if python[0].heavy || !python[1].heavy || !python[2].heavy {
+        return Err(
+            "click must be the light Python row and poetry and pandas the heavy ones".to_string(),
+        );
     }
     // Rows without a language stay Rust, so existing pins keep their meaning.
     if config
