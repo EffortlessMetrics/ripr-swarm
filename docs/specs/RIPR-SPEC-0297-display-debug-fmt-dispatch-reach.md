@@ -126,7 +126,8 @@ all are required:
 A `format!` or `{}` side, a computed expected string and a weaker assertion
 such as `ends_with` gain no display-string pin support here. Unsafe edits in a
 Display write tail also cannot recover discriminator credit through generic
-token overlap. Existing assertion provenance stays intact: the missing evidence
+token overlap, and no owner-pin route (helper-chain entry, field projection or
+fallible receipt) confirms such an edit without an admitted output pin. Existing assertion provenance stays intact: the missing evidence
 is observation of the changed output, not execution or macro binding. Debug
 owners retain their prior handling. No actionability widens.
 

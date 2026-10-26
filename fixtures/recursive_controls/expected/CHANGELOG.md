@@ -384,3 +384,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — recursive_controls (32)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless recursive_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

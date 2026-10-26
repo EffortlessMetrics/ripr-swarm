@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::super::extract::ShadowAuthority;
+use super::super::extract::arrow_row_oracles_for_fn;
 use super::super::extract::extract_pattern_words;
 use super::super::extract::retain_reached_oracles;
 use super::super::facts::FileFacts;
@@ -656,13 +657,17 @@ fn summarize_file_with_collectors(
                     &body,
                 ),
                 calls,
-                assertions: extract_parser_oracles(
-                    &function,
-                    text,
-                    &line_index,
-                    DropInScope::WholeFile,
-                    &file_decls,
-                ),
+                assertions: {
+                    let mut assertions = extract_parser_oracles(
+                        &function,
+                        text,
+                        &line_index,
+                        DropInScope::WholeFile,
+                        &file_decls,
+                    );
+                    assertions.extend(arrow_row_oracles_for_fn(&attrs, &function, start_line));
+                    assertions
+                },
                 literals,
                 attrs,
                 nested_fn_names,

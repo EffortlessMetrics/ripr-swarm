@@ -25,6 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod equality_dispatch;
+mod implicit_dispatch;
+mod iterator_dispatch;
 mod operator_dispatch;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
@@ -370,9 +372,9 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator syntax has no token worth indexing; same-file tests of an
-        // operator-trait impl are scanned in full.
-        if owner_fn.is_some_and(operator_dispatch::has_operator_shape) {
+        // Operator, loop and scope-end syntax has no token worth indexing;
+        // same-file tests of such an impl are scanned in full.
+        if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
         }
 
@@ -867,8 +869,9 @@ fn find_related_tests_with_candidates<'a>(
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
-    // #9567: a user operator-trait method that operator syntax runs unnamed.
-    let operator_owner = owner_fn.and_then(|owner| operator_dispatch::operator_owner(owner, index));
+    // #9567: a user operator, `Iterator::next` or `Drop::drop` that syntax runs
+    // unnamed.
+    let implicit_owner = owner_fn.and_then(|owner| implicit_dispatch::implicit_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -1088,10 +1091,11 @@ fn find_related_tests_with_candidates<'a>(
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref())
         };
-        // Operator syntax (#9567) is the same kind of unnamed owner call as
-        // an equality macro (#8999), so it shares the signal.
+        // Operator, loop and scope-end syntax (#9567) is the same kind of
+        // unnamed owner call as an equality macro (#8999), so it shares the
+        // signal.
         let equality_asserts_owner = !property_only_owner_call
-            && match (owner_fn, equality_owner.as_ref(), operator_owner.as_ref()) {
+            && match (owner_fn, equality_owner.as_ref(), implicit_owner.as_ref()) {
                 (Some(owner), Some(equality), _) => {
                     equality_dispatch::test_asserts_equality_through_owner(
                         test,
@@ -1101,15 +1105,13 @@ fn find_related_tests_with_candidates<'a>(
                         index,
                     )
                 }
-                (Some(owner), None, Some(operator)) => {
-                    operator_dispatch::test_applies_operator_to_owner(
-                        test,
-                        owner,
-                        operator,
-                        test_source(),
-                        index,
-                    )
-                }
+                (Some(owner), None, Some(implicit)) => implicit_dispatch::test_reaches_owner(
+                    test,
+                    owner,
+                    implicit,
+                    test_source(),
+                    index,
+                ),
                 _ => false,
             };
         // #3714: captured `calls` facts only — the same authority as
@@ -1375,9 +1377,33 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
+        // #9638: a receiver call of a method hop's caller (`v.grow(8)` for
+        // `fn grow(&mut self, ..) { self.try_grow(..) }`). It does not ride
+        // the free-call bypasses of `calls_helper_entry`: a receiver call has
+        // no crate path that could tie it to the owner's package, so only a
+        // test in the owner's package qualifies. The cross-package test pins
+        // the outcome; this explicit prefix check is defense in depth that no
+        // mutation test pins on its own (the later cross-package `continue`
+        // and the receiver-type check refuse the same test).
+        let calls_method_entry = !calls_helper_entry
+            && match &owner_package_prefix {
+                Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+                // A root-package owner has no prefix. Only a test that is
+                // itself outside every member package (`tests/..`, `src/..`
+                // of the root) shares its package; a workspace member's
+                // test, and any path that cannot be scoped, fails closed.
+                None => {
+                    package_prefix(&test.file).is_none()
+                        && !path_is_absolute_form(&test.file)
+                        && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+                }
+            }
+            && helper_chain.is_some_and(|chain| {
+                super::helper_transfer::test_calls_method_entry(index, test, chain)
+            });
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
-            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
+            && (calls_helper_entry || calls_method_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner

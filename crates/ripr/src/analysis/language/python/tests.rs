@@ -4552,6 +4552,10 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 file: PathBuf::from("tests/conftest.py"),
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
+                literal_construction: None,
+                literal_params: None,
+                isolated: false,
+                scope_imports: Vec::new(),
             });
         }
         tests
@@ -5392,6 +5396,80 @@ fn find_related_tests_matches_import_alias_call() {
     assert_eq!(related[0].name, "test_discount_alias");
     assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
     assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+}
+
+/// #10750: a large test set is scanned on the rayon workers. The candidates
+/// and their order must equal the sequential scan's, including the
+/// alternation of related and unrelated tests in the input.
+#[test]
+fn related_test_candidates_parallel_scan_matches_sequential_order() {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount):\n    return amount - 10\n",
+    );
+    let mut source = "from src.pricing import apply_discount\n\n".to_string();
+    for index in 0..700 {
+        if index % 3 == 0 {
+            source.push_str(&format!(
+                "def test_other_{index}():\n    assert other({index}) == {index}\n\n"
+            ));
+        } else if index % 3 == 1 {
+            source.push_str(&format!(
+                "def test_discount_{index}():\n    assert apply_discount({index}) == {}\n\n",
+                index - 10
+            ));
+        } else {
+            source.push_str(&format!(
+                "def test_discount_weak_{index}():\n    assert apply_discount({index})\n\n"
+            ));
+        }
+    }
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), &source);
+    assert_eq!(tests.len(), 700, "every generated test is extracted");
+
+    let related = related_test_candidates(&owners[0], &tests);
+
+    let sequential: Vec<_> = tests
+        .iter()
+        .filter_map(|test| related_test_relation(test, &owners[0]).map(|relation| (test, relation)))
+        .collect();
+    assert_eq!(sequential.len(), related.len());
+    assert!(
+        related
+            .iter()
+            .all(|candidate| sequential.iter().any(|(test, relation)| {
+                std::ptr::eq(*test, candidate.test) && *relation == candidate.relation
+            })),
+        "every candidate keeps its sequentially computed relation kind"
+    );
+    let strong_first = related
+        .iter()
+        .position(|candidate| candidate.test.name.starts_with("test_discount_weak_"));
+    assert_eq!(
+        related.len(),
+        466,
+        "two of every three tests call the owner"
+    );
+    assert_eq!(
+        strong_first,
+        Some(233),
+        "every strong exact-value test ranks before every weak truthiness test"
+    );
+    let names: Vec<&str> = related.iter().map(|c| c.test.name.as_str()).collect();
+    let mut strong: Vec<&str> = sequential
+        .iter()
+        .map(|(test, _)| test.name.as_str())
+        .filter(|name| !name.starts_with("test_discount_weak_"))
+        .collect();
+    strong.sort_unstable();
+    let mut weak: Vec<&str> = sequential
+        .iter()
+        .map(|(test, _)| test.name.as_str())
+        .filter(|name| name.starts_with("test_discount_weak_"))
+        .collect();
+    weak.sort_unstable();
+    let expected: Vec<&str> = strong.into_iter().chain(weak).collect();
+    assert_eq!(names, expected, "parallel order equals the sequential sort");
 }
 
 #[test]
@@ -8285,6 +8363,7 @@ fn classify_price_boundary_with_test_body_and_origins(
         PythonNoBehaviorContext::default(),
         None,
         &mut origins,
+        None,
     )
     .ok_or_else(|| "changed predicate should classify".to_string())?;
     Ok((finding, origins))
@@ -8324,6 +8403,7 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
             PythonNoBehaviorContext::default(),
             None,
             &mut origins,
+            None,
         )
         .ok_or_else(|| "changed predicate should classify".to_string())?;
         let files = origins

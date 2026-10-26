@@ -80,6 +80,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
+mod fixture_receivers;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;

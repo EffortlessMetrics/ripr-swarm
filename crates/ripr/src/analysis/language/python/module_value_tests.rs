@@ -2185,6 +2185,7 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
         "price.__code__ = frozen.__code__",
         "price.__defaults__ = (1,)",
         "price.__kwdefaults__ = {}",
+        "price.__closure__ = ()",
     ] {
         let test = format!(
             "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
@@ -2198,5 +2199,175 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
         &silver_test("assert price(\"silver\") == 5"),
         TABLE_NEW,
     )?);
+    Ok(())
+}
+
+#[test]
+fn replacing_a_scalar_readers_code_withholds_credit() -> Check {
+    let source = "RATES = 6\n\n\ndef price(tier):\n    return RATES\n";
+    for replacement in [
+        "price.__code__ = frozen.__code__",
+        "price.__defaults__ = (1,)",
+        "price.__kwdefaults__ = {}",
+        "price.__closure__ = ()",
+    ] {
+        let test = format!(
+            "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
+        );
+        assert_not_credited(&classify_table_edit(
+            source,
+            &[],
+            &test,
+            "RATES = 5",
+            "RATES = 6",
+        )?);
+    }
+    // Control: the same test without the replacement keeps the credit.
+    assert_credited(&classify_table_edit(
+        source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        "RATES = 5",
+        "RATES = 6",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_code_slot_assignment_replaces_readers_but_does_not_rebind_plain_names() {
+    let own = Path::new("hostile/settings.py");
+    let other = Path::new("tests/test_helper.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        [
+            (own, "LIMIT = 1\n"),
+            (other, "def f():\n    pass\n\nf.__code__ = f.__code__\n"),
+        ]
+        .into_iter(),
+        false,
+    );
+    assert!(foreign.may_replace_reader_code());
+    assert!(!foreign.may_rebind("version_info", Path::new("sys.py")));
+    assert!(!foreign.may_rebind("LIMIT", own));
+}
+
+#[test]
+fn reflection_only_withholds_credit_for_modules_it_can_reach() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    // Unconnected reflection over an unrelated module keeps the credit.
+    let unrelated = (
+        "hostile/util.py",
+        "import math\n\nPI = getattr(math, \"pi\")\n",
+    );
+    assert_credited(&classify_table(&source, &[unrelated], &test, TABLE_NEW)?);
+    // A reflective helper that a test imports next to the owner may be handed
+    // the module as an argument, so the component reaches the owner.
+    let helper = (
+        "hostile/util.py",
+        "def read(module, name):\n    return getattr(module, name)\n",
+    );
+    let connected = "import hostile.util\nfrom hostile.settings import price\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n";
+    assert_not_credited(&classify_table(&source, &[helper], connected, TABLE_NEW)?);
+    // Loading a module by name makes the reachable set unknown.
+    let loader = (
+        "hostile/util.py",
+        "import importlib\n\nMODULE = getattr(importlib.import_module(\"x\"), \"y\")\n",
+    );
+    assert_not_credited(&classify_table(&source, &[loader], &test, TABLE_NEW)?);
+    Ok(())
+}
+
+#[test]
+fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    // The bridge names the owner only on the continuation line of a
+    // parenthesized import.
+    // Brackets inside a comment or a string do not end that statement early.
+    for bridge_source in [
+        "from hostile import (\n    settings as hub,\n)\n",
+        "from hostile import (  # )\n    settings as hub,\n)\n",
+        "MARKER = \")\"; from hostile import (\n    settings as hub,\n)\n",
+    ] {
+        let bridge = ("hostile/bridge.py", bridge_source);
+        let touch = (
+            "hostile/touch.py",
+            "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
+        );
+        assert_not_credited(&classify_table(
+            &source,
+            &[bridge, touch],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    // Evaluated code can import any module, whatever the file names.
+    for evaluated in [
+        "import math\n\nexec(input())\n",
+        "import math\n\neval(input())\n",
+        "import math\n\ncompile(input(), \"x\", \"exec\")\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &source,
+            &[("hostile/util.py", evaluated)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    Ok(())
+}
+
+// Class-creation and construction effects the model does not evaluate (#9619).
+#[test]
+fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Check {
+    let base = dc_default();
+    let factory = "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Invoice:\n    amount: int\n    tax_rate: float = 0.25\n    tags: list = field(default_factory=fail)\n\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n";
+    for (label, source, test) in [
+        ("failing default_factory", factory.to_string(), DC_TEST),
+        (
+            "call default on an async method",
+            format!("{base}\n    async def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "call evaluated at class creation as a parameter default",
+            format!("{base}\n    def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "builtin annotation rebound to a marker",
+            base.replace("\n\n\n@dataclass", "\nfloat = ClassVar\n\n\n@dataclass"),
+            DC_TEST,
+        ),
+        (
+            "unknown decorator on another method",
+            format!("{base}\n    @tweak\n    def other(self):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "test takes a fixture that may patch the class",
+            base.clone(),
+            "from hostile.settings import Invoice\n\n\ndef test_it(rate):\n    assert Invoice(100).total() == 120\n",
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[], test)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    // A directly parametrized argument is not a fixture request.
+    let parametrized = "import pytest\nfrom hostile.settings import Invoice\n\n\n@pytest.mark.parametrize(\"case\", [1])\ndef test_it(case):\n    assert Invoice(100).total() == 120\n";
+    let finding = classify_dc(&base, DC_NEW, &[], parametrized)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Builtin descriptors and `list`/`dict` factories keep the credit.
+    let plain = format!(
+        "{}\n    @property\n    def big(self):\n        return self.amount >= 1000\n",
+        base.replace(
+            "    amount: int\n",
+            "    amount: int\n    tags: list = field(default_factory=list)\n"
+        )
+        .replace("import dataclass", "import dataclass, field")
+    );
+    let finding = classify_dc(&plain, DC_NEW, &[], DC_TEST)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

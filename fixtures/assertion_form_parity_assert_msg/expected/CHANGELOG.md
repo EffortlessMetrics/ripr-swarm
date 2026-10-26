@@ -407,3 +407,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (31)
+
+Reason:
+RIPR-SPEC-0122: #10622 observed-boundary weak-oracle next step and advisory
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (32)
+
+Reason:
+RIPR-SPEC-0122: boundary-observed Next step says ripr grades the assertion as a weak check (#10622)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

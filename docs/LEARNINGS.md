@@ -3261,7 +3261,11 @@ A log line is not enough: libtest captures output of passing tests, and
 the Windows receipts classify an `ok` row as a pass. So an unestablished
 Windows deny now fails with `NOT_ESTABLISHED`, and the oracle itself moves
 to an injected `create_dir` refusal that needs no ACL and runs everywhere.
-Unverified cause: `CreateDirectoryW` opens with backup intent, which an
-enabled `SeRestorePrivilege` lets bypass the ACL, while `File::create` does
-not (the `(WD)` deny was enforced). The failure message records that
-privilege state.
+Cause, established on a hosted runner: Git for Windows bash enables
+`SeBackupPrivilege` and `SeRestorePrivilege` and every child inherits them;
+with both enabled the `(AD)` deny does not stop `CreateDirectoryW` (a pwsh
+child of bash created the directory). A step with `shell: pwsh` starts with
+both disabled, and there the same deny is enforced. The sharded workflow
+therefore runs the real-ACL tests in a pwsh step and excludes them from the
+bash shards. `File::create` was never affected (the `(WD)` deny was
+enforced). The failure message still records the privilege state.

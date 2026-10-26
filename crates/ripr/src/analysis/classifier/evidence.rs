@@ -790,6 +790,8 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            // Refuses every owner-pin route, not only token overlap: none of them
+            // observes the written output without an admitted display pin.
             if fmt_write_tail && !fmt_literal_edit {
                 return false;
             }
@@ -904,7 +906,9 @@ impl ClassifiedProbeEvidence {
                                         )
                                         .activation
                                     });
-                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
+                                wrapper_return_boundary_pinned(
+                                    owner, assertion, chain, activation, test,
+                                )
                             })
                 },
                 assertion_admitted: &assertion_admitted,
