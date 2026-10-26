@@ -46,7 +46,7 @@
 //! precedence). The result
 //! is plain Rust that the ordinary file-fact producer parses.
 
-use ra_ap_syntax::ast::{HasAttrs, HasName};
+use ra_ap_syntax::ast::{HasAttrs, HasGenericParams, HasModuleItem, HasName};
 use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxNode, SyntaxToken, ast};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1035,6 +1035,53 @@ fn text_invokes_unknown_macro(text: &str) -> bool {
     false
 }
 
+/// Whether one substituted arrow row is exactly one `#[test] fn name() { .. }`
+/// whose statements are all standard assertion macro calls. This is parsed, not
+/// scanned: an item-position macro invocation beside the test, a macro name the
+/// lexical scan could misread (nested comments, non-ASCII identifiers), or any
+/// other statement can inject or rebind the callee the assertions name.
+fn is_assertion_only_test(row: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(row) else {
+        return false;
+    };
+    let items: Vec<ast::Item> = parse.tree().items().collect();
+    let [ast::Item::Fn(function)] = items.as_slice() else {
+        return false;
+    };
+    let attributes: Vec<String> = function
+        .attrs()
+        .map(|attribute| attribute.syntax().text().to_string())
+        .collect();
+    if attributes != ["#[test]"]
+        || function.generic_param_list().is_some()
+        || function.where_clause().is_some()
+        || function.ret_type().is_some()
+        || function
+            .param_list()
+            .is_none_or(|params| params.params().next().is_some() || params.self_param().is_some())
+    {
+        return false;
+    }
+    let Some(statements) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let is_assertion = |expr: Option<ast::Expr>| match expr {
+        Some(ast::Expr::MacroExpr(call)) => call
+            .macro_call()
+            .and_then(|call| call.path())
+            .is_some_and(|path| {
+                NON_BINDING_MACROS.contains(&path.syntax().text().to_string().as_str())
+            }),
+        _ => false,
+    };
+    statements.statements().all(|statement| match statement {
+        ast::Stmt::ExprStmt(statement) => is_assertion(statement.expr()),
+        _ => false,
+    }) && statements
+        .tail_expr()
+        .is_none_or(|tail| is_assertion(Some(tail)))
+}
+
 /// Whether one substituted row declares a scope word or more than one `fn`.
 fn text_defines_nested_scope(text: &str) -> bool {
     if text.contains('|') {
@@ -1097,7 +1144,9 @@ fn expand_rows(
         })?;
         // A `tt` row element can supply the `fn`, `mod` or `use` the authored
         // body lacks, so the scope refusal also reads each substituted row.
-        if arrow_rows && text_defines_nested_scope(&expanded) {
+        if arrow_rows
+            && (text_defines_nested_scope(&expanded) || !is_assertion_only_test(&expanded))
+        {
             return None;
         }
         text.push_str(&expanded);
@@ -1546,6 +1595,22 @@ mod tests {
             (
                 "a vec! call that a foreign macro could shadow",
                 "vec![]; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "an allowed assertion macro invoked beside the test",
+                "crate::debug_assert_eq!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a nested block comment hiding a macro bang",
+                "crate::shadow /* outer /* inner */ tail */ !(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a non-ASCII macro name ending in an allowed name",
+                "crate::αassert_eq!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a non-assertion statement in the test",
+                "#[test] fn $name() { helper(); assert_eq!(gate($v), $w); }",
             ),
             (
                 "a macro from another module in the body",
