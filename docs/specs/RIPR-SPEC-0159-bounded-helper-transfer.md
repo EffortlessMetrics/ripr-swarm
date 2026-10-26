@@ -126,7 +126,11 @@ can only hint that a caller "may lead here" without changing anything.
   inherent associated function of that type, or `Self::name`); it must be the
   one workspace function of its name, outside test or evidence source, with
   no local binding, `use .. as` rename or foreign import of the name (or of
-  the type) in the caller's file, and its whole body must be one
+  the type) in the caller's file, no other mention of the name in the caller
+  (a parameter, nested `fn`/`const`/`static`/`let` or a glob import in its
+  body), defined in the caller's own file and inline module, called on a
+  hop whose callee declares `Result<..>` or `Option<..>` with no workspace
+  type of that name, and its whole body must be one
   unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none
   rebound by a user macro or import) or `std::process::abort()` /
   `std::process::exit(..)`. Everything else keeps the abstention: a
@@ -634,7 +638,7 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
 entry credit and its swallowed, transformed, shared-name, two-candidate,
-shadowed, path-call, unwrap-tail, std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
+shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-file and custom-type controls), std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).

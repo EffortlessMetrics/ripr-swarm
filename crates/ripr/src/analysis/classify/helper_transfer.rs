@@ -1005,7 +1005,7 @@ pub(crate) fn resolve_chain(
             receiver: None,
             through_macro: true,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
-            diverging_handlers: diverging_handlers(caller, index),
+            diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1121,7 +1121,7 @@ fn chain_through_caller(
         receiver: None,
         through_macro: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
-        diverging_handlers: diverging_handlers(caller, index),
+        diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1462,7 +1462,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         receiver: Some(receiver.to_string()),
         through_macro: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
-        diverging_handlers: diverging_handlers(caller, index),
+        diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
 }
 
@@ -2899,10 +2899,15 @@ fn split_unwrap_or_else(tail: &str) -> Option<(&str, &str)> {
 
 /// The `.unwrap_or_else(<path>)` handlers in `caller`'s body that resolve to
 /// one workspace function which only diverges (#9638).
-fn diverging_handlers(caller: &FunctionSummary, index: &RustIndex) -> Vec<String> {
+fn diverging_handlers(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+) -> Vec<String> {
     const NEEDLE: &str = ".unwrap_or_else(";
     let body: &str = &caller.body;
-    if !body.contains("unwrap_or_else") {
+    if !body.contains("unwrap_or_else") || !callee_returns_std_result_or_option(callee_name, index)
+    {
         return Vec::new();
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
@@ -2921,6 +2926,60 @@ fn diverging_handlers(caller: &FunctionSummary, index: &RustIndex) -> Vec<String
         }
     }
     handlers
+}
+
+/// Whether `callee_name` is the one workspace function of its name and
+/// declares a `Result<..>` or `Option<..>` return, with no workspace type of
+/// either name, so `.unwrap_or_else(..)` on its result is the std method and
+/// not a same-named method of a custom type.
+fn callee_returns_std_result_or_option(callee_name: &str, index: &RustIndex) -> bool {
+    if !callee_is_unique(callee_name, index) {
+        return false;
+    }
+    let Some(callee) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return false;
+    };
+    let Some(returned) = super::owner_pin::declared_return_type(&callee.body) else {
+        return false;
+    };
+    let returned = returned.trim();
+    ["Result", "Option"].iter().any(|std_type| {
+        returned
+            .strip_prefix(std_type)
+            .is_some_and(|rest| rest.starts_with('<'))
+            && super::owner_pin::workspace_type_name_count(std_type, index) == 0
+    })
+}
+
+/// The inline `mod` names enclosing 1-based `line` of `source`, outermost
+/// first. `None` when the braces do not balance.
+fn module_path_at_line(source: &str, line: usize) -> Option<Vec<String>> {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut current = 1usize;
+    for (at, character) in masked.char_indices() {
+        if current >= line && !character.is_whitespace() {
+            break;
+        }
+        match character {
+            '\n' => current += 1,
+            '{' => {
+                let mut words = masked[..at].split_whitespace().rev();
+                let name = words.next().map(str::to_string);
+                let is_mod = words.next() == Some("mod");
+                stack.push(if is_mod { name } else { None });
+            }
+            '}' => {
+                stack.pop()?;
+            }
+            _ => {}
+        }
+    }
+    Some(stack.into_iter().flatten().collect())
 }
 
 /// Whether `path` (`name` or `Type::name`) names the one workspace function
@@ -2970,6 +3029,17 @@ fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> 
     let Some(file) = index.files().get(&caller.file) else {
         return false;
     };
+    // The handler must sit in the caller's own file and inline module, so a
+    // bare or type-qualified name resolves to it without an import, and the
+    // caller's body must not glob-import or re-declare the name.
+    if handler.file != caller.file
+        || module_path_at_line(&file.source, handler.start_line)
+            != module_path_at_line(&file.source, caller.start_line)
+        || module_path_at_line(&file.source, caller.start_line).is_none()
+        || !name_only_used_as_handler(caller, path, name)
+    {
+        return false;
+    }
     let shadowed = |item: &str| {
         super::reveal::flattened_use_paths(&file.source)
             .iter()
@@ -2984,6 +3054,24 @@ fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> 
         return false;
     }
     function_only_diverges(handler, index)
+}
+
+/// Every whole-word mention of `name` in the caller (signature and body) is
+/// the handler argument `path` of an `.unwrap_or_else(path)` call, and the
+/// body glob-imports nothing: a parameter, nested `fn`/`const`/`static`/`let`
+/// or glob-imported item of that name would be the one the call resolves to.
+fn name_only_used_as_handler(caller: &FunctionSummary, path: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&caller.body);
+    if masked.contains("::*") {
+        return false;
+    }
+    let call = format!(".unwrap_or_else({path})");
+    let rest = masked.replace(&call, ".unwrap_or_else()");
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    !rest.match_indices(name).any(|(at, _)| {
+        !rest[..at].chars().next_back().is_some_and(is_word)
+            && !rest[at + name.len()..].chars().next().is_some_and(is_word)
+    })
 }
 
 /// Whether `function` can never return normally: its whole body is one

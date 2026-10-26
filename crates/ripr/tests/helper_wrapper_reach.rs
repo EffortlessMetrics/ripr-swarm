@@ -2213,3 +2213,143 @@ fn unwrap_tail_with_a_diverging_workspace_handler_pairs_the_boundary_pin() -> Re
     }
     Ok(())
 }
+
+// #9638 review of the diverging tail: the handler name must really denote the
+// unique workspace function at the call, not a parameter, a nested item, a
+// glob-imported item, or a method of a custom return type.
+fn assert_shadowed_handler_not_credited(
+    extra: &str,
+    forwarder: &str,
+    tests: &str,
+) -> Result<(), String> {
+    let finding = forwarder_finding(extra, forwarder, tests)?;
+    assert_ne!(
+        finding["classification"], "exposed",
+        "{forwarder}: {finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_name_bound_by_the_caller_is_not_credited() -> Result<(), String> {
+    let tests = "        assert_eq!(pool.grow(3, |_| false), false);\n        assert_eq!(pool.grow(4, |_| false), true);";
+    for signature in [
+        "wanted: usize, die: fn(Overflow) -> bool",
+        "wanted: usize, die: impl FnOnce(Overflow) -> bool",
+        "wanted: usize, die: F",
+    ] {
+        let generics = if signature.ends_with(": F") {
+            "<F: FnOnce(Overflow) -> bool>"
+        } else {
+            ""
+        };
+        let forwarder = format!(
+            "    pub fn grow{generics}(&mut self, {signature}) -> bool {{\n        self.try_grow(wanted).unwrap_or_else(die)\n    }}"
+        );
+        assert_shadowed_handler_not_credited(DIVERGING_DIE, &forwarder, tests)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_name_declared_inside_the_caller_is_not_credited() -> Result<(), String> {
+    for local in [
+        "fn die(_: Overflow) -> bool {\n            false\n        }",
+        "const die: fn(Overflow) -> bool = |_| false;",
+        "static die: fn(Overflow) -> bool = |_| false;",
+        "let die = |_: Overflow| false;",
+        "use external_crate::*;",
+    ] {
+        let forwarder = format!(
+            "    pub fn grow(&mut self, wanted: usize) -> bool {{\n        {local}\n        self.try_grow(wanted).unwrap_or_else(die)\n    }}"
+        );
+        assert_shadowed_handler_not_credited(DIVERGING_DIE, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_in_another_module_or_behind_a_foreign_glob_is_not_credited()
+-> Result<(), String> {
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    for extra in [
+        // The unique `die` lives in a module the caller does not import; a
+        // foreign glob may supply the `die` the caller actually names.
+        "use external_crate::*;\nmod hidden {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n",
+        // The same without a glob: the module is simply not in scope.
+        "mod hidden {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n",
+    ] {
+        assert_shadowed_handler_not_credited(extra, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_on_a_custom_type_with_its_own_unwrap_or_else_is_not_credited() -> Result<(), String>
+{
+    let custom = "pub struct Answer(bool);\nimpl Answer {\n    pub fn unwrap_or_else<F: FnOnce(Overflow) -> bool>(self, _handler: F) -> bool {\n        !self.0\n    }\n}\n";
+    let pool_extra = format!("{DIVERGING_DIE}{custom}");
+    // `try_grow` itself must return the custom type for the hop to matter, so
+    // the owner is replaced by a wrapper-free variant of the fixture.
+    let source = forwarder_source(
+        &pool_extra,
+        &unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)"),
+        UNWRAP_TESTS,
+    )
+    .replace(
+        "pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {",
+        "pub fn try_grow(&mut self, wanted: usize) -> Answer {",
+    )
+    .replace("return Ok(true);", "return Answer(true);")
+    .replace(
+        "        Ok(false)\n    }\n\n",
+        "        Answer(false)\n    }\n\n",
+    );
+    let finding = predicate_finding(&source, FORWARDER_DIFF)?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_workspace_result_alias_is_not_credited() -> Result<(), String> {
+    // A workspace type named `Result` may carry its own `unwrap_or_else`.
+    let extra = format!("{DIVERGING_DIE}pub type Result<T> = core::result::Result<T, Overflow>;\n");
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    assert_shadowed_handler_not_credited(&extra, &forwarder, UNWRAP_TESTS)
+}
+
+#[test]
+fn unwrap_tail_with_a_handler_in_another_file_is_not_credited() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    std::fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    let source = forwarder_source("mod util;\nuse util::die;\n", &forwarder, UNWRAP_TESTS);
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/util.rs"),
+        "use super::Overflow;\n\npub fn die<T>(_: Overflow) -> T {\n    panic!(\"overflow\")\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, FORWARDER_DIFF).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
