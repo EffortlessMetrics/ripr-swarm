@@ -1161,15 +1161,19 @@ pub(super) fn classify_sink_alignment_prepared(
             (method_owner_identity(unit)
                 || free_fn_module_identity(unit)
                 || calls_owner_through_module(test, owner))
-            .then(|| EffectReads::of(effect, test, owner))
+            .then(|| EffectReads::of(effect, test, owner, guard_entered))
         }))
     });
     let effect_observed = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
-            && effect_reads(unit)
-                .as_ref()
-                .as_ref()
-                .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
+            && effect_reads(unit).as_ref().as_ref().is_some_and(|reads| {
+                reads.observed_by(
+                    &unit.text,
+                    unit.line,
+                    unit.source_range,
+                    unit.helper_derived,
+                )
+            })
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
@@ -1269,9 +1273,9 @@ pub(super) fn classify_sink_alignment_prepared(
 /// Memoize a fact that depends only on the related test holding an
 /// assertion, so a test with many assertions computes it once per finding
 /// rather than once per assertion and branch.
-fn per_related_test<T: Clone>(
-    fact: impl Fn(&AlignmentUnit<'_>) -> T,
-) -> impl Fn(&AlignmentUnit<'_>) -> T {
+fn per_related_test<'a, T: Clone>(
+    fact: impl Fn(&AlignmentUnit<'a>) -> T,
+) -> impl Fn(&AlignmentUnit<'a>) -> T {
     let cache: RefCell<HashMap<*const RelatedTest, T>> = RefCell::new(HashMap::new());
     move |unit| {
         let key = std::ptr::from_ref(unit.related);
@@ -1302,6 +1306,7 @@ struct AlignmentUnit<'a> {
     reported: String,
     /// The file line the assertion starts on, when it is a source assertion.
     line: Option<usize>,
+    source_range: Option<rustpython_parser::text_size::TextRange>,
     kind: OracleKind,
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
@@ -1341,6 +1346,7 @@ fn alignment_units<'a>(
                     text: assertion.gate_text.clone(),
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
+                    source_range: assertion.source_range,
                     kind: assertion.oracle_kind.clone(),
                     effect_only: !strong,
                     helper_derived: assertion.helper_derived,
@@ -1360,6 +1366,7 @@ fn alignment_units<'a>(
                 text: text.clone(),
                 reported: text.clone(),
                 line: None,
+                source_range: None,
                 kind: related.oracle_kind.clone(),
                 effect_only: false,
                 // A legacy reported oracle must not wash out known helper

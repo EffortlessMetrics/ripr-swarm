@@ -481,6 +481,8 @@ struct PythonAssertion {
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
     helper_derived: bool,
+    /// Native assertion/call span, relative to the containing test body.
+    source_range: Option<rustpython_parser::text_size::TextRange>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,

@@ -444,6 +444,7 @@ fn assertion_from_assert(
             "assert {}",
             assert_gate_expr(assert_stmt.test.as_ref(), source)
         ),
+        source_range: Some(assert_stmt.range),
         line: line_for_range_start(source, assert_stmt.range),
         oracle_kind,
         oracle_strength,
@@ -569,6 +570,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
             callable_call: Some(callable_call),
             helper_derived: false,
             text,
+            source_range: Some(call.range),
             line: line_for_range_start(source, call.range),
             oracle_kind,
             oracle_strength,
@@ -591,6 +593,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         gate_text,
         callable_call: None,
         helper_derived: false,
+        source_range: Some(call.range),
         line: line_for_range_start(source, call.range),
         oracle_kind,
         oracle_strength,

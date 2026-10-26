@@ -1,0 +1,9 @@
+diff --git a/shop/route.py b/shop/route.py
+--- a/shop/route.py
++++ b/shop/route.py
+@@ -4,4 +4,4 @@
+ 
+ 
+ def checkout():
+-    response.status_code = 422
++    response.status_code = 400

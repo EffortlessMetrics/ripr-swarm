@@ -3799,6 +3799,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
+  "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -3924,6 +3925,10 @@ code = [
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/analysis/language/python/helper_inline.rs",
   "crates/ripr/src/analysis/language/python/related_tests.rs",
+  "crates/ripr/src/analysis/language/python/effect_alignment/order.rs",
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+  "crates/ripr/src/analysis/language/python/helper_assertions.rs",
+  "crates/ripr/src/analysis/language/python/owners_tests.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md",
@@ -3949,6 +3954,7 @@ outputs = [
   "policy/dependency_allowlist.txt",
   ".ripr/traceability.toml",
   "metrics/capabilities.toml",
+  "fixtures/python_effect_order_module_before_call/expected/check.json",
 ]
 metrics = [
   "language_adapter_python_findings_preview",
@@ -8766,6 +8772,8 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_calls_through_trait_path_then_argument_type_decides",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_trait_path_call_to_a_function_without_self_then_name_only_relation",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
+  "fixtures/python_effect_order_guarded_before_call",
+  "fixtures/python_effect_order_module_before_call",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -8852,6 +8860,8 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md",
+  "fixtures/python_effect_order_guarded_before_call/expected/check.json",
+  "fixtures/python_effect_order_module_before_call/expected/check.json",
 ]
 metrics = [
   "evidence_promotion_honesty_charter_members",
@@ -18316,6 +18326,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::string_escape_spellings_are_not_compared_as_text",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_that_masks_the_edited_field_does_not_credit",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_rule_fails_open_when_the_result_is_read_otherwise",
+  "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
+  "fixtures/python_effect_order_guarded_before_call",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_credit.rs",
@@ -18323,6 +18335,7 @@ code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
   "crates/ripr/src/analysis/language/python/boundary.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
+  "crates/ripr/src/analysis/language/python/effect_alignment/order.rs",
 ]
 outputs = [
   "fixtures/python_guarded_write_alias_overwrite/expected/check.json",
@@ -18343,6 +18356,7 @@ outputs = [
   "fixtures/python_guarded_write_unicode_rebound/expected/check.json",
   "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md",
   "docs/OUTPUT_SCHEMA.md",
+  "fixtures/python_effect_order_guarded_before_call/expected/check.json",
 ]
 metrics = ["unit_test_pass_rate"]
 [[behavior]]

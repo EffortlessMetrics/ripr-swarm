@@ -447,6 +447,28 @@ pub(super) struct TestImportContext<'a> {
     pub(super) subclassed: bool,
 }
 
+/// Preserve each assertion's native byte position inside the exact test slice.
+fn test_assertions(
+    statements: &[Stmt],
+    source: &SourceText<'_>,
+    test_range: TextRange,
+    standard_unittest_list: bool,
+) -> Vec<super::PythonAssertion> {
+    let mut assertions =
+        collect_assertions_from_statements(statements, source, standard_unittest_list);
+    for assertion in &mut assertions {
+        assertion.source_range = assertion.source_range.and_then(|range| {
+            (range.start() >= test_range.start() && range.end() <= test_range.end()).then(|| {
+                TextRange::new(
+                    range.start() - test_range.start(),
+                    range.end() - test_range.start(),
+                )
+            })
+        });
+    }
+    assertions
+}
+
 /// Follow the default pytest `python_functions` and unittest
 /// `TestLoader.testMethodPrefix`: both use `test`, not `test_`.
 /// Custom collection prefixes and hooks are not resolved here.
@@ -496,9 +518,10 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(
+                let assertions = test_assertions(
                     &function.body,
                     source,
+                    function.range,
                     import_context.standard_unittest_list
                         && super::oracles::unittest_list::eligible_method(
                             &function.args,
@@ -587,7 +610,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(&function.body, source, false);
+                let assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == PythonFramework::Pytest)

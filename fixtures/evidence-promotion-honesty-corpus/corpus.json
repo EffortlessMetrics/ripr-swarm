@@ -13704,6 +13704,60 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "python_effect_order_guarded_before_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_effect_order_guarded_before_call",
+      "vector": "field_observer_before_owner_call_on_same_physical_line",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "python_effect_order_module_before_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_effect_order_module_before_call",
+      "vector": "field_observer_before_owner_call_on_same_physical_line",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
     }
   ]
 }
