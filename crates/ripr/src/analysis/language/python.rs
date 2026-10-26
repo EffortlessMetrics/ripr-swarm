@@ -95,6 +95,7 @@ mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
@@ -467,6 +468,9 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The literal `params=` rows a fixture returning `request.param` hands
+    /// the test, one run per row (#9619, `param_fixtures.rs`).
+    literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
     /// Set when attached: no other fixture or hook visible to the test names
     /// this fixture, so the test receives the instance exactly as built.
     isolated: bool,
@@ -968,6 +972,7 @@ impl PythonAdapter {
             &fixture_side_by_file,
             unreadable_conftest,
         );
+        param_fixtures::apply_literal_param_fixtures(&mut all_tests);
         fixtures::taint_admission_by_conftest(
             &mut all_tests,
             &implicit_conftests,
@@ -1416,6 +1421,9 @@ mod fixtures_tests;
 
 #[cfg(test)]
 mod literal_fixture_tests;
+
+#[cfg(test)]
+mod param_fixture_tests;
 
 #[cfg(test)]
 mod dunder_entry_tests;

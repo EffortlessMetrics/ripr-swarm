@@ -921,11 +921,14 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.framework == PythonFramework::Pytest
-        && !test.parametrized
         && body_calls_owner(&test.body_text, owner)
         && test
             .fixtures
             .iter()
+            // A direct parametrize argname is a value pytest supplies, not a
+            // fixture; a parametrize mark does not resolve the test's other
+            // fixtures (#9619).
+            .filter(|fixture| !test.direct_parametrized.contains(fixture))
             .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
             .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
             .any(|fixture| body_uses_identifier(&test.body_text, fixture))

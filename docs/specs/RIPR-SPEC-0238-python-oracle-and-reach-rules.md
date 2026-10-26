@@ -407,8 +407,10 @@ This order is the existing behavior and is normative:
 - L7: `property_based_test`: an eligible candidate with a `given` or
   `example` decorator and no strong assertion;
 - L8: `unresolved_pytest_fixture`: every eligible candidate is a
-  non-parametrized pytest test that calls the owner and uses a
-  non-auxiliary fixture in its body. A fixture is resolved, and does not
+  pytest test that calls the owner and uses a non-auxiliary fixture in its
+  body. A direct `@pytest.mark.parametrize` argname is a value pytest
+  supplies, not a fixture; a parametrize mark does not resolve the test's
+  other fixtures, and an `indirect=` argname is a fixture (#9619). A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,
@@ -429,6 +431,23 @@ This order is the existing behavior and is normative:
   `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
   `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
   The fixture parameter then counts as a receiver bound to the owner class.
+  A fixture is also resolved when its literal `params=` rows reach the
+  test through `request.param` (#9619, `py-fixtures-fee-boundary`): its
+  only decorator is the fixture decorator with keyword `params=` (a list
+  or tuple whose rows are scalar literals or tuples of scalar literals)
+  and at most a literal `ids=` list of strings; the def takes exactly
+  `request` and its body is an optional docstring and
+  `return request.param`; the fixture's file binds its name once and the
+  scope rules above hold (without the owner-module import rule: tuple and
+  scalar rows are immutable, so an imported fixture cannot change them).
+  The test is a module-level pytest test with no parametrize mark, no
+  Hypothesis inputs and no decorator other than a pytest mark; it takes
+  the fixture as a parameter without a default, and its first statement
+  after a docstring is `name = fixture` or `a, b = fixture` with distinct
+  names that are not parameters and every row of the target's arity. No
+  later statement names the fixture, rebinds a target name or defines a
+  nested scope. The test then reads as `@pytest.mark.parametrize` over the
+  target names with the rows as cases, and the unpack is not a rebinding.
   Any other shape keeps the limit; a third-party plugin fixture outside
   the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
@@ -1421,6 +1440,32 @@ and the test is `tests/test_subject.py`, which imports each owner from
     that binds it and a class-level test all keep `static_unknown`,
     `unresolved_pytest_fixture` (unchanged).
 
+42. Function `def handling_fee(amount): return 0 if amount >= 100 else 5`,
+    changed to `amount > 99`; conftest
+    `@pytest.fixture(params=[(99, 5), (100, 0)], ids=["below", "at"])` /
+    `def fee_case(request): return request.param`; test
+    `def test_fee(fee_case):` / `amount, fee = fee_case` /
+    `assert handling_fee(amount) == fee`: the same verdict as
+    `@pytest.mark.parametrize("amount, fee", [(99, 5), (100, 0)])` over
+    `assert handling_fee(amount) == fee` (`exposed`; today
+    `static_unknown`, `unresolved_pytest_fixture`; L8,
+    `py-fixtures-fee-boundary`). Rows `(50, 5), (200, 0)` read
+    `weakly_exposed`, as the decorated form does. Named, list,
+    `pytest.param`, starred or non-literal rows, empty params, callable
+    `ids=`, `scope=`, `autouse=`, a positional decorator argument, a
+    transformed `request.param`, an extra fixture statement or parameter,
+    a second decorator or definition; an unpack of the wrong arity, a
+    starred, nested, attribute, chained or subscripted unpack, an unpack
+    that is not first, a later rebinding or read of the fixture, a nested
+    scope, a duplicate name, a defaulted or shadowing parameter, a foreign
+    test decorator; a dependent fixture, a request walk,
+    `pytest_generate_tests`, a star import, a module import of the name and
+    a nearer conftest binding all keep `static_unknown`,
+    `unresolved_pytest_fixture`. A test that also carries its own
+    parametrize mark keeps only the mark's cases, and the fixture stays
+    unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
+    `exposed`, a false credit for off-boundary rows).
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`
@@ -1553,6 +1598,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+- L8's literal-params fixture and the parametrize-mark scope (#9619):
+  `crates/ripr/src/analysis/language/python/param_fixture_tests.rs` pins
+  the decorated control, the conftest, same-module and single-name forms,
+  the off-boundary parity and every negative shape of example 42;
+  `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
 
 ## Implementation Mapping
 
@@ -1592,6 +1642,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
+  `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
+  `static_limits.rs` (direct parametrize argnames): L8, example 42.
 
 ## Metrics
 
