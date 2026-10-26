@@ -26,7 +26,7 @@ use super::bool_oracle::count_bindings;
 use super::module_constants::ModuleBindingFacts;
 use super::module_value::{
     ModuleEdit, ModuleValueCredit, Reader, Scope, Value, assertion_expression, constant_spellings,
-    evaluate, keep_unshadowed, straight_line_assertion, with_line_replaced,
+    evaluate, straight_line_assertion, with_line_replaced,
 };
 use super::source_facts::parse_module_result;
 use super::{PythonOwner, PythonTest, expr_full_name};
@@ -218,6 +218,7 @@ fn credits<'a>(
     ) else {
         return None;
     };
+    let mut module_facts = Vec::new();
     for (source, module) in [
         (new_source, &new_module),
         (old_source.as_str(), &old_module),
@@ -226,7 +227,22 @@ fn credits<'a>(
         if !facts.bound_once(class) {
             return None;
         }
+        module_facts.push(facts);
     }
+    // A method replaced by assignment (`Class.total = ...`) anywhere no longer
+    // runs the body the model reads.
+    let method_written = |name: &str| {
+        module_owner.foreign_writes.may_rebind(name, file)
+            || module_facts
+                .iter()
+                .any(|facts| facts.may_assign_attribute(name))
+            || all_tests.iter().any(|test| {
+                test.constant_rebinding
+                    .attributes
+                    .contains(&name.to_string())
+                    || test.constant_rebinding.assigns_attribute(name)
+            })
+    };
 
     let mut out = Vec::new();
     for test in all_tests {
@@ -234,7 +250,7 @@ fn credits<'a>(
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.assigns_attribute(&field)
             || test.constant_rebinding.assigns_attribute(class)
-            || keep_unshadowed(test, vec!["round".to_string()]).is_empty()
+            || super::related_tests::builtin_is_shadowed(test, "round")
         {
             continue;
         }
@@ -248,6 +264,13 @@ fn credits<'a>(
         ) else {
             continue;
         };
+        if new_model
+            .methods
+            .iter()
+            .any(|method| method_written(&method.name))
+        {
+            continue;
+        }
         // The edit moves only the one field's default.
         if !same_fields(&old_model, &new_model, &field, &old_value, &new_value) {
             continue;
@@ -423,7 +446,17 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
                         }) {
                             return None;
                         }
-                        (true, None)
+                        // A `field(...)` call without a default leaves the
+                        // field required.
+                        let is_field = expr_full_name(&call.func)
+                            .is_some_and(|name| name == "field" || name == "dataclasses.field");
+                        let defaulted = !is_field
+                            || call.keywords.iter().any(|keyword| {
+                                keyword.arg.as_ref().is_some_and(|arg| {
+                                    matches!(arg.as_str(), "default" | "default_factory")
+                                })
+                            });
+                        (defaulted, None)
                     }
                     Some(_) => (true, None),
                 };

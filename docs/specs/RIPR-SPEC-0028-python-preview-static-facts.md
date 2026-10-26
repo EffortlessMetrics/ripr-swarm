@@ -482,8 +482,9 @@ keyword-only or `init=False` field; and the edited line swaps one literal
 default under an unchanged name and annotation. A straight-line `assert` that
 builds the class from literals, leaves the field unset and reads it through an
 undecorated one-`return` method or an attribute is the oracle when it holds with
-the old default and fails with the new one. The evaluator adds floats and the
-unshadowed builtin `round` for this read only, with Python's float arithmetic.
+the old default and fails with the new one. For this read the evaluator adds floats
+(`+`, `-`, `*`, `/`, comparisons and unary signs, declining integers beyond 2^53)
+and the unshadowed one-argument builtin `round`.
 An explicit value for the field, a field default that is `field(...)` or
 computed, a method outside the evaluator, a rebound class or field, or a test
 that shadows, writes or may skip the construction keeps `decorator_indirection`. A function defined under a

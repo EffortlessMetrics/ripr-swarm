@@ -1722,6 +1722,53 @@ fn a_rebound_dataclass_or_field_is_not_credited() -> Check {
 }
 
 #[test]
+fn a_replaced_dataclass_method_or_shadowed_round_is_not_credited() -> Check {
+    let source = dc_default();
+    for (label, other) in [
+        (
+            "method replaced in another file",
+            "from hostile.settings import Invoice\nInvoice.total = lambda self: 120\n",
+        ),
+        (
+            "method replaced through setattr",
+            "import hostile.settings as s\nsetattr(s.Invoice, 'total', lambda self: 120)\n",
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[("tests/conftest.py", other)], DC_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    let replaced_in_module = format!("{source}\n\nInvoice.total = lambda self: 120\n");
+    let finding = classify_dc(&replaced_in_module, DC_NEW, &[], DC_TEST)?;
+    assert_lambda_withheld(&finding, "method replaced in the owner module");
+    let finding = classify_dc(
+        &source,
+        DC_NEW,
+        &[],
+        &dc_test("    Invoice.total = lambda self: 120\n    assert Invoice(100).total() == 120"),
+    )?;
+    assert_lambda_withheld(&finding, "method replaced by the test");
+    let shadowed = "from hostile.settings import Invoice\n\nround = lambda value: 120\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n";
+    let finding = classify_dc(&source, DC_NEW, &[], shadowed)?;
+    assert_lambda_withheld(&finding, "round bound once by the test module");
+    Ok(())
+}
+
+#[test]
+fn a_required_field_call_is_not_a_default() -> Check {
+    let source = format!(
+        "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Invoice:\n    amount: int = field(repr=False)\n{DC_NEW}\n\n{DC_METHOD}"
+    );
+    let finding = classify_dc(
+        &source,
+        DC_NEW,
+        &[],
+        &dc_test("    assert Invoice().total() == 0"),
+    )?;
+    assert_lambda_withheld(&finding, "field() without default leaves amount required");
+    Ok(())
+}
+
+#[test]
 fn a_pinned_dataclass_default_edit_is_credited() -> Check {
     let source = dc_default();
     for (label, test) in [
