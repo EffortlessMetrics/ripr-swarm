@@ -23,4 +23,4 @@ repository direct/helper credit; diff helper support remains conservative.
 
 Treat construction of a future as polling it, expand arbitrary macros or infer
 value flow. Dormant item/closure/async-move controls remain conservative. The shared
-34-case matrix also retains the previous22 receiver/helper/scope controls.
+50-case matrix also retains the previous 22 receiver/helper/scope controls.
