@@ -2768,6 +2768,41 @@ fn equality_boundary_returns_discount() {
     Ok(())
 }
 
+/// #10301: the compact grip consumer reads the once-built declared-factory map
+/// through `CompactGripContext`, so it needs its own discriminator beside the
+/// classify-path test of the same fixture.
+#[test]
+fn compact_grip_credits_declared_self_factories_only() -> Result<(), String> {
+    let lib = "pub struct Site(u8);\npub struct Cache(u8);\nimpl Site {\n    pub fn with_langs(n: u8) -> Self { Site(n) }\n    pub fn with_cache() -> Cache { Cache(2) }\n    pub fn with_shadow<Site>(value: Site) -> Site { value }\n    pub fn build(&self) -> u8 { self.0 * 1 }\n}\nimpl Cache {\n    pub fn build(&self) -> u8 { self.0 * 1 }\n}\n";
+    let tests = "#[test]\nfn langs() {\n    let s = Site::with_langs(1);\n    assert_eq!(s.build(), 1);\n}\n\n#[test]\nfn cache() {\n    let c = Site::with_cache();\n    assert_eq!(c.build(), 2);\n}\n\n#[test]\nfn shadow() {\n    let c = Site::with_shadow(Cache(2));\n    assert_eq!(c.build(), 2);\n}\n";
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), lib),
+        (PathBuf::from("tests/site.rs"), tests),
+    ])?;
+    let context = CompactGripContext::new(&index);
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            context
+                .owner_function(seam.file(), seam.display_line())
+                .is_some_and(|owner| owner.name == "build" && owner.id.0.contains("impl Site"))
+        })
+        .ok_or_else(|| "fixture must yield a seam owned by Site::build".to_string())?;
+    let related = find_related_tests_ranked(seam, &context);
+    let reason = |name: &str| {
+        related
+            .iter()
+            .find(|(indexed, _)| indexed.test.name == name)
+            .map(|(_, reason)| *reason)
+    };
+    assert_eq!(reason("langs"), Some(RelationReason::DirectOwnerCall));
+    assert_ne!(reason("cache"), Some(RelationReason::DirectOwnerCall));
+    // The factory's own type parameter named like the impl is not the impl.
+    assert_ne!(reason("shadow"), Some(RelationReason::DirectOwnerCall));
+    Ok(())
+}
+
 #[test]
 fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
     // `PathBuf` equality ignores `./` segments, so these two grips compare
