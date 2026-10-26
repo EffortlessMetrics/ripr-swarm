@@ -472,7 +472,22 @@ straight-line `assert` that holds with the old body and fails with the new one
 is the oracle, and only then is the lambda-syntax limit lifted. A changed
 parameter list, a default, a body outside the evaluator, a second binding or a
 test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
-assertion distinguishes is never graded as a gap. A function defined under a
+assertion distinguishes is never graded as a gap. A default edit of a field in
+a plain `@dataclass` class (#9619) relates the same way: the class is a
+top-level `@dataclass` or `@dataclasses.dataclass` with no arguments, bases or
+keywords, imported from `dataclasses` and bound once; its body holds only
+annotated fields, a docstring, `pass` and methods, with no `__init__`,
+`__post_init__`, `__new__` or attribute hook and no `ClassVar`, `InitVar`,
+keyword-only or `init=False` field; and the edited line swaps one literal
+default under an unchanged name and annotation. A straight-line `assert` that
+builds the class from literals, leaves the field unset and reads it through an
+undecorated one-`return` method or an attribute is the oracle when it holds with
+the old default and fails with the new one. For this read the evaluator adds floats
+(`+`, `-`, `*`, `/`, comparisons and unary signs, declining integers beyond 2^53)
+and the unshadowed one-argument builtin `round`.
+An explicit value for the field, a field default that is `field(...)` or
+computed, a method outside the evaluator, a rebound class or field, or a test
+that shadows, writes or may skip the construction keeps `decorator_indirection`. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
