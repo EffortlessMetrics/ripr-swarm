@@ -51,16 +51,23 @@ struct Shape<'a> {
     attrs: &'a str,
     /// Items above `Widget` in the same file.
     prelude: &'a str,
+    /// Items inside `impl Widget`, after `new` and `read`.
+    widget_items: &'a str,
 }
 
 fn shared_source(shape: Shape<'_>, test_statement: &str, read_body: &str) -> String {
-    let Shape { attrs, prelude } = shape;
+    let Shape {
+        attrs,
+        prelude,
+        widget_items,
+    } = shape;
     format!(
         "{prelude}pub struct Widget;
 pub struct Other;
 impl Widget {{
     pub fn new()->Self{{Widget}}
     pub fn read(&self)->u32{{{read_body}}}
+    {widget_items}
 }}
 impl Other {{
     pub fn new()->Self{{Other}}
@@ -381,10 +388,130 @@ fn a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap() 
             "unrelated local",
             "let w = Other::new(); std::assert_eq!(w.read(), 4);",
         ),
+        (
+            "qualified foreign annotation",
+            "let w: crate::foreign::Widget = crate::foreign::Widget; std::assert_eq!(w.read(), 4);",
+        ),
     ] {
         let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
         assert_ne!(limit(&finding), Some(LIMIT), "{label}: {finding}");
         assert!(is_gap(&finding)?, "{label}: {finding}");
+    }
+    Ok(())
+}
+
+/// A bare `fixture()` is the declared free fn only while nothing in the file
+/// binds `fixture` another way; an import of the same name stands in for it.
+#[test]
+fn a_bare_factory_shadowed_by_an_import_keeps_the_gap() -> Result<(), String> {
+    let shape = Shape {
+        prelude: "pub fn fixture()->Widget{Widget}\n",
+        ..Shape::default()
+    };
+    let plain = Workspace::create_shaped(
+        Placement::Generated,
+        shape,
+        "std::assert_eq!(fixture().read(), 4);",
+    )?
+    .finding()?;
+    assert_eq!(
+        limit(&plain),
+        Some(LIMIT),
+        "premise: the free fn is read: {plain}"
+    );
+    let shadowed = Workspace::create_shaped(
+        Placement::Generated,
+        shape,
+        "use std::iter::empty as fixture; std::assert_eq!(fixture::<u8>().read(), 4);",
+    )?
+    .finding()?;
+    assert_keeps_gap("import shadows the free fn", &shadowed)
+}
+
+/// `foreign::Widget::seeded()` is a different type than the local `Widget`,
+/// so a qualified factory is never read as the owner's own.
+#[test]
+fn a_qualified_associated_factory_keeps_the_gap() -> Result<(), String> {
+    for (label, statement) in [
+        (
+            "inline",
+            "std::assert_eq!(foreign::Widget::new().read(), 4);",
+        ),
+        (
+            "bound",
+            "let w = foreign::Widget::new(); std::assert_eq!(w.read(), 4);",
+        ),
+    ] {
+        let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
+        assert_keeps_gap(label, &finding)?;
+    }
+    Ok(())
+}
+
+/// The declaration that supplies `Widget::seeded()` must be a directly
+/// callable, always-available inherent fn whose `Widget` is the owner. Each
+/// shape below makes Rust call the trait factory (returning `Other`) or a
+/// type variable, so the call is not the owner's.
+#[test]
+fn an_unauthoritative_inherent_factory_declaration_keeps_the_gap() -> Result<(), String> {
+    let trait_fallback = "pub trait Factory { fn seeded() -> Other; }\n\
+                          impl Factory for Widget { fn seeded() -> Other { Other } }\n";
+    let statement = "std::assert_eq!(Widget::seeded().read(), 4);";
+    let positive = Workspace::create_shaped(
+        Placement::Generated,
+        Shape {
+            widget_items: "pub fn seeded()->Self{Widget}",
+            ..Shape::default()
+        },
+        statement,
+    )?
+    .finding()?;
+    assert_eq!(
+        limit(&positive),
+        Some(LIMIT),
+        "premise: a direct factory is read: {positive}"
+    );
+    for (label, shape, statement) in [
+        (
+            "fn local to a const",
+            Shape {
+                prelude: trait_fallback,
+                widget_items: "const HIDDEN: () = { fn seeded()->Widget{Widget} };",
+                ..Shape::default()
+            },
+            statement,
+        ),
+        (
+            "cfg-gated fn",
+            Shape {
+                prelude: trait_fallback,
+                widget_items: "#[cfg(any())] pub fn seeded()->Self{Widget}",
+                ..Shape::default()
+            },
+            statement,
+        ),
+        (
+            "cfg-gated impl",
+            Shape {
+                prelude: "pub trait Factory { fn seeded() -> Other; }\n\
+                          impl Factory for Widget { fn seeded() -> Other { Other } }\n\
+                          #[cfg(any())] impl Widget { pub fn seeded()->Self{Widget} }\n",
+                ..Shape::default()
+            },
+            statement,
+        ),
+        (
+            "generic spelled like the owner",
+            Shape {
+                widget_items: "pub fn seeded<Widget>(v: Widget)->Widget{v}",
+                ..Shape::default()
+            },
+            "std::assert_eq!(Widget::seeded(Other).read(), 4);",
+        ),
+    ] {
+        let finding =
+            Workspace::create_shaped(Placement::Generated, shape, statement)?.finding()?;
+        assert_keeps_gap(label, &finding)?;
     }
     Ok(())
 }
@@ -459,8 +586,8 @@ fn an_unrelated_weak_assertion_does_not_lift_the_withhold() -> Result<(), String
 #[test]
 fn a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap() -> Result<(), String> {
     let shape = Shape {
-        attrs: "",
         prelude: "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ..Shape::default()
     };
     let finding = Workspace::create_shaped(
         Placement::Generated,

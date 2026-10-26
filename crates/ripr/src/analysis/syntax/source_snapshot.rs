@@ -6,7 +6,7 @@ use super::{NameScopes, name_scope::name_scopes_in_tree, parse_clean_source_file
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use ra_ap_syntax::{
     AstNode, AstPtr, Parse, SourceFile, TextRange,
-    ast::{self, HasName},
+    ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -230,6 +230,90 @@ impl SourceSnapshot {
             Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
             Err(_) => compute(),
         }
+    }
+
+    /// Whether `function` is a directly callable inherent associated fn of
+    /// `ty`: its parent is the item list of an inherent `impl` that sits at
+    /// module level (not inside a block or const), neither it nor its impl or
+    /// enclosing modules carries a `cfg` other than `cfg(test)` (availability is
+    /// unestablished), and no generic parameter of the fn or the impl is spelled
+    /// `ty` (that name would then be a type variable, not the owner). `None`
+    /// when the declaration is ambiguous or the file does not parse.
+    pub(crate) fn inherent_factory_declaration_is_authoritative(
+        &self,
+        function: &FunctionSummary,
+        ty: &str,
+    ) -> Option<bool> {
+        let tree = self.parse.as_ref()?.tree();
+        let mut matches = tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(|item| {
+                item.name()
+                    .is_some_and(|name| name.text() == function.name.as_str())
+                    && item.fn_token().is_some_and(|token| {
+                        (self.lines.line(item.syntax().text_range().start())
+                            ..=self.lines.line(token.text_range().start()))
+                            .contains(&function.start_line)
+                    })
+            });
+        let (Some(item), None) = (matches.next(), matches.next()) else {
+            return None;
+        };
+        let spelled = |list: Option<ast::GenericParamList>| {
+            list.into_iter()
+                .flat_map(|list| list.generic_params())
+                .any(|param| match param {
+                    ast::GenericParam::TypeParam(param) => {
+                        param.name().is_some_and(|name| name.text() == ty)
+                    }
+                    ast::GenericParam::ConstParam(param) => {
+                        param.name().is_some_and(|name| name.text() == ty)
+                    }
+                    ast::GenericParam::LifetimeParam(_) => false,
+                })
+        };
+        let unestablished_cfg = |node: &dyn HasAttrs| {
+            node.attrs().any(|attr| {
+                let text: String = attr
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                (text.starts_with("#[cfg(") || text.starts_with("#[cfg_attr("))
+                    && text != "#[cfg(test)]"
+            })
+        };
+        let Some(list) = item.syntax().parent().and_then(ast::AssocItemList::cast) else {
+            return Some(false);
+        };
+        let Some(imp) = list.syntax().parent().and_then(ast::Impl::cast) else {
+            return Some(false);
+        };
+        if imp.trait_().is_some()
+            || spelled(item.generic_param_list())
+            || spelled(imp.generic_param_list())
+        {
+            return Some(false);
+        }
+        if unestablished_cfg(&item) || unestablished_cfg(&imp) {
+            return Some(false);
+        }
+        for ancestor in imp.syntax().ancestors().skip(1) {
+            if let Some(module) = ast::Module::cast(ancestor.clone()) {
+                if unestablished_cfg(&module) {
+                    return Some(false);
+                }
+            } else if !(ast::ItemList::can_cast(ancestor.kind())
+                || ast::SourceFile::can_cast(ancestor.kind()))
+            {
+                return Some(false);
+            }
+        }
+        Some(true)
     }
 
     pub(crate) fn name_scopes(&self, caller: &TestSummary) -> Option<Arc<NameScopes>> {

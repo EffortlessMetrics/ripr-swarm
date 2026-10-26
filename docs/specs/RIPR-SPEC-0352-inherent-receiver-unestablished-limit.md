@@ -113,8 +113,8 @@ unchanged; where it reaches the same cause it already reads `opaque`.
   package), the declaring parents of the test file, and every package it
   reaches through a lexical import edge (`use dep::*`, `use dep::name`,
   `extern crate dep`) to a fixpoint. An import is matched to a package by
-  directory name and fails closed to every package when the name matches no
-  or several directories, the matching directory holds a crate of another
+  directory name and fails closed to every package when the name is a
+  workspace package or macro-scope crate and matches no or several directories, the matching directory holds a crate of another
   name, any manifest in scope renames a dependency, or a manifest cannot be
   read. A site in a package the scope never imports or mounts is part of the
   unplaced doubt, so a bare `assert_eq!` there is withheld, not a gap. The scan
@@ -140,7 +140,11 @@ unchanged; where it reaches the same cause it already reads `opaque`.
 - The serde rows `serde-derive-rename-field-upper` and
   `serde-derive-rename-variant-lower` read `limited`: `serde_derive` does not
   import `serde_core`, whose `pub use core::*` sites stay outside its own scope.
-- Unexercised guards, not claimed proved: (1) the "at least one assertion names
+- Unexercised guards, not claimed proved: the `#[ignore]` exclusion, the
+  own-related-tests filter, the enforced-relation conjunct, the rename and
+  mismatch manifest arms each on its own, the test file's own manifest under
+  trust, crate-local and scoped names under trust, nested `src` and `extern
+  crate` edges; and (1) the "at least one assertion names
   the owner" guard (fails closed); (2) the reach-every-package rules for an
   unmatched, duplicated or unreadable workspace name and hyphen normalisation;
   (3) the declaring parents of the test file; (4) the withheld-file refusals;
@@ -150,8 +154,19 @@ unchanged; where it reaches the same cause it already reads `opaque`.
   (an unparsable manifest returns the conservative answer).
 - Mutation experiments and the executed base receipt are retained with the
   hardening follow-up.
-- No cache generation moves: seam caches store `ClassifiedSeam` values that never
-  name `Finding` or the post-pass where this rule runs.
+- The post-pass stores nothing in a seam cache. The identity gate does change
+  `ClassifiedSeam` relations; stale entries are safe because the cache key
+  includes the commit- or source-digest-bound analyzer identity, not a
+  hand-bumped schema version.
+- Known open: when the owner call sits outside the assertion
+  (`let r = Widget::new().read(); std::assert_eq!(r, 4);`) the relation is
+  already direct and only the oracle row is refused by the same unverifiable
+  macro, so the finding stays a gap. The oracle-side limit names free-function
+  owners only. `a_call_outside_the_assertion_is_not_blocked_by_the_macro`
+  (hardening follow-up) pins today's behavior.
+- Non-claim: the withhold checks the relation and oracle strength, not that
+  the trusted reading would leave no other gap (for example a missing boundary
+  input). A gap that holds in both macro worlds can read `static_unknown`.
 
 ## Acceptance Examples
 
@@ -171,7 +186,7 @@ unchanged; where it reaches the same cause it already reads `opaque`.
 
 ## Fail-closed statement
 
-The rule only withholds. It runs after every other limit and never changes a
+The rule only withholds. It runs after the implicit-call and indirect-owner withholds and never changes a
 class toward `exposed`; a wrong actionable signal is worse than a missed
 advisory, so a doubt about the trigger keeps the current gap and a doubt about
 the macro keeps the current non-credit.

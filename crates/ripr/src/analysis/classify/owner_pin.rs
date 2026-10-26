@@ -2983,21 +2983,22 @@ fn imported_crate_roots(source: &str, roots: &mut BTreeSet<String>) {
             .unwrap_or(text.len());
         (end > 0).then(|| text[..end].to_string())
     };
-    for (offset, _) in source.match_indices("use ") {
-        let boundary = source[..offset]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-        if !boundary {
-            continue;
-        }
-        let statement = source[offset + 4..].split(';').next().unwrap_or_default();
+    // Comments are masked and `use`/`extern crate` are found as whole words, so
+    // a tab, newline or comment between the keyword and the path is still read.
+    let masked = mask_comments_and_strings(source);
+    for offset in whole_word_offsets(&masked, "use") {
+        let statement = masked[offset + 3..].split(';').next().unwrap_or_default();
         for part in statement.split([',', '{']) {
             roots.extend(ident(part));
         }
     }
-    for (offset, _) in source.match_indices("extern crate ") {
-        roots.extend(ident(&source[offset + 13..]));
+    for offset in whole_word_offsets(&masked, "extern") {
+        let rest = masked[offset + 6..].trim_start();
+        if let Some(rest) = rest.strip_prefix("crate")
+            && rest.starts_with(|c: char| c.is_whitespace())
+        {
+            roots.extend(ident(rest));
+        }
     }
 }
 
@@ -5662,6 +5663,21 @@ enum CallShape<'a> {
 /// gets no `.await` credit, and its bare call (a future) does not compile.
 pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
     function_declaration_is_async(owner, index).unwrap_or(false)
+}
+
+/// Whether `owner` is a directly callable, always-available inherent
+/// associated fn of `ty` with no generic parameter spelled `ty`; unknown
+/// declarations are not authoritative.
+pub(in crate::analysis) fn inherent_factory_declaration_is_authoritative(
+    owner: &FunctionSummary,
+    ty: &str,
+    index: &RustIndex,
+) -> bool {
+    index
+        .source_syntax
+        .get(index, &owner.file)
+        .and_then(|snapshot| snapshot.inherent_factory_declaration_is_authoritative(owner, ty))
+        == Some(true)
 }
 
 /// Read the complete source declaration: indexed body slices start at `fn`
@@ -13421,6 +13437,7 @@ pub(super) fn imported_enum_variant_value(
     name: &str,
     enum_name: &str,
     test_file: &Path,
+    test_line: usize,
     index: &RustIndex,
 ) -> bool {
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
@@ -13479,7 +13496,10 @@ pub(super) fn imported_enum_variant_value(
         })
     };
     let mut admitted = 0usize;
-    for import in flattened_use_paths(&file.source) {
+    let Some(visible_imports) = imports_visible_at_line(&file.source, test_line) else {
+        return false;
+    };
+    for import in flattened_use_paths(&visible_imports) {
         let last = import.path.rsplit("::").next().unwrap_or("");
         let binds_name = last == name || import.alias.as_deref() == Some(name);
         if import.alias.is_none()
@@ -13510,6 +13530,43 @@ pub(super) fn imported_enum_variant_value(
                     .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
         })
     })
+}
+
+/// The `use` items whose enclosing module, file or block also contains line
+/// `line` (1-based) of `source`, joined one per line. An import in a sibling
+/// module or another function is not in scope for a test elsewhere in the
+/// file, so it can neither supply nor shadow a name there. `None` when the
+/// file does not parse or the line is not in it.
+fn imports_visible_at_line(source: &str, line: usize) -> Option<String> {
+    let parse = parse_clean_source_file(source)?;
+    // The end of the line, so a block opened on the test's own line (`fn t() {`)
+    // contains the point and its own `use` items count.
+    let at = source
+        .split_inclusive('\n')
+        .take(line.checked_sub(1)? + 1)
+        .map(str::len)
+        .sum::<usize>()
+        .checked_sub(1)?;
+    let at = ra_ap_syntax::TextSize::try_from(at).ok()?;
+    let imports: Vec<String> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .filter(|item| {
+            item.syntax()
+                .ancestors()
+                .skip(1)
+                .find(|node| {
+                    ast::ItemList::can_cast(node.kind())
+                        || ast::SourceFile::can_cast(node.kind())
+                        || ast::StmtList::can_cast(node.kind())
+                })
+                .is_some_and(|scope| scope.text_range().contains(at))
+        })
+        .map(|item| item.syntax().text().to_string())
+        .collect();
+    Some(imports.join("\n"))
 }
 
 /// The prelude's value-namespace names a unit struct could share.

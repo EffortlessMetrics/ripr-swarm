@@ -3742,6 +3742,22 @@ fn compact_impl_type_name(ty: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+/// The compact name of an annotation written as one unqualified path segment.
+/// `crate::foreign::Widget` keeps its module prefix out of `compact_impl_type_name`,
+/// so a qualified annotation is refused here rather than read as `Widget`
+/// (#8782 item 1).
+fn unqualified_annotation_type_name(ty: &str) -> Option<String> {
+    let head = ty.trim();
+    let head = head.strip_prefix('&').unwrap_or(head).trim();
+    let head = head.strip_prefix("mut ").unwrap_or(head).trim();
+    let head = head.strip_prefix("dyn ").unwrap_or(head).trim();
+    let head = head.split('<').next()?;
+    if head.contains("::") {
+        return None;
+    }
+    compact_impl_type_name(ty)
+}
+
 fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     if binding.is_empty() {
         return None;
@@ -3994,11 +4010,31 @@ fn factory_call_names_type(
     matches!(
         type_head(expr),
         Some((segments, Some(b'(')))
-            if matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && factory(ty, name) == FactoryReturn::OwnSync)
+            if matches!(segments.as_slice(), [ty, name] if *ty == impl_type && factory(ty, name) == FactoryReturn::OwnSync)
                 // A bare `helper()` is asked of the free-function lookup, which
                 // takes an empty type to mean "no impl block".
                 || matches!(segments.as_slice(), [name] if factory("", name) == FactoryReturn::OwnSync)
     )
+}
+
+/// Whether `name` is bound in `test_file` by a `use` that spells it (a final
+/// segment or an `as` alias) or by a `name:` parameter, either of which can
+/// stand in for the declared free fn at the call. Globs are not read: a glob
+/// cannot shadow the file's own item or a second glob without an ambiguity.
+fn free_fn_name_is_imported_or_parameter(index: &RustIndex, test_file: &Path, name: &str) -> bool {
+    index.files().get(test_file).is_none_or(|facts| {
+        let masked = mask_comments_and_strings(&facts.source);
+        super::owner_pin::whole_word_offsets(&masked, name)
+            .into_iter()
+            .any(|offset| {
+                let after = masked[offset + name.len()..].trim_start();
+                let parameter = after.starts_with(':') && !after.starts_with("::");
+                let import = super::owner_pin::whole_word_offsets(&masked[..offset], "use")
+                    .last()
+                    .is_some_and(|keyword| !masked[*keyword..offset].contains(';'));
+                parameter || import
+            })
+    })
 }
 
 /// A bare `name()` call in `test_file` is a synchronous free helper that
@@ -4032,7 +4068,7 @@ fn free_fn_returns_type(
                     .any(|offset| masked[..offset].trim_end().ends_with(keyword.trim_end()))
             })
     });
-    if shadowed {
+    if shadowed || free_fn_name_is_imported_or_parameter(index, test_file, name) {
         return FactoryReturn::Other;
     }
     if super::owner_pin::function_declaration_is_async(function, index) != Some(false) {
@@ -4074,6 +4110,9 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> Fa
     // unknown declaration fails closed too.
     if super::owner_pin::function_declaration_is_async(function, index) != Some(false) {
         return FactoryReturn::Future;
+    }
+    if !super::owner_pin::inherent_factory_declaration_is_authoritative(function, ty, index) {
+        return FactoryReturn::Other;
     }
     let masked = mask_comments_and_strings(&function.body);
     let Some(signature) = masked.split('{').next() else {
@@ -4679,7 +4718,13 @@ fn inherent_receiver_call_resolves_with(
     };
     let unit_variant = |name: &str| {
         index.is_some_and(|index| {
-            super::owner_pin::imported_enum_variant_value(name, impl_type, &test.file, index)
+            super::owner_pin::imported_enum_variant_value(
+                name,
+                impl_type,
+                &test.file,
+                test.start_line,
+                index,
+            )
         })
     };
     let factory = |ty: &str, name: &str| {
@@ -5109,8 +5154,10 @@ fn visible_receiver_binding_names_type(
                     return false;
                 }
                 if let Some(annotation) = binding.ty() {
-                    return compact_impl_type_name(&annotation.syntax().text().to_string())
-                        .as_deref()
+                    return unqualified_annotation_type_name(
+                        &annotation.syntax().text().to_string(),
+                    )
+                    .as_deref()
                         == Some(impl_type);
                 }
                 return binding.initializer().is_some_and(|initializer| {
@@ -5143,7 +5190,7 @@ fn visible_receiver_binding_names_type(
                         let text = ty.syntax().text().to_string();
                         let text = text.trim().trim_start_matches('&').trim();
                         let text = text.strip_prefix("mut ").unwrap_or(text);
-                        compact_impl_type_name(text).as_deref() == Some(impl_type)
+                        unqualified_annotation_type_name(text).as_deref() == Some(impl_type)
                     });
             }
             // A bare type name is a value only for a verified unit struct

@@ -77,7 +77,7 @@ fn blocked_tests(
             finding
                 .related_tests
                 .iter()
-                .any(|row| row.name == test.name && row.file == test.file)
+                .any(|row| is_test(&row.name, &row.file, row.line, test))
                 && !is_ignored(test)
                 && assertions_over_owner_are_strong(test, owner)
                 && inherent_owner_call_resolves_if_macros_trusted(test, owner, index, pin_syntax)
@@ -92,6 +92,13 @@ fn blocked_tests(
             )
         })
         .collect()
+}
+
+/// Whether a related-test row names `test`. Name and file alone cannot tell
+/// two same-named tests in sibling modules apart, so the start line is part of
+/// the identity.
+fn is_test(name: &str, file: &std::path::Path, line: usize, test: &TestSummary) -> bool {
+    name == test.name && file == test.file && line == test.start_line
 }
 
 /// Whether the oracle is not what keeps this test from catching the change: at
@@ -175,4 +182,30 @@ pub(in crate::analysis) fn withhold_receiver_unestablished_gap(
     );
     withhold_gap(finding, LIMIT, FIRST_UNRESOLVED_EDGE, next_step, &[judged]);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_test;
+    use crate::analysis::rust_index::summarize_file;
+    use std::path::PathBuf;
+
+    /// Two same-named tests in sibling modules share name and file; only the
+    /// start line says which one a related-test row is.
+    #[test]
+    fn a_related_row_names_one_of_two_same_named_tests_by_its_start_line() -> Result<(), String> {
+        let file = PathBuf::from("src/lib.rs");
+        let source =
+            "mod first {\n#[test] fn checks() {}\n}\nmod second {\n#[test] fn checks() {}\n}\n";
+        let facts = summarize_file(file.clone(), source.to_string());
+        let [first, second] = facts.tests.as_slice() else {
+            return Err(format!("premise: two tests, got {}", facts.tests.len()));
+        };
+        assert_eq!(first.name, second.name);
+        assert_ne!(first.start_line, second.start_line);
+        assert!(is_test("checks", &file, first.start_line, first));
+        assert!(!is_test("checks", &file, first.start_line, second));
+        assert!(!is_test("checks", &file, second.start_line, first));
+        Ok(())
+    }
 }

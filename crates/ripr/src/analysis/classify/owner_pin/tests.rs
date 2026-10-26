@@ -12967,3 +12967,37 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }
+
+/// A `use` is in scope for a test only when its module, file or block also
+/// contains the test: a sibling module's glob supplies and shadows nothing.
+#[test]
+fn imports_visible_at_a_line_exclude_sibling_modules_and_other_blocks() -> Result<(), String> {
+    let source = "use a::Root;\nmod unrelated {\n    use crate::E::*;\n}\nmod tests {\n    use b::Own;\n    #[test] fn checks() {\n        use c::Inner;\n    }\n    fn other() {\n        use d::Elsewhere;\n    }\n}\n";
+    let visible = imports_visible_at_line(source, 7).ok_or("parse")?;
+    assert!(
+        visible.contains("a::Root") && visible.contains("b::Own"),
+        "{visible}"
+    );
+    assert!(visible.contains("c::Inner"), "{visible}");
+    assert!(!visible.contains("crate::E"), "{visible}");
+    assert!(!visible.contains("d::Elsewhere"), "{visible}");
+    Ok(())
+}
+
+/// The crate roots a file imports are read through any whitespace or comment
+/// between the keyword and the path, so a spelling cannot hide a glob import.
+#[test]
+fn imported_crate_roots_read_through_whitespace_and_comments() {
+    for source in [
+        "use mac::*;",
+        "use\tmac::*;",
+        "use\nmac::*;",
+        "use/* note */mac::*;",
+        "use /* note */ mac::*;",
+        "extern\ncrate\nmac;",
+    ] {
+        let mut roots = BTreeSet::new();
+        imported_crate_roots(source, &mut roots);
+        assert!(roots.contains("mac"), "{source:?}: {roots:?}");
+    }
+}

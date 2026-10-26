@@ -326,11 +326,11 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "serde-derive-rename-field-upper"
-reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. It read a false gap before the rule."
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
 
 [[entry]]
 case = "serde-derive-rename-variant-lower"
-reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. It read a false gap before the rule."
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
 
 [[entry]]
 case = "serde-format-u8-hundreds"

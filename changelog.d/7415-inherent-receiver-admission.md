@@ -1,8 +1,10 @@
 <!-- section: Fixed -->
 - Unique indexed inherent method names no longer grant direct test-call
   attribution without bounded receiver evidence. Diff and repository reports
-  refuse comment-only, expired-binding and assertion-operand item-shadow
-  evidence, calls inside dormant nested functions, closures and async bodies, and
-  foreign inherent helper receivers, while preserving actual enum receivers,
-  declared nominal parameter types and public-library calls. Corpus snapshots
+  require the receiver to be established as the owner's type: a qualified
+  annotation or factory path, a bare factory shadowed by an import, an enum
+  variant imported only in a sibling module, and an inherent factory that is
+  const-local, cfg-gated or generic over the owner's spelling no longer earn
+  direct attribution. The broader refusal and preservation cases are pinned by
+  follow-up hardening tests (#8004). Corpus snapshots
   retain the false actionable cost of unsupported factory flow (#7415, #8004).
