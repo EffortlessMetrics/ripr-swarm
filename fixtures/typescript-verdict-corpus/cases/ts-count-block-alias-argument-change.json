@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The recorded argument distinguishes the edit; a count remains one in both executions.",
+  "reasoning": "The recorded argument distinguishes wrong arguments from the intended behavior; a block-local count remains one for the original, equivalent rewrite and wrong argument.",
   "labeling_observation": {
     "ripr_commit": "56f5ab8bb0b7654545acec888c49e8e35eced6aa",
     "full_checkout_verdict": "credited",

@@ -16,7 +16,7 @@ Run `cargo xtask fixtures typescript_mock_count_block_alias`.
 Runtime truth was executed with Node v24.19.0 using
 `node --experimental-strip-types --test test/notify.test.ts` from `input/`.
 The original, equivalent rewrite and wrong `id + 1` argument all pass the
-count. The same-block recorded-argument pin passes both equivalent versions
+count. The same-block `assert.equal(calls[0].arguments[0], 8)` pin passes both equivalent versions
 and fails the wrong argument at actual 5 versus expected 8. Both use real
 Node built-in test/mock/assert; this is separate from static exposure.
 
