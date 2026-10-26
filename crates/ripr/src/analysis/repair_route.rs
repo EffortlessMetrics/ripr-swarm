@@ -223,11 +223,27 @@ fn incomplete_stage_evidence(class: SeamGripClass) -> &'static str {
     }
 }
 
+/// The missing/required-evidence string for a discriminator kind. The one
+/// producer of this format; human refusal text that needs to recognise a kind
+/// goes through [`is_boundary_value_discriminator_evidence`] instead of parsing
+/// the string itself.
+pub(crate) fn producer_discriminator_evidence(kind: &str) -> String {
+    format!("{PRODUCER_DISCRIMINATOR_EVIDENCE}: {kind}")
+}
+
+/// Whether a readiness evidence item names the boundary-value discriminator.
+pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
+    item == producer_discriminator_evidence(
+        RequiredDiscriminator::BoundaryValue {
+            description: String::new(),
+        }
+        .as_str(),
+    )
+}
+
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
-    let discriminator_evidence = format!(
-        "{PRODUCER_DISCRIMINATOR_EVIDENCE}: {}",
-        seam.required_discriminator().as_str()
-    );
+    let discriminator_evidence =
+        producer_discriminator_evidence(seam.required_discriminator().as_str());
     let required = vec![
         discriminator_evidence.clone(),
         SAFE_TEST_TARGET_EVIDENCE.to_string(),

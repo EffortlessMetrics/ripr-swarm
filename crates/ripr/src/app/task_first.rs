@@ -227,6 +227,13 @@ fn repair_refusal(
         .map(|reason| (RefusalKind::Other, reason))
 }
 
+/// Whether a readiness missing-evidence item is the boundary-value
+/// discriminator the producer could not find. Recognised through the
+/// producer's own format (`analysis/repair_route.rs`), not by parsing text here.
+pub(super) fn is_boundary_value_discriminator(item: &str) -> bool {
+    crate::analysis::repair_route::is_boundary_value_discriminator_evidence(item)
+}
+
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     // Sentence-style labels: these render directly in "none repair-eligible
     // (...)" lists and refusal notes, so an internal-enum spelling reads as a
@@ -972,6 +979,9 @@ pub(crate) fn check_repair_route(
             reason,
             kind,
             missing,
+            // #10622: a related test already reaching the boundary input
+            // makes the weak oracle, not the input, the remaining work.
+            boundary_input_observed: finding.boundary_input_observed_with_weak_oracle(),
         });
     }
     if static_limited {

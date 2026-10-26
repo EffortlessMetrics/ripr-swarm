@@ -183,6 +183,11 @@ impl StageEvidence {
     }
 }
 
+/// The infection summary the predicate classifier emits when a related test
+/// input sits at the changed boundary (#10622 reads it to word guidance).
+pub(crate) const BOUNDARY_INPUT_OBSERVED_SUMMARY: &str =
+    "Detected related test input at the changed boundary";
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RevealEvidence {
     pub observe: StageEvidence,
