@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn private_method_variants_keep_unknown_reach_and_honest_public_output() -> Result<(), String> {
+fn private_method_variants_keep_unknown_reach() -> Result<(), String> {
     let test = "import { Ledger } from '../src/ledger';\ntest('entry', () => { const ledger = new Ledger(); expect(ledger.entry(60)).toBe(55); });\n";
     let masked = "test('text only', () => { const text = 'ledger.#adjust(60)'; /* ledger.#adjust(60) */ expect(text).toBe('ledger.#adjust(60)'); });\n";
     for (key, modifier) in [("#adjust", ""), ("#adjust", "static "), ("#调整", "")] {
@@ -46,33 +46,6 @@ fn private_method_variants_keep_unknown_reach_and_honest_public_output() -> Resu
                     .iter()
                     .any(|line| line == &format!("owner: {key}"))
             );
-            let rendered = crate::output::human::render_finding(finding);
-            assert!(
-                rendered.contains("could not establish whether a test reaches"),
-                "{rendered}"
-            );
-            assert!(
-                !rendered.contains("a candidate test path exists"),
-                "{rendered}"
-            );
-            assert!(
-                !rendered.contains("related-test link is heuristic-only"),
-                "{rendered}"
-            );
-            let actionability =
-                crate::output::preview_actionability::preview_actionability_for(finding)
-                    .ok_or_else(|| "private finding lacks actionability".to_string())?;
-            assert!(!actionability.repair_packet_ready);
-            assert!(actionability.why_not_actionable.contains("private member"));
-            let card = crate::output::typescript_preview_card::typescript_preview_card(finding)
-                .ok_or_else(|| "private finding lacks preview card".to_string())?;
-            let json =
-                crate::output::typescript_preview_card::typescript_preview_card_json_value(&card);
-            assert_eq!(json["owner"], key);
-            assert_eq!(json["repair_packet_ready"], false);
-            assert_eq!(json["related_test"], serde_json::Value::Null);
-            assert!(!card.suggested_assertion_shape.starts_with("Add "));
-            assert!(card.suggested_assertion_shape.contains("reach"));
             if label == "public" {
                 let entry_line = src
                     .lines()
@@ -268,7 +241,6 @@ fn private_method_replacement_and_removed_body_keep_unknown_reach() -> Result<()
         crate::domain::SourceCurrentness::BaseDeleted
     );
     assert!(finding.related_tests.is_empty());
-    assert!(crate::output::typescript_preview_card::typescript_preview_card(finding).is_none());
     Ok(())
 }
 
