@@ -360,9 +360,11 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
     for required in [
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
-        "[ \"$status\" = 0 ] && [ \"$tests\" -ge 1 ]",
-        "[ \"$dup\" -eq 0 ] && [ \"$missing\" -eq 0 ] && [ \"$extra\" -eq 0 ] && [ \"$fail\" -eq 0 ]",
-        "the full workspace test list is missing",
+        "cargo xtask verify-test-shards \\\n",
+        "            --shards 4 \\\n",
+        "            --sha \"$(git rev-parse HEAD)\" \\\n",
+        "            --run-id \"$GITHUB_RUN_ID\" \\\n",
+        "name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}\n          path: |\n            target/nextest/ci/junit.xml\n            target/nextest/ci/run-context.txt\n",
     ] {
         if !shards.contains(required) {
             findings.push(format!("shards: verify lost `{required}`"));
@@ -432,7 +434,9 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
         ),
         ("fail-fast: false", "continue-on-error: true"),
         ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
-        ("[ \"$dup\" -eq 0 ] &&", "true &&"),
+        ("cargo xtask verify-test-shards", "true"),
+        ("            --shards 4 \\\n", "            --shards 3 \\\n"),
+        ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (
             "    if: ${{ !cancelled() }}\n    runs-on",
             "    if: success()\n    runs-on",

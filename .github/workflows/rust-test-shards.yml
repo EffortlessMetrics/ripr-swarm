@@ -128,60 +128,56 @@ jobs:
     needs: rust-test-shard
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+
+      # Restore only: the shard jobs own the cache, and a warm xtask build keeps the
+      # verifier off the clock.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ripr-swarm-rust-shards-${{ runner.os }}
+          save-if: false
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: ${{ inputs.artifact-name }}-nextest-shard-*-${{ github.run_attempt }}
           path: shards
 
-      # Fails unless all four shards reported, every shard exited zero with a JUnit
-      # report naming at least one test, and the partition lists are a disjoint
-      # cover of the workspace list. Summed JUnit counts alone would pass equal-sized
-      # omissions and duplicates, so the lists are compared by name.
+      # `verify-test-shards` accepts the shards only as conservation of the one
+      # unpartitioned run: each shard's status, run context (repository, checkout,
+      # run, attempt, profile, partition, exit) and JUnit report (complete, no
+      # failures, testcases equal to its partition list) must be current and green,
+      # and the partition lists must be a disjoint cover of the workspace list. It
+      # writes the combined junit.xml and run-context.txt the unpartitioned step
+      # retains, so consumers of `<artifact>-nextest-<attempt>` read the same files.
       - name: Check the shards are a complete, disjoint, green cover
         run: |
-          fail=0
-          : > union.txt
-          total_tests=0
-          for n in 1 2 3 4; do
-            dir="shards/${{ inputs.artifact-name }}-nextest-shard-$n-${{ github.run_attempt }}"
-            # upload-artifact roots the archive at the paths' common ancestor, which
-            # moves with the optional report files, so find each file by name.
-            f_status="$(find "$dir" -name "shard-$n.status" 2> /dev/null | head -n 1)"
-            f_junit="$(find "$dir" -name junit.xml 2> /dev/null | head -n 1)"
-            f_list="$(find "$dir" -name "list-$n.txt" 2> /dev/null | head -n 1)"
-            status="$([ -n "$f_status" ] && cat "$f_status" || echo missing)"
-            tests="$([ -n "$f_junit" ] && grep -Eo '<testsuites [^>]*tests="[0-9]+"' "$f_junit" | grep -Eo 'tests="[0-9]+"' | grep -Eo '[0-9]+' || echo 0)"
-            listed="$([ -n "$f_list" ] && wc -l < "$f_list" || echo 0)"
-            echo "shard $n: nextest exit $status, junit tests $tests, listed $listed" | tee -a "$GITHUB_STEP_SUMMARY"
-            [ "$status" = 0 ] && [ "$tests" -ge 1 ] || { echo "::error::shard $n did not pass with a JUnit report naming a test (exit $status, tests $tests)"; fail=1; }
-            [ -n "$f_list" ] && cat "$f_list" >> union.txt
-            total_tests=$((total_tests + tests))
-          done
-          all="$(find "shards/${{ inputs.artifact-name }}-nextest-shard-1-${{ github.run_attempt }}" -name list-all.txt 2> /dev/null | head -n 1)"
-          [ -n "$all" ] && [ -s "$all" ] || { echo "::error::the full workspace test list is missing"; exit 1; }
-          sort union.txt > union-sorted.txt
-          dup="$(uniq -d union-sorted.txt | wc -l)"
-          uniq union-sorted.txt > union-unique.txt
-          missing="$(comm -13 union-unique.txt "$all" | wc -l)"
-          extra="$(comm -23 union-unique.txt "$all" | wc -l)"
-          total="$(wc -l < "$all")"
-          {
-            echo "### Shard cover"
-            echo "workspace tests listed: $total"
-            echo "junit tests across shards: $total_tests"
-            echo "duplicated across shards: $dup"
-            echo "missing from shards: $missing"
-            echo "not in workspace list: $extra"
-          } | tee -a "$GITHUB_STEP_SUMMARY" shards-summary.txt
-          [ "$dup" -eq 0 ] && [ "$missing" -eq 0 ] && [ "$extra" -eq 0 ] && [ "$fail" -eq 0 ]
+          cargo xtask verify-test-shards \
+            --dir shards \
+            --artifact "${{ inputs.artifact-name }}" \
+            --attempt "${{ github.run_attempt }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID" \
+            --shards 4 \
+            --out target/nextest/ci
+          cat target/nextest/ci/shards-summary.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload shard summary
+      - name: Upload combined test results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
-          path: shards-summary.txt
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/run-context.txt
+            target/nextest/ci/shards-summary.txt
           if-no-files-found: warn
           retention-days: 5
