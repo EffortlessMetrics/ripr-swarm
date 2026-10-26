@@ -408,7 +408,9 @@ This order is the existing behavior and is normative:
   `example` decorator and no strong assertion;
 - L8: `unresolved_pytest_fixture`: every eligible candidate is a
   pytest test that calls the owner and uses a non-auxiliary fixture in its
-  body. A direct `@pytest.mark.parametrize` argname is a value pytest
+  body. The body starts after the colon that ends the test's signature, so
+  a multi-line signature's parameter lines are not uses and a one-line body
+  on the `def` line is (#10685). A direct `@pytest.mark.parametrize` argname is a value pytest
   supplies, not a fixture; a parametrize mark does not resolve the test's
   other fixtures, and an `indirect=` argname is a fixture (#9619). A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
