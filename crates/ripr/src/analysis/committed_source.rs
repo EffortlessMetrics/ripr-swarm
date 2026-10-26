@@ -815,7 +815,7 @@ fn parse_ls_tree_z(bytes: &[u8]) -> Result<Vec<(String, LsTreeEntry)>, String> {
 fn utf8_path(bytes: &[u8]) -> Result<String, String> {
     String::from_utf8(bytes.to_vec()).map_err(|_utf8_error| {
         format!(
-            "committed-source probe: tracked path `{}` is not valid UTF-8; refusing a lossy committed-content lookup",
+            "committed-source probe: tracked path `{}` is not valid UTF-8; refusing a lossy committed-content lookup. Rename the file to a UTF-8 name (`git mv`), then re-run",
             String::from_utf8_lossy(bytes)
         )
     })

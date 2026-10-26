@@ -419,6 +419,39 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
     Ok(())
 }
 
+/// A tracked path that is not valid UTF-8 is refused rather than looked up
+/// lossily, and the refusal names the rename that repairs it (#10568).
+#[cfg(unix)]
+#[test]
+fn non_utf8_tracked_path_refusal_names_the_rename_repair() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("nonutf8-path")?;
+    let root = scratch.path.join("r");
+    let name = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
+    repo(&root, |root| {
+        change_lib(root)?;
+        fs::write(
+            root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs")),
+            b"pub fn z() {}\n",
+        )
+        .map_err(|e| format!("write failed: {e}"))
+    })?;
+    // An uncommitted edit to the tracked file makes `git status` list it.
+    fs::write(&name, b"pub fn z() { let _ = 1; }\n").map_err(|e| format!("write failed: {e}"))?;
+    let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&ran, "non-utf8 tracked path")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for needle in ["is not valid UTF-8", "`git mv`"] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn non_utf8_source_is_limited_not_clean() -> Result<(), String> {
