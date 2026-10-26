@@ -17628,6 +17628,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::numeric_literals_skip_identifier_digits_and_cap_the_count",
 ]
 fixtures = [
+  "fixtures/typescript_call_removal_throwing_method",
+  "fixtures/typescript_call_removal_absent_method",
+  "fixtures/typescript_call_removal_unbound_argument",
+  "fixtures/typescript_call_removal_multiple_calls",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",
@@ -17641,6 +17645,8 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",
   "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",
