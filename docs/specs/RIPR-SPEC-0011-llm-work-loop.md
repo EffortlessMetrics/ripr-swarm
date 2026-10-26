@@ -45,6 +45,17 @@ The status report should:
   snapshot or `agent receipt` is older than `agent verify`;
 - keep all language advisory and static.
 
+`--out` names the directory status reads, and only the default workflow
+directory is accepted: spellings that are lexically equivalent to
+`target/ripr/workflow` (for example `./target/ripr/workflow`, a trailing
+slash, or a `..` that pops only real directories) run exactly like the default
+spelling, while any genuinely different directory is refused with exit 2 and
+`agent status --out <dir> is not supported` on stderr instead of being
+silently ignored (#10542). Lexical equivalence is not trusted when a `..`
+follows a symlink: the filesystem resolves `..` after the symlink target, so
+such a spelling is refused even when lexical cleaning would make it match
+(#10624 review).
+
 General inventory continuation and missing-artifact commands bind the selected
 root from its native filesystem spelling. UTF-8 Unix directory names containing
 a literal backslash must select that directory when pasted from another working
@@ -171,6 +182,22 @@ by a valid repeated flag, exit 2 with empty stdout and the refusal on stderr
 before configuration loading or repair/store writes. A missing value retains
 its missing-value refusal. Canonical phase meanings and the existing `--help`
 short circuit remain unchanged.
+
+### Repeated value flags refuse (#10542)
+
+Every `ripr agent` value flag is single-use. A second occurrence of the same
+value flag is a usage error, refused with exit 2, empty stdout, and
+`<command> takes <flag> once` on stderr before any artifact or state write.
+For example, `ripr agent brief --seam-id s --max-seams 1 --max-seams 10`
+refuses with `agent brief takes --max-seams once` instead of silently keeping
+the last cap, and `ripr agent verify --before a --before b --after c --json`
+refuses with `agent verify takes --before once` instead of comparing `b`
+against itself. Two deliberate exceptions keep their family contracts:
+`--root` stays last-win everywhere, including the pattern-setting parsers, so
+scripted double-root invocations keep working; and `agent receipt --command`
+stays a repeatable accumulator. An empty `agent verify --gap-id` is refused at
+the parser with the same exit-2 usage-error shape, naming the empty flag
+instead of flowing the empty id into the artifact layer.
 
 ## JSON Shape
 

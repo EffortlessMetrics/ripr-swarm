@@ -70,6 +70,192 @@ fn registration_bindings_keep_imported_and_global_controls() -> Result<(), Strin
     Ok(())
 }
 
+/// #10477: a registration picked off a whole-module `require()` namespace
+/// relates like the destructured form, across declarations.
+#[test]
+fn registration_picked_off_a_require_namespace_is_a_known_runner() -> Result<(), String> {
+    for prelude in [
+        "const runner = require('node:test'); const test = runner.test;",
+        "const runner = require('node:test'); const { test } = runner;",
+        "const runner = require('node:test'), test = runner.test;",
+        "const runner = require('node:test'); const { describe, test } = runner;",
+    ] {
+        let source = format!("{prelude}\n{TEST}");
+        let finding = registration_finding("registration-namespace-pick", &source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+    }
+    Ok(())
+}
+
+/// #10477: the namespace may be spelled like the export it picks, and the
+/// registration then goes through the renamed local only.
+#[test]
+fn a_namespace_spelled_like_its_picked_export_still_registers_the_renamed_local()
+-> Result<(), String> {
+    let source = format!(
+        "const test = require('node:test'); const {{ test: it }} = test;\n{}",
+        TEST.replacen("test(", "it(", 1)
+    );
+    let finding = registration_finding("registration-namespace-keyname", &source)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+    assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+    Ok(())
+}
+
+/// #10477 negatives: a non-runner module, a namespace that is written, escaped
+/// or rebound, and a `let` namespace never make the picked local a runner.
+#[test]
+fn registration_picked_off_an_unproven_require_namespace_stays_unrelated() -> Result<(), String> {
+    for prelude in [
+        "const helpers = require('./helpers'); const test = helpers.test;",
+        "const runner = require('node:test'); const test = runner.test; runner.test = () => {};",
+        "const runner = require('node:test'), test = runner.test; runner.test = () => {};",
+        "const runner = require('node:test'); const test = runner.test; globalThis.r = runner;",
+        "let runner = require('node:test'); const test = runner.test; runner = {};",
+        "const runner = require('node:test'); const runner2 = runner; const test = runner2.test;",
+        "const runner = require('node:test'); const test = runner?.test;",
+        "const runner = require('node:test'); const { test = () => {} } = runner;",
+        // `.default` is not a native CommonJS export (rule 22): no pick, any spelling.
+        "const runner = require('node:test'); const test = runner.default;",
+        "const runner = require('node:test'); const { default: test } = runner;",
+        "const runner = require('node:test'); const test = runner['default'];",
+        "const runner = require('node:test'); const { 'default': test } = runner;",
+        "const runner = require('node:test'); const { ['default']: test } = runner;",
+        // Nested patterns and members that are not runner exports.
+        "const runner = require('node:test'); const { a: { test } } = runner;",
+        "const runner = require('node:test'); const test = runner.mock;",
+        "const runner = require('node:test'); const test = runner.test.skip;",
+        // Guards the shared extractor also applies: delete, assign, define, call through.
+        "const runner = require('node:test'); const test = runner.test; delete runner.test;",
+        "const runner = require('node:test'); const test = runner.test; Object.assign(runner, {});",
+        "const runner = require('node:test'); const test = runner.test; Object.defineProperty(runner, 'test', {});",
+        "const runner = require('node:test'); const test = runner.test; runner.mock.reset();",
+        "const runner = require('node:test'); const test = runner.test; runner.test.bind(runner);",
+        // Only a `const` pick of a `const` namespace, declared in order, counts.
+        "const runner = require('node:test'); var test = runner.test;",
+        "const runner = require('node:test'); let test = runner.test;",
+        "const test = runner.test; const runner = require('node:test');",
+        "const runner = require('node:test'); const test = runner.test; function swap() { test = () => {}; }",
+        "const runner = require('node:test'); const test = runner.test; ({ test } = { test: () => {} });",
+        "const runner = require('node:test'); const test = runner.test; for (test of []) {}",
+        // The namespace is used in a way the text scan cannot bound.
+        "const runner = require('node:test'); const test = runner.test; runner`x`;",
+        "const runner = require('node:test'); const test = runner.test; `${runner}`;",
+        "const runner = require('node:test'); const test = runner.test; \\u0072unner.mock = () => {};",
+        "const runner = require('node:test'); const test = runner.test; void typeof runner;",
+        "const runner = require('node:test'); const test = runner.test; eval('runner.mock = 1');",
+        "import runner from 'node:test'; const test = runner.test;",
+        // A forward pick reads the namespace in its dead zone.
+        "const early = runner.test; const runner = require('node:test'); const test = runner.test;",
+        "const early = runner.test; const runner = require('node:test'), test = runner.test;",
+        // Every write to the picked local, wrapped or not, withdraws the pick.
+        "const runner = require('node:test'); const test = runner.test; (test) = () => {};",
+        "const runner = require('node:test'); const test = runner.test; (test as any) = () => {};",
+        "const runner = require('node:test'); const test = runner.test; [test] = [() => {}];",
+        "const runner = require('node:test'); const test = runner.test; ({ a: test } = { a: () => {} });",
+        "const runner = require('node:test'); const test = runner.test; test++;",
+        "const runner = require('node:test'); const test = runner.test; test += 1;",
+        "const runner = require('node:test'); const test = runner.test; for (test of []) {}",
+        // Replacing, deleting or escaping the picked local's members or value.
+        "const runner = require('node:test'); const test = runner.test; test.only = () => {};",
+        "const runner = require('node:test'); const test = runner.test; test.x = 1;",
+        "const runner = require('node:test'); const test = runner.test; delete test.only;",
+        "const runner = require('node:test'); const test = runner.test; Object.assign(test, {});",
+        "const runner = require('node:test'); const test = runner.test; const copy = test;",
+    ] {
+        let source = format!("{prelude}\n{TEST}");
+        assert_eq!(
+            registration_finding("registration-namespace-negative", &source)?.class,
+            ExposureClass::NoStaticPath,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+/// #10477: a registration that runs before the pick declares its local reads a
+/// dead binding, so it earns nothing; a modifier call after the pick still does.
+#[test]
+fn a_namespace_pick_registers_only_calls_after_its_declaration() -> Result<(), String> {
+    let before = format!("const runner = require('node:test');\n{TEST}\nconst test = runner.test;");
+    assert_eq!(
+        registration_finding("registration-namespace-order", &before)?.class,
+        ExposureClass::NoStaticPath,
+        "{before}"
+    );
+    let modifier = format!(
+        "const runner = require('node:test'); const test = runner.test;\n{}",
+        TEST.replacen("test(", "test.only(", 1)
+    );
+    let finding = registration_finding("registration-namespace-modifier", &modifier)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{modifier}");
+    assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+    Ok(())
+}
+
+/// #10477: renaming an inactive runner member into an active-looking local
+/// must not register (`xit`, `xdescribe`): the extraction guards read the local
+/// spelling, so the pick refuses inactive members. Each pair keeps the active
+/// twin credited.
+#[test]
+fn a_namespace_pick_never_renames_an_inactive_runner_member() -> Result<(), String> {
+    let suite = "describe('pending', () => { test('adds', () => { expect(sumAll([2, 3, 4])).toBe(9); }); });";
+    for (inactive, active, body) in [
+        (
+            "const runner = require('mocha'); const test = runner.xit;",
+            "const runner = require('mocha'); const test = runner.it;",
+            TEST,
+        ),
+        (
+            "const runner = require('mocha'); const { xit: test } = runner;",
+            "const runner = require('mocha'); const { it: test } = runner;",
+            TEST,
+        ),
+        (
+            "const runner = require('mocha'), test = runner.xit;",
+            "const runner = require('mocha'), test = runner.it;",
+            TEST,
+        ),
+        (
+            "const runner = require('mocha'); const describe = runner.xdescribe; const test = runner.it;",
+            "const runner = require('mocha'); const describe = runner.describe; const test = runner.it;",
+            suite,
+        ),
+        (
+            "const runner = require('mocha'); const { xdescribe: describe, it: test } = runner;",
+            "const runner = require('mocha'); const { describe, it: test } = runner;",
+            suite,
+        ),
+    ] {
+        let inactive_source = format!("{inactive}\n{body}");
+        let tests = extract_tests(
+            Path::new("tests/sum.test.ts"),
+            &format!("{IMPORT}{inactive_source}"),
+        );
+        assert!(tests.is_empty(), "{inactive_source}: {tests:?}");
+        assert_eq!(
+            registration_finding("registration-namespace-inactive", &inactive_source)?.class,
+            ExposureClass::NoStaticPath,
+            "{inactive_source}"
+        );
+        let active_source = format!("{active}\n{body}");
+        let finding = registration_finding("registration-namespace-active", &active_source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{active_source}");
+        assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+    }
+    // A file with an inactive and an active registration keeps only the active one.
+    let mixed = format!(
+        "const runner = require('mocha'); const test = runner.it; const skipped = runner.xit;\n{TEST}\n{}",
+        TEST.replacen("test(", "skipped(", 1)
+    );
+    let finding = registration_finding("registration-namespace-mixed", &mixed)?;
+    assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+    Ok(())
+}
+
 #[test]
 fn registration_bindings_reject_local_noop_callbacks() -> Result<(), String> {
     for source in [

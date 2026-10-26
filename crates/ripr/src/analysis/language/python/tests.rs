@@ -4552,6 +4552,10 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 file: PathBuf::from("tests/conftest.py"),
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
+                literal_construction: None,
+                literal_params: None,
+                isolated: false,
+                scope_imports: Vec::new(),
             });
         }
         tests
@@ -6254,6 +6258,62 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
             declared.changed_files
         ));
     }
+    Ok(())
+}
+
+/// #10461: a changed file that sorts past the workspace cap is still read and
+/// classified; the cap refuses only unchanged context, and says so.
+#[test]
+fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-keeps-changed");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
+    write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
+    write_repo_file(
+        &root.join("zz_changed.py"),
+        "def price(amount):\n    return amount + 1\n",
+    )?;
+    let options = repo_options(&root);
+    let limits = PythonDiffWalkLimits {
+        max_workspace_files: 1,
+        ..generous_walk_limits()
+    };
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("zz_changed.py"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return amount + 1".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &changed_files, limits)?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|finding| finding.probe.location.file == Path::new("zz_changed.py")),
+        "the changed file past the cap must still be classified, got {:?}",
+        result.findings
+    );
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly the count-cap disclosure is expected, got {:?}",
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+    assert_eq!(
+        limitation.affected_items,
+        Some(2),
+        "both unchanged files are refused because the changed file takes the only slot"
+    );
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("changed .py files are kept past this cap"),
+        "disclosure must say changed files were kept: {detail}"
+    );
     Ok(())
 }
 

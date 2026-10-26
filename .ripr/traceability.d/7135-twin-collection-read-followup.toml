@@ -1,0 +1,10 @@
+# Registers the remaining twin collection read controls (#7135, #10657) under RIPR-SPEC-0228.
+[[extend]]
+id = "RIPR-SPEC-0228"
+tests = [
+  "crates/ripr/tests/collection_read_non_discriminating.rs::argument_sensitive_twin_comparison_keeps_credit",
+  "crates/ripr/tests/collection_read_non_discriminating.rs::seeded_conditional_owner_twin_keeps_credit_for_any_spelling",
+  "crates/ripr/tests/collection_read_non_discriminating.rs::sibling_field_write_through_mut_borrow_keeps_credit",
+  "crates/ripr/tests/collection_read_non_discriminating.rs::local_collection_twins_never_credit_exposed",
+  "crates/ripr/tests/collection_read_non_discriminating.rs::twin_history_edges_getter_chain_guard_and_same_line",
+]
