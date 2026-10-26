@@ -1557,6 +1557,9 @@ pub(crate) fn write_apply_record_from(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    mod driver_image;
+
     /// The authority identity the retained-record fixture grants.
     const AUTHORITY_IDENTITY: &str = "test-operator";
 
@@ -1781,8 +1784,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn identical_record_inputs_serialize_identically() -> Result<(), String> {
+    fn sample_record() -> Result<Value, String> {
         // This is deterministic construction proof, not selection admission.
         // The packet bytes are a committed producer snapshot, not a digest
         // placeholder. Neither call creates or publishes a durable attempt.
@@ -1806,26 +1808,31 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
         };
-        let render = || {
-            render_record(
-                &root,
-                RecordIdentity {
-                    seam_id: "identical-seam",
-                    repository_head: &verified.head,
-                    phase: "prepare",
-                    durable_attempt_id: None,
-                    binding_artifact_sha256: None,
-                    verified: &verified,
-                    authority: AUTHORITY_IDENTITY,
-                    packet_sha256: &packet_sha256,
-                    before_snapshot_sha256: &before_snapshot_sha256,
-                    policy: &policy,
-                },
-                None,
-            )
-        };
-        let first = render()?;
-        let second = render()?;
+        render_record(
+            &root,
+            RecordIdentity {
+                seam_id: "identical-seam",
+                repository_head: &verified.head,
+                phase: "prepare",
+                durable_attempt_id: None,
+                binding_artifact_sha256: None,
+                verified: &verified,
+                authority: AUTHORITY_IDENTITY,
+                packet_sha256: &packet_sha256,
+                before_snapshot_sha256: &before_snapshot_sha256,
+                policy: &policy,
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn identical_record_inputs_serialize_identically() -> Result<(), String> {
+        let first = sample_record()?;
+        let second = sample_record()?;
+        let packet_sha256 = sha256_hex(include_bytes!(
+            "../../../../fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json"
+        ));
         if first
             .pointer("/input/packet_sha256")
             .and_then(Value::as_str)
