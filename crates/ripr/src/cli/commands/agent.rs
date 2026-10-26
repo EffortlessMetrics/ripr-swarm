@@ -1055,6 +1055,46 @@ fn run_agent_receipt_for_attempt(
     }
 }
 
+/// Whether lexical `..` resolution can disagree with the filesystem: true
+/// when a component that `lexically_clean` would pop is itself a symlink
+/// the kernel follows before the later `..` (or when a relative path keeps
+/// a leading `..` that cannot be checked at all). Callers that accepted a
+/// path on a lexical comparison must refuse in that case — the spelled path
+/// and the cleaned path can then name different real directories (#10624
+/// review).
+fn parent_dir_follows_symlink(path: &Path) -> bool {
+    let mut walked = PathBuf::new();
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if stack.pop().is_some() {
+                    // `walked` currently ends at the popped component, so it
+                    // is exactly the path the kernel would follow first.
+                    if crate::agent::loop_commands::is_symlink(&walked) {
+                        return true;
+                    }
+                    walked.pop();
+                } else if !is_absolute {
+                    // lexically_clean preserves a leading relative `..`;
+                    // there is nothing on disk to prove it against.
+                    return true;
+                }
+            }
+            std::path::Component::Normal(name) => {
+                walked.push(name);
+                stack.push(name.to_owned());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                walked.push(component.as_os_str())
+            }
+        }
+    }
+    false
+}
+
 /// Anchor a relative `agent receipt --out` at the resolved `--root` (issue
 /// #3967): the product renders `--out` relative next to an absolute
 /// `--root`, so resolving it at the paste-site process CWD wrote genuine
@@ -1088,13 +1128,29 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
     // commands. Passing the workflow directory there rendered
     // `--root ./target/ripr/workflow`, a command that cannot run (#3893).
     // A non-default `--out` is refused rather than silently ignored until
-    // the inspected paths can follow it.
+    // the inspected paths can follow it. The comparison is lexical, not raw
+    // `PathBuf` equality: `--out ./target/ripr/workflow` names exactly the
+    // accepted directory and must not fail on its `./` spelling (#10542).
     if let Some(dir) = &options.out_dir {
         let requested = resolve_agent_start_out_dir(&options.root, dir);
         let default_dir = options.root.join("target/ripr/workflow");
-        if requested != default_dir {
+        if crate::agent::loop_commands::lexically_clean(&requested)
+            != crate::agent::loop_commands::lexically_clean(&default_dir)
+        {
             return Err(format!(
                 "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
+                dir.display(),
+                default_dir.display()
+            ));
+        }
+        // Lexical equality is unsound when a `..` follows a symlink: the
+        // filesystem resolves `..` after the symlink target, not after the
+        // spelled component, so the accepted spelling can name a different
+        // real directory than the default (#10624 review). Refuse unless
+        // lexical resolution provably matches filesystem resolution.
+        if parent_dir_follows_symlink(&requested) {
+            return Err(format!(
+                "agent status --out {} is not supported: a symlink before `..` resolves to a different directory than its spelling; agent status reads the workflow artifacts under {}",
                 dir.display(),
                 default_dir.display()
             ));
