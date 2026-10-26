@@ -185,6 +185,30 @@ impl TypeScriptAdmissionContext {
                                 });
                             }
                         }
+                        // A member picked off a namespace declared in this same
+                        // statement is read by the extractor with that one
+                        // statement in view, so a later `runner.test = stub`
+                        // is invisible to it. The whole-program pass below
+                        // decides every namespace pick (#10477).
+                        let namespace_picked: Vec<String> = declaration
+                            .declarations
+                            .iter()
+                            .filter(|declarator| {
+                                declarator.init.as_ref().is_some_and(|init| {
+                                    match init.get_inner_expression() {
+                                        Expression::Identifier(_) => true,
+                                        Expression::StaticMemberExpression(member) => matches!(
+                                            member.object.get_inner_expression(),
+                                            Expression::Identifier(_)
+                                        ),
+                                        _ => false,
+                                    }
+                                })
+                            })
+                            .flat_map(|declarator| declarator.id.get_binding_identifiers())
+                            .map(|id| id.name.to_string())
+                            .collect();
+                        imports.retain(|import| !namespace_picked.contains(&import.local));
                         if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
                             let kept = unwritten_declarator_locals(declaration, scan.as_ref());
                             imports.retain(|import| kept.contains(&import.local));
@@ -607,7 +631,8 @@ fn verified_namespace_member_registrations(
         let [(declared_at, declared_id)] = declarations.as_slice() else {
             continue;
         };
-        let mut allowed = vec![declared_id.start as usize..declared_id.end as usize];
+        let mut allowed: Vec<std::ops::Range<usize>> = Vec::new();
+        allowed.push(declared_id.start as usize..declared_id.end as usize);
         // (member, local, declarator span) per qualifying pick.
         let mut picks: Vec<(String, String, oxc_span::Span)> = Vec::new();
         for statement in &program.body {
@@ -635,18 +660,22 @@ fn verified_namespace_member_registrations(
                     (
                         BindingPattern::BindingIdentifier(local),
                         Expression::StaticMemberExpression(member),
-                    ) if !member.optional && active_runner_member(member.property.name.as_str()) => {
+                    ) if !member.optional => {
                         let Expression::Identifier(receiver) = member.object.get_inner_expression()
                         else {
                             continue;
                         };
                         if receiver.name.as_str() == namespace.local {
+                            // A member read is a use of the namespace whatever the
+                            // member; only an active registration root is picked.
                             allowed.push(receiver.span.start as usize..receiver.span.end as usize);
-                            picks.push((
-                                member.property.name.to_string(),
-                                local.name.to_string(),
-                                declarator.span,
-                            ));
+                            if active_runner_member(member.property.name.as_str()) {
+                                picks.push((
+                                    member.property.name.to_string(),
+                                    local.name.to_string(),
+                                    declarator.span,
+                                ));
+                            }
                         }
                     }
                     (BindingPattern::ObjectPattern(pattern), Expression::Identifier(receiver))
@@ -661,22 +690,26 @@ fn verified_namespace_member_registrations(
                             ) = (&property.key, &property.value)
                             else {
                                 group.clear();
+                                key_spans.clear();
                                 break;
                             };
-                            if property.computed || !active_runner_member(key.name.as_str()) {
+                            if property.computed {
                                 group.clear();
+                                key_spans.clear();
                                 break;
                             }
-                            group.push((
-                                key.name.to_string(),
-                                local.name.to_string(),
-                                declarator.span,
-                            ));
+                            if active_runner_member(key.name.as_str()) {
+                                group.push((
+                                    key.name.to_string(),
+                                    local.name.to_string(),
+                                    declarator.span,
+                                ));
+                            }
                             // The key names an export; it is not a use of the
                             // namespace even when the namespace is spelled alike.
                             key_spans.push(key.span.start as usize..key.span.end as usize);
                         }
-                        if !group.is_empty() {
+                        if !key_spans.is_empty() {
                             allowed.push(receiver.span.start as usize..receiver.span.end as usize);
                             allowed.append(&mut key_spans);
                             picks.extend(group);

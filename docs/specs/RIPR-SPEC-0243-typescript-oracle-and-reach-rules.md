@@ -1176,6 +1176,19 @@ runner-source and shadowing gates of rule 5 still decide whether the resulting
 import is a known registration, so a non-runner module's `helpers.test` stays
 unrelated.
 
+The pick is conservative on purpose (#10477 review). `.default`, computed,
+nested, defaulted and rest picks are not read, and neither is a member that is
+not an active registration root: `runner.xit` or `{ xdescribe: describe }`
+renamed into an active-looking local would pass the local-spelling extraction
+guards, so inactive members never become a pick. The namespace must be declared
+once and every other use must be a pick declared after it (a forward pick, a
+direct call, an alias, an escape, a tagged or interpolated use, `delete`,
+`Object.assign`/`defineProperty` or a call through it refuses every pick). The
+picked local must be declared before any use, never written (wrapped targets,
+member assignment, update, compound and loop targets included) and only called,
+optionally through a member chain. A file that can reach a name without
+spelling it (`eval`, `with`, an identifier escape) reads nothing.
+
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
 from a module that the owner file imports (`TypeScriptOwner.imports`),
