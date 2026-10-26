@@ -21,5 +21,10 @@ flate2 = "1"
 tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
+[dev-dependencies]
+# Producer-to-policy SARIF controls must exercise Perl ingestion in the normal
+# workspace test gate; the product's default feature set remains unchanged.
+ripr = { path = "../crates/ripr", features = ["lang-perl"] }
+
 [lints]
 workspace = true

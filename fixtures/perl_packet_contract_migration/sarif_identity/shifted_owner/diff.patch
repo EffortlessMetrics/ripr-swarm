@@ -1,0 +1,9 @@
+diff --git a/lib/App/Discount.pm b/lib/App/Discount.pm
+--- a/lib/App/Discount.pm
++++ b/lib/App/Discount.pm
+@@ -7 +7 @@
+-    return 0;
++    return 5 if $amount < 25;
+@@ -9 +9 @@
+-    return 0;
++    return 7 if $amount > 100;
