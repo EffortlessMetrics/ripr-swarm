@@ -55905,6 +55905,30 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
     assert!(!crlf.contains('\r'), "CRLF input is normalized: {crlf:?}");
 }
 
+/// Remove a test-owned scratch directory, retrying a Windows sharing or lock
+/// violation (os error 32/33) for up to five seconds. A process another test
+/// spawned while this test held the cwd there, or a scanner opening the new
+/// report, can keep a handle briefly; hosted Windows failed this cleanup after
+/// the oracle had passed (#10344). Any other error, or a holder that outlasts
+/// the bound, still fails.
+fn remove_owned_scratch_dir(root: &Path) -> std::io::Result<()> {
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+    let mut attempts = 0;
+    loop {
+        match fs::remove_dir_all(root) {
+            Err(err)
+                if attempts < 50
+                    && matches!(err.raw_os_error(), Some(SHARING_VIOLATION | LOCK_VIOLATION)) =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            other => return other,
+        }
+    }
+}
+
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
     let guard = acquire_test_cwd_write_guard();
@@ -55962,7 +55986,7 @@ fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String>
         )
     });
     restore?;
-    let cleanup = fs::remove_dir_all(&root)
+    let cleanup = remove_owned_scratch_dir(&root)
         .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
     drop(guard);
     match outcome {
