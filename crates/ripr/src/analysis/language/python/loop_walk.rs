@@ -83,7 +83,7 @@ pub(super) fn generator_walk(
 pub(super) fn sequence_oracle_observes_row(
     row: &super::boundary::CallRow,
     owner: &PythonOwner,
-    candidates: &[super::PythonRelatedCandidate<'_>],
+    candidates: &[super::related_tests::PythonRelatedCandidate<'_>],
 ) -> bool {
     use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
