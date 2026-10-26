@@ -654,6 +654,10 @@ fn strip_sibling_field_reads(code: &str, binding: &str, path: &str) -> String {
         let Some(after) = code[end..].strip_prefix('.') else {
             continue;
         };
+        // `&mut c.tag` / `ref mut c.tag` is a write-capable place.
+        if code[..at].trim_end().ends_with("mut") {
+            continue;
+        }
         let field_len = after.find(|ch: char| !ident(ch)).unwrap_or(after.len());
         let field = &after[..field_len];
         if field.is_empty() || field == path {

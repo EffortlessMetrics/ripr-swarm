@@ -202,6 +202,58 @@ fn seeded_conditional_owner_twin_keeps_credit_for_any_spelling() -> Result<(), S
     Ok(())
 }
 
+/// A sibling field set through a mutable borrow is driving history exactly
+/// like a direct assignment (#7135): the sides diverge, so credit stays.
+#[test]
+fn sibling_field_write_through_mut_borrow_keeps_credit() -> Result<(), String> {
+    let production = "pub struct Bag { pub items: Vec<u32>, pub tag: u32 }\nimpl Bag {\n    pub fn new() -> Self { Bag { items: vec![20], tag: 0 } }\n    pub fn add(&mut self, x: u32) {\n        if self.tag == 0 {\n            self.items.clear();\n            self.items.push(x);\n        }\n    }\n}\npub fn set_tag(tag: &mut u32, value: u32) { *tag = value; }\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,3 +7,3 @@ impl Bag {\n             self.items.clear();\n-            self.items.push(x + 1);\n+            self.items.push(x);\n         }\n";
+    let mut wrong = Vec::new();
+    for (name, set) in [
+        ("direct", "c.tag = 1;"),
+        ("mut_borrow", "set_tag(&mut c.tag, 1);"),
+    ] {
+        let body = format!(
+            "let mut c = Bag::new();\nlet mut d = Bag::new();\n{set}\nc.add(20);\nd.add(20);\nassert_eq!(c.items, d.items);"
+        );
+        let source = format!(
+            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\n#[test]\nfn bag_observed() {{\n{body}\n}}\n}}\n"
+        );
+        let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join("collection_read_nd_mut")
+            .join(name);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"bag_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        if report.findings.is_empty()
+            || !report
+                .findings
+                .iter()
+                .any(|f| f.class.as_str() == "exposed")
+        {
+            wrong.push(format!(
+                "{name}: {:?}",
+                report
+                    .findings
+                    .iter()
+                    .map(|f| format!("{}={}", f.probe.family.as_str(), f.class.as_str()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
 /// A local `Vec` filled through the owner never credits a self-comparison or
 /// a twin either (#7135); the control form is not credited at all today, so
 /// this pins only the negative direction.
