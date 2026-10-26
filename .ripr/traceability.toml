@@ -14846,6 +14846,7 @@ tests = [
   "crates/ripr/src/mcp/protocol.rs::tests::resource_templates_expose_snapshot_and_gap_routes",
   "crates/ripr/src/mcp/protocol.rs::tests::failure_vocabulary_covers_the_issue_contract",
   "crates/ripr/src/mcp/protocol.rs::tests::instructions_name_the_progressive_flow_and_the_cli_route",
+  "crates/ripr/src/mcp/protocol.rs::tests::pre_call_scope_routes_untracked_files_through_staging_or_explicit_diff",
   "crates/ripr/src/mcp/server_tests.rs::sdk_server_metadata_preserves_bounded_status_instructions",
   "crates/ripr/src/mcp/server_tests.rs::sdk_server_declares_snapshot_and_gap_resource_templates",
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure",
