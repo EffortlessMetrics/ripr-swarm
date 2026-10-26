@@ -146,3 +146,187 @@ fn a_readable_miss_cannot_hide_an_unreadable_call_row() -> Result<(), String> {
     }
     Ok(())
 }
+
+fn classify_test_source(owner: &str, test: &str) -> Result<Finding, String> {
+    let file = Path::new("src/steps.py");
+    classify_change_with_source(
+        file,
+        2,
+        "    while start >= 0:",
+        Some("    while start > 0:"),
+        &extract_owners(file, owner),
+        &extract_tests(Path::new("tests/test_steps.py"), test),
+        Some(owner),
+    )
+    .ok_or_else(|| "missing finding".to_string())
+}
+
+#[test]
+fn partial_or_lossy_consumers_do_not_claim_a_walked_boundary() -> Result<(), String> {
+    let mut failures = Vec::new();
+    for assertion in [
+        "assert next(countdown(3)) == 3",
+        "assert sum(countdown(3)) == 6",
+        "assert sum(countdown(0)) == 0",
+        "assert max(countdown(3)) == 3",
+        "assert list(countdown(3))[:1] == [3]",
+        "assert list(countdown(3))[0] == 3",
+    ] {
+        let test =
+            format!("from src.steps import countdown\n\ndef test_steps():\n    {assertion}\n");
+        let finding = classify_test_source(DOWN, &test)?;
+        if !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("boundary_activation_unresolved: "))
+            || finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.text.contains("unit-step generator walk"))
+        {
+            failures.push(format!(
+                "{assertion}: {:?}; {:?}",
+                finding.evidence, finding.activation
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn an_unobserved_generator_call_cannot_supply_the_boundary() -> Result<(), String> {
+    for (owner, body) in [
+        (
+            DOWN.to_string(),
+            "    countdown(3)\n    assert list(countdown(-2)) == []\n",
+        ),
+        (
+            DOWN.to_string(),
+            "    assert list(countdown(-2)) == [], list(countdown(3))\n",
+        ),
+        (
+            DOWN.replace("start):", "start, unused=None):"),
+            "    assert list(countdown(-2, unused=countdown(3))) == []\n",
+        ),
+    ] {
+        let test = format!("from src.steps import countdown\n\ndef test_steps():\n{body}");
+        let finding = classify_test_source(&owner, &test)?;
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "{body}: {:?}",
+            finding.evidence
+        );
+        assert!(
+            !finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.text.contains("unit-step generator walk")),
+            "{body}: {:?}",
+            finding.activation
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shadowed_sequence_constructors_cannot_supply_the_boundary() -> Result<(), String> {
+    for (setup, body) in [
+        (
+            "list = lambda value: []\n",
+            "    assert list(countdown(3)) == []\n",
+        ),
+        (
+            "",
+            "    list = lambda value: []\n    assert list(countdown(3)) == []\n",
+        ),
+        (
+            "import builtins\nbuiltins.list = lambda value: []\n",
+            "    assert list(countdown(3)) == []\n",
+        ),
+    ] {
+        let test = format!("from src.steps import countdown\n{setup}\ndef test_steps():\n{body}");
+        let finding = classify_test_source(DOWN, &test)?;
+        assert!(
+            !finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.text.contains("unit-step generator walk")),
+            "{setup}{body}: {:?}",
+            finding.activation
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unit_walk_keeps_integer_boundaries_exact() -> Result<(), String> {
+    for (bound, near, past) in [
+        ("9007199254740993", "9007199254740994", "9007199254740992"),
+        (
+            "170141183460469231731687303715884105726",
+            "170141183460469231731687303715884105727",
+            "170141183460469231731687303715884105725",
+        ),
+        (
+            "-170141183460469231731687303715884105727",
+            "-170141183460469231731687303715884105726",
+            "-170141183460469231731687303715884105728",
+        ),
+    ] {
+        let owner = DOWN.replace(">= 0", &format!(">= {bound}"));
+        let old = format!("    while start > {bound}:");
+        assert_eq!(
+            classify_loop(&owner, 2, &old, past, "[]")?.class,
+            ExposureClass::WeaklyExposed,
+            "past {bound}"
+        );
+        assert_eq!(
+            classify_loop(&owner, 2, &old, near, &format!("[{near}]"))?.class,
+            ExposureClass::Exposed,
+            "near {bound}"
+        );
+        assert_eq!(
+            classify_loop(&owner, 2, &old, bound, "[]")?.class,
+            ExposureClass::Exposed,
+            "equal {bound}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn whole_sequence_oracles_keep_owner_and_constructor_identity() -> Result<(), String> {
+    for test in [
+        "from src.steps import countdown\n\ndef test_steps():\n    assert (3, 2, 1) == tuple(countdown(3))\n",
+        "from src.steps import countdown as walk\n\ndef test_steps():\n    assert list(walk(3)) == [3, 2, 1]\n",
+        "import src.steps as steps\n\ndef test_steps():\n    assert list(steps.countdown(3)) == [3, 2, 1]\n",
+    ] {
+        let finding = classify_test_source(DOWN, test)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test}");
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.text.contains("unit-step generator walk")),
+            "{test}: {:?}",
+            finding.activation
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "{test}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}

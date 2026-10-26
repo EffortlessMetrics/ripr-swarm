@@ -216,6 +216,11 @@ pub(super) fn python_boundary_evidence(
             && rows.iter().all(|row| {
                 resolve_operand(left, row, &constants)
                     .is_some_and(|value| value.parse::<i128>().is_ok())
+                    && super::loop_walk::sequence_oracle_observes_row(
+                        row,
+                        owner,
+                        related_candidates,
+                    )
             }))
         .then_some(walk)
     });

@@ -608,8 +608,14 @@ For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
 integer bound, a closed generator walk can resolve a rebound parameter. It
 accepts only an owner consisting of the loop, whose body is `yield name`
 followed by one unconditional `name -= 1` (descending) or `name += 1`
-(ascending). Every strong call must bind a readable integer. A near-side or
-equal input reaches the bound; a past-bound input does not (#9733).
+(ascending). Every strong call must bind a readable integer and occur in a
+direct whole-list or whole-tuple equality against an integer-literal sequence.
+The builtin constructor and imported free-function owner must retain their
+identity. A near-side or equal input reaches the bound; a past-bound input
+does not (#9733). Partial/lossy consumers such as `next` and `sum`, slices,
+unobserved calls, assertion-message calls, nested calls, shadowed constructors,
+and unsupported assertion shapes retain the unresolved limitation: potential
+iteration alone does not establish observation of the changed final element.
 Step-two, conditional, early-exit, pre-loop rebinding, other statements and
 unreadable calls retain the existing unresolved boundary limitation. This is
 not general loop evaluation.

@@ -76,3 +76,119 @@ pub(super) fn generator_walk(
     }
     None
 }
+
+/// The closed walk also needs an oracle that observes the whole yielded
+/// sequence. Exhaustion alone is insufficient: adding zero preserves a sum,
+/// and a first-item or sliced assertion never observes the changed suffix.
+pub(super) fn sequence_oracle_observes_row(
+    row: &super::boundary::CallRow,
+    owner: &PythonOwner,
+    candidates: &[super::PythonRelatedCandidate<'_>],
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<generator-oracle>"),
+        &row.text,
+    ) else {
+        return false;
+    };
+    let [Stmt::Assert(assertion)] = module.body.as_slice() else {
+        return false;
+    };
+    // A failure message may contain another owner call that does not execute.
+    if assertion.msg.is_some() {
+        return false;
+    }
+    let Expr::Compare(compare) = assertion.test.as_ref() else {
+        return false;
+    };
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return false;
+    };
+    let Some((constructor, callee)) =
+        sequence_operand(&compare.left, right).or_else(|| sequence_operand(right, &compare.left))
+    else {
+        return false;
+    };
+    candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        let bindings = &test.constant_rebinding;
+        candidate.relation.uses_oracle()
+            && test.file == row.file
+            && test.assertions.iter().any(|assertion| {
+                assertion.line == row.line
+                    && !assertion.helper_derived
+                    && assertion.oracle_strength.rank()
+                        >= crate::domain::OracleStrength::Strong.rank()
+            })
+            && !super::related_tests::builtin_is_shadowed(test, constructor)
+            && !bindings.assigns_attribute(constructor)
+            && !bindings.assigns_attribute(&owner.name)
+            && !bindings.rebinds(callee.split('.').next().unwrap_or(&callee))
+            && super::related_tests::owner_module_callees(test, owner).contains(&callee)
+    })
+}
+
+fn sequence_operand<'a>(
+    observed: &'a rustpython_parser::ast::Expr,
+    expected: &rustpython_parser::ast::Expr,
+) -> Option<(&'a str, String)> {
+    use rustpython_parser::ast::Expr;
+
+    let Expr::Call(materialize) = observed else {
+        return None;
+    };
+    let Expr::Name(constructor) = materialize.func.as_ref() else {
+        return None;
+    };
+    let elements = match (constructor.id.as_str(), expected) {
+        ("list", Expr::List(list)) => &list.elts,
+        ("tuple", Expr::Tuple(tuple)) => &tuple.elts,
+        _ => return None,
+    };
+    let [Expr::Call(call)] = materialize.args.as_slice() else {
+        return None;
+    };
+    if !materialize.keywords.is_empty()
+        || !elements.iter().all(integer_literal)
+        // Do not let a nested unused generator call borrow the outer oracle.
+        || !call.args.iter().all(scalar_argument)
+        || !call.keywords.iter().all(|keyword| keyword.arg.is_some() && scalar_argument(&keyword.value))
+    {
+        return None;
+    }
+    Some((constructor.id.as_str(), static_callee(&call.func)?))
+}
+
+fn integer_literal(expression: &rustpython_parser::ast::Expr) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    match expression {
+        Expr::Constant(constant) => matches!(constant.value, ast::Constant::Int(_)),
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+            matches!(unary.operand.as_ref(), Expr::Constant(constant) if matches!(constant.value, ast::Constant::Int(_)))
+        }
+        _ => false,
+    }
+}
+
+fn scalar_argument(expression: &rustpython_parser::ast::Expr) -> bool {
+    use rustpython_parser::ast::Expr;
+    matches!(expression, Expr::Constant(_) | Expr::Name(_))
+        || integer_literal(expression)
+        || matches!(expression, Expr::Attribute(_)) && static_callee(expression).is_some()
+}
+
+fn static_callee(expression: &rustpython_parser::ast::Expr) -> Option<String> {
+    use rustpython_parser::ast::Expr;
+    match expression {
+        Expr::Name(name) => Some(name.id.to_string()),
+        Expr::Attribute(attribute) => Some(format!(
+            "{}.{}",
+            static_callee(&attribute.value)?,
+            attribute.attr
+        )),
+        _ => None,
+    }
+}
