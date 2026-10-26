@@ -85,6 +85,8 @@ use classify::{
 };
 mod discriminators;
 mod effect_alignment;
+#[cfg(test)]
+mod effect_order_tests;
 mod hypothesis;
 mod module_constants;
 mod no_behavior;
@@ -487,6 +489,10 @@ struct PythonAssertion {
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
     helper_derived: bool,
+    /// Native assertion/call span, relative to the containing test body.
+    source_range: Option<rustpython_parser::text_size::TextRange>,
+    /// Only the native operands retained by the oracle gate, never its message.
+    observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
