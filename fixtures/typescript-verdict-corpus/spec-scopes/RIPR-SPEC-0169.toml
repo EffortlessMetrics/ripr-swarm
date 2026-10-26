@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0169"
+scope = "out"
+reason = "Rust source-role composition over cfg(test) module edges; a TypeScript case cannot label it"
