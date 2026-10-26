@@ -1,0 +1,10 @@
+# Registers the changed-file retention under the Python walk cap (#10461) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/bounded_read.rs::truncate_workspace_files_always_keeps_changed_files",
+  "crates/ripr/src/analysis/language/python/tests.rs::analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/bounded_read.rs",
+]

@@ -1033,7 +1033,10 @@ pub(crate) fn error_payload_credits(
             facts.separates(|message| message.contains(&expected))
         }
         Kind::ThrowsObject | Kind::RejectsThrowObject | Kind::RejectsMatchObject => true,
-        Kind::AssertThrowsObject | Kind::AssertRejectsObject => {
+        Kind::AssertThrowsObject
+        | Kind::AssertRejectsObject
+        | Kind::AvaThrowsObject
+        | Kind::AvaThrowsAsyncObject => {
             if !facts.message_only {
                 return true;
             }

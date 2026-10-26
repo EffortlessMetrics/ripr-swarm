@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The edit breaks tests::test_display and tests::test_to_string_as, which format exactly one unit. 0.10's weakly_exposed gap was a false actionable verdict; 0.11 dev's infection_unknown is an acceptable abstention.",
+  "reasoning": "The edit breaks tests::test_display and tests::test_to_string_as, which format exactly one unit. 0.10's weakly_exposed gap was a false actionable verdict; 0.11 dev's infection_unknown is an acceptable abstention. RIPR-SPEC-0158 example 12 names this case: the only direct row binds `bytes` to a string literal, so the verdict stays infection_unknown.",
   "labeling_observation": {
     "ripr_commit": "a7a089e",
     "full_checkout_verdict": "limited",

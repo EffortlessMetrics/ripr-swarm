@@ -417,6 +417,10 @@ case = "spec-b-0150-string-only-family"
 reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
+case = "spec-b-0153-declared-test-target-helper"
+reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silence because the edited file is test source with no production probe, though the mutant is caught by its tests; abstaining is the required outcome, not a regression (#10126)."
+
+[[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
 reason = "RIPR-SPEC-0154 example 3 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
 
@@ -523,6 +527,18 @@ reason = "Tests discriminate the change (runtime-verified) but ripr abstains by 
 [[entry]]
 case = "spec-b-0165-non-unique-nested-callee"
 reason = "Tests discriminate the change (runtime-verified) but ripr abstains by design: two candidate helpers share the nested callee name, which RIPR-SPEC-0165 Acceptance example 5 and the Required guards (callee uniqueness) mandate refusing. Crediting requires a spec amendment removing that refusal (#10304); keep this entry until then."
+
+[[entry]]
+case = "spec-b-0169-cfg-test-include-helper"
+reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silence because the edited file is test source with no production probe, though the mutant is caught by its tests; abstaining is the required outcome, not a regression (#10126)."
+
+[[entry]]
+case = "spec-b-0169-out-of-line-cfg-test-helper"
+reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silence because the edited file is test source with no production probe, though the mutant is caught by its tests; abstaining is the required outcome, not a regression (#10126)."
+
+[[entry]]
+case = "spec-b-0169-raw-path-cfg-test-helper"
+reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silence because the edited file is test source with no production probe, though the mutant is caught by its tests; abstaining is the required outcome, not a regression (#10126)."
 
 [[entry]]
 case = "spec0048-label-rendered-observed"
