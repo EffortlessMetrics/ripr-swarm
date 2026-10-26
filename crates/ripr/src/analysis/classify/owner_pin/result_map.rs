@@ -34,7 +34,9 @@ pub(in crate::analysis) fn admitted_rewrite(
         return None;
     }
     let function = function(&owner.body)?;
-    if super::declared_async(owner, index) != Some(false) || !standard_result(&function) {
+    if super::function_declaration_is_async(owner, index) != Some(false)
+        || !standard_result(&function)
+    {
         return None;
     }
     let block = function.body()?;
@@ -182,7 +184,7 @@ fn result_receiver(receiver: &ast::Expr, owner: &FunctionSummary, index: &RustIn
     let declaration = declarations.next()?;
     let reader = function(&declaration.body)?;
     if declarations.next().is_some()
-        || super::declared_async(declaration, index) != Some(false)
+        || super::function_declaration_is_async(declaration, index) != Some(false)
         || !standard_result(&reader)
     {
         return None;

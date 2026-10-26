@@ -2156,7 +2156,7 @@ const METADATA: &[CommandMetadata] = &[
         },
         state_target: None,
         json_support: false,
-        example: "ripr explain ABC123 --base REV",
+        example: "ripr explain <finding-id|file:line> --base REV",
         next_routes: &["context", "check"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
@@ -3303,6 +3303,27 @@ mod tests {
     fn example_must_start_with_the_catalog_path() -> Result<(), String> {
         let rows = with_mutated_row("cmd:check", |row| row.example = "ripr diff --base main")?;
         expect_single_violation(&rows, "does not start with \"ripr check\"")
+    }
+
+    #[test]
+    fn explain_example_names_selector_forms_not_a_fake_id() -> Result<(), String> {
+        let row = METADATA
+            .iter()
+            .find(|row| row.id == "cmd:explain")
+            .ok_or("cmd:explain row missing")?;
+        if row.example.contains("ABC123") {
+            return Err(format!(
+                "explain example is a literal fake id: {}",
+                row.example
+            ));
+        }
+        if !row.example.contains("<finding-id|file:line>") {
+            return Err(format!(
+                "explain example does not name the selector forms: {}",
+                row.example
+            ));
+        }
+        Ok(())
     }
 
     #[test]

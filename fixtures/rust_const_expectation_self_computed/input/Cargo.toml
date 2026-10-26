@@ -1,0 +1,4 @@
+[package]
+name = "rust_const_expectation_self_computed"
+version = "0.1.0"
+edition = "2024"

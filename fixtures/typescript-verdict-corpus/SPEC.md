@@ -79,7 +79,7 @@ it as false and its reasoning names the spec example.
 
 Each case that labels an acceptance example (hand-numbered or slug-keyed,
 RIPR-SPEC-0245) cites it in
-`spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
+`spec_examples`, and `spec-coverage.toml` gates those citations through `spec-examples.lock`.
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
 RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0262. A case cites an example only when its diff and test have
 that example's shape; uncovered examples stay visible in `check`'s coverage
@@ -138,7 +138,7 @@ rule 4 abstains as `static_unknown` rather than claiming a static oracle.
 Generic-call and `this`-member boundaries retain the unit coverage from #9519;
 these corpus rows exercise bare multiline and namespace-import member calls.
 
-The five `jest-spec0258-*` cases came last and were labeled the same way.
+The eight `jest-spec0258-*` cases came last and were labeled the same way.
 Their two own subjects exist because each one's whole-package state is the
 point: a missing snapshot fails every `jest --ci` run of the unedited
 package, so `authored-ts-jest-snapshot-unwritten` runs `jest --ci=false`,
@@ -146,6 +146,13 @@ where each run, started from the committed package without a `.snap`
 file, writes the entry from what the code returns; and
 `authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
 its `jest -u` script and rewrites the committed entry.
+`authored-ts-jest-snapshot-projects` roots a `projects` entry at a
+project config whose `snapshotResolver` sends snapshots to another
+directory, so `npm test` writes a fresh entry and passes the edited package
+(a non-CI run: under `CI=true` jest implies `--ci` and fails the unedited
+package too); `authored-ts-jest-snapshot-inline-projects` keeps a plain
+inline `projects` object that moves nothing, so the committed entry fails
+the edit.
 
 The 28 `shape-*`, 8 `deco-*`, 12 `pw-*` and 15 `hostile-*` cases are all
 `behavior_change` edits: each edit is its own single mutant, applied by hand

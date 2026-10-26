@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
+import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
 
 function runGit(workspacePath: string, args: string[]): string {
@@ -263,6 +264,15 @@ async function main() {
     }
 
     const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
+    if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
+      process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(
+        workspaceTrustMode,
+        testServerPath,
+        process.env.RIPR_TEST_PACKAGED_SERVER_PATH
+      ).join(
+        REQUIRED_TITLE_SEPARATOR
+      );
+    }
     if (workspaceTrustMode === 'untrusted') {
       await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
@@ -274,6 +284,9 @@ async function main() {
       });
     }
 
+    // The multi-root host greps a different suite, so the main host's required
+    // journeys are not registered there.
+    delete process.env.RIPR_TEST_REQUIRE_RAN;
     if (workspaceTrustMode === 'trusted') {
       // Same test-host lane, separate empty profile: other suites open files,
       // mutate configuration and restart servers, which would mask ambiguity.

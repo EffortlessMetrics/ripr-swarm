@@ -133,27 +133,14 @@ variant.
 
 ## Acceptance Examples
 
-### arm-blind (must downgrade)
-
-```
-probe family:  match_arm
-expression:    None => 0,
-test:          assert_eq!(reason(Some(5)), 6);
-
-Before fix:    exposed / confidence 1.0
-After fix:     weakly_exposed / confidence 0.92 / arm_observation_unverified
-```
-
-### arm-observer (must stay exposed)
-
-```
-probe family:  match_arm
-expression:    Status::Idle => 0,
-test:          assert_eq!(classify(Status::Idle), 0);
-
-Before fix:    exposed / confidence 1.0
-After fix:     exposed / confidence 1.0   (unchanged — Idle token_match fires)
-```
+1. Arm-blind, must downgrade. Probe family `match_arm`, expression
+   `None => 0,`, test `assert_eq!(reason(Some(5)), 6);`. Before the fix:
+   `exposed` / confidence 1.0. After: `weakly_exposed` / confidence 0.92 /
+   `arm_observation_unverified`.
+2. Arm-observer, must stay exposed. Probe family `match_arm`, expression
+   `Status::Idle => 0,`, test `assert_eq!(classify(Status::Idle), 0);`. Before
+   and after the fix: `exposed` / confidence 1.0 (unchanged: the `Idle`
+   `token_match` fires).
 
 ## Test Mapping
 

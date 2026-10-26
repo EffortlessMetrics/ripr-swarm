@@ -1,0 +1,23 @@
+{
+  "id": "python_literal_value_inside_longer_number",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_literal_value_inside_longer_number",
+  "vector": "changed_number_found_only_inside_a_longer_number",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

@@ -127,11 +127,13 @@ fn apply_with<'s>(
     let mut star_exports = StarExports {
         source_of,
         declared: HashMap::new(),
+        bodies: HashMap::new(),
     };
     for owner in owners.iter_mut() {
         owner.star_exported = !owner.name.starts_with('_')
             && !owner.is_module_owner()
-            && star_exports.exports(&owner.file, &owner.name);
+            && star_exports.exports(&owner.file, &owner.name)
+            && star_exports.binds_once(&owner.file, &owner.name);
         owner.reexport_modules =
             package_reexport_modules(owner, &exporters, definitions, &mut star_exports);
     }
@@ -278,9 +280,31 @@ enum AllDeclaration {
 struct StarExports<'s, F: Fn(&Path) -> Option<&'s str>> {
     source_of: F,
     declared: HashMap<PathBuf, AllDeclaration>,
+    /// Top-level statements per module, parsed once; `None` when unreadable.
+    bodies: HashMap<PathBuf, Option<Vec<Stmt>>>,
 }
 
 impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
+    /// Whether exactly one top-level statement of `file` binds `name` (its
+    /// own definition). A reassignment, a second definition or a conditional
+    /// binding means a star import may bind something else, so this reader
+    /// fails closed; so does an unreadable module.
+    fn binds_once(&mut self, file: &Path, name: &str) -> bool {
+        let source_of = &self.source_of;
+        let body = self.bodies.entry(file.to_path_buf()).or_insert_with(|| {
+            source_of(file).and_then(|source| match parse_module_result(file, source) {
+                Ok(Mod::Module(module)) => Some(module.body),
+                _ => None,
+            })
+        });
+        body.as_ref().is_some_and(|body| {
+            body.iter()
+                .filter(|stmt| stmt_binds(stmt, name, true))
+                .count()
+                == 1
+        })
+    }
+
     fn exports(&mut self, file: &Path, name: &str) -> bool {
         let source_of = &self.source_of;
         let declaration =

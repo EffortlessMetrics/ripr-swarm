@@ -26,6 +26,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach score: score_is_zero_only_for_zero_points
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 11 more detail line(s) in --format human-full
@@ -33,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/test_in_index_read_not_exact/input --diff <cwd>/fixtures/test_in_index_read_not_exact/diff.patch --mode fast probe:src_lib.rs:return_value:27ba9fa1
   ripr context --root <cwd>/fixtures/test_in_index_read_not_exact/input --diff <cwd>/fixtures/test_in_index_read_not_exact/diff.patch --mode fast --at probe:src_lib.rs:return_value:27ba9fa1
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value); run `ripr repair probe:src_lib.rs:return_value:27ba9fa1 --root <cwd>/fixtures/test_in_index_read_not_exact/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: return_value; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/test_in_index_read_not_exact/input --at src/lib.rs:2 --kind return_value
 

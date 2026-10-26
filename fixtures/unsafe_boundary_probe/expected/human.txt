@@ -27,6 +27,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No static test path found for the changed owner
     - infection unknown: Changed syntax is not mapped to a high-confidence probe family
     - 4 more detail line(s) in --format human-full
@@ -34,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast probe:src_lib.rs:static_unknown:eff3c10e
   ripr context --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:eff3c10e
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:static_unknown:eff3c10e --root <cwd>/fixtures/unsafe_boundary_probe/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

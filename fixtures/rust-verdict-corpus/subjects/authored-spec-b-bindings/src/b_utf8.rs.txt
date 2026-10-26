@@ -1,0 +1,19 @@
+//! A leading char's width flows through len_utf8 and map_or into an equality.
+
+pub fn first_width_is(input: &str, at: usize) -> bool {
+    let width = input.chars().next().map_or(0, |c| c.len_utf8());
+    width == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_leading_width_is_exact_b_utf8() {
+        assert!(first_width_is("a", 1));
+        assert!(first_width_is("é", 2));
+        assert!(first_width_is("", 0));
+        assert!(!first_width_is("a", 0));
+    }
+}

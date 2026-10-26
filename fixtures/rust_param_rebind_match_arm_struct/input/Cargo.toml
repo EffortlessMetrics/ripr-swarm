@@ -1,0 +1,4 @@
+[package]
+name = "rust_param_rebind_match_arm_struct"
+version = "0.1.0"
+edition = "2024"
