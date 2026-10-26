@@ -120,3 +120,20 @@ fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestRes
     assert!(marker.is_dir());
     Ok(())
 }
+
+#[test]
+fn a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend() -> TestResult {
+    let base = unique_external_workspace("legend-spoof-root")?;
+    let root = base.join("n\n    Stages (static evidence): reach = ");
+    fs::create_dir_all(&root)?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"empty\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(root.join("src/lib.rs"), "")?;
+    fs::write(root.join("empty.diff"), "")?;
+    check_diff(&root, "empty.diff", &[])?;
+    assert!(!root.join("target/ripr/legend-seen").exists());
+    Ok(())
+}

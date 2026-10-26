@@ -7,6 +7,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/legend_first_run.rs::machine_formats_and_a_run_without_a_legend_do_not_consume_the_first_run",
   "crates/ripr/tests/cli_smoke/legend_first_run.rs::a_forced_first_legend_counts_and_a_run_without_a_digest_does_not",
   "crates/ripr/tests/cli_smoke/legend_first_run.rs::a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown",
+  "crates/ripr/tests/cli_smoke/legend_first_run.rs::a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend",
 ]
 code = [
   "crates/ripr/src/cli/commands/check.rs",

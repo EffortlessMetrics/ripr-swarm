@@ -1987,12 +1987,10 @@ fn check_inner(
             err,
         )
     })?;
-    // Record only a legend that was actually printed: a root named like the
-    // legend must not count, so match the renderer's own line start.
+    // Record only a legend that was actually printed: a root whose name echoes
+    // a legend line must not count, so match the renderer's whole block.
     if !legend_seen
-        && rendered
-            .lines()
-            .any(|line| line.starts_with("    Stages (static evidence): reach = "))
+        && rendered.contains(crate::output::human::HUMAN_EVIDENCE_LEGEND)
         && let Some(marker) = legend_marker.as_ref()
     {
         record_human_legend_seen(&limited_check_input.root, marker);

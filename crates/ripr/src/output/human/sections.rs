@@ -50,6 +50,22 @@ pub(super) fn trim_field_period(value: &str) -> &str {
 /// parse error ("Next step: TypeScript preview advisory: ..."), so a value
 /// carrying a short leading label renders with a dash; plain text keeps the
 /// colon.
+/// The full first-run Evidence legend (#9373, #10481). `check` records the
+/// first-run marker only when a render contains this whole block, so a header
+/// that merely echoes one legend line cannot count as a displayed legend.
+pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
+    "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+    "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
+    "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
+    "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
+    "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
+    "      candidate line = changed line ripr considers for probes\n",
+);
+
 fn next_step_prefix(step: &str) -> &'static str {
     const NEXT_STEP_PREFIX: &str = "  Next step: ";
     const NEXT_STEP_NESTED_PREFIX: &str = "  Next step — ";
@@ -285,18 +301,7 @@ pub(crate) fn render_finding_digest_with_config(
                 "    Terms: rerun with `--legend` for the stage, state and summary definitions\n",
             );
         } else {
-            out.push_str(concat!(
-                "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
-                "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-                "      discriminator = assertion distinguishes intended from wrong behavior\n",
-                "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-                "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-                "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
-                "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
-                "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
-                "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
-                "      candidate line = changed line ripr considers for probes\n",
-            ));
+            out.push_str(HUMAN_EVIDENCE_LEGEND);
         }
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
