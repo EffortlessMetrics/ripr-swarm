@@ -392,14 +392,12 @@ fn substitute_fragments(statement: &str, names: &[String], arguments: &[&str]) -
     (!mask_comments_and_strings(&expanded).contains('$')).then_some(expanded)
 }
 
-/// A path, field or method chain, call or literal with at most one prefix
-/// operator: safe to splice into another expression without parentheses.
+/// A path, field or method chain, call or literal: safe to splice into
+/// another expression without parentheses. A prefix operator is not atomic:
+/// an `$x:expr` fragment is opaque, so `$x.len()` over `&v` is `(&v).len()`,
+/// not `&v.len()`.
 fn is_atomic_operand(argument: &str) -> bool {
-    let argument = argument
-        .strip_prefix(['&', '-', '!'])
-        .unwrap_or(argument)
-        .trim_start();
-    let masked = mask_comments_and_strings(argument);
+    let masked = mask_comments_and_strings(argument.trim());
     let mut depth = 0usize;
     masked.chars().all(|character| match character {
         '(' | '[' | '{' => {

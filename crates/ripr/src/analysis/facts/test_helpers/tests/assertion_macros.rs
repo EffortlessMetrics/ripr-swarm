@@ -427,3 +427,17 @@ fn view_expands_several_calls_on_one_line_beside_non_ascii_text() {
     );
     assert_eq!(view.matches('\n').count(), source.matches('\n').count());
 }
+
+#[test]
+fn prefixed_argument_is_parenthesized_so_a_receiver_keeps_its_meaning() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for(&module_with(
+        "macro_rules! assert_len {\n        ($x:expr, $want:expr) => { assert_eq!($x.len(), $want); };\n    }",
+        "assert_len!(&gate_items, 3);",
+    ))?;
+    assert_eq!(
+        assertion_texts(test_named(&index, "probe")?),
+        vec!["assert_eq!((&gate_items).len(), 3);".to_string()]
+    );
+    Ok(())
+}
