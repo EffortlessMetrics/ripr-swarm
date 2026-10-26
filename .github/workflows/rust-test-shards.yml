@@ -146,16 +146,21 @@ jobs:
           total_tests=0
           for n in 1 2 3 4; do
             dir="shards/${{ inputs.artifact-name }}-nextest-shard-$n-${{ github.run_attempt }}"
-            status="$(cat "$dir/shard-$n.status" 2> /dev/null || echo missing)"
-            tests="$(grep -Eo '<testsuites [^>]*tests="[0-9]+"' "$dir/junit.xml" 2> /dev/null | grep -Eo 'tests="[0-9]+"' | grep -Eo '[0-9]+' || echo 0)"
-            listed="$(wc -l < "$dir/list-$n.txt" 2> /dev/null || echo 0)"
+            # upload-artifact roots the archive at the paths' common ancestor, which
+            # moves with the optional report files, so find each file by name.
+            f_status="$(find "$dir" -name "shard-$n.status" 2> /dev/null | head -n 1)"
+            f_junit="$(find "$dir" -name junit.xml 2> /dev/null | head -n 1)"
+            f_list="$(find "$dir" -name "list-$n.txt" 2> /dev/null | head -n 1)"
+            status="$([ -n "$f_status" ] && cat "$f_status" || echo missing)"
+            tests="$([ -n "$f_junit" ] && grep -Eo '<testsuites [^>]*tests="[0-9]+"' "$f_junit" | grep -Eo 'tests="[0-9]+"' | grep -Eo '[0-9]+' || echo 0)"
+            listed="$([ -n "$f_list" ] && wc -l < "$f_list" || echo 0)"
             echo "shard $n: nextest exit $status, junit tests $tests, listed $listed" | tee -a "$GITHUB_STEP_SUMMARY"
             [ "$status" = 0 ] && [ "$tests" -ge 1 ] || { echo "::error::shard $n did not pass with a JUnit report naming a test (exit $status, tests $tests)"; fail=1; }
-            cat "$dir/list-$n.txt" >> union.txt 2> /dev/null || true
+            [ -n "$f_list" ] && cat "$f_list" >> union.txt
             total_tests=$((total_tests + tests))
           done
-          all="shards/${{ inputs.artifact-name }}-nextest-shard-1-${{ github.run_attempt }}/list-all.txt"
-          [ -s "$all" ] || { echo "::error::the full workspace test list is missing"; exit 1; }
+          all="$(find "shards/${{ inputs.artifact-name }}-nextest-shard-1-${{ github.run_attempt }}" -name list-all.txt 2> /dev/null | head -n 1)"
+          [ -n "$all" ] && [ -s "$all" ] || { echo "::error::the full workspace test list is missing"; exit 1; }
           sort union.txt > union-sorted.txt
           dup="$(uniq -d union-sorted.txt | wc -l)"
           uniq union-sorted.txt > union-unique.txt
