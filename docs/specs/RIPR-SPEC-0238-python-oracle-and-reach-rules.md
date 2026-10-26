@@ -1129,6 +1129,23 @@ rejected alternative. Any can be reversed later without touching the rest.
     accepting the miss at the one input where it is the identity.
     Rejected: gate only a single wrapping call, because `max(n, 0)`,
     `n or 0` and nested wrappers return `n` unchanged just as often.
+16. **A decorator argument or decorator-factory loop edit is limited by
+    design.** Adopted (2026-10-26, #9619): an edit to a decorator's
+    argument (`@retry(3)` to `@retry(4)`) or to the loop inside the factory
+    it calls (`range(times)`) is judged by module state that persists across
+    calls (`flaky()` succeeds on the third attempt), and no bounded static
+    evaluator reads that soundly. The rows `py-shapes-decorator-retry-count`
+    and `py-shapes-decorator-loop-bound` keep ideal `credited` and accepted
+    `limited`, and stay in `missed-credit.toml` with this Decision as the
+    reason. The equivalent twins `py-shapes-decorator-retry-count-slack`
+    and `py-shapes-decorator-loop-bound-slack` make the same edits where
+    the pinned call cannot tell (`@retry(4)`, `range(times + 1)`), so
+    crediting by edit shape would read `exposed` on a test that passes on
+    the mutant; they must stay `gap` or `limited`. Rejected: credit any
+    test that calls a function decorated with the edited factory, because
+    the twins show that call does not discriminate. Revisit with a
+    fixture-backed state evaluator under its own spec, as Decision 9 of
+    RIPR-SPEC-0246 does for mocha hooks.
 
 ## Required Evidence
 
@@ -1441,6 +1458,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_module_that_binds_len_is_not_read`,
   `an_escape_in_the_docstring_source_drops_it`,
   `a_trailing_comment_on_the_example_line_does_not_hide_the_comparison`.
+- Existing: corpus rows `py-shapes-decorator-retry-count-slack` and
+  `py-shapes-decorator-loop-bound-slack` (`cargo xtask verdict-corpus
+  check --language python`): Decision 16's negatives, which must never
+  read `exposed`.
 - Existing: `crates/ripr/src/analysis/language/python/doctest_eval.rs`
   `floor_division_and_modulo_follow_the_divisor_sign`,
   `slices_normalize_indexes_like_python`,
