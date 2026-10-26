@@ -369,3 +369,25 @@ fn module_scope_walk_combined_injection_reaches_both_collectors() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn the_borrowing_encoder_writes_the_bytes_the_owned_wire_writes() -> Result<(), serde_json::Error> {
+    // `into` on the old derive cloned the whole table; the cache digest and
+    // entry now come from the borrowing impl, which must not move a byte.
+    let sources = [
+        include_str!("../ra.rs"),
+        include_str!("../../extract/mask.rs"),
+        "mod m { #[cfg(unix)] fn a() { let x = 1; use std::fmt; b(); } fn b() {} }\nasync fn c() { || d(); }\n",
+    ];
+    for text in sources {
+        let scopes = module_item_scopes(text).ok_or_else(|| {
+            <serde_json::Error as serde::de::Error>::custom("premise: the source parses")
+        })?;
+        assert!(!scopes.item_fns.is_empty());
+        assert_eq!(
+            serde_json::to_string(&scopes)?,
+            serde_json::to_string(&ModuleItemScopesWire::from(scopes.clone()))?
+        );
+    }
+    Ok(())
+}
