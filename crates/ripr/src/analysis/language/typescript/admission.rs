@@ -263,6 +263,15 @@ impl TypeScriptAdmissionContext {
         expected_describe: bool,
         bindings: impl Iterator<Item = (String, bool)>,
     ) -> bool {
+        let context = self.registration_context();
+        let names = RegistrationNames::new(bindings);
+        context.registration_is_known_in(call, expected_describe, &names)
+    }
+
+    /// The context a registration is resolved in: the runner imports only,
+    /// with every other import and re-export carried as an enclosing name.
+    /// Built once per statement list, not once per registration.
+    pub(crate) fn registration_context(&self) -> Self {
         let imports: Vec<_> = self
             .registration_imports
             .iter()
@@ -271,7 +280,7 @@ impl TypeScriptAdmissionContext {
             .filter(|import| import.imported.is_some())
             .cloned()
             .collect();
-        let context = Self {
+        Self {
             // A graph-only re-export or namespace object must not fall back
             // to an ambient global registration with the same spelling. Test
             // files no longer record re-exports as imports (#7507), so their
@@ -286,16 +295,27 @@ impl TypeScriptAdmissionContext {
             imports,
             test_dir: self.test_dir.clone(),
             ..Self::default()
-        };
-        let mut scan = Scan::new(&context, false);
-        scan.scopes.push(
-            bindings
-                .filter(|(name, file_declaration)| {
-                    !file_declaration || !context.imports.iter().any(|import| import.local == *name)
-                })
-                .map(|(name, _)| (name, Bound::Local))
-                .collect(),
-        );
+        }
+    }
+
+    /// `registration_is_known` against a context from `registration_context`
+    /// and an indexed set of visible bindings. Only the callee's root name is
+    /// ever resolved, so only that name's bindings are put in scope.
+    pub(crate) fn registration_is_known_in(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        expected_describe: bool,
+        names: &RegistrationNames,
+    ) -> bool {
+        let mut scan = Scan::new(self, false);
+        if let Some((Expression::Identifier(root), _, _)) = registration_shape(call)
+            && names.binds(root.name.as_str(), &self.imports)
+        {
+            scan.scopes
+                .push(BTreeMap::from([(root.name.to_string(), Bound::Local)]));
+        } else {
+            scan.scopes.push(BTreeMap::new());
+        }
         let expected = if expected_describe {
             RegistrationKind::Describe
         } else {
@@ -307,6 +327,40 @@ impl TypeScriptAdmissionContext {
 
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
+    }
+}
+
+/// The names the enclosing scopes of a registration bind, indexed by name.
+/// A name is kept per kind of binding: one a file-level declaration makes
+/// (exempt from shadowing only when an import supplies the same name) and one
+/// any other level makes (always shadows).
+#[derive(Default)]
+pub(crate) struct RegistrationNames {
+    by_name: std::collections::HashMap<String, (bool, bool)>,
+}
+
+impl RegistrationNames {
+    pub(crate) fn new(bindings: impl Iterator<Item = (String, bool)>) -> Self {
+        let mut by_name: std::collections::HashMap<String, (bool, bool)> =
+            std::collections::HashMap::new();
+        for (name, file_declaration) in bindings {
+            let kinds = by_name.entry(name).or_default();
+            if file_declaration {
+                kinds.1 = true;
+            } else {
+                kinds.0 = true;
+            }
+        }
+        Self { by_name }
+    }
+
+    /// Whether `name` is a local binding that shadows a runner import of the
+    /// same name: any non-file binding, or a file-level declaration no
+    /// runner import supplies.
+    fn binds(&self, name: &str, runner_imports: &[TypeScriptImport]) -> bool {
+        self.by_name.get(name).is_some_and(|&(local, file)| {
+            local || (file && !runner_imports.iter().any(|import| import.local == name))
+        })
     }
 }
 
@@ -903,6 +957,58 @@ enum RegistrationKind {
     Describe,
 }
 
+/// A registration callee's root, its factory call (`.each(table)`) and whether
+/// it is a Playwright suite.
+type RegistrationShape<'a, 'b> = (
+    &'b Expression<'a>,
+    Option<(&'b str, &'b [Argument<'a>])>,
+    bool,
+);
+
+/// The root, factory call and Playwright-suite flag of a registration callee,
+/// or `None` when the callee is not a registration chain.
+fn registration_shape<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+) -> Option<RegistrationShape<'a, 'b>> {
+    // Playwright's `test.describe(...)`: a suite spelled as a member of the
+    // `test` root rather than as a `describe` root of its own.
+    let mut playwright_describe = false;
+    let (root, factory) = match call.callee.get_inner_expression() {
+        // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
+        Expression::CallExpression(factory) => {
+            let (root, segments) = static_chain(factory.callee.get_inner_expression())?;
+            let (last, modifiers) = segments.split_last()?;
+            if !REGISTRATION_FACTORIES.contains(last)
+                || !modifiers
+                    .iter()
+                    .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
+            {
+                return None;
+            }
+            (root, Some((*last, factory.arguments.as_slice())))
+        }
+        Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
+        other => {
+            let (root, segments) = static_chain(other)?;
+            let modifiers = match segments.split_first() {
+                Some((&"describe", rest)) => {
+                    playwright_describe = true;
+                    rest
+                }
+                _ => &segments[..],
+            };
+            if !modifiers.iter().all(|segment| {
+                REGISTRATION_MODIFIERS.contains(segment)
+                    || (playwright_describe && *segment == "parallel")
+            }) {
+                return None;
+            }
+            (root, None)
+        }
+    };
+    Some((root, factory, playwright_describe))
+}
+
 /// A recognized `test`/`describe` registration call.
 struct Registration<'a, 'b> {
     kind: RegistrationKind,
@@ -1003,42 +1109,7 @@ impl<'c> Scan<'c> {
         &self,
         call: &'b oxc_ast::ast::CallExpression<'a>,
     ) -> Option<Registration<'a, 'b>> {
-        // Playwright's `test.describe(...)`: a suite spelled as a member of the
-        // `test` root rather than as a `describe` root of its own.
-        let mut playwright_describe = false;
-        let (root, factory) = match call.callee.get_inner_expression() {
-            // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
-            Expression::CallExpression(factory) => {
-                let (root, segments) = static_chain(factory.callee.get_inner_expression())?;
-                let (last, modifiers) = segments.split_last()?;
-                if !REGISTRATION_FACTORIES.contains(last)
-                    || !modifiers
-                        .iter()
-                        .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
-                {
-                    return None;
-                }
-                (root, Some((*last, factory.arguments.as_slice())))
-            }
-            Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
-            other => {
-                let (root, segments) = static_chain(other)?;
-                let modifiers = match segments.split_first() {
-                    Some((&"describe", rest)) => {
-                        playwright_describe = true;
-                        rest
-                    }
-                    _ => &segments[..],
-                };
-                if !modifiers.iter().all(|segment| {
-                    REGISTRATION_MODIFIERS.contains(segment)
-                        || (playwright_describe && *segment == "parallel")
-                }) {
-                    return None;
-                }
-                (root, None)
-            }
-        };
+        let (root, factory, playwright_describe) = registration_shape(call)?;
         let Expression::Identifier(root) = root else {
             return None;
         };
