@@ -181,16 +181,16 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
-  --timeout SECS    Wall-clock budget in seconds (default 600; 0 disables).
+  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
+                    excludes repo seam-inventory formats). On analysis_timeout,
+                    raise/disable it or narrow the diff; re-run.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
-
 Examples:
   ripr check
   ripr check --base origin/main --json
-
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
