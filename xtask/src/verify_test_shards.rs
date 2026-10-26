@@ -17,6 +17,13 @@
 //! - the partition lists are pairwise disjoint and equal to the full workspace
 //!   list.
 //!
+//! A partial "re-run failed jobs" uploads fresh artifacts only for the re-run
+//! shards (#10605), so each shard's evidence is read from its latest attempt at
+//! or before the verifying attempt; the run-context check binds the chosen
+//! artifact to this repository, checkout, run, partition and its own attempt,
+//! so a shard accepted from an earlier attempt is still exactly this run's
+//! work on this checkout. The combined receipt discloses the attempts used.
+//!
 //! It then writes one combined `junit.xml` and `run-context.txt`, the files the
 //! unpartitioned step retained, so consumers of the `<artifact>-nextest-<attempt>`
 //! evidence read the same shape, plus `shards-summary.txt`. Any problem is a
@@ -103,10 +110,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     if shards == 0 {
         return Err("verify-test-shards: --shards must be at least 1".to_string());
     }
+    let attempt = take("attempt")?;
+    if attempt.parse::<u32>().is_err() {
+        return Err(format!(
+            "verify-test-shards: --attempt must be a number, got {attempt:?}"
+        ));
+    }
     Ok(Options {
         dir: PathBuf::from(take("dir")?),
         artifact: take("artifact")?,
-        attempt: take("attempt")?,
+        attempt,
         repository: take("repository")?,
         sha: take("sha")?,
         run_id: take("run-id")?,
@@ -130,13 +143,19 @@ fn verify(options: &Options) -> Outcome {
     let mut total_tests = 0u64;
     let mut first_context = String::new();
     let mut first_environment = String::new();
+    let mut used_attempts = BTreeSet::new();
 
     for shard in 1..=options.shards {
-        let dir = options.dir.join(format!(
-            "{}-nextest-shard-{shard}-{}",
-            options.artifact, options.attempt
-        ));
         let tag = format!("shard {shard}");
+        let Some((dir, shard_attempt)) = select_shard_dir(options, shard) else {
+            problems.push(format!(
+                "{tag}: artifact is missing for attempts 1..={}",
+                options.attempt
+            ));
+            summary.push_str(&format!("{tag}: no artifact\n"));
+            continue;
+        };
+        used_attempts.insert(shard_attempt);
         let list = read_named(&dir, &format!("list-{shard}.txt"), &tag, &mut problems);
         let list_lines: BTreeSet<String> = list
             .as_deref()
@@ -154,7 +173,7 @@ fn verify(options: &Options) -> Outcome {
         }
 
         if let Some(context) = read_named(&dir, "run-context.txt", &tag, &mut problems) {
-            check_context(&context, options, shard, &tag, &mut problems);
+            check_context(&context, options, shard, shard_attempt, &tag, &mut problems);
             let environment = environment_of(&context);
             check_environment(&environment, &tag, &mut problems);
             if shard == 1 {
@@ -179,20 +198,29 @@ fn verify(options: &Options) -> Outcome {
         }
         total_tests += tests;
         summary.push_str(&format!(
-            "shard {shard}: listed {}, junit tests {tests}\n",
+            "shard {shard}: listed {}, junit tests {tests} (attempt {shard_attempt})\n",
             list_lines.len()
         ));
     }
 
-    let all = options.dir.join(format!(
-        "{}-nextest-shard-1-{}",
-        options.artifact, options.attempt
-    ));
-    let all_lines: BTreeSet<String> =
-        match read_named(&all, "list-all.txt", "full workspace list", &mut problems) {
-            Some(text) => lines_of(&text).collect(),
-            None => BTreeSet::new(),
-        };
+    let all_dir = select_shard_dir(options, 1).map_or_else(
+        || {
+            options.dir.join(format!(
+                "{}-nextest-shard-1-{}",
+                options.artifact, options.attempt
+            ))
+        },
+        |(dir, _attempt)| dir,
+    );
+    let all_lines: BTreeSet<String> = match read_named(
+        &all_dir,
+        "list-all.txt",
+        "full workspace list",
+        &mut problems,
+    ) {
+        Some(text) => lines_of(&text).collect(),
+        None => BTreeSet::new(),
+    };
     if all_lines.is_empty() {
         problems.push("the full workspace test list is empty".to_string());
     }
@@ -238,13 +266,46 @@ fn verify(options: &Options) -> Outcome {
          <testsuites name=\"nextest-run\" tests=\"{total_tests}\" failures=\"0\" errors=\"0\">\n\
          {suites}</testsuites>\n"
     );
-    let context = combined_context(&first_context, options);
+    let context = combined_context(&first_context, options, &used_attempts);
     Outcome {
         problems,
         summary,
         junit,
         context,
     }
+}
+
+/// A partial "re-run failed jobs" uploads fresh artifacts only for the
+/// re-run shards (#10605), so a shard's evidence is its latest artifact for
+/// this run at or before the verifying attempt. Suffixes that are not
+/// attempts, or name a future attempt, are not evidence.
+fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
+    let current: u32 = options.attempt.parse().ok()?;
+    let prefix = format!("{}-nextest-shard-{shard}-", options.artifact);
+    let mut best: Option<(PathBuf, u32)> = None;
+    let entries = fs::read_dir(&options.dir).ok()?;
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(suffix) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Ok(attempt) = suffix.parse::<u32>() else {
+            continue;
+        };
+        if attempt == 0 || attempt > current {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_attempt)| attempt > *best_attempt)
+        {
+            best = Some((entry.path(), attempt));
+        }
+    }
+    best
 }
 
 /// List lines with terminal colour escapes removed: the hosted job sets
@@ -374,6 +435,7 @@ fn check_context(
     context: &str,
     options: &Options,
     shard: u32,
+    attempt: u32,
     tag: &str,
     problems: &mut Vec<String>,
 ) {
@@ -385,7 +447,7 @@ fn check_context(
         ("repository", options.repository.clone()),
         ("checkout_sha", options.sha.clone()),
         ("run_id", options.run_id.clone()),
-        ("run_attempt", options.attempt.clone()),
+        ("run_attempt", attempt.to_string()),
         ("profile", "ci".to_string()),
         ("shard", format!("{shard}/{}", options.shards)),
         ("command", command),
@@ -642,7 +704,10 @@ fn unescape(value: &str) -> String {
 
 /// The unpartitioned step's `run-context.txt` shape, from shard 1's tool
 /// versions and blob identities, with the partition-specific lines replaced.
-fn combined_context(first: &str, options: &Options) -> String {
+/// `verified_attempts` discloses when the accepted shards span more than one
+/// run attempt (a partial re-run, #10605): `run_attempt` stays the verifying
+/// attempt, and the line names the attempts the shard evidence came from.
+fn combined_context(first: &str, options: &Options, used_attempts: &BTreeSet<u32>) -> String {
     let mut out = format!(
         "repository={}\ncheckout_sha={}\nrun_id={}\nrun_attempt={}\nprofile=ci\n\
          shards={}/{} verified\ncommand=cargo nextest run --workspace --profile ci \
@@ -655,6 +720,10 @@ fn combined_context(first: &str, options: &Options) -> String {
         options.shards,
         options.shards
     );
+    if used_attempts.len() > 1 {
+        let attempts: Vec<String> = used_attempts.iter().map(u32::to_string).collect();
+        out.push_str(&format!("verified_attempts={}\n", attempts.join(",")));
+    }
     out.push_str(&environment_of(first));
     out.push_str("nextest_exit=0\n");
     out
@@ -668,10 +737,14 @@ mod tests {
     const BLOB: &str = "0123456789abcdef0123456789abcdef01234567";
 
     fn options(dir: &Path, shards: u32) -> Options {
+        options_attempt(dir, shards, "1")
+    }
+
+    fn options_attempt(dir: &Path, shards: u32, attempt: &str) -> Options {
         Options {
             dir: dir.join("in"),
             artifact: "art".to_string(),
-            attempt: "1".to_string(),
+            attempt: attempt.to_string(),
             repository: "o/r".to_string(),
             sha: SHA.to_string(),
             run_id: "7".to_string(),
@@ -695,9 +768,42 @@ mod tests {
     }
 
     fn context(shard: u32, shards: u32) -> String {
+        context_attempt(shard, shards, 1)
+    }
+
+    fn context_attempt(shard: u32, shards: u32, attempt: u32) -> String {
         format!(
-            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\ninput_blobs (a, b, c, d):\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
+            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\ninput_blobs (a, b, c, d):\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
         )
+    }
+
+    /// Lays out one shard attempt; `nested` mimics an archive rooted above
+    /// `nextest/ci`, the other layout `upload-artifact` can produce.
+    fn lay_out_shard(
+        root: &Path,
+        nested: bool,
+        shard: u32,
+        shards: u32,
+        attempt: u32,
+        ids: &[&str],
+    ) -> Result<(), String> {
+        let mut dir = root
+            .join("in")
+            .join(format!("art-nextest-shard-{shard}-{attempt}"));
+        if nested {
+            dir = dir.join("nextest/ci");
+        }
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let put =
+            |name: &str, text: String| fs::write(dir.join(name), text).map_err(|e| e.to_string());
+        put(&format!("shard-{shard}.status"), "0\n".to_string())?;
+        put("run-context.txt", context_attempt(shard, shards, attempt))?;
+        put("junit.xml", junit(ids))?;
+        put(&format!("list-{shard}.txt"), ids.join("\n") + "\n")?;
+        if shard == 1 {
+            put("list-all.txt", "b one\nb three\nb two\n".to_string())?;
+        }
+        Ok(())
     }
 
     /// Lays out two good shards; `nested` mimics an archive rooted above
@@ -705,21 +811,7 @@ mod tests {
     fn lay_out(root: &Path, nested: bool) -> Result<(), String> {
         let shards: [(u32, &[&str]); 2] = [(1, &["b one", "b two"]), (2, &["b three"])];
         for (shard, ids) in shards {
-            let mut dir = root.join("in").join(format!("art-nextest-shard-{shard}-1"));
-            if nested {
-                dir = dir.join("nextest/ci");
-            }
-            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let put = |name: &str, text: String| {
-                fs::write(dir.join(name), text).map_err(|e| e.to_string())
-            };
-            put(&format!("shard-{shard}.status"), "0\n".to_string())?;
-            put("run-context.txt", context(shard, 2))?;
-            put("junit.xml", junit(ids))?;
-            put(&format!("list-{shard}.txt"), ids.join("\n") + "\n")?;
-            if shard == 1 {
-                put("list-all.txt", "b one\nb three\nb two\n".to_string())?;
-            }
+            lay_out_shard(root, nested, shard, 2, 1, ids)?;
         }
         Ok(())
     }
@@ -747,6 +839,65 @@ mod tests {
             let problems = problems_for("good", nested, |_| {})?;
             assert!(problems.is_empty(), "nested={nested}: {problems:?}");
         }
+        Ok(())
+    }
+
+    /// A partial "re-run failed jobs" uploads fresh artifacts only for the
+    /// re-run shards (#10605): shard 1 keeps its attempt-1 evidence while
+    /// shard 2 is read from attempt 2, and the combined receipt discloses
+    /// both attempts.
+    #[test]
+    fn partial_rerun_reads_each_shards_latest_attempt() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-partial-rerun");
+        // Attempt 1: shard 1 green, shard 2 red (its status is overwritten by
+        // the attempt-2 artifact below, which selection must prefer).
+        lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
+        lay_out_shard(&root, false, 2, 2, 1, &["b three"])?;
+        let _ = fs::write(shard_dir(&root, 2).join("shard-2.status"), "1\n");
+        lay_out_shard(&root, false, 2, 2, 2, &["b three"])?;
+        let outcome = verify(&options_attempt(&root, 2, "2"));
+        assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+        assert!(
+            outcome
+                .summary
+                .contains("shard 1: listed 2, junit tests 2 (attempt 1)"),
+            "{}",
+            outcome.summary
+        );
+        assert!(
+            outcome
+                .summary
+                .contains("shard 2: listed 1, junit tests 1 (attempt 2)"),
+            "{}",
+            outcome.summary
+        );
+        assert!(
+            outcome.context.contains("verified_attempts=1,2"),
+            "{}",
+            outcome.context
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// An artifact from an attempt after the verifying attempt is not
+    /// evidence: it cannot exist for this run, so the shard reads as missing
+    /// rather than passing on a future artifact.
+    #[test]
+    fn a_future_attempt_is_not_evidence() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-future-attempt");
+        lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
+        lay_out_shard(&root, false, 2, 2, 3, &["b three"])?;
+        let outcome = verify(&options_attempt(&root, 2, "2"));
+        assert!(
+            outcome
+                .problems
+                .iter()
+                .any(|problem| problem.contains("artifact is missing")),
+            "{:?}",
+            outcome.problems
+        );
+        let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 
