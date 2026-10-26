@@ -2742,7 +2742,7 @@ type MockCountAliases = std::collections::BTreeMap<String, (Vec<MockCountPart>, 
 /// unused closures. This only withholds argument credit; it establishes no
 /// execution order or admission. Initializer dependencies resolve independently
 /// of lexical order, and nested shadowing refuses the name entirely. A callback's
-/// constants have that callback's lexical scope, not the whole registration.
+/// constants retain their function or unconditional block's lexical scope.
 fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockCountAliases {
     use oxc_ast_visit::{Visit, walk};
     struct Constant {
@@ -2758,22 +2758,17 @@ fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockC
         reads: std::collections::BTreeMap<String, Vec<u32>>,
         constants: Vec<Constant>,
     }
-    impl<'a> Visit<'a> for Facts<'_> {
-        fn visit_binding_identifier(&mut self, node: &oxc_ast::ast::BindingIdentifier<'a>) {
-            *self.bindings.entry(node.name.to_string()).or_default() += 1;
-        }
-
-        fn visit_identifier_reference(&mut self, node: &oxc_ast::ast::IdentifierReference<'a>) {
-            self.reads
-                .entry(node.name.to_string())
-                .or_default()
-                .push(node.span.start);
-        }
-
-        fn visit_function_body(&mut self, body: &oxc_ast::ast::FunctionBody<'a>) {
-            // Only direct, straight-line declarations in a callback body.
-            // In particular this does not read loop-header declarations.
-            for statement in &body.statements {
+    impl Facts<'_> {
+        fn collect_straight_line_constants(
+            &mut self,
+            statements: &[Statement<'_>],
+            scope: oxc_span::Span,
+        ) {
+            for statement in statements {
+                if let Statement::BlockStatement(block) = statement {
+                    self.collect_straight_line_constants(&block.body, block.span);
+                    continue;
+                }
                 let Statement::VariableDeclaration(declaration) = statement else {
                     continue;
                 };
@@ -2797,10 +2792,28 @@ fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockC
                         initializer: initializer.to_string(),
                         start: declarator.span.start,
                         end: declarator.span.end,
-                        scope: body.span,
+                        scope,
                     });
                 }
             }
+        }
+    }
+    impl<'a> Visit<'a> for Facts<'_> {
+        fn visit_binding_identifier(&mut self, node: &oxc_ast::ast::BindingIdentifier<'a>) {
+            *self.bindings.entry(node.name.to_string()).or_default() += 1;
+        }
+
+        fn visit_identifier_reference(&mut self, node: &oxc_ast::ast::IdentifierReference<'a>) {
+            self.reads
+                .entry(node.name.to_string())
+                .or_default()
+                .push(node.span.start);
+        }
+
+        fn visit_function_body(&mut self, body: &oxc_ast::ast::FunctionBody<'a>) {
+            // Standalone lexical blocks preserve the straight-line contract.
+            // Do not descend through conditionals or loop/header declarations.
+            self.collect_straight_line_constants(&body.statements, body.span);
             walk::walk_function_body(self, body);
         }
     }
@@ -2826,8 +2839,8 @@ fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockC
             })
         {
             // A unique spelling can still name an outer value outside this
-            // callback. Refuse it rather than let an unused sibling closure's
-            // count alias weaken an unrelated argument pin.
+            // lexical scope. Refuse it rather than let an unused block or
+            // sibling closure's count alias weaken an unrelated argument pin.
             continue;
         }
         let Ok(init) =

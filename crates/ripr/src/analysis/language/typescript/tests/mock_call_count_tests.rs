@@ -454,9 +454,8 @@ fn unconditional_block_mock_call_count_aliases_are_not_argument_pins() -> Result
 #[test]
 fn unconditional_block_mock_call_count_aliases_preserve_argument_and_added_call_credit()
 -> Result<(), String> {
-    let argument = node_test(
-        "{ const calls = fn.mock.calls; assert.equal(calls[0].arguments[0], 8); }",
-    );
+    let argument =
+        node_test("{ const calls = fn.mock.calls; assert.equal(calls[0].arguments[0], 8); }");
     let tests = extract_tests(Path::new("tests/notify.test.ts"), &argument);
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0].assertions.len(), 1);

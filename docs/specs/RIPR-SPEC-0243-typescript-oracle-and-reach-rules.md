@@ -1402,9 +1402,10 @@ the masker.
     pins, which keep their reading. Alias resolution follows straight-line
     callback-local constant identities, including supported named callbacks,
     and refuses names bound more than once anywhere in the registration.
-    An admitted nested callback keeps its own constant identities. A name
-    also read outside its declaring callback is unresolved rather than
-    capturing an unrelated outer value; alias facts admit no new assertions.
+    An admitted nested callback keeps its own constant identities. Unconditional
+    lexical blocks retain their own constant scope, including nested blocks.
+    A name also read outside its declaring callback or block is unresolved
+    rather than capturing an unrelated outer value; alias facts admit no new assertions.
     A count binding cannot supply exact argument evidence even when declared
     lexically later; this demotion establishes no execution or admission. Count facts are read once per related test; ordinary argument
     pins do not trigger repeated whole-test parsing. Mutable, destructured,
