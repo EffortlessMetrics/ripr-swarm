@@ -3004,9 +3004,12 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         "Rust-scan explanation stays secondary:\n{terminal}"
     );
     assert!(
-        terminal.contains("Python preview:\n  status: no_python_findings"),
+        terminal.contains("Python preview:\n  status: not scanned by pilot; run `ripr check`\n"),
         "{terminal}"
     );
+    // #10681: never a numeric zero or clean-looking status for Python.
+    assert!(!terminal.contains("findings: 0"), "{terminal}");
+    assert!(!terminal.contains("no_python_findings"), "{terminal}");
     assert!(
         terminal.contains(&format!(
             "python: 1 file (preview, diff-first)\n    route: {command}\n"
@@ -3027,6 +3030,12 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         md.contains("Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan."),
         "{md}"
     );
+
+    assert!(
+        md.contains("- Python findings: not scanned by pilot; run `ripr check`"),
+        "{md}"
+    );
+    assert!(!md.contains("- Python findings: `0`"), "{md}");
 
     let json = render_pilot_summary_json(&[], context);
     let parsed: serde_json::Value = serde_json::from_str(&json)

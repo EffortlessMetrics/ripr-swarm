@@ -20,6 +20,7 @@ use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
     withheld_static_limitations,
 };
+use crate::output::pilot::types::PilotPythonFirstUseStatus;
 use crate::output::pilot::{
     ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
     PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
@@ -1861,6 +1862,13 @@ fn push_python_first_use_md(out: &mut String, first_use: &PilotPythonFirstUse) {
     out.push_str(&format!("- Status: `{}`\n", first_use.status.as_str()));
     out.push_str("- Language: `python` (`preview`)\n");
     out.push_str("- Boundary: `preview_advisory_only`\n");
+    if first_use.status == PilotPythonFirstUseStatus::NoPythonFindings {
+        // #10681: do not print a numeric zero that reads as a clean result.
+        out.push_str(
+            "- Python findings: not scanned by pilot; run `ripr check` for the Python diff findings\n\n",
+        );
+        return;
+    }
     out.push_str(&format!(
         "- Python findings: `{}`\n",
         first_use.findings_total
@@ -1928,6 +1936,16 @@ fn push_python_repair_card_md(out: &mut String, card: &PythonRepairCard) {
 
 fn push_python_first_use_terminal(out: &mut String, first_use: &PilotPythonFirstUse) {
     out.push_str("Python preview:\n");
+    if first_use.status == PilotPythonFirstUseStatus::NoPythonFindings {
+        // #10681: pilot's repo-wide pass is not the Python diff analysis, so a
+        // numeric zero would read as a clean result `ripr check` can contradict.
+        out.push_str("  status: not scanned by pilot; run `ripr check`\n");
+        out.push_str("  language: python (preview)\n");
+        out.push_str(
+            "  findings: not counted here; `ripr check` reports the Python diff findings\n\n",
+        );
+        return;
+    }
     out.push_str(&format!("  status: {}\n", first_use.status.as_str()));
     out.push_str("  language: python (preview)\n");
     out.push_str(&format!("  findings: {}\n", first_use.findings_total));
