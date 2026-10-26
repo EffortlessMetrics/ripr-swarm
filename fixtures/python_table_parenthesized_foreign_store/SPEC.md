@@ -18,4 +18,4 @@ The finding reads `static_unknown`. The foreign store restores 5 before the asse
 
 Index only the unparenthesized spelling of a dict binding and miss the foreign store, or promote the edit to `exposed`.
 
-These are static analyzer stimuli, not executed pytest fixtures; the verdict corpus (`authored-py-table-traps`) carries the runtime truth. RIPR-SPEC-0108 pins the finding independently of golden blessing.
+These are static analyzer stimuli, not executed pytest fixtures. RIPR-SPEC-0108 pins the finding independently of golden blessing. Native pytest on the unchanged test passes on the original and the edited module, so this is a trap and not a kill.

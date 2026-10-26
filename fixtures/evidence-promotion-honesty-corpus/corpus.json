@@ -14185,6 +14185,32 @@
       ]
     },
     {
+      "id": "python_scalar_code_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_scalar_code_replacement",
+      "vector": "scalar_reader_code_replacement_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_scalar_code_replacement_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_scalar_code_replacement_removed",
+      "vector": "scalar_reader_without_code_replacement_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_call_chain_literal_input_predicate",
       "language": "rust",
       "tier": "pure",

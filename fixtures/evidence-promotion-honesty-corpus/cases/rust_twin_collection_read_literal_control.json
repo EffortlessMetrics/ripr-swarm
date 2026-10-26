@@ -1,0 +1,17 @@
+{
+  "id": "rust_twin_collection_read_literal_control",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_twin_collection_read_literal_control",
+  "vector": "an_exact_collection_pin_keeps_its_credit",
+  "probe_family": "side_effect",
+  "assertions": [
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    }
+  ]
+}
