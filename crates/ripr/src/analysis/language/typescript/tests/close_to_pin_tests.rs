@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0243 rule 27: `toBeCloseTo(<number>)` on a literal-argument call
+//! RIPR-SPEC-0247 rule 6: `toBeCloseTo(<number>)` on a literal-argument call
 //! pins a changed `return` expression when the old value passes and the new
 //! value falls outside the default tolerance (0.005).
 
@@ -148,6 +148,41 @@ fn a_shadowed_owner_or_a_multi_line_change_earns_nothing() -> Result<(), String>
             &test_source("  expect(cmToIn(2.54)).toBeCloseTo(1);"),
         )?,
         0
+    );
+    Ok(())
+}
+
+#[test]
+fn a_branch_or_early_exit_before_the_return_earns_nothing() -> Result<(), String> {
+    let test = test_source("  expect(cmToIn(100)).toBeCloseTo(39.37);");
+    for (label, owner) in [
+        (
+            "early return",
+            "export function cmToIn(cm: number): number {\n  if (cm >= 100) return 39.37;\n  return cm / 2.5;\n}\n",
+        ),
+        (
+            "async",
+            "export async function cmToIn(cm: number): Promise<number> {\n  return cm / 2.5;\n}\n",
+        ),
+    ] {
+        assert_eq!(
+            close_to_credits(label, owner, OLD_LINE, NEW_LINE, &test)?,
+            0,
+            "{label}"
+        );
+    }
+    // A declaration before the return still runs for every call.
+    let declared =
+        "export function cmToIn(cm: number): number {\n  const scale = 1;\n  return cm / 2.5;\n}\n";
+    assert_eq!(
+        close_to_credits(
+            "declaration",
+            declared,
+            OLD_LINE,
+            NEW_LINE,
+            &test_source("  expect(cmToIn(2.54)).toBeCloseTo(1);"),
+        )?,
+        1
     );
     Ok(())
 }

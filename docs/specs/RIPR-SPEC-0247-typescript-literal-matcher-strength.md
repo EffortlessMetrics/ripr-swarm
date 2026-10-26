@@ -433,8 +433,8 @@ and the rejected alternative. Recorded on #6654.
 
 **Rule 6. `toBeCloseTo` on a literal call pins a changed `return` the
 tolerance separates (2026-10-26).** On a ReturnValue seam,
-`expect(f(a)).toBeCloseTo(n)` reads `exact_value` / strong when all of
-these hold:
+`expect(f(a)).toBeCloseTo(n)` is credited as a pin (the extracted oracle
+stays `unknown`; the classifier reads it strong) when all of these hold:
 
 - the matcher takes one number literal and no `numDigits`, so the tolerance
   is the default `10 ** -2 / 2` (0.005); a second argument, a negation, a
@@ -443,7 +443,9 @@ these hold:
 - the changed line is a one-line `return <expression>;` in an owner that
   `plain_changed_return` accepts: arity known, no parameter reassigned, no
   nested function before the return (the gate RIPR-SPEC-0243 rule 18
-  uses);
+  uses), and the owner is synchronous and not a generator with nothing
+  between its signature and the return that branches, returns or throws
+  early, so the changed line runs for every call;
 - the assertion observes the whole result of one owner call with scalar
   literal arguments, through a name the test imports from the owner's
   module (the observation gate of rules 2 and 5);

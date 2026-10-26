@@ -1269,6 +1269,52 @@ pub(crate) fn plain_changed_return<'t>(
     Some((old_expression, new_expression))
 }
 
+/// Whether the changed `return` at `line` runs for every call of a plain,
+/// synchronous owner: nothing between the signature and the return branches,
+/// returns or throws early, and the owner is neither `async` nor a generator.
+/// Rule 18 only withdraws credit, so it does not need this; the
+/// `toBeCloseTo` pin grants credit, and an early `return` for the asserted
+/// input would leave the changed line unexecuted on both versions.
+pub(crate) fn changed_return_runs_unconditionally(
+    line: usize,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let Some(root) = workspace_root else {
+        return false;
+    };
+    let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
+        return false;
+    };
+    let head: String = source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| {
+            let number = index + 1;
+            number >= owner.start_line && number < line
+        })
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let masked = ts_mask_literals_and_comments(&head);
+    let Some((signature, prefix)) = masked.split_once('{') else {
+        return false;
+    };
+    let word = |text: &str, name: &str| {
+        text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .any(|token| token == name)
+    };
+    !(word(signature, "async")
+        || signature.contains('*')
+        || prefix.contains('{')
+        || [
+            "if", "else", "switch", "case", "for", "while", "do", "try", "catch", "return",
+            "throw", "break", "continue", "yield",
+        ]
+        .iter()
+        .any(|keyword| word(prefix, keyword)))
+}
+
 /// RIPR-SPEC-0243 rule 18: the changed single-line `return <expression>;`
 /// is shown unexercised when EVERY strong assertion of every oracle-eligible
 /// related test observes owner calls whose arguments are all literals and on

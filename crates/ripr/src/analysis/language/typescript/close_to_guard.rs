@@ -62,6 +62,9 @@ pub(crate) fn ts_close_to_pin_facts(
     else {
         return facts;
     };
+    if !changed_return_runs_unconditionally(line, owner, workspace_root) {
+        return facts;
+    }
     for candidate in candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
