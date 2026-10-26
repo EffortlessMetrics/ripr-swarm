@@ -1375,9 +1375,33 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
+        // #9638: a receiver call of a method hop's caller (`v.grow(8)` for
+        // `fn grow(&mut self, ..) { self.try_grow(..) }`). It does not ride
+        // the free-call bypasses of `calls_helper_entry`: a receiver call has
+        // no crate path that could tie it to the owner's package, so only a
+        // test in the owner's package qualifies. The cross-package test pins
+        // the outcome; this explicit prefix check is defense in depth that no
+        // mutation test pins on its own (the later cross-package `continue`
+        // and the receiver-type check refuse the same test).
+        let calls_method_entry = !calls_helper_entry
+            && match &owner_package_prefix {
+                Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+                // A root-package owner has no prefix. Only a test that is
+                // itself outside every member package (`tests/..`, `src/..`
+                // of the root) shares its package; a workspace member's
+                // test, and any path that cannot be scoped, fails closed.
+                None => {
+                    package_prefix(&test.file).is_none()
+                        && !path_is_absolute_form(&test.file)
+                        && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+                }
+            }
+            && helper_chain.is_some_and(|chain| {
+                super::helper_transfer::test_calls_method_entry(index, test, chain)
+            });
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
-            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
+            && (calls_helper_entry || calls_method_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner

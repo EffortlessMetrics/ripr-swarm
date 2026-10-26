@@ -108,6 +108,20 @@ pub(crate) struct CallIdentityMemos {
     /// #9209: the workspace's non-plain `Drop` impls, read once per index so
     /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
     drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,
+    /// #9638: how many `struct`/`enum`/`union`/`type` items of each name the
+    /// workspace declares, read once per index so a receiver-type check is a
+    /// lookup instead of a masked scan of every indexed file.
+    type_name_counts: std::sync::OnceLock<BTreeMap<String, usize>>,
+}
+
+impl CallIdentityMemos {
+    /// The memoized type-name declaration counts, built by `build` on first use.
+    pub(super) fn type_name_counts(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, usize>,
+    ) -> &BTreeMap<String, usize> {
+        self.type_name_counts.get_or_init(build)
+    }
 }
 
 impl Clone for CallIdentityMemos {
