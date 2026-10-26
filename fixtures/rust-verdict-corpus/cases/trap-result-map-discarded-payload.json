@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "self.try_get_uint(nbytes).map(|v| { let _ = sign_extend(v, nbytes); -1 })",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent to original: callback always returns -1, including when the actual input is zero; existing all-ff test still passes"
