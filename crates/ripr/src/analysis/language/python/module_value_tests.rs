@@ -2249,4 +2249,28 @@ fn a_code_slot_assignment_replaces_readers_but_does_not_rebind_plain_names() {
     assert!(foreign.may_replace_reader_code());
     assert!(!foreign.may_rebind("version_info", Path::new("sys.py")));
     assert!(!foreign.may_rebind("LIMIT", own));
+fn reflection_only_withholds_credit_for_modules_it_can_reach() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    // Unconnected reflection over an unrelated module keeps the credit.
+    let unrelated = (
+        "hostile/util.py",
+        "import math\n\nPI = getattr(math, \"pi\")\n",
+    );
+    assert_credited(&classify_table(&source, &[unrelated], &test, TABLE_NEW)?);
+    // A reflective helper that a test imports next to the owner may be handed
+    // the module as an argument, so the component reaches the owner.
+    let helper = (
+        "hostile/util.py",
+        "def read(module, name):\n    return getattr(module, name)\n",
+    );
+    let connected = "import hostile.util\nfrom hostile.settings import price\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n";
+    assert_not_credited(&classify_table(&source, &[helper], connected, TABLE_NEW)?);
+    // Loading a module by name makes the reachable set unknown.
+    let loader = (
+        "hostile/util.py",
+        "import importlib\n\nMODULE = getattr(importlib.import_module(\"x\"), \"y\")\n",
+    );
+    assert_not_credited(&classify_table(&source, &[loader], &test, TABLE_NEW)?);
+    Ok(())
 }
