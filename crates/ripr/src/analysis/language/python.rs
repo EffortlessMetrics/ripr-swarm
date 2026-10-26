@@ -460,6 +460,12 @@ struct PythonFixtureDef {
     file: PathBuf,
     body_text: String,
     imports: Vec<PythonImport>,
+    /// The class the fixture returns a fresh literal-built instance of
+    /// (`return Account(100)`), when that is its whole shape (#9619).
+    literal_construction: Option<String>,
+    /// Set when attached: no other fixture or hook visible to the test names
+    /// this fixture, so the test receives the instance exactly as built.
+    isolated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -847,6 +853,8 @@ impl PythonAdapter {
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+        let mut fixture_side_by_file: BTreeMap<PathBuf, fixtures::FixtureSideEffects> =
+            BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
@@ -906,6 +914,12 @@ impl PythonAdapter {
                 if !facts.fixtures.is_empty() {
                     fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
                 }
+                let mut side = facts.fixture_side_effects.clone();
+                // A partly parsed module may hold fixtures this walk never saw.
+                side.opaque |= !facts.limitations.is_empty();
+                if side != fixtures::FixtureSideEffects::default() {
+                    fixture_side_by_file.insert(relative.clone(), side);
+                }
                 helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
                 // A conftest with implicit setup, or one that only partly parsed,
                 // may assert around every test below it.
@@ -935,6 +949,12 @@ impl PythonAdapter {
         let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         };
+        fixtures::mark_isolated_fixture_defs(
+            &mut all_tests,
+            &fixture_defs_by_file,
+            &fixture_side_by_file,
+            unreadable_conftest,
+        );
         fixtures::taint_admission_by_conftest(
             &mut all_tests,
             &implicit_conftests,
@@ -1358,6 +1378,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod literal_fixture_tests;
 
 #[cfg(test)]
 mod dunder_entry_tests;

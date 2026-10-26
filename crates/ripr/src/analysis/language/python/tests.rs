@@ -4552,6 +4552,8 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 file: PathBuf::from("tests/conftest.py"),
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
+                literal_construction: None,
+                isolated: false,
             });
         }
         tests

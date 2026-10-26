@@ -408,7 +408,20 @@ This order is the existing behavior and is normative:
   `example` decorator and no strong assertion;
 - L8: `unresolved_pytest_fixture`: every eligible candidate is a
   non-parametrized pytest test that calls the owner and uses a
-  non-auxiliary fixture in its body;
+  non-auxiliary fixture in its body. A fixture is resolved, and does not
+  count, when it hands a module-level test a fresh literal-built instance
+  of a method owner's class (#9619, `py-fixtures-deposit`): a single
+  argument-free `@pytest.fixture` (function scope, no `params=`, no
+  `autouse=`) on a synchronous def with no parameters whose body is an
+  optional docstring and `return C(<literals>)`, where `C` is the owner's
+  class imported under its own name from the owner's module, and the
+  fixture's file binds neither the fixture name nor `C` a second time
+  and has no star import. No other fixture or `pytest_*` hook in the
+  test's module or its `conftest.py` chain may name the fixture, every
+  chain conftest that exists must have been read and parsed, no file in
+  that scope may star-import or declare `pytest_plugins`, the test must
+  not rebind the parameter, and the test's module must not bind the name
+  over a conftest fixture. Any other shape keeps the limit;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
@@ -1340,6 +1353,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `exposed` (unchanged; the input does not resolve). With `ship` changed
     to `return s // 100`: `exposed` (unchanged; not a guarded return).
 
+41. Class `Account` with `def deposit(self, amount): self.balance += amount`,
+    changed to `self.balance = self.balance + amount`; conftest
+    `@pytest.fixture` / `def account(): return Account(100)` with
+    `from shop import Account`; test `def test_d(account):` /
+    `account.deposit(50)` / `assert account.balance == 150`: the same
+    verdict as `account = Account(100)` inlined in the test body (today
+    `static_unknown`, `unresolved_pytest_fixture`; L8,
+    `py-fixtures-deposit`). A `yield`, an extra statement, a fixture
+    parameter, decorator arguments, a second decorator, an `async def`, a
+    non-literal or starred argument, another class, a class from another
+    module, a renamed import, a second binding of the class or the
+    fixture name, a star import, `pytest_plugins`, another fixture or hook
+    (here or up the chain) that names `account`, a test that rebinds it,
+    a test module that binds it and a class-level test all keep
+    `static_unknown`, `unresolved_pytest_fixture` (unchanged).
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
@@ -1445,6 +1474,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
   second decorator, an instance method called on the class, a decorator
   that only ends in `classmethod`, a same-named method of another class
   and a class name the test rebinds (#7634).
+
+- L8's literal owner-instance fixture (#9619):
+  `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
+  pins the inlined control, the conftest and same-module fixture, and
+  every negative shape and interference route of example 41.
 
 ## Implementation Mapping
 
