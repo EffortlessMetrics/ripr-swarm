@@ -26,6 +26,7 @@ helper into executed owner evidence. Do not rewrite runtime truth to fit advice.
 
 The adjacent `controls/` files are complete native Rust subjects. The shared
 boundary matrix is documented in
-`fixtures/inherent_receiver_free_helper_identity/BOUNDARIES.md` and exercised by
-`inherent_executable_owner_identity_boundary_matrix` and the production-path
-integration `executable_owner_identity_boundaries_agree_in_diff`.
+`fixtures/inherent_receiver_free_helper_identity/BOUNDARIES.md` and is exercised
+by `inherent_executable_owner_identity_boundary_matrix` and the production-path
+integration `executable_owner_identity_boundaries_agree_in_diff`, which land in the
+stacked test slice (#9614), not in this fixture slice.
