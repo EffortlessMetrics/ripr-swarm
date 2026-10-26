@@ -31744,6 +31744,29 @@ fn spec_index_fragments_must_be_named_for_the_one_spec_they_register() -> Result
             .any(|violation| violation.contains("stray.md must be named RIPR-SPEC-NNNN.md")),
         "{violations:?}"
     );
+
+    // One row per fragment, and not a second copy of a README row.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Again |\n",
+    );
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0001.md"),
+        "| [RIPR-SPEC-0001](../specs/RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one")),
+        "{violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0001.md duplicates the README row")),
+        "{violations:?}"
+    );
     Ok(())
 }
 

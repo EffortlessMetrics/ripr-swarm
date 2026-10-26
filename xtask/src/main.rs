@@ -6474,6 +6474,12 @@ fn spec_index_fragments(root: &Path) -> Result<Vec<(String, String)>, String> {
 /// holds spec rows for `RIPR-SPEC-NNNN` only, so a misnamed fragment cannot
 /// satisfy another spec's index entry.
 fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
+    let readme = root.join("docs/specs/README.md");
+    let readme_text = if readme.exists() {
+        read_text_lossy(&readme)?
+    } else {
+        String::new()
+    };
     for (name, text) in spec_index_fragments(root)? {
         let Some(stem) = name.strip_suffix(".md").filter(|stem| is_spec_id(stem)) else {
             violations.push(format!(
@@ -6488,9 +6494,15 @@ fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> R
                 ));
             }
         }
-        if !text.contains(&format!("[{stem}](../specs/")) {
+        let rows = text.matches(&format!("[{stem}](../specs/")).count();
+        if rows != 1 {
             violations.push(format!(
-                "{SPEC_INDEX_FRAGMENT_DIR}/{name} has no `[{stem}](../specs/<file>)` row"
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must hold exactly one `[{stem}](../specs/<file>)` row, found {rows}"
+            ));
+        }
+        if readme_text.contains(&format!("[{stem}](")) {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} duplicates the README row for `{stem}`; keep one"
             ));
         }
     }
