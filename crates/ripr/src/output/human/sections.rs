@@ -282,7 +282,7 @@ pub(crate) fn render_finding_digest_with_config(
         // definitions stay one flag away.
         if config.reports().human_legend() == crate::config::HumanLegend::Pointer {
             out.push_str(
-                "    Terms: `ripr check --legend` prints the stage, state and summary definitions\n",
+                "    Terms: rerun with `--legend` for the stage, state and summary definitions\n",
             );
         } else {
             out.push_str(concat!(

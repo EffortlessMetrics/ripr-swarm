@@ -194,9 +194,10 @@ exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4)
 its last three lines also define `finding`, `unsuppressed`, the `unknown`
 bucket, `base-side` and the Counts line's `candidate line` (#9244 item 4
 leftovers). They claim no runtime mutation outcome.
-The CLI prints the legend on the first run in a build tree and records that in
-`target/ripr/legend-seen`; later runs replace the ten lines with one
-`Terms: ` pointer to `ripr check --legend`, which prints them again. Library
+The CLI prints the legend on the first standalone human run in a build tree that
+selects a digest (a `--output-dir` fanout member always carries it and does not
+count) and records that in `target/ripr/legend-seen`; later runs replace the ten lines with one
+`Terms: ` pointer to `--legend`, which prints them again. Library
 callers and an unwritable output tree always get the full legend (#10481).
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed

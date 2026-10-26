@@ -6,7 +6,7 @@ use std::path::Path;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const LEGEND: &str = "Stages (static evidence)";
-const POINTER: &str = "Terms: `ripr check --legend`";
+const POINTER: &str = "Terms: rerun with `--legend`";
 
 fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
     let project = unique_external_workspace(label)?;
@@ -29,7 +29,11 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
 }
 
 fn check(project: &Path, extra: &[&str]) -> TestResult<String> {
-    let mut args = vec!["check", "--diff", "change.diff"];
+    check_diff(project, "change.diff", extra)
+}
+
+fn check_diff(project: &Path, diff: &str, extra: &[&str]) -> TestResult<String> {
+    let mut args = vec!["check", "--diff", diff];
     args.extend_from_slice(extra);
     let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(project), &args)?;
     assert!(
@@ -77,5 +81,28 @@ fn machine_formats_and_a_run_without_a_legend_do_not_consume_the_first_run() -> 
     let first = check(&project, &[])?;
     assert!(first.contains(LEGEND), "{first}");
     assert!(marker.is_file());
+    Ok(())
+}
+
+#[test]
+fn a_forced_first_legend_counts_and_a_run_without_a_digest_does_not() -> TestResult {
+    let project = workspace("legend-forced")?;
+    let marker = project.join("target/ripr/legend-seen");
+
+    // A run with no selected finding prints no legend, so it is not a first run.
+    fs::write(project.join("empty.diff"), "")?;
+    let empty = check_diff(&project, "empty.diff", &[])?;
+    assert!(
+        !empty.contains(LEGEND) && !empty.contains(POINTER),
+        "{empty}"
+    );
+    assert!(!marker.exists(), "no digest must not record the legend");
+
+    // `--legend` on the first real digest prints it and records it.
+    let forced = check(&project, &["--legend"])?;
+    assert!(forced.contains(LEGEND), "{forced}");
+    assert!(marker.is_file());
+    let next = check(&project, &[])?;
+    assert!(next.contains(POINTER) && !next.contains(LEGEND), "{next}");
     Ok(())
 }

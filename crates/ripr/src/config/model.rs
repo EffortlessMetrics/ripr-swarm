@@ -349,7 +349,7 @@ pub struct ReportsConfig {
 }
 
 /// The bounded human digest's legend (RIPR-SPEC-0122): the ten definition
-/// lines, or one line pointing at `ripr check --legend`.
+/// lines, or one line pointing at `--legend`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum HumanLegend {
     #[default]

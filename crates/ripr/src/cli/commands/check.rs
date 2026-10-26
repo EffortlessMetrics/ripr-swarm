@@ -1948,13 +1948,11 @@ fn check_inner(
     // #10481: the ten-line Evidence legend explains the digest to a first-time
     // reader; later runs keep one pointer line. "Seen" is a marker beside the
     // reports, so a clean build tree sees the legend again.
-    let legend_marker = (matches!(format, OutputFormat::Human) && !legend_requested)
+    let legend_marker = matches!(format, OutputFormat::Human)
         .then(|| human_legend_marker(&limited_check_input.root))
         .flatten();
-    let mark_legend_seen = legend_marker
-        .as_ref()
-        .is_some_and(|marker| !marker.exists());
-    if legend_marker.is_some() && !mark_legend_seen {
+    let legend_seen = legend_marker.as_ref().is_some_and(|marker| marker.exists());
+    if legend_seen && !legend_requested {
         config.reports.human_legend = crate::config::HumanLegend::Pointer;
     }
     let rendered = app::render_check_with_config_and_navigation_and_progress(
@@ -1987,8 +1985,12 @@ fn check_inner(
             err,
         )
     })?;
-    if mark_legend_seen
-        && rendered.contains("Stages (static evidence)")
+    // Record only a legend that was actually printed: a root named like the
+    // legend must not count, so match the renderer's own line start.
+    if !legend_seen
+        && rendered
+            .lines()
+            .any(|line| line.starts_with("    Stages (static evidence): reach = "))
         && let Some(marker) = legend_marker.as_ref()
     {
         record_human_legend_seen(&limited_check_input.root, marker);

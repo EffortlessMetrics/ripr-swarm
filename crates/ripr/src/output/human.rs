@@ -7075,9 +7075,7 @@ mod tests {
         assert!(!pointer.contains("Stages (static evidence)"), "{pointer}");
         assert!(!pointer.contains("Summary terms:"), "{pointer}");
         assert_eq!(
-            pointer
-                .matches("    Terms: `ripr check --legend` prints")
-                .count(),
+            pointer.matches("    Terms: rerun with `--legend`").count(),
             1,
             "{pointer}"
         );

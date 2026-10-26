@@ -895,7 +895,7 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
     for (key, value) in settings {
         let ran = ripr(
             &root,
-            &["check"],
+            &["check", "--legend"],
             &[
                 ("GIT_CONFIG_COUNT", "1"),
                 ("GIT_CONFIG_KEY_0", key),
@@ -916,7 +916,7 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         .to_owned();
     let ran = ripr(
         &root,
-        &["check"],
+        &["check", "--legend"],
         &[
             ("GIT_CONFIG_COUNT", "1"),
             ("GIT_CONFIG_KEY_0", "diff.orderFile"),
@@ -962,9 +962,9 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
             "orderfile did not reorder the stimulus diff:\n{default_order}"
         ));
     }
-    let plain_run = ripr(&root2, &["check"], &[])?;
+    let plain_run = ripr(&root2, &["check", "--legend"], &[])?;
     assert_sane(&plain_run, "two-file baseline")?;
-    let ordered_run = ripr(&root2, &["check"], &order_env)?;
+    let ordered_run = ripr(&root2, &["check", "--legend"], &order_env)?;
     assert_sane(&ordered_run, "two-file live orderfile")?;
     if plain_run.code != ordered_run.code || plain_run.stdout != ordered_run.stdout {
         return Err(format!(
