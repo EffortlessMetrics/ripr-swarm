@@ -164,8 +164,8 @@ pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name t
 Usage: ripr check [OPTIONS]
 
 Common options:
-  --base REV        Compare against this revision; when omitted, ripr tries
-                    origin/HEAD, origin/main, origin/master, main, master.
+  --base REV        Compare against this revision; when omitted, ripr uses
+                    the origin/HEAD ref, then origin/main, origin/master, main, master.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
