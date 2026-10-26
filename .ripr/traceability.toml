@@ -14181,6 +14181,7 @@ fixtures = [
   "fixtures/tail_comparison_boundary",
   "fixtures/returned_comparison_boundary_gap",
   "fixtures/returned_comparison_rival_import",
+  "fixtures/module_reach_super_import_in_file_wrong_module",
   "fixtures/owner_return_pin_direct",
   "fixtures/rust_returned_type_drop_exit",
   "fixtures/rust_returned_type_drop_plain",

@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (5)
+
+Reason:
+RIPR-SPEC-0197: a rival helper-entry call supplies no trusted boundary row; preserve infection_unknown without a fabricated gap. Independent review confirms the scoped #10046 correction.
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -13339,6 +13339,10 @@
       "probe_family": "predicate",
       "assertions": [
         {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        },
+        {
           "type": "must_not_report_clean"
         },
         {
