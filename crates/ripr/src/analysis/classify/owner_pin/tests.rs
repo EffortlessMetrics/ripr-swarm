@@ -12658,3 +12658,46 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
         assert!(scalar_names_rebound("u32", source), "{source}");
     }
 }
+
+/// The classify side proves each nested comparison macro's import by name;
+/// the syntax side reads the same names as plain expansions (#10389). The
+/// two lists must name the same macros.
+#[test]
+fn known_comparison_macros_match_the_syntax_plain_nested_list() {
+    let mut classify: Vec<&str> = KNOWN_COMPARISON_MACROS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let mut syntax: Vec<&str> = crate::analysis::syntax::COMPARISON_NESTED_MACROS.to_vec();
+    classify.sort_unstable();
+    syntax.sort_unstable();
+    assert_eq!(classify, syntax);
+}
+
+#[test]
+fn comparison_macro_imports_are_gated_only_by_their_own_attributes() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    // First statement of an attributed module, and after an attributed item.
+    assert!(imported(
+        "#[cfg(test)]\nmod tests {\nuse float_cmp::approx_eq;\n}\n"
+    ));
+    assert!(imported(
+        "#[derive(Debug)]\nstruct X {}\nuse float_cmp::approx_eq;\n"
+    ));
+    // An attribute on the `use` itself, or another binding of the name.
+    assert!(!imported("#[cfg(any())]\nuse float_cmp::approx_eq;\n"));
+    assert!(!imported(
+        "use float_cmp::approx_eq;\nfn f() {\nuse other::approx_eq;\n}\n"
+    ));
+}
+
+#[test]
+fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    assert!(imported("use float_cmp::approx_eq;\n"));
+    assert!(imported("use float_cmp::{ApproxEq, approx_eq};\n"));
+    assert!(!imported("use float_cmp::other::approx_eq;\n"));
+    assert!(!imported("use float_cmp::approx_eq::other;\n"));
+    assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
+    assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}

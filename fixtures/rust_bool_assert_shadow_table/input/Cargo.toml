@@ -1,0 +1,4 @@
+[package]
+name = "rust_bool_assert_shadow_table"
+version = "0.1.0"
+edition = "2024"

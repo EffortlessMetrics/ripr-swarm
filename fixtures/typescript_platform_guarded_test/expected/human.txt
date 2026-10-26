@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_platform_guarded_test/input
+config: <cwd>/fixtures/typescript_platform_guarded_test/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: limitations below (analysis incomplete)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; file: tests/guarded.test.ts; affected items: 1; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_conditional_registration — the recognized test file `tests/guarded.test.ts` registers a test under the unevaluated condition `isWindows` (e.g. a platform or environment guard); static analysis cannot tell whether that registration runs, so the test is indexed for reach but its assertions earn no credit; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  File: src/subject.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: unknown (severity: note, confidence 0.40)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: return age >= 18;
+  Analyzer limit: Related tests reach `isAdult` only through a registration under a condition static
+    analysis cannot evaluate (a platform or environment guard); whether they run, and what they
+    assert, is not established either way
+  Related test: tests/guarded.test.ts:7 isAdult at the boundary
+  Next step — TypeScript preview advisory: the related test asserts inside a callback the extractor
+    cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is
+    needed on that evidence, and no repair packet is emitted
+  Evidence: reach yes · infection unknown · propagation unknown · observation unknown · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
+    - reach yes: 1 related test(s) found for owner `isAdult`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_platform_guarded_test/input --diff <cwd>/fixtures/typescript_platform_guarded_test/diff.patch --mode fast probe:src_subject.ts:typescript_preview:5c135e82
+  ripr context --root <cwd>/fixtures/typescript_platform_guarded_test/input --diff <cwd>/fixtures/typescript_platform_guarded_test/diff.patch --mode fast --at probe:src_subject.ts:typescript_preview:5c135e82
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

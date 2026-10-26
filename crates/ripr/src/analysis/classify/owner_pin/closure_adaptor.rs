@@ -913,6 +913,12 @@ fn closure_binding(closure: &ast::ClosureExpr) -> Option<(String, usize)> {
 /// no block, and no variable other than the binding (a captured local
 /// would be an input the element rows do not carry).
 fn unconditional_closure_body(body: &ast::Expr, binding: &str) -> bool {
+    unconditional_body_over(body, &|name| name == binding)
+}
+
+/// [`unconditional_closure_body`] with the names a bare path may read given
+/// by `reads` (a constant-like name is always allowed).
+pub(super) fn unconditional_body_over(body: &ast::Expr, reads: &dyn Fn(&str) -> bool) -> bool {
     if matches!(body, ast::Expr::BlockExpr(_)) {
         return false;
     }
@@ -942,7 +948,7 @@ fn unconditional_closure_body(body: &ast::Expr, binding: &str) -> bool {
                 return false;
             };
             if path.qualifier().is_none() {
-                last == binding || constant_like(&last)
+                reads(&last) || constant_like(&last)
             } else {
                 constant_like(&last)
             }

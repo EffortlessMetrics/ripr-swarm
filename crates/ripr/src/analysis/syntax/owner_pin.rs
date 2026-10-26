@@ -23,7 +23,9 @@ use super::ra::{
     LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
     std_macro_root_is_unrebound,
 };
-use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
+use crate::analysis::facts::cfg_predicates::{
+    attribute_introduces_only_test, attribute_test_build_availability,
+};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
     ast::{
@@ -61,6 +63,11 @@ struct FunctionAssertions {
     /// Why every assertion in this test is refused, when the refusal is a
     /// property of the whole test rather than of one invocation.
     refusal: Option<AssertionContextRefusal>,
+    /// Set when `refusal` is `MacroOperandExit` and the function is clean once
+    /// the [`COMPARISON_NESTED_MACROS`] count as plain expansions: `assertions`
+    /// then holds the per-assertion verdicts (#10389). The strict `refusal`
+    /// still answers every other query.
+    comparison_clean: bool,
     assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
     /// Assertions of test-local check helpers this test calls on an eager
@@ -210,6 +217,32 @@ impl OwnerPinAssertions {
         assertion: (usize, &str),
         ambiguous_macros: &BTreeSet<String>,
     ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, false)
+    }
+
+    /// [`Self::refusal`] with the [`COMPARISON_NESTED_MACROS`] read as plain
+    /// expansions: the first gate that refuses this assertion for a reason
+    /// other than the opaque nested comparison macro itself (#10389). The
+    /// function-level macro scan reports `MacroOperandExit` before any
+    /// per-assertion gate, which would hide a dead context.
+    pub(crate) fn refusal_trusting_comparison_macros(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+    ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, true)
+    }
+
+    fn refusal_trusting(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+        trust_comparison_macros: bool,
+    ) -> Option<AssertionContextRefusal> {
         let Some(facts) = self
             .functions
             .get(&(function.0, function.1, function.2.to_string()))
@@ -220,7 +253,11 @@ impl OwnerPinAssertions {
                 AssertionContextRefusal::UnparsedFile
             });
         };
-        if let Some(refusal) = &facts.refusal {
+        if let Some(refusal) = &facts.refusal
+            && !(trust_comparison_macros
+                && facts.comparison_clean
+                && matches!(refusal, AssertionContextRefusal::MacroOperandExit(_)))
+        {
             return Some(refusal.clone());
         }
         if facts.body != BodyFingerprint::of(body) {
@@ -2255,7 +2292,24 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         } else {
             item_context_refusal(function.syntax())
         };
-        if let Some(refusal) = refusal {
+        // #10389: a function refused only for a nested comparison macro keeps
+        // its per-assertion verdicts, so a caller that trusts those macros
+        // still sees a dead context the function-level scan reported first.
+        let comparison_clean =
+            matches!(refusal, Some(AssertionContextRefusal::MacroOperandExit(_)))
+                && has_escape_among(
+                    body.syntax(),
+                    trusted,
+                    &empty_macros,
+                    &json_uses,
+                    COMPARISON_NESTED_MACROS,
+                )
+                .is_none()
+                && function
+                    .attrs()
+                    .all(|attr| runs_body_unchanged(&attr, function.syntax()))
+                && item_context_refusal(function.syntax()).is_none();
+        if let (Some(refusal), false) = (&refusal, comparison_clean) {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
             // a refused helper still counts toward duplicate detection. A
             // refused `#[test_case]` function stays unidentified: the
@@ -2266,7 +2320,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     &mut result.functions,
                     key,
                     FunctionAssertions {
-                        refusal: Some(refusal),
+                        refusal: Some(refusal.clone()),
                         ..FunctionAssertions::default()
                     },
                 );
@@ -2400,7 +2454,8 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             key,
             FunctionAssertions {
                 body: BodyFingerprint::of(&body_source),
-                refusal: None,
+                refusal,
+                comparison_clean,
                 assertions,
                 macros,
                 helper_assertions,
@@ -2413,11 +2468,17 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result
 }
 
-/// Where a root statement of `function` never completes: a `loop` with no
-/// `break` (`loop {}`) or a standard-library `process::exit` / `abort` call.
-/// Like an earlier `return`, it keeps every later invocation from running
-/// (#8927). Nested statements do not count: only the body's own list.
+/// Where a root statement of `function` never completes: a `loop` (or
+/// `while true`) that no `break` leaves, or a standard-library
+/// `process::exit` / `abort` call, spelled in full, through an imported
+/// `std::process` module (renamed or not) or as an imported leaf. Like an
+/// earlier `return`, it keeps every later invocation from running (#8927).
+/// Nested statements do not count: only the body's own list. A `break` that
+/// belongs to an inner loop, closure or async block does not leave the outer
+/// loop (#8983); a labeled `break` leaves it when the label is its own or an
+/// enclosing one.
 fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
+    let process = StdProcessNames::of(function);
     function
         .body()?
         .stmt_list()?
@@ -2427,10 +2488,12 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
             _ => None,
         })
         .find(|expression| match expression {
-            ast::Expr::LoopExpr(body) => !body
-                .syntax()
-                .descendants()
-                .any(|node| ast::BreakExpr::can_cast(node.kind())),
+            ast::Expr::LoopExpr(body) => !loop_is_left_by_break(body.syntax()),
+            ast::Expr::WhileExpr(body) => {
+                body.condition()
+                    .is_some_and(|condition| is_literal_true(&condition))
+                    && !loop_is_left_by_break(body.syntax())
+            }
             ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
                 let path: String = callee
                     .syntax()
@@ -2438,14 +2501,138 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
                     .to_string()
                     .split_whitespace()
                     .collect();
-                matches!(
-                    path.strip_prefix("::").unwrap_or(&path),
-                    "std::process::exit" | "std::process::abort"
-                )
+                process.diverges(path.strip_prefix("::").unwrap_or(&path))
             }),
             _ => false,
         })
         .map(|expression| expression.syntax().text_range().start())
+}
+
+/// `true`, however many parentheses wrap it (`while (true) {}`).
+fn is_literal_true(condition: &ast::Expr) -> bool {
+    match condition {
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| is_literal_true(&inner)),
+        other => other.syntax().text().to_string().trim() == "true",
+    }
+}
+
+/// Whether some `break` inside `loop_node` leaves exactly that loop.
+fn loop_is_left_by_break(loop_node: &SyntaxNode) -> bool {
+    let label_of = |node: &SyntaxNode| {
+        node.children()
+            .find_map(ast::Label::cast)
+            .and_then(|label| label.lifetime())
+            .map(|lifetime| lifetime.text().to_string())
+    };
+    loop_node
+        .descendants()
+        .filter_map(ast::BreakExpr::cast)
+        .any(|expression| {
+            let wanted = expression
+                .lifetime()
+                .map(|lifetime| lifetime.text().to_string());
+            for ancestor in expression.syntax().ancestors().skip(1) {
+                if ancestor == *loop_node {
+                    // Reached with no inner owner: the `break` is this loop's
+                    // own, or names its label or an enclosing one.
+                    return true;
+                }
+                // A closure, function or async block is its own control
+                // context: a `break` inside it never leaves an outer loop.
+                if ast::ClosureExpr::can_cast(ancestor.kind())
+                    || ast::Fn::can_cast(ancestor.kind())
+                    || ast::BlockExpr::cast(ancestor.clone())
+                        .is_some_and(|block| block.async_token().is_some())
+                {
+                    return false;
+                }
+                match &wanted {
+                    // An unlabeled `break` belongs to the nearest loop.
+                    None => {
+                        if ast::LoopExpr::can_cast(ancestor.kind())
+                            || ast::WhileExpr::can_cast(ancestor.kind())
+                            || ast::ForExpr::can_cast(ancestor.kind())
+                        {
+                            return false;
+                        }
+                    }
+                    // A labeled one belongs to the loop or block carrying
+                    // that label.
+                    Some(wanted) => {
+                        if label_of(&ancestor).as_ref() == Some(wanted) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            // Not under `loop_node` after all: keep the older answer.
+            true
+        })
+}
+
+/// The ways `function` can spell a standard-library process exit: the
+/// `std::process` module under whatever name an import gives it, and the
+/// `exit` / `abort` leaves under theirs. A glob import of `std::process`
+/// makes the bare names divergent too. Over-matching only withholds credit.
+struct StdProcessNames {
+    modules: Vec<String>,
+    leaves: Vec<String>,
+}
+
+impl StdProcessNames {
+    fn of(function: &ast::Fn) -> Self {
+        let mut names = Self {
+            modules: Vec::new(),
+            leaves: Vec::new(),
+        };
+        let Some(root) = function.syntax().ancestors().last() else {
+            return names;
+        };
+        let mut leaves = Vec::new();
+        for import in root.descendants().filter_map(ast::Use::cast) {
+            if let Some(tree) = import.use_tree() {
+                flatten_use_tree(&tree, &[], &mut leaves);
+            }
+        }
+        for leaf in leaves {
+            let path: Vec<&str> = leaf.path.iter().map(String::as_str).collect();
+            let path = match path.as_slice() {
+                ["core", rest @ ..] | ["std", rest @ ..] => {
+                    let mut with_std = vec!["std"];
+                    with_std.extend(rest);
+                    with_std
+                }
+                other => other.to_vec(),
+            };
+            match (&leaf.binding, path.as_slice()) {
+                (UseBinding::Name(name), ["std", "process"])
+                | (UseBinding::Name(name), ["std", "process", "self"]) => {
+                    names.modules.push(name.clone());
+                }
+                (UseBinding::Name(name), ["std", "process", "exit" | "abort"]) => {
+                    names.leaves.push(name.clone());
+                }
+                (UseBinding::Glob, ["std", "process"]) => {
+                    names.leaves.push("exit".to_string());
+                    names.leaves.push("abort".to_string());
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    fn diverges(&self, path: &str) -> bool {
+        if matches!(path, "std::process::exit" | "std::process::abort") {
+            return true;
+        }
+        if self.leaves.iter().any(|leaf| leaf == path) {
+            return true;
+        }
+        path.split_once("::").is_some_and(|(module, leaf)| {
+            matches!(leaf, "exit" | "abort") && self.modules.iter().any(|name| name == module)
+        })
+    }
 }
 
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
@@ -2457,6 +2644,7 @@ fn is_test_function(function: &ast::Fn) -> bool {
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
             .is_some_and(|name| matches!(name.text(), "test" | "rstest" | "test_case"))
+            || attribute_introduces_only_test(&attr.syntax().text().to_string())
     })
 }
 
@@ -3057,6 +3245,12 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     }
     if attr.excl_token().is_some() {
         return false;
+    }
+    // `#[cfg_attr(all(), test)]` is the built-in `#[test]` in a test build.
+    if attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     let Some(path) = attr.path() else {
         return false;
@@ -4031,6 +4225,18 @@ fn has_escape(
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
 ) -> Option<AssertionContextRefusal> {
+    has_escape_among(body, trusted, empty, json_uses, &[])
+}
+
+/// [`has_escape`] with `plain_nested` names also read as plain nested
+/// expansions in a macro operand.
+fn has_escape_among(
+    body: &SyntaxNode,
+    trusted: &[&str],
+    empty: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
+    plain_nested: &[&str],
+) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             // Discarded arguments are not executed. Cross-file/import/shadow
@@ -4056,7 +4262,11 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && json_visible,
+                    plain_nested,
+                )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -4096,10 +4306,14 @@ pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false)
+    opaque_macro_operand_with_json(tree, false, &[])
 }
 
-fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
+fn opaque_macro_operand_with_json(
+    tree: &ast::TokenTree,
+    literal_json: bool,
+    plain_nested: &[&str],
+) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
@@ -4107,7 +4321,10 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || nested_invocations(&tokens).any(|(name, plain)| {
-        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+        !(plain
+            && (NESTED_EXPANSIONS.contains(&name)
+                || plain_nested.contains(&name)
+                || name == "json" && literal_json))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"
@@ -4121,6 +4338,13 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
 /// token scan above already reads for exits; its binding is checked with the
 /// invoking macros'.
 const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
+
+/// Pure comparison macros of `float_cmp` and `approx` (#10389). They expand
+/// to a boolean over their operands, but ripr does not expand third-party
+/// macros, so the nested spelling is only read as plain by the return-value
+/// boolean-assert carve-out, which also proves the import by name.
+pub(crate) const COMPARISON_NESTED_MACROS: &[&str] =
+    &["approx_eq", "relative_eq", "abs_diff_eq", "ulps_eq"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
