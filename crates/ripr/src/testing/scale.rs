@@ -23,14 +23,26 @@ pub(crate) fn assert_growth_within(
     small: usize,
     large: usize,
     factor: u32,
+    work: impl FnMut(usize),
+) {
+    let epoch = Instant::now();
+    assert_growth_with_clock(label, small, large, factor, work, || epoch.elapsed());
+}
+
+fn assert_growth_with_clock(
+    label: &str,
+    small: usize,
+    large: usize,
+    factor: u32,
     mut work: impl FnMut(usize),
+    mut now: impl FnMut() -> Duration,
 ) {
     assert_measured_growth(label, small, large, factor, |size, repetitions| {
-        let started = Instant::now();
+        let started = now();
         for _ in 0..repetitions {
             work(size);
         }
-        started.elapsed()
+        now().saturating_sub(started)
     });
 }
 
@@ -81,8 +93,33 @@ fn assert_measured_growth(
 
 #[cfg(test)]
 mod tests {
-    use super::assert_measured_growth;
+    use super::{assert_growth_with_clock, assert_measured_growth};
+    use std::cell::{Cell, RefCell};
     use std::time::Duration;
+
+    #[test]
+    fn dispatcher_runs_both_sizes_with_the_same_calibrated_repetitions() {
+        let elapsed = Cell::new(Duration::ZERO);
+        let sizes = RefCell::new(Vec::new());
+        assert_growth_with_clock(
+            "dispatch",
+            1,
+            2,
+            3,
+            |size| {
+                sizes.borrow_mut().push(size);
+                elapsed.set(elapsed.get() + Duration::from_millis(2 * size as u64));
+            },
+            || elapsed.get(),
+        );
+        // The first qualifying small batch is 64 * 2 ms. Each size runs
+        // three samples at every doubling: 3 * (1+2+4+8+16+32+64) = 381.
+        let sizes = sizes.into_inner();
+        assert_eq!(sizes.iter().filter(|&&size| size == 1).count(), 381);
+        assert_eq!(sizes.iter().filter(|&&size| size == 2).count(), 381);
+        assert_eq!(sizes.len(), 762);
+        assert_eq!(&sizes[..6], &[1, 2, 2, 1, 1, 2]);
+    }
 
     #[test]
     fn matched_2x_linear_work_passes_even_below_the_initial_floor() {
