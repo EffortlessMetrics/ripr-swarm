@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_alias (5)
+
+Reason:
+RIPR-SPEC-0106: preserve count/pin classifications and JSON/full evidence while aligning these five owned digests with accepted main summary legends and missing-gap Next wording.
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
