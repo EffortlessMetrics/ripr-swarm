@@ -367,15 +367,35 @@ changes `self.count += 2` to `self.count += 1`.
     value (`b.set("BOLT", 5); b.fill("BOLT", 5)`), a constructor that
     seeds the map, and an owner that writes the map again after the insert
     (`self.stock.insert(..)` twice, `self.bump(sku)`) count the same way.
+21. `self.lines.push(Line { sku: sku.to_uppercase(), qty })` with the `sku`
+    initializer changed, test `let mut expected = Order::default();
+    expected.lines.push(Line { sku: "BOLT".to_string(), qty: 2 });
+    o.add("bolt", 2); assert_eq!(o.lines, expected.lines)`: `exposed`. The
+    expected side is a second binding that never ran the owner and is built
+    only from `Type::default()` or `Type::new()` plus field paths and
+    `push`, `extend` or `insert`, so it holds the value independently. The
+    same shape with `Line` deriving `PartialEq` beside an unrelated type
+    with a hand-written `eq` stays `exposed`.
+22. Same owner, but the expected collection is built through the owner
+    (`expected.add("bolt", 2)`) or by a helper that calls it
+    (`let expected = expected_order();`): not `exposed`. A changed `sku`
+    reaches both sides of the equality, so the test passes either way.
+23. Same owner and expected collection as 21 in a `#[should_panic]` test: not
+    `exposed`. The test passes exactly when the collections differ.
+24. Same as 21, but the pushed element type has a hand-written `PartialEq`
+    (`impl PartialEq for Line { fn eq(..) }` comparing `sku` ignoring case or
+    not at all), or derives it over a field whose type does: not `exposed`.
+    The equality may ignore the changed field, and the static reading cannot
+    evaluate `eq`.
 
 ## Test Mapping
 
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Verdict corpus: 19 cases `spec0228-*` in
+- Verdict corpus: the `spec0228-*` cases in
   `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9 and
-  12-20,
+  12-24,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
@@ -591,9 +611,13 @@ changes `self.count += 2` to `self.count += 1`.
   (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`, literals built in
   a local and pushed later, `insert`, and a push preceded by another
   statement on its line are not credited and keep the missing field-value
-  fact. A custom `PartialEq` on the element that ignores the changed field
-  is not detected: whole-value equality is taken to compare every field, as
-  for RIPR-SPEC-0225 whole-value credit.
+  fact. A pushed element type with a hand-written `PartialEq`, or whose
+  definition embeds one (followed four levels deep, `custom_eq.rs`), is not
+  credited: its `eq` may ignore the changed field. A literal whose type has no
+  `struct` or `enum` definition in the workspace (`Self`, an alias, a macro)
+  fails closed the same way. Derived `PartialEq` is taken to compare every
+  field. In reveal the credit also needs the expected side to be a second
+  binding built by hand (example 21), outside `#[should_panic]` tests.
 - Field assignments (`self.f = ..`, `self.f op= ..`, every compound
   operator) on a field path rooted at `self` are probed as
   `field_construction` in diff scope (`field_assignment_path` in `ra.rs`)

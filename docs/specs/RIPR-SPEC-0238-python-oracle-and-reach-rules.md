@@ -969,7 +969,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     assumed; the command line CI uses is unknown. A docstring is read only
     when it belongs to an undecorated top-level `def` defined once, every
     example is one `>>>` call of a bare name with literal arguments, the
-    expected line is one `repr` of a string, integer or boolean, and no
+    expected line is one `repr` of a string, integer or boolean (a trailing
+    `#` comment on the `>>>` line is allowed and cannot hide the comparison), and no
     `# doctest:` directive, backslash (in the decoded docstring or its
     source), `...` or `<BLANKLINE>` appears; a module-level `__test__`, a
     star import or a binding of `len` disables the read. The example must exist
@@ -1438,7 +1439,8 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `attached_short_flags_and_cache_selectors_stop_the_read`,
   `a_positional_collection_target_in_addopts_stops_the_read`,
   `a_module_that_binds_len_is_not_read`,
-  `an_escape_in_the_docstring_source_drops_it`.
+  `an_escape_in_the_docstring_source_drops_it`,
+  `a_trailing_comment_on_the_example_line_does_not_hide_the_comparison`.
 - Existing: `crates/ripr/src/analysis/language/python/doctest_eval.rs`
   `floor_division_and_modulo_follow_the_divisor_sign`,
   `slices_normalize_indexes_like_python`,
