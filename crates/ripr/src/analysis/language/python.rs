@@ -76,6 +76,7 @@ mod doctest_tests;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
+mod imported_call_operator;
 mod message_pin;
 mod module_value;
 mod type_guard;
@@ -1449,6 +1450,8 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod imported_call_operator_tests;
 #[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]
