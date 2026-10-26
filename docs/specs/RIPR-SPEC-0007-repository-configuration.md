@@ -30,6 +30,9 @@ The configuration layer should:
   config fingerprinting share that presence rule);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
+- derive misplaced or retired-key recovery hints from the complete parser
+  reason, so comments, values, syntax failures, and quoted key prefixes cannot
+  fabricate or redirect the hint;
 - keep explicit CLI options ahead of repository config;
 - keep explicit LSP initialization options ahead of repository config;
 - allow repository config to set the default analysis mode;
@@ -83,6 +86,16 @@ This obligation does not change artifact-root ownership, input filtering,
 configuration precedence, or output schemas. Newline-containing and non-UTF-8
 path advice is outside this bounded contract.
 
+For a project whose root has a `Cargo.toml`, doctor's warning for the default
+`target/ripr` root recommends `/target/` instead. Rust repair requires Cargo's
+whole build directory `target/` to be Git-ignored (a child-only rule is
+insufficient), so the advice must also satisfy that preflight (#9006): doctor
+judges the default root covered only when `target/` itself is ignored (a
+child-only `/target/ripr/` rule is still flagged), and the changed-scope
+artifact disclosure names `/target/` too. Roots
+relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
+`Cargo.toml`, keep the literal-root rule above.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
@@ -91,6 +104,17 @@ uses `!` and the completed run exits 3 (#5102). An advisory never changes the ex
 artifact root not covered by git ignore rules, the artifact root tracked by
 git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
+
+When a repository has a `.mcp.json`, doctor also checks that it registers a
+`ripr` server whose command is `ripr` and whose args are exactly `mcp`,
+`--stdio` (what `ripr init --mcp` writes). A missing entry, a mismatched entry
+or an unparseable file is an advisory `~` line and an advisory `mcp_config`
+check in JSON; it never changes the exit status. The repair advice follows
+what `ripr init --mcp` can do: run it when the entry is missing (including a
+missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
+and fix or remove the file first when it is not a JSON object or `mcpServers`
+is not an object, which init refuses. A `.mcp.json` that is a symlink is not
+verified; one over 1 MiB is reported as unreadable.
 
 ### Suppression manifest declarations
 
@@ -570,6 +594,7 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
+- `crates/ripr/tests/cli_smoke.rs::config_validate_hints_follow_the_parser_reason_not_source_text`
 - `crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`

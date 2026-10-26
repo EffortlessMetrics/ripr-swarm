@@ -1,0 +1,12 @@
+diff --git a/src/b_utf8.rs b/src/b_utf8.rs
+--- a/src/b_utf8.rs
++++ b/src/b_utf8.rs
+@@ -1,7 +1,7 @@
+ //! A leading char's width flows through len_utf8 and map_or into an equality.
+ 
+ pub fn first_width_is(input: &str, at: usize) -> bool {
+-    let width = input.chars().next().map_or(0, |c| c.len_utf8());
++    let width = input.chars().next().map_or(0, |ch| ch.len_utf8());
+     width == at
+ }
+ 

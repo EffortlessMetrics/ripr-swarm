@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No static test path found for the changed owner
     - infection unknown: No tests were found, so activation/infection cannot be estimated
     - 8 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/plain_diff_multifile_boundary/input --diff <cwd>/fixtures/plain_diff_multifile_boundary/diff.patch --mode fast probe:src_a.rs:predicate:668eac8e
   ripr context --root <cwd>/fixtures/plain_diff_multifile_boundary/input --diff <cwd>/fixtures/plain_diff_multifile_boundary/diff.patch --mode fast --at probe:src_a.rs:predicate:668eac8e
-  no repair start offered: repair route not ready (missing evidence: safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file); run `ripr repair probe:src_a.rs:predicate:668eac8e --root <cwd>/fixtures/plain_diff_multifile_boundary/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

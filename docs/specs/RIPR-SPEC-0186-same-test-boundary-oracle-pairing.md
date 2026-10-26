@@ -116,6 +116,16 @@ pair, and so does an entry call shadowed by a test-local closure or nested
 fn of the entry's name. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
 never admits a wrapper assertion here.
 
+The `return_value` twin of that private predicate may confirm the same wrapper
+assertion when the owner-return shape is an unconditional whole `bool` tail
+(RIPR-SPEC-0197's `Any` path), and the test reaches it only through the helper
+chain (#9849). This separate confirmation requires an admitted bare `assert_eq!`
+whose whole compared operand is the entry call and whose other operand is one
+numeric or boolean literal. The same per-test boundary row and result-forwarding
+chain are required. A projected or transformed operand, computed or named
+expectation, short-circuit owner tail, and discarded or recomputed helper result
+receive no new credit. Direct owner-return pin admission remains unchanged.
+
 A `let`-bound boundary name stays paired only while the binding still holds
 the call's result. A post-`let` reassignment (`got = true`), compound
 assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
@@ -283,6 +293,7 @@ relation are out of scope.
 - `fixtures/predicate_pairing_newline_split_reassigned_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 - `crates/ripr/tests/helper_wrapper_reach.rs`
+- `fixtures/rust_wrapper_boolean_return_discarded`
 
 ## Implementation Mapping
 
@@ -292,6 +303,10 @@ relation are out of scope.
   and parameter-rebinding checks the wrapper-entry pairing uses.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs`: the `HelperLoan` facts
   (helper, plain parameters, eager lone-line call lines) pairing reads.
+- `crates/ripr/src/analysis/classify/reveal.rs`: the assertion-local
+  `wrapper_return_pin` admission for the whole-return twin.
+- `crates/ripr/src/analysis/classify/owner_pin.rs`:
+  `is_unconditional_boolean_tail`, the owner shape the wrapper pin admits.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: apply the pairing gate
   before `exposed`.
 - `crates/ripr/src/analysis/classify/decision.rs`: missing evidence names the

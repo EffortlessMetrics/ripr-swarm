@@ -729,9 +729,12 @@ fn an_unread_assertion_macro_without_the_owner_call_keeps_the_gap() -> Result<()
 }
 
 #[test]
-fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> {
-    // The direct test's own weak oracle is what ripr judged; the custom macro
-    // beside it does not turn that judgment into a limit.
+fn a_direct_test_whose_own_boolean_assert_is_unadmitted_beside_a_custom_macro_is_named_not_credited()
+-> Result<(), String> {
+    // The custom macro is opaque, so the test's own `assert!` is not shown to
+    // run and no longer counts as a recognized oracle (#10389: the boolean
+    // `assert!` takes the same execution admission as `assert_eq!`). The
+    // direct test then has no oracle and the evidence names the macro.
     let fixture = Fixture::new(
         "custom-assert-direct-oracle",
         &CUSTOM_ASSERT.replacen(
@@ -741,9 +744,17 @@ fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> 
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_custom_assert_construction(&finding, true);
+    assert_custom_assert_construction(&finding, false);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("assertion not credited") && line.contains("`assert_rate!`")),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
 

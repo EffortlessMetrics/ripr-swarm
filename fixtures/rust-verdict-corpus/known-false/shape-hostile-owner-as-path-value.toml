@@ -1,3 +1,0 @@
-case = "shape-hostile-owner-as-path-value"
-issue = 9442
-reason = "Owner referenced as a path value is not followed (#9442)."

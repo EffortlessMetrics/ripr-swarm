@@ -1,0 +1,12 @@
+diff --git a/src/b_shape.rs b/src/b_shape.rs
+--- a/src/b_shape.rs
++++ b/src/b_shape.rs
+@@ -1,7 +1,7 @@
+ //! The changed binding is a destructuring pattern, not a simple let.
+ 
+ pub fn ext_starts_at_pair(path: &str, at: usize) -> bool {
+-    let (start, _) = (path.rfind('.').map_or(0, |i| i + 1), 0);
++    let (start, _) = (path.rfind('.').map_or(0, |dot| dot + 1), 0);
+     start == at
+ }
+ 

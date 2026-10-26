@@ -1,0 +1,7 @@
+//! RIPR-SPEC-0048 acceptance example 2.
+
+pub const TIER_LABEL: &str = "tier: gold";
+
+pub fn render_report() -> String {
+    format!("{TIER_LABEL}\n")
+}

@@ -650,3 +650,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_strict_actionability (27)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_strict_actionability (28)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_strict_actionability (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -296,6 +296,8 @@ PROOF_INPUTS_JSON="${PROOF_INPUTS_JSON:?set accepted proof-input reference list}
 # Supplied by the trusted controller from exact native owner decisions, not generated here.
 OWNER_ACCEPTANCE_JSON="${OWNER_ACCEPTANCE_JSON:?set reviewed selection/denominator/audit acceptance envelopes}"
 CONTROLLER_ROOT="${CONTROLLER_ROOT:?set absolute independent controller root}"
+# The producer resolves --input against CONTROLLER_ROOT, so jq writes there.
+MANIFEST_INPUT="${MANIFEST_INPUT:-live-head-selection-input.json}"
 CANDIDATE_TREE="$(git -C "$SWARM_ROOT" rev-parse "$SWARM_PARENT^{tree}")"
 test "$(git -C "$SWARM_ROOT" rev-parse HEAD)" = "$SWARM_PARENT"
 test -z "$(git -C "$SWARM_ROOT" status --porcelain=v1 --untracked-files=all)"
@@ -323,11 +325,10 @@ jq --arg sha "$SWARM_PARENT" --arg tree "$CANDIDATE_TREE" --arg ref "$SWARM_REF"
   .pin = {remote_ref_readback: {owner_issue: 1609, path: $readback, sha256: $readback_sha},
     ruleset: {owner_issue: 1609, path: $ruleset, sha256: $ruleset_sha}} |
   .qualification.proof_inputs = $proof[0] |
-  .source_parent = null' "$PACKET_ROOT/live-head-selection-template.json" > "$PACKET_ROOT/live-head-selection-input.json"
+  .source_parent = null' "$PACKET_ROOT/live-head-selection-template.json" > "$CONTROLLER_ROOT/$MANIFEST_INPUT"
 # jq only assembles proposed inputs. The existing Rust DTO validates all typed
 # fields and retained owner/pin bytes, then emits both projections. OUT must be
 # a new directory below CONTROLLER_ROOT; it is not a standalone controller root.
-MANIFEST_INPUT="${MANIFEST_INPUT:?set controller-relative live-head-selection-input.json}"
 MANIFEST_OUTPUT="${MANIFEST_OUTPUT:?set new controller-relative proposal directory}"
 cargo xtask release-manifest-proposal --controller-root "$CONTROLLER_ROOT" \
   --version 0.11.0 --input "$MANIFEST_INPUT" --out "$MANIFEST_OUTPUT"
