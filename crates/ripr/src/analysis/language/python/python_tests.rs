@@ -3914,7 +3914,7 @@ fn visit_workspace_returns_silently_when_directory_is_unreadable() {
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
         &[],
-        &mut out,
+        &mut |file| out.push(file),
     );
     assert!(out.is_empty());
 }

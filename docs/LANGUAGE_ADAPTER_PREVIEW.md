@@ -368,6 +368,8 @@ budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
 and unreadable changed files are named typed limitations on the diff
 result, never silent skips. The file-count cap only refuses unchanged context: changed
 `.py` files are kept past it, while the byte budgets still apply (#10461).
+The walk streams into that bounded selection, so discovery holds at most the
+cap plus the changed files in memory (#10594).
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |

@@ -47,8 +47,8 @@ use crate::domain::{
     ProbeFamily, StaticLimitKind, StopReason, SymbolId,
 };
 use bounded_read::{
-    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, read_workspace_sources_capped,
-    truncate_workspace_files,
+    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, WorkspaceFileSelection,
+    read_workspace_sources_capped,
 };
 use rayon::prelude::*;
 use rustpython_parser::ast::Expr;
@@ -190,9 +190,9 @@ use static_limits::{
 
 mod workspace;
 use crate::analysis::diff::reconstruct_old_source;
-use workspace::{
-    collect_workspace_python_files_with_handwritten, line_is_in_ranges, owner_for_changed_line,
-};
+#[cfg(test)]
+use workspace::collect_workspace_python_files_with_handwritten;
+use workspace::{line_is_in_ranges, owner_for_changed_line, visit_workspace_with_handwritten};
 
 /// Python preview adapter.
 ///
@@ -836,18 +836,22 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
-        let discovered =
-            collect_workspace_python_files_with_handwritten(&options.root, handwritten);
         // Changed files are the subject of the diff, so the cap only ever
-        // refuses context around them (#10461).
+        // refuses context around them (#10461). The walk streams into a
+        // bounded selection so discovery memory stays at the cap rather
+        // than the workspace size (#10594).
         let changed_walk_paths: BTreeSet<String> = changed_files
             .iter()
             .map(|changed| normalized_path(&changed.path))
             .collect();
-        let (workspace_files, refused_files) =
-            truncate_workspace_files(discovered, walk_limits.max_workspace_files, |file| {
+        let mut selection =
+            WorkspaceFileSelection::new(walk_limits.max_workspace_files, |file: &Path| {
                 changed_walk_paths.contains(&normalized_path(file))
             });
+        visit_workspace_with_handwritten(&options.root, &options.root, handwritten, &mut |file| {
+            selection.push(file)
+        });
+        let (workspace_files, refused_files) = selection.finish();
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
