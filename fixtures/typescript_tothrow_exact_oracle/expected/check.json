@@ -58,7 +58,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "empty user throws with error code",
@@ -68,7 +70,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "empty user throws ParseError class",
@@ -78,7 +82,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

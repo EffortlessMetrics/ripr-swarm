@@ -1,0 +1,45 @@
+{
+  "case_id": "mocha-before-hook-count",
+  "subject_id": "authored-ts-mocha-hooks",
+  "diff": "cases/mocha-before-hook-count.diff",
+  "anchor": {
+    "file": "src/registry.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_before_hook_state_equal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "Node.js v22.22.0, mocha 12.0.3, chai 6.3, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return names.length + 1;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "registry > counts a new registration",
+        "equivalence_review": "the edit itself: The second registration is expected to return 2 because the before hook registered one."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The second registration is expected to return 2 because the before hook registered one. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

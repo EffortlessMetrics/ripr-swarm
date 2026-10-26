@@ -135,6 +135,8 @@ Current how-to docs:
   candidate local-wheelhouse pip/uv rehearsal with a fail-closed aggregate
 - [Termination qualification](TERMINATION_QUALIFICATION.md) - exact-binary
   adversarial corpus for Rust and Python nesting
+- [Size scaling gate](SIZE_SCALING.md) - exact-binary check that cost grows
+  no faster than input size for Rust, Python and TypeScript files
 - [First successful PR workflow](FIRST_PR_WORKFLOW.md)
 - [First successful PR demo](demo/first-successful-pr.md)
 - [Start-here convergence receipts](handoffs/2026-05-22-start-here-surface-convergence-receipts.md)
@@ -304,6 +306,7 @@ Current explanation docs:
 - [Learnings](LEARNINGS.md)
 - [Friction log](FRICTION_LOG.md)
 - [Experience roadmap](roadmap/experience.md)
+- [False-verdict ledger](roadmap/false-verdicts.md)
 - [Agent-as-user runs](AGENT_AS_USER_RUNS.md)
 - [Deferred decisions](DEFERRED.md)
 - [Agent handoff protocol](reference/AGENT_HANDOFF_PROTOCOL.md)

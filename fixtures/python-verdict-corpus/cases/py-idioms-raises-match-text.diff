@@ -1,0 +1,10 @@
+diff --git a/idioms/validate.py b/idioms/validate.py
+--- a/idioms/validate.py
++++ b/idioms/validate.py
+@@ -1,5 +1,5 @@
+ def parse_age(text):
+     age = int(text)
+     if age < 0:
+-        raise ValueError("age must be non-negative")
++        raise ValueError("age is bad")
+     return age

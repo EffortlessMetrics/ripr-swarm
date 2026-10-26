@@ -1,0 +1,22 @@
+{
+  "case_id": "hostile-block-comment-assertion",
+  "subject_id": "authored-ts-vitest-hostile",
+  "origin": "authored",
+  "anchor": "src/commented.ts:6",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "vitest_assertion_in_block_comment_and_string",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

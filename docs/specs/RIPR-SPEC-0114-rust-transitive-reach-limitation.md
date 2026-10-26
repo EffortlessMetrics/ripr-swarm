@@ -102,6 +102,8 @@ unchanged.
 all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
 `weakly_exposed`.
 
+#10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit.
+
 ### When NOT found
 
 Leave the finding exactly as today (bare `no_static_path`, or a proximity-only
@@ -151,7 +153,13 @@ which ripr does not follow.
   (activate/observe/discriminate and their evidence lines) become unknown with
   truthful summaries; evidence gains a `proc_macro_expansion:` line. A negative
   a stage established on its own evidence is kept.
-- Never promotes: only `no_static_path` is rewritten, only to `static_unknown`.
+- A `static_unknown` finding that still carries a ruled-out `reach no` (an
+  unmodelled-syntax probe classified `static_unknown` without passing through
+  `no_static_path`: its owner may be reached unseen, i.e. named elsewhere in
+  the workspace outside its own fn line or a std-trait impl method; #10088) gets the
+  same reach/stage/evidence/next-step rewrite; its class is already the unknown.
+- Never promotes: only `no_static_path` and a `static_unknown` with ruled-out
+  reach are rewritten, only to `static_unknown`.
 
 ### Wire format
 
@@ -278,6 +286,10 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — witness limit kind and pointer kept, transitive stop reason dropped
 - `crates/ripr/tests/proc_macro_no_static_path.rs::build_script_of_a_proc_macro_package_is_not_proc_macro_library_code`
   — diff-path negative for a build script
+- `crates/ripr/tests/proc_macro_no_static_path.rs::proc_macro_static_unknown_with_a_production_caller_does_not_claim_reach_no`
+  — an unmodelled-syntax `static_unknown` whose owner may be reached unseen reads `reach unknown`, not `reach no` (#10088)
+- `crates/ripr/tests/proc_macro_no_static_path.rs::ordinary_static_unknown_with_a_production_caller_keeps_reach_no`
+  — discriminating negative: an ordinary crate keeps `reach no`
 
 ## Implementation Mapping
 

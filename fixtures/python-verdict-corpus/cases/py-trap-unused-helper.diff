@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -46,7 +46,7 @@
+ 
+ 
+ def unused_helper(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def input_asserted(a, b):

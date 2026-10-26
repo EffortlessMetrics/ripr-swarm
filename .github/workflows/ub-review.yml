@@ -38,7 +38,7 @@ jobs:
       # Cache the ub-review source build so subsequent runs skip the ~12 min
       # cargo recompile. Keyed on the action SHA so a new pin invalidates.
       # Cuts repeat runs from ~14 min to ~2-3 min (ub-review #728).
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target/ub-review-build"
           key: ub-review-55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8

@@ -7,7 +7,7 @@
   "summary": {"changed_rust_files":0,"probes":7,"findings":7,"exposed":4,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:e0cf4877c667bee8ed51b44b8135bde9a8ad70a1302cfd19e949979ce946a5aa","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":15,"candidate_line_count":7,"probe_count":7,"finding_count":7},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:c09a83579b47b23bc9de4f7f8fca608ba87c231d99a2e0a8f42da4cba51a2577","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":15,"candidate_line_count":7,"probe_count":7,"finding_count":7},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -335,7 +335,9 @@
           "oracle_kind": "smoke_only",
           "oracle": "expect(...).toBeTruthy(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {
@@ -923,5 +925,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/signals.ts","digest":"sha256:fcf741dd809678ea1792f90576eb2ce0bcb0674b3809df6301eb6b8a305d9ff1"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/signals.ts","digest":"sha256:66a965e77f0dba388076a1406a1b4b8a132fd79f970c4bbd861dab8b60dbad5c"}]}
 }

@@ -1042,7 +1042,7 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    normalize(path).to_string_lossy().replace('\\', "/")
+    crate::output::path::fold_verbatim_on_host(normalize(path).to_string_lossy().replace('\\', "/"))
 }
 
 fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, Refusal> {

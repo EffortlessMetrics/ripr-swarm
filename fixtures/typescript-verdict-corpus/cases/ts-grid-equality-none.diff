@@ -1,0 +1,10 @@
+diff --git a/src/equality.ts b/src/equality.ts
+--- a/src/equality.ts
++++ b/src/equality.ts
+@@ -15,5 +15,5 @@
+ }
+ 
+ export function isDefaultPort(port: number): boolean {
+-  return port === 8080;
++  return 8080 === port;
+ }

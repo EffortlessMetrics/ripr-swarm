@@ -1,0 +1,12 @@
+diff --git a/src/delete.ts b/src/delete.ts
+--- a/src/delete.ts
++++ b/src/delete.ts
+@@ -27,7 +27,7 @@
+   }
+ 
+   recordEviction(): void {
+-    this.evictions = this.evictions + 1;
++    this.evictions += 1;
+     this.lastEvent = "evictions";
+   }
+ }

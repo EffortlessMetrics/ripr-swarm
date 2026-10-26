@@ -1,0 +1,34 @@
+pub fn tier(units: u32) -> &'static str {
+    if units >= 100 { "bulk" } else if units >= 10 { "pack" } else { "single" }
+}
+
+pub fn tier_loose(units: u32) -> &'static str {
+    if units >= 1000 { "pallet" } else if units >= 50 { "crate" } else { "each" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tier_table() {
+        let table = [
+            (1, "single"),
+            (9, "single"),
+            (10, "pack"),
+            (99, "pack"),
+            (100, "bulk"),
+            (500, "bulk"),
+        ];
+        for (units, expected) in table {
+            assert_eq!(tier(units), expected);
+        }
+    }
+
+    #[test]
+    fn loose_table() {
+        for (units, expected) in [(1, "each"), (70, "crate"), (5000, "pallet")] {
+            assert_eq!(tier_loose(units), expected);
+        }
+    }
+}

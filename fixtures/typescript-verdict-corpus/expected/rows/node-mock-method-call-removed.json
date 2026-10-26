@@ -1,0 +1,22 @@
+{
+  "case_id": "node-mock-method-call-removed",
+  "subject_id": "authored-ts-nodetest-mocks",
+  "origin": "authored",
+  "anchor": "src/audit.ts:9",
+  "behavior_family": "side_effect",
+  "test_shape": "nodetest_mock_method_callcount_only",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

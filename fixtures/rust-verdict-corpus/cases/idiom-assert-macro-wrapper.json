@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-assert-macro-wrapper",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-assert-macro-wrapper.diff",
+  "anchor": {
+    "file": "src/helpers.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_macro_rules_wrapper",
+  "hard_case": "The assertion is a test-local `macro_rules!` that expands to `assert_eq!`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base + base / 5",
+        "mutated_line": "base + base / 5",
+        "outcome": "tests_failed",
+        "failing_test": "helpers::tests::macro_pins_surcharge",
+        "equivalence_review": "not equivalent: `base + (base / 10)` becomes `base + base / 5`"
+      },
+      {
+        "replacement": "base - base / 10",
+        "mutated_line": "base - base / 10",
+        "outcome": "tests_failed",
+        "failing_test": "helpers::tests::macro_pins_surcharge",
+        "equivalence_review": "not equivalent: `base + (base / 10)` becomes `base - base / 10`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "macro_pins_surcharge pins surcharge(100) to 110; a fifth gives 120 and subtracting gives 90. Shape: user-defined assertion macro.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

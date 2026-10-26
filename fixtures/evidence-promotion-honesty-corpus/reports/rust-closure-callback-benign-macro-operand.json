@@ -1,0 +1,236 @@
+{
+  "schema_version": "0.5",
+  "scope": "repo",
+  "metrics": {
+    "seams_total": 1,
+    "headline_eligible": 0,
+    "strongly_gripped": 1,
+    "weakly_gripped": 0,
+    "ungripped": 0,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 0,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
+  "seams": [
+    {
+      "seam_id": "35e970f277c310c9",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 2,
+      "column": 5,
+      "end_line": 2,
+      "end_column": 28,
+      "owner": "src/lib.rs::greet",
+      "expression": "format!(\"hello {name}\")",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "greets",
+          "file": "src/lib.rs",
+          "line": 15,
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "evidence_summary": "exact value assertion",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "observed_values": [
+        "\"bob\""
+      ],
+      "missing_discriminators": [],
+      "evidence_record": {
+        "actionability": {
+          "class": "not_policy_relevant",
+          "has_concrete_guidance": false,
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "signals": {
+            "assertion_shape": false,
+            "candidate_value": true,
+            "missing_discriminator": false,
+            "recommended_test_target": true,
+            "related_test": true,
+            "verification_command": false
+          }
+        },
+        "calibration": {
+          "agreement": "no_runtime_data",
+          "availability": "not_imported",
+          "confidence": "unknown"
+        },
+        "canonical_gap_group_size": null,
+        "canonical_gap_id": null,
+        "canonical_gap_reason": null,
+        "canonical_item": {
+          "actionability": "already_observed",
+          "canonical_gap_id": null,
+          "canonical_item_kind": "observed",
+          "command_specs": {
+            "receipt": null,
+            "verify": null
+          },
+          "confidence": {
+            "basis": "static_only",
+            "notes": [
+              "no imported runtime calibration data"
+            ]
+          },
+          "evidence_class": "return_value",
+          "gap_state": "already_observed",
+          "group_reason": null,
+          "primary_anchor": {
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "line": 2,
+            "reason": "record_location",
+            "source_id": "35e970f277c310c9"
+          },
+          "raw_group_size": 1,
+          "raw_spans": [
+            {
+              "end_line": 2,
+              "file": "src/lib.rs",
+              "kind": "strongly_gripped",
+              "source_id": "35e970f277c310c9",
+              "start_line": 2
+            }
+          ],
+          "receipt_command": null,
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+          "related_test": {
+            "file": "src/lib.rs",
+            "line": 15,
+            "name": "greets",
+            "reason": "direct_owner_call"
+          },
+          "repair_command": null,
+          "repair_route": null,
+          "static_limitations": [],
+          "verify_command": null,
+          "why": "seam is already gripped or intentionally non-actionable under current policy"
+        },
+        "evidence_path": {
+          "activate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observed 1 concrete activation value(s) for seam `format!(\"hello {name}\")`"
+          },
+          "discriminate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"
+          },
+          "observe": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observation evidence is `yes`"
+          },
+          "propagate": {
+            "confidence": "low",
+            "state": "yes",
+            "summary": "Static propagation to `return_value` sink is yes"
+          },
+          "reach": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Related tests appear to reach `src/lib.rs::greet`: greets"
+          }
+        },
+        "grip_class": "strongly_gripped",
+        "headline_eligible": false,
+        "location": {
+          "file": "src/lib.rs",
+          "line": 2
+        },
+        "missing_discriminators": [],
+        "observed_values": [
+          {
+            "context": "function_argument",
+            "line": 16,
+            "text": "run_test(&format!(\"hi {}\", \"bob\"), || greet(\"bob\"));",
+            "value": "\"bob\""
+          }
+        ],
+        "owner": "src/lib.rs::greet",
+        "presentation_text": null,
+        "raw_findings": [
+          {
+            "evidence_record_ref": "35e970f277c310c9",
+            "expression": "format!(\"hello {name}\")",
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "language": "rust",
+            "language_status": "stable",
+            "line": 2,
+            "probe_kind": "return_value",
+            "source_id": "35e970f277c310c9"
+          }
+        ],
+        "recommendation": {
+          "action": "no_action",
+          "assertion_shape": null,
+          "candidate_values": [
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "\"bob\""
+            }
+          ],
+          "nearest_test_to_imitate": {
+            "evidence_summary": "exact value assertion",
+            "file": "src/lib.rs",
+            "line": 15,
+            "name": "greets",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          },
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "recommended_test": null,
+          "verify_command": null
+        },
+        "related_tests": [
+          {
+            "evidence_summary": "exact value assertion",
+            "file": "src/lib.rs",
+            "line": 15,
+            "name": "greets",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          }
+        ],
+        "related_tests_total": 1,
+        "schema_version": "0.1",
+        "seam_id": "35e970f277c310c9",
+        "seam_kind": "return_value",
+        "static_limitations": []
+      }
+    }
+  ]
+}

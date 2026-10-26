@@ -1,5 +1,251 @@
 mod json_construction;
 mod retention_parity;
+#[test]
+fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
+    let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
+    let index = index(&[(LIB, source)]);
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    let snapshot = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    let test = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 4)
+        .ok_or("production subject")?;
+    let owner = OwnerScope::new("read", 3, Path::new(LIB));
+    for _ in 0..20 {
+        assert!(!test_module_shadows_type(
+            test,
+            source,
+            "Widget",
+            Some(owner),
+            &index
+        ));
+    }
+    assert_eq!(
+        snapshot.shadow_computations(),
+        1,
+        "identical shadow queries must compute once"
+    );
+    let scopes = snapshot.lexical_items().ok_or("scope facts")?;
+    assert!(std::ptr::eq(
+        scopes,
+        snapshot.lexical_items().ok_or("scope facts")?
+    ));
+    // Owner file/name/line all affect the exemption, even at the same test.
+    for wrong in [
+        OwnerScope::new("read", 3, Path::new(HELPERS)),
+        OwnerScope::new("missing", 3, Path::new(LIB)),
+        OwnerScope::new("read", 100, Path::new(LIB)),
+    ] {
+        assert!(test_module_shadows_type(
+            test,
+            source,
+            "Widget",
+            Some(wrong),
+            &index
+        ));
+    }
+    let nested = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 6)
+        .ok_or("nested subject")?;
+    assert!(test_module_shadows_type(
+        nested,
+        source,
+        "Widget",
+        Some(owner),
+        &index
+    ));
+    assert!(test_module_shadows_trait(
+        nested,
+        source,
+        "Render",
+        Some(owner),
+        &index
+    ));
+    assert!(!test_module_shadows_type(
+        nested,
+        source,
+        "Render",
+        Some(owner),
+        &index
+    ));
+    assert!(!test_module_shadows_type(
+        nested,
+        source,
+        "Absent",
+        Some(owner),
+        &index
+    ));
+    let peer = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 10)
+        .ok_or("peer subject")?;
+    assert!(test_module_shadows_type(
+        peer,
+        source,
+        "Widget",
+        Some(owner),
+        &index
+    ));
+    // Name and both coordinates remain in the key, including macro-shaped
+    // callers that have no matching function and require the line fallback.
+    let before = snapshot.shadow_computations();
+    for changed in 0..3 {
+        let mut other = test.clone();
+        match changed {
+            0 => other.name = "macro_subject".into(),
+            1 => other.start_line = 5,
+            _ => other.end_line = 6,
+        }
+        let _ = test_module_shadows_type(&other, source, "Widget", Some(owner), &index);
+    }
+    assert_eq!(snapshot.shadow_computations(), before + 3);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers()
+-> Result<(), String> {
+    let original = "mod tests { struct Widget; #[test] fn subject() {} }";
+    let mut index = index(&[(LIB, original)]);
+    let test = index.tests().iter().next().ok_or("subject")?.clone();
+    let old = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    assert!(!test_module_shadows_type(
+        &test,
+        "mod tests { #[test] fn subject() {} }",
+        "Widget",
+        None,
+        &index
+    ));
+    assert!(test_module_shadows_type(
+        &test,
+        "mod tests { struct Widget; fn broken( {",
+        "Widget",
+        None,
+        &index
+    ));
+    let clone = index.clone();
+    let cloned = clone
+        .source_syntax
+        .get(&clone, Path::new(LIB))
+        .ok_or("clone")?;
+    assert!(!Arc::ptr_eq(&old, &cloned));
+    assert_eq!(cloned.shadow_computations(), 0);
+    index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
+        "mod tests { #[test] fn subject() {} }".into();
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(!test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    let new = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("new snapshot")?;
+    assert!(!Arc::ptr_eq(&old, &new));
+    assert_eq!(old.shadow_computations(), 1);
+    assert_eq!(new.shadow_computations(), 1);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Result<(), String> {
+    for (source, expected) in [
+        (
+            "mod sibling { struct Widget; } #[test] fn subject() {}",
+            false,
+        ),
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { #[test] fn subject() {} }",
+            true,
+        ),
+        ("mod a { struct r#Widget; #[test] fn r#subject() {} }", true),
+        (
+            "mod a { type Widget = Other; #[test] fn subject() {} }",
+            true,
+        ),
+        (
+            "mod a { use foreign::Other as Widget; #[test] fn subject() {} }",
+            false,
+        ),
+        (
+            "mod a { struct Widget; fn read() {} fn read() {} #[test] fn subject() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+        assert!(!index.tests().is_empty());
+        if source.contains("use foreign::Other as Widget") {
+            // Import renames refuse at the outer caller's existing authority;
+            // they are not declarations handled by this module-item helper.
+            assert!(file_renames_to(source, "Widget"));
+        }
+    }
+    Ok(())
+}
+#[test]
+fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
+    // The owner's nearest enclosing module is the production declaration's
+    // scope and never a shadow; every other module still counts.
+    for (source, expected) in [
+        // Owner and the same-name type share `a`: exempt.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
+            false,
+        ),
+        // The owner sits in `b`; the type declared in the test's own `a` shadows.
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
+        (
+            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
+            true,
+        ),
+        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        assert!(!index.tests().is_empty());
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+    }
+    Ok(())
+}
+
+mod shared_target_context;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -12,6 +258,27 @@ const LIB: &str = "src/lib.rs";
 const TESTS: &str = "tests/buf_tests.rs";
 const HELPERS: &str = "src/helpers.rs";
 const CHILD: &str = "src/helpers/stack_tests.rs";
+
+#[test]
+fn owner_lexical_facts_are_shared_across_syntax_owners() -> Result<(), String> {
+    let index = index(&[(LIB, "fn helper() {}\n#[test] fn subject() { helper(); }\n")]);
+    let first = OwnerPinSyntax::default()
+        .file_scopes(&index, Path::new(LIB))
+        .ok_or("scope table")?;
+    let second = OwnerPinSyntax::default()
+        .file_scopes(&index, Path::new(LIB))
+        .ok_or("scope table")?;
+    assert!(
+        std::ptr::eq(&*first, &*second),
+        "a source snapshot must share lexical facts across owners"
+    );
+    let cloned = index.clone();
+    let other_index = OwnerPinSyntax::default()
+        .file_scopes(&cloned, Path::new(LIB))
+        .ok_or("scope table")?;
+    assert!(!std::ptr::eq(&*first, &*other_index));
+    Ok(())
+}
 
 /// The bytes 7930d93 shape: a trait default method whose changed tail is
 /// the only `Ok(..)` and whose `?` exits early with an `Err(..)`.
@@ -68,6 +335,7 @@ fn index(files: &[(&str, &str)]) -> RustIndex {
         index.extend_tests(facts.tests.iter().cloned());
         index.insert_file_only(PathBuf::from(path), facts);
     }
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
     index
 }
 
@@ -89,7 +357,25 @@ fn index_with_provenance(
         index.extend_tests(facts.tests.iter().cloned());
         index.insert_file_only(PathBuf::from(path), facts);
     }
+    fixture_execution_contexts(&mut index);
     index
+}
+
+/// Explicit authority for these closed synthetic fixture chains. Production
+/// never reconstructs complete execution ancestry from a representative DTO.
+fn fixture_execution_contexts(index: &mut RustIndex) {
+    let mut parents: BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>> = BTreeMap::new();
+    for facts in index.files().values() {
+        for edge in &facts.role_provenance.edges {
+            if edge.kind == SourceRoleProvenanceEdgeKind::Module {
+                let entries = parents.entry(edge.child.clone()).or_default();
+                if !entries.contains(edge) {
+                    entries.push(edge.clone());
+                }
+            }
+        }
+    }
+    index.execution_module_parents = Some(parents);
 }
 
 /// One composed out-of-line `mod` edge.
@@ -2121,6 +2407,24 @@ fn weight_admitted(tests: &str) -> Vec<String> {
     admitted_texts(&index, &pin)
 }
 
+/// [`weight_admitted`] after the parameterized-test promotion that gives a
+/// `#[test_case]` function its test fact, as ordinary indexing runs it.
+fn test_case_admitted(tests: &str) -> Vec<String> {
+    let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let promoted = crate::analysis::facts::normalize_reconstructed_source_roles(
+        &mut index,
+        Path::new(""),
+        &[],
+    );
+    assert!(promoted.is_ok(), "{promoted:?}");
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the free owner must establish a pin");
+    let Some(pin) = pin else {
+        return Vec::new();
+    };
+    admitted_texts(&index, &pin)
+}
+
 #[test]
 fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
     let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), weight(2) + weight(2));\n    assert_eq!(weight(2), 2 * weight(1));\n    debug_assert_eq!(weight(4), 12);\n    assert_eq!(weight(4), 12);\n}\n";
@@ -2757,6 +3061,49 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
 }
 
 #[test]
+fn inert_attributes_keep_the_pin_and_rebound_or_gating_ones_refuse_it() {
+    for attributes in [
+        "#[test]\n#[rustfmt::skip]",
+        "#[rustfmt::skip]\n#[test]",
+        "#[test]\n#[allow(clippy::eq_op)]",
+        "#[allow(clippy::eq_op)]\n#[test]",
+        "#[test]\n#[warn(unused)]\n#[deny(unused_must_use)]",
+        "#[test]\n#[expect(clippy::eq_op)]",
+        "#[test]\n#[doc = \"pins the weight\"]",
+        "#[test]\n#[inline]\n#[must_use]\n#[track_caller]",
+        "#[test]\n#[clippy::cognitive_complexity = \"30\"]",
+        "#[test]\n#[rustfmt::skip]\n#[allow(clippy::eq_op)]\n#[doc = \"stacked\"]",
+        // An import of another name does not rebind a built-in one.
+        "use other::skip;\n#[test]\n#[allow(unused)]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // An import or `extern crate .. as` can rebind a bare built-in name
+        // to an attribute macro that rewrites the body.
+        "use my_macros::skip_body as allow;\n#[test]\n#[allow(unused)]",
+        "use my_macros::skip_body as r#doc;\n#[test]\n#[doc = \"x\"]",
+        "extern crate my_macros as inline;\n#[test]\n#[inline]",
+        // Attributes that decide whether or how the test runs stay refused.
+        "#[test]\n#[ignore]",
+        "#[test]\n#[should_panic]",
+        "#[test]\n#[cfg(feature = \"slow\")]",
+        "#[test]\n#[rustfmt::skip]\n#[ignore]",
+        // An unknown path is never read as inert.
+        "#[test]\n#[my_macros::allow]",
+        "#[test]\n#[allow_all]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",
@@ -3147,6 +3494,168 @@ fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
     ] {
         let tests = case_test(prelude, attributes, parameters, name);
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
+fn a_test_case_table_with_literal_rows_runs_the_body_once_per_row() {
+    let case_test = |prelude: &str, attributes: &str, parameters: &str, name: &str| {
+        format!(
+            "use demo::weight;\n{prelude}\n{attributes}\nfn {name}({parameters}) {{\n    assert_eq!(weight(x), expected);\n}}\n"
+        )
+    };
+    let params = "x: u32, expected: u32";
+    for (prelude, attributes) in [
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[test_case(5, 15)]",
+        ),
+        ("", "#[test_case::test_case(4, 12)]"),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[serial_test::serial]",
+        ),
+        ("extern crate test_case;", "#[test_case::test_case(4, 12)]"),
+    ] {
+        let tests = case_test(prelude, attributes, params, "weighs");
+        assert_eq!(test_case_admitted(&tests).len(), 1, "{tests}");
+    }
+    for (prelude, attributes, parameters, name) in [
+        // The `=> expected` form generates its own comparison; `matches`,
+        // `with`, descriptions and the other `test_case` attributes change
+        // what runs.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4 => 12)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"four\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[test_case(5 => 15)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[ignore]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[should_panic]",
+            params,
+            "weighs",
+        ),
+        // A row value that is not one scalar literal per parameter: a string
+        // or computed value may call the owner, a count mismatch does not
+        // bind the parameters.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, weight(4))]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, \"12\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 3 * 4)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12, 1)]",
+            params,
+            "weighs",
+        ),
+        // Parameters other than plain immutable bindings.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "mut x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "x: u32, mut expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "ref x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "x: impl Into<u32>, expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "#[allow(unused)] x: u32, expected: u32",
+            "weighs",
+        ),
+        // `test_case` is not the crate, or the bare name is another macro.
+        (
+            "use other::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "weighs",
+        ),
+        ("use test_case::*;", "#[test_case(4, 12)]", params, "weighs"),
+        ("", "#[test_case(4, 12)]", params, "weighs"),
+        (
+            "mod test_case { pub use other::test_case; }\nuse test_case::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use other as test_case;\nuse test_case::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "weighs",
+        ),
+        // A test named after a checked crate expands to a module that
+        // shadows it.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "test_case",
+        ),
+        (
+            "use test_case::test_case;\nuse serial_test::serial;",
+            "#[test_case(4, 12)]\n#[serial]",
+            params,
+            "serial_test",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, parameters, name);
+        assert!(test_case_admitted(&tests).is_empty(), "{tests}");
     }
 }
 
@@ -4367,7 +4876,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::assert_eq!(weight(input), 12);",
         "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_eq!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
@@ -4376,8 +4889,21 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
+        // A leading prefix token is not part of the macro path (#8927).
+        "if matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "if !cfg!(test) { assert_eq!(weight(input), 12); }",
+        "if cfg!(any()) { assert_eq!(weight(input), 12); }",
+        "if!cfg!(test) { assert_eq!(weight(input), 12); }",
+        "matches!(1, 2) && { assert_eq!(weight(input), 12); true };",
+        "!true && { assert_eq!(weight(input), 12); true };",
+        "if ::core::matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "while ::std::cfg!(any()) { assert_eq!(weight(input), 12); }",
     ] {
-        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_ne!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
 }
 
@@ -4576,6 +5102,33 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
 }
 
 #[test]
+fn owner_pin_refuses_a_test_whose_indexed_body_no_longer_matches_the_parsed_source()
+-> Result<(), String> {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("fixture has no test")?;
+    let assertion = test.assertions.first().ok_or("fixture has no assertion")?;
+    let syntax = OwnerPinSyntax::default();
+    assert_eq!(syntax.refusal(test, assertion, &index), None);
+    // The same length, one byte different: the stored fingerprint must see it.
+    let mut stale = test.clone();
+    stale.body = stale.body.replacen("12", "13", 1).into();
+    assert_ne!(stale.body, test.body);
+    assert_eq!(
+        OwnerPinSyntax::default().refusal(&stale, assertion, &index),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::StaleSource
+        )),
+        "a body differing from the parsed source must be refused as stale"
+    );
+    Ok(())
+}
+
+#[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
         "mod nested { #![cfg(any())] BODY }",
@@ -4669,6 +5222,7 @@ fn a_crate_local_site_another_crate_can_compile_stays_workspace_wide() {
         let mut facts = summarize_file(PathBuf::from(helper), shadow.to_string());
         facts.role_provenance.edges = edges;
         index.insert_file_only(PathBuf::from(helper), facts);
+        fixture_execution_contexts(&mut index);
         if include_target {
             index.include_targets.insert(PathBuf::from(helper));
         }
@@ -4862,6 +5416,7 @@ fn an_unresolvable_path_attribute_or_lexical_fallback_disables_root_routing() {
     let mut facts = summarize_file(PathBuf::from("src/other.rs"), String::new());
     facts.used_lexical_fallback = true;
     fallback.insert_file_only(PathBuf::from("src/other.rs"), facts);
+    fixture_execution_contexts(&mut fallback);
     assert_eq!(
         TargetRoots::new(&fallback).root(Path::new(TESTS), &fallback),
         None
@@ -7412,6 +7967,7 @@ fn analyzer_limit_refusals_are_limits_of_ripr_reading() {
         syntax(AssertionContextRefusal::UnidentifiedTest),
         syntax(AssertionContextRefusal::AsyncTest),
         syntax(AssertionContextRefusal::DuplicateSpelling),
+        syntax(AssertionContextRefusal::DuplicateSpellingOneRuns),
         syntax(AssertionContextRefusal::StaleSource),
         syntax(AssertionContextRefusal::TestAttribute(
             "#[cfg(any(feature = \"std\", not(no_core_net)))]".to_string(),
@@ -9865,6 +10421,7 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
     let admitted = |lib: &str, tests: &str| {
         let mut index = index(&[(LIB, lib), (TESTS, tests)]);
         index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        fixture_execution_contexts(&mut index);
         let owner = owner(&index, "weight");
         let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index);
         let syntax = OwnerPinSyntax::default();
@@ -10554,7 +11111,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     // reach the root only through a `use` or glob in the root, which the
     // root scan refuses. The same binding in the library's crate never
     // counts.
-    let helper = "tests/buf_tests/helper.rs";
+    let helper = "tests/helper.rs";
     let lib_binding = "mod demo_lib {}\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
     for (files, binds) in [
         (
@@ -10663,6 +11220,50 @@ fn an_err_return_guard_on_inequality_pins_its_assertion_twin() {
                 .all(|(text, admitted)| *admitted && text.starts_with(subject)),
             "{body}: {verdicts:?}"
         );
+    }
+}
+
+#[test]
+fn an_err_return_guard_on_a_negated_literal_matches_pins_its_assertion_twin() {
+    // RIPR-SPEC-0154 example 2 (#10121): `if !matches!(owner(..), v) {
+    // return Err(..) }` is `assert!(matches!(owner(..), v))`, which pins the
+    // owner's value like `assert_eq!(owner(..), v)` does.
+    let body = "    if !matches!(weight(4), 12) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
+    let subject = "if !matches!(weight(4), 12)";
+    let verdicts = weight_verdicts(&weight_test(" -> Result<(), String>", body), subject);
+    assert_eq!(verdicts.len(), 1, "{verdicts:?}");
+    assert!(
+        verdicts
+            .iter()
+            .all(|(text, admitted)| *admitted && text.starts_with(subject)),
+        "{verdicts:?}"
+    );
+}
+
+#[test]
+fn an_err_return_guard_on_a_matches_that_is_not_one_literal_pin_refuses() {
+    for (body, subject) in [
+        // An or-pattern, wildcard and binding pin no single value.
+        (
+            "    if !matches!(weight(4), 12 | 13) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), 12 | 13)",
+        ),
+        (
+            "    if !matches!(weight(4), _) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), _)",
+        ),
+        // A guarded pattern says nothing about the value alone.
+        (
+            "    if !matches!(weight(4), n if n > 1) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), n if n > 1)",
+        ),
+        // The scrutinee must be the owner call itself.
+        (
+            "    if !matches!(weight(4) + 1, 13) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4) + 1, 13)",
+        ),
+    ] {
+        assert_not_pinned(&weight_test(" -> Result<(), String>", body), subject);
     }
 }
 
@@ -11250,6 +11851,7 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
             index.insert_file_only(PathBuf::from(path), facts);
         }
         index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, &root);
         let owner = index.functions().iter().find(|function| {
             function.name == "reading" && function.file == Path::new("meter/src/lib.rs")
         });
@@ -11342,6 +11944,70 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
             "assert_eq!(2, count_positive(&[5, 6]));".to_string(),
         ]
     );
+}
+
+/// #9444: a changed tail that walks a slice parameter is not reached by a
+/// call passing only an empty literal there, whatever the adaptor.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_argument() {
+    for walk in ["iter()", "into_iter()", "iter_mut()"] {
+        let tail = format!("xs.{walk}.count()");
+        let lib = adaptor_lib(
+            &tail,
+            &adaptor_test(
+                "        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[3, 4]), 2);",
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", &tail);
+        assert!(pin.is_some(), "`{walk}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted_texts(&index, &pin),
+            vec!["assert_eq!(count_positive(&[3, 4]), 2);".to_string()],
+            "{walk}"
+        );
+    }
+}
+
+/// #9444 review: the refusal also reads a call wrapped in a rendered or
+/// indexed comparison, a spaced method call, and leaves a field receiver
+/// or a rebound parameter alone.
+#[test]
+fn walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter() {
+    for (tail, assertion, admitted) in [
+        (
+            "xs.iter().count()",
+            "assert_eq!(format!(\"{}\", count_positive(&[])), \"0\");",
+            false,
+        ),
+        (
+            "xs.iter().count()",
+            "assert_eq!(vec![count_positive(&[])][0], 0);",
+            false,
+        ),
+        (
+            "xs .iter() .count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            false,
+        ),
+        (
+            "row.xs.iter().count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            true,
+        ),
+    ] {
+        let lib = adaptor_lib(tail, &adaptor_test(&format!("        {assertion}")));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", tail);
+        assert!(pin.is_some(), "`{tail}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{tail} {assertion}"
+        );
+    }
 }
 
 /// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
@@ -12042,6 +12708,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::core::arch::x86::*;\n",
         "use core::{simd::*, mem};\n",
         "mod inner {\n    use std::collections::*;\n}\n",
+        // #9676: serde_core's facade. A path in a module resolves only against
+        // that module's own items, so a module named `core` beside the glob
+        // (here, the one holding it) does not shadow the standard root.
+        "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -12063,6 +12733,16 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // The module-local admission still refuses a binding in the glob's own
+        // module, and an item-position macro that may emit one.
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
+        // A plain import that binds the root name, by path or by `{self}`,
+        // takes it over for the module.
+        "use other::std;\nuse std::io::prelude::*;\n",
+        "use other::std::{self};\nuse std::io::prelude::*;\n",
         // `alloc` has no manifest proof, so it stays a foreign glob.
         "use alloc::vec::*;\n",
     ] {
@@ -12111,9 +12791,10 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     let files: Vec<MacroScanFile<'_>> = likely.into_iter().chain(rest).collect();
     assert!(!files.is_empty(), "the scan needs files to map over");
     let resolved = |_: &Path, _: usize, _: &str| true;
+    let roots = TargetRoots::new(&index);
     let decision_of_scan = || {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        scan_macro_sites(&files, &index, &resolved);
+        scan_macro_sites(&files, &index, &roots, &resolved);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     };
 
@@ -12242,4 +12923,47 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
     ] {
         assert!(scalar_names_rebound("u32", source), "{source}");
     }
+}
+
+/// The classify side proves each nested comparison macro's import by name;
+/// the syntax side reads the same names as plain expansions (#10389). The
+/// two lists must name the same macros.
+#[test]
+fn known_comparison_macros_match_the_syntax_plain_nested_list() {
+    let mut classify: Vec<&str> = KNOWN_COMPARISON_MACROS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let mut syntax: Vec<&str> = crate::analysis::syntax::COMPARISON_NESTED_MACROS.to_vec();
+    classify.sort_unstable();
+    syntax.sort_unstable();
+    assert_eq!(classify, syntax);
+}
+
+#[test]
+fn comparison_macro_imports_are_gated_only_by_their_own_attributes() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    // First statement of an attributed module, and after an attributed item.
+    assert!(imported(
+        "#[cfg(test)]\nmod tests {\nuse float_cmp::approx_eq;\n}\n"
+    ));
+    assert!(imported(
+        "#[derive(Debug)]\nstruct X {}\nuse float_cmp::approx_eq;\n"
+    ));
+    // An attribute on the `use` itself, or another binding of the name.
+    assert!(!imported("#[cfg(any())]\nuse float_cmp::approx_eq;\n"));
+    assert!(!imported(
+        "use float_cmp::approx_eq;\nfn f() {\nuse other::approx_eq;\n}\n"
+    ));
+}
+
+#[test]
+fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    assert!(imported("use float_cmp::approx_eq;\n"));
+    assert!(imported("use float_cmp::{ApproxEq, approx_eq};\n"));
+    assert!(!imported("use float_cmp::other::approx_eq;\n"));
+    assert!(!imported("use float_cmp::approx_eq::other;\n"));
+    assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
+    assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }

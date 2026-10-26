@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:34
 Changed
   before: (true, false) => "request_identity_v1",
   after:  (true, false) =>
+          (arm head only; open the arm at ./src/lib.rs:34 to read its new body)
 
 Probe
   family: match_arm
@@ -28,7 +29,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: (true, false) =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: (true, false) => (line 34)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
@@ -75,7 +76,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: "request_identity_v1"
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: "request_identity_v1" (line 34)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior

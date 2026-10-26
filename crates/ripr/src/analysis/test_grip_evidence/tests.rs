@@ -1,4 +1,6 @@
 mod module_extraction;
+mod shared_execution_context;
+mod warm_entrypoint;
 
 use super::related_tests::context::*;
 use super::related_tests::*;
@@ -78,6 +80,7 @@ fn index_from_files_at_stamp(
             .iter()
             .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &fixture_root);
     Ok(FixtureIndex {
         index,
         _fixture_root: fixture_root,
@@ -477,7 +480,7 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     let root = authority_fixture_root("file-scan-memo")?;
     fs::write(
         root.join("src/lib.rs"),
-        "const LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
+        "mod other;\nconst LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
     )
     .map_err(|error| error.to_string())?;
     fs::write(
@@ -513,6 +516,12 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     first.value_facts(&index);
     if second.file_value_scan.get().is_none() {
         return Err("first test's facts did not populate the shared file scan".to_string());
+    }
+    if !first
+        .value_facts(&index)
+        .shares_module_constants_with(second.value_facts(&index))
+    {
+        return Err("tests in one file must share one constants map, not clone it".to_string());
     }
     // Identity alone would pass with an empty shared scan: both tests must
     // still resolve the same-file constant through it.
@@ -3118,6 +3127,43 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
             "cancelled pass evaluated {} seams on rayon workers",
             evidence.len()
         ));
+    }
+    Ok(())
+}
+
+/// #9211 for the seam walk: a stage big enough to need the whole-index tables
+/// pays the workspace macro-site scan once on the caller before any seam is
+/// queued, not whichever worker asks first while the others wait. A small
+/// stage reads none of them and pays nothing.
+#[test]
+fn evidence_pass_warms_the_workspace_scan_once_and_only_for_large_stages() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass
+        .context
+        .as_ref()
+        .ok_or("the fixture must build a context")?;
+    if seams.len() >= WARM_MIN_SEAMS {
+        return Err("the fixture must be a small stage".into());
+    }
+    let evidence = pass.evidence_for(&seams);
+    if evidence.len() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    if context.workspace_scan_passes() != 0 {
+        return Err("a small stage must not pay the whole-index scan".into());
+    }
+    pass.warm_shared_tables(context, None, &None);
+    // At most the ambiguity pass plus one completion; the fixture has no
+    // macro-site consumer, so only the warm can have paid it.
+    let paid = context.workspace_scan_passes();
+    if !(1..=2).contains(&paid) {
+        return Err(format!("expected the primed scan, got {paid} passes"));
+    }
+    pass.warm_shared_tables(context, None, &None);
+    pass.evidence_for(&seams);
+    if context.workspace_scan_passes() != paid {
+        return Err("a later stage must not rescan the workspace".into());
     }
     Ok(())
 }
@@ -19638,5 +19684,86 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
             "{case}: compact consumer"
         );
     }
+    Ok(())
+}
+
+/// #10229: file is part of a value fact's identity, so the same line, value
+/// and text from two test files stays two facts while an exact same-file
+/// duplicate still collapses.
+#[test]
+fn value_facts_keep_one_fact_per_test_file() {
+    let fact = |file: &str| ValueFact {
+        file: Some(PathBuf::from(file)),
+        line: 6,
+        text: "assert_eq!(score(100, 100), true);".to_string(),
+        value: "amount == threshold".to_string(),
+        context: ValueContext::FunctionArgument,
+    };
+    let mut values = vec![fact("tests/b.rs"), fact("tests/a.rs"), fact("tests/b.rs")];
+    sort_value_facts(&mut values);
+    let files = values
+        .iter()
+        .map(|value| value.file.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        files,
+        vec![Some(Path::new("tests/a.rs")), Some(Path::new("tests/b.rs"))]
+    );
+}
+
+#[test]
+fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<(), String> {
+    let test_body = "#[test]\n\
+         fn boundary() {\n\
+             assert_eq!(discounted_total(100, 100), 90);\n\
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (
+            PathBuf::from("src/pricing.rs"),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 \
+                 { if amount >= threshold { amount - 10 } else { amount } }\n",
+        ),
+        (PathBuf::from("tests/first_tests.rs"), test_body),
+        (PathBuf::from("tests/second_tests.rs"), test_body),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+
+    // Same line, text, value and context on both sides: only the test file
+    // differs, so the pair isolates file as the identity discriminator.
+    let mut facts = evidence
+        .observed_values
+        .iter()
+        .map(|fact| {
+            (
+                fact.file.clone(),
+                fact.line,
+                fact.text.as_str(),
+                fact.value.as_str(),
+                fact.context.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    facts.sort_by(|a, b| a.0.cmp(&b.0));
+    let fact = |file: &str| {
+        (
+            Some(PathBuf::from(file)),
+            3,
+            "assert_eq!(discounted_total(100, 100), 90);",
+            "100",
+            ValueContext::FunctionArgument,
+        )
+    };
+    assert_eq!(
+        facts,
+        vec![fact("tests/first_tests.rs"), fact("tests/second_tests.rs")],
+        "facts: {:?}",
+        evidence.observed_values
+    );
     Ok(())
 }

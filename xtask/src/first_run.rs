@@ -1213,6 +1213,17 @@ fn scoreboard_rows(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
                 "review_on_change",
             ));
         }
+        // One reading per case, `no verdict` included, so the scoreboard can
+        // tell a case that did not agree from a walk that never wrote one.
+        rows.push(row(
+            &case.name,
+            "check",
+            "verdict_reading",
+            json!(verdict_reading(case.verdict, !case.caught_by.is_empty())),
+            "class",
+            Value::Null,
+            "review_on_change",
+        ));
     }
     rows
 }
@@ -1352,9 +1363,16 @@ mod tests {
             assert_eq!(resolve_ripr("weird\\name")?, "weird\\name");
         }
         let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        // `std::path::absolute` normalizes separators on Windows, so the
+        // expected spelling is built from components rather than joining the
+        // slash-separated input verbatim.
         assert_eq!(
             resolve_ripr("target/debug/ripr")?,
-            cwd.join("target/debug/ripr").display().to_string()
+            cwd.join("target")
+                .join("debug")
+                .join("ripr")
+                .display()
+                .to_string()
         );
         Ok(())
     }
@@ -1394,6 +1412,12 @@ mod tests {
             Value::Null
         );
         assert_eq!(find("demo-1.0.0", "check", "secs")?["budget"], json!(10.0));
+        // Every case writes a reading (this one has no catching tests, so a
+        // weak verdict agrees), which is what the scoreboard counts.
+        assert_eq!(
+            find("demo-1.0.0", "check", "verdict_reading")?["value"],
+            json!("agrees with the tests")
+        );
         assert_eq!(
             find("demo-1.0.0", "check", "stdout_lines")?["value"],
             json!(2)

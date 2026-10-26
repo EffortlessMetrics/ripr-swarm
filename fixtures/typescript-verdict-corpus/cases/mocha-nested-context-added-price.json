@@ -1,0 +1,45 @@
+{
+  "case_id": "mocha-nested-context-added-price",
+  "subject_id": "authored-ts-mocha-hooks",
+  "diff": "cases/mocha-nested-context-added-price.diff",
+  "anchor": {
+    "file": "src/basket.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect",
+  "test_shape": "mocha_chai_nested_context_beforeeach_equal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "Node.js v22.22.0, mocha 12.0.3, chai 6.3, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "this.items.push(price + 1);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "Basket > with two items > totals the prices",
+        "equivalence_review": "the edit itself: Two items added in a nested beforeEach are summed and compared exactly."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Two items added in a nested beforeEach are summed and compared exactly. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

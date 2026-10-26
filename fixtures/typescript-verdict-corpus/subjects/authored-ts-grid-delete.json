@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-delete",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "9c53ae8affc771a4dd581b340ee7af489cee0ac07849e5652dd196264fb21cc9"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/delete.ts",
+      "sha256": "b19dd763882fa7747bb840e1e7da4e76a522a1d36bdf2f5b64468653f904d858"
+    },
+    {
+      "path": "test/delete.test.ts",
+      "sha256": "5897b5e7c0318d3b9615a1c11195fd0ab8405553ddb85fb12b0f308aa838ff6a"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

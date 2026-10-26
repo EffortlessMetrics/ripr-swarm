@@ -135,6 +135,7 @@ pub(in crate::analysis) fn field_projection_receipt(
     };
     let helper = &hop.caller;
     if hop.through_macro
+        || hop.receiver.is_some()
         || helper.source_role.is_evidence_role()
         || owner.file != helper.file
         || !callee_is_unique(&owner.name, context.index)

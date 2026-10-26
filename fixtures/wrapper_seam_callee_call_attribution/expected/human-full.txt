@@ -27,7 +27,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for error variant: try_parse_summary(raw).map_err(|error| error.to_string().into())
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches error variant: try_parse_summary(raw).map_err(|error| error.to_string().into()) (line 14)
   - related test tests/attribution.rs:4 observes_callee_outcome uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding misses: asserts, but not on the changed value; checked `assert_eq!(parsed.map(|n| n), Ok(3))`
@@ -40,6 +40,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
@@ -73,7 +74,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for returned value: try_parse_summary(raw).map_err(|error| error.to_string().into())
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches returned value: try_parse_summary(raw).map_err(|error| error.to_string().into()) (line 14)
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(ignored, Ok(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
@@ -87,6 +88,7 @@ Weakness
 
 Static limitation
   wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
 
 Limitation detail
   last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel

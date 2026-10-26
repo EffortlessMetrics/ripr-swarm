@@ -1,4 +1,4 @@
-//! Release-only sweep of committed producer documents against every published
+//! Sweep of committed producer documents against every published
 //! schema (#3920).
 //!
 //! `check-verification-contracts` validates one hand-picked subject per
@@ -16,7 +16,11 @@
 //! tree, so a dirty or artifact-littered release checkout cannot change the
 //! denominator or pass bytes the candidate does not carry.
 //!
-//! It is not wired into a required check. The binding table below is the
+//! The required Rust gate runs it on the candidate (#9505), feeding the
+//! `doctor`, `pr-evidence` and `review-comments` runtime rows from that run's
+//! own producer output. `repair-attempt` and `execution_result` need an agent
+//! repair transaction too heavy for that gate; they carry a reviewed narrower
+//! authority instead (#9561, pinned by a test below). The binding table below is the
 //! reviewed rule for which committed bytes are producer output, which are
 //! consumer-input stimulus, and which schemas have no committed producer bytes
 //! at all and must be fed live artifacts with `--artifact`.
@@ -51,6 +55,12 @@ enum Corpus {
     /// The producer writes only per-run bytes; nothing committed is producer
     /// output. Subjects come only from `--artifact`.
     RuntimeOnly(&'static str),
+    /// Like `RuntimeOnly`, but a named in-crate test already validates the
+    /// bytes the real producer writes, so a missing `--artifact` is
+    /// `authority_only`, not `not_run`. Lookalike detection still applies, so a
+    /// committed document with this schema's discriminators is not silently
+    /// skipped. The pin test below keeps the named authority alive (#9561).
+    Authority(&'static str),
     /// No producer emits this shape, or the producer is pinned by a narrower
     /// in-crate authority this validator cannot replace. Never counted as
     /// validated.
@@ -87,6 +97,14 @@ const BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
+            // Retained captures of past `ripr check` runs inside real-repo eval
+            // fixtures. They validate against the schema, but they are not
+            // bytes the candidate's build produced, so they stay edge fixtures.
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-corrected.json",
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-original.json",
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-weak.json",
+            "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/effective-check.json",
+            "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/ineffective-check.json",
         ],
         excluded: &[(
             "fixtures/evidence-promotion-honesty-corpus/reports/",
@@ -134,14 +152,15 @@ const BINDINGS: &[Binding] = &[
         edge_fixtures: &[
             "tests/fixtures/verification/ripr/review-comments.valid.json",
             "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
+            "tests/fixtures/verification/ripr/review-comments.capped.valid.json",
         ],
         excluded: &[],
     },
     Binding {
         schema_path: "schemas/ripr/repair-attempt.schema.json",
         pointer: None,
-        corpus: Corpus::RuntimeOnly(
-            "`ripr agent repair` writes target/ripr/repair-attempts/<id>/attempt.json per attempt",
+        corpus: Corpus::Authority(
+            "narrower authority (#9561): assert_manifest_matches_published_schema in crates/ripr/tests/python_repair_attempt.rs checks the bytes the real `ripr agent repair` before/after phases write; `ripr agent repair` writes target/ripr/repair-attempts/<id>/attempt.json per attempt, so release replay still passes it with --artifact",
         ),
         edge_fixtures: &[],
         excluded: &[],
@@ -151,20 +170,26 @@ const BINDINGS: &[Binding] = &[
         pointer: Some("/$defs/command_spec"),
         corpus: Corpus::CommandSpecs { verify: false },
         edge_fixtures: &[],
-        excluded: &[],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus (some carry `command_specs` with null roles) read by check-evidence-promotion-honesty, not producer output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
         pointer: Some("/$defs/verification_command_spec"),
         corpus: Corpus::CommandSpecs { verify: true },
         edge_fixtures: &[],
-        excluded: &[],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus (some carry `command_specs` with null roles) read by check-evidence-promotion-honesty, not producer output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
         pointer: Some("/$defs/execution_result"),
-        corpus: Corpus::RuntimeOnly(
-            "`ripr agent verify-execute --result-json` commits one result per bounded execution",
+        corpus: Corpus::Authority(
+            "narrower authority (#9561): assert_result_matches_published_schema in crates/ripr/tests/cli_smoke.rs checks the result the real `ripr agent verify-execute --result-json` commits per bounded execution; release replay still passes it with --artifact",
         ),
         edge_fixtures: &[],
         excluded: &[],
@@ -538,6 +563,18 @@ fn sweep(
             Corpus::Exempt(reason) => {
                 summary.push(format!("{label}: exempt ({reason})"));
                 json!({ "state": "exempt", "reason": reason })
+            }
+            Corpus::Authority(authority) => {
+                let state = if counts.artifacts > 0 {
+                    "artifact_validated"
+                } else {
+                    "authority_only"
+                };
+                summary.push(format!(
+                    "{label}: {state}, {} live artifact(s) validated ({authority})",
+                    counts.artifacts
+                ));
+                json!({ "state": state, "authority": authority })
             }
             Corpus::RuntimeOnly(route) => {
                 let state = if counts.artifacts > 0 {
@@ -1138,6 +1175,64 @@ mod tests {
     }
 
     #[test]
+    fn authority_rows_report_artifact_validated_or_authority_only_and_fail_bad_artifacts()
+    -> Result<(), String> {
+        let root = example_root();
+        let good = root.join("live.json");
+        write(&good, r#"{"schema_version":"0.1","status":"pass"}"#);
+        let authority = || binding(Corpus::Authority("named test"), &[]);
+        let artifact = |file: &Path| Artifact {
+            schema_path: EXAMPLE_SCHEMA.to_string(),
+            schema_pointer: None,
+            file: file.to_path_buf(),
+            subject_pointer: None,
+        };
+
+        let none = sweep_committed(&root, &[authority()], &[])?;
+        let state = |report: &SweepReport| report.packet["rows"][0]["disposition"]["state"].clone();
+        if !none.violations.is_empty() || state(&none) != "authority_only" {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!(
+                "no artifact must be authority_only: {}",
+                none.packet
+            ));
+        }
+        let ok = sweep_committed(&root, &[authority()], &[artifact(&good)])?;
+        if !ok.violations.is_empty() || state(&ok) != "artifact_validated" {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!("a good artifact must validate: {}", ok.packet));
+        }
+        write(&good, r#"{"schema_version":"0.1","status":"maybe"}"#);
+        let bad = run(&root, &[authority()], &[artifact(&good)])?;
+        if bad.violations.is_empty() {
+            return Err("a bad artifact on an authority row passed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_committed_lookalike_of_an_authority_row_fails_until_bound_or_excluded()
+    -> Result<(), String> {
+        let root = example_root();
+        write(
+            &root.join("fixtures/x/attempt.json"),
+            r#"{"schema_version":"0.1","status":"maybe"}"#,
+        );
+        let report = run(&root, &[binding(Corpus::Authority("named test"), &[])], &[])?;
+        if !report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("fixtures/x/attempt.json"))
+        {
+            return Err(format!(
+                "a committed lookalike was silently skipped: {:?}",
+                report.violations
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn the_sweep_reads_the_commit_not_the_working_tree() -> Result<(), String> {
         let root = example_root();
         let golden = root.join("fixtures/a/expected/example.json");
@@ -1265,6 +1360,93 @@ mod tests {
             {
                 return Err(format!("binding names unpublished {}", binding.schema_path));
             }
+        }
+        Ok(())
+    }
+
+    /// Exempt rows are only as good as the authority they name. Each named
+    /// test or helper must still exist in its file and be cited by a binding's
+    /// exemption reason, so deleting an authority fails here instead of
+    /// leaving an exemption that points at nothing (#9561).
+    #[test]
+    fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
+        // (name, is_test_fn, source). A helper must be defined and called; a
+        // test fn must sit directly under `#[test]`.
+        let pins: [(&str, bool, &str); 3] = [
+            (
+                "assert_manifest_matches_published_schema",
+                false,
+                include_str!("../../crates/ripr/tests/python_repair_attempt.rs"),
+            ),
+            (
+                "assert_result_matches_published_schema",
+                false,
+                include_str!("../../crates/ripr/tests/cli_smoke.rs"),
+            ),
+            (
+                "capability_output_matches_the_published_schema",
+                true,
+                include_str!("../../crates/ripr/src/lsp/agent_protocol.rs"),
+            ),
+        ];
+        for (name, is_test, source) in pins {
+            let defined = source.contains(&format!("fn {name}("));
+            let live = if is_test {
+                source
+                    .lines()
+                    .zip(source.lines().skip(1))
+                    .any(|(attr, def)| {
+                        attr.trim() == "#[test]"
+                            && def.trim_start().starts_with(&format!("fn {name}("))
+                    })
+            } else {
+                // Definition plus at least one call site.
+                source.matches(&format!("{name}(")).count() >= 2
+            };
+            if !defined || !live {
+                return Err(format!(
+                    "named authority `{name}` no longer exists or is never run"
+                ));
+            }
+            if !BINDINGS.iter().any(|binding| match &binding.corpus {
+                Corpus::Exempt(reason) | Corpus::Authority(reason) => reason.contains(name),
+                _ => false,
+            }) {
+                return Err(format!("no exempt binding cites authority `{name}`"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The sweep is only a control if the required gate runs it. Pin the
+    /// wiring: the step exists and feeds every runtime row the gate can
+    /// produce, so deleting the step or an `--artifact` fails here (#9505).
+    #[test]
+    fn the_required_rust_gate_runs_the_sweep_with_live_producer_artifacts() -> Result<(), String> {
+        let gates = include_str!("../../.github/workflows/rust-gates.yml");
+        let step = gates
+            .split("- name: Schema producer sweep")
+            .nth(1)
+            .and_then(|rest| rest.split("\n      - name:").next())
+            .ok_or("rust-gates.yml has no `Schema producer sweep` step")?;
+        assert!(step.contains("cargo xtask schema-producer-sweep"));
+        let guard = step
+            .find("\"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\"")
+            .ok_or("pr-evidence and review-comments feeds are not guarded to the events that run PR evidence")?;
+        for schema in ["pr-evidence", "review-comments"] {
+            let feed = step
+                .find(&format!("--artifact schemas/ripr/{schema}.schema.json="))
+                .ok_or_else(|| format!("sweep step does not feed {schema}"))?;
+            assert!(
+                feed > guard,
+                "{schema} feed sits outside the pull_request/merge_group guard"
+            );
+        }
+        for schema in ["doctor", "pr-evidence", "review-comments"] {
+            assert!(
+                step.contains(&format!("--artifact schemas/ripr/{schema}.schema.json=")),
+                "sweep step does not feed the {schema} runtime row"
+            );
         }
         Ok(())
     }

@@ -10,11 +10,12 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) use super::extract::contains_macro_invocation;
 pub(crate) use super::extract::{
-    OracleTextShape, classify_assertion, classify_assertion_in, err_return_guard_oracles,
-    extract_assertions, extract_assertions_in, extract_call_facts, extract_identifier_tokens,
-    extract_line_scanned_oracles, extract_literal_facts, extract_literals, extract_return_facts,
-    guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
-    is_inequality_assertion, is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    LazyDecls, OracleTextShape, classify_assertion, classify_assertion_with,
+    err_return_guard_oracles, extract_assertions, extract_assertions_in, extract_call_facts,
+    extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
+    extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,
+    has_oracle_text_shape, is_inequality_assertion, is_unwrap_err_bound_error_assertion,
+    unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
 #[cfg(test)]
@@ -195,7 +196,7 @@ pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String>
 
 /// Concrete next step appended when a file has more than one claiming parent
 /// module (`rust_module_ambiguous_parent`).
-const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "rust_module_ambiguous_parent means more than one parent `mod` item (or both `<name>.rs` and `<name>/mod.rs`) claims a listed file, so ripr cannot pick one module context for it. This can be a valid layout (for example a bench or example crate that includes the same file through several `#[path]` items, or one file compiled into several crates); no change is needed if it builds. Mutually exclusive `#[cfg(X)]` / `#[cfg(not(X))]` declarations of one module are not reported. To give ripr one owner, declare the file from a single parent `mod` item; a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
+const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "rust_module_ambiguous_parent means more than one parent `mod` item (or both `<name>.rs` and `<name>/mod.rs`) claims a listed file, so ripr cannot pick one module context for it. This can be a valid layout (for example one file declared from several modules of different compilation units that ripr cannot tell apart); no change is needed if it builds. Mutually exclusive `#[cfg(X)]` / `#[cfg(not(X))]` declarations of one module, and one file declared by several distinct Cargo target roots (benches, examples, bins, integration tests), are generally not reported. To give ripr one owner, declare the file from a single parent `mod` item; a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
 
 /// Closing sentence of [`module_composition_disclosure`] (#4378) and
 /// [`include_resolution_disclosure`].

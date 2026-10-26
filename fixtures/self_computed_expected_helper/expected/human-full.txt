@@ -28,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: subtotal * 8 / 100
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches returned value: subtotal * 8 / 100 (line 2)
   - related test src/lib.rs:14 tax_matches_reference uses weak exact value oracle: assert_eq!(tax(250), reference_tax(250)); misses: assertion too weak to tell the old behavior from the new
   - source function argument value subtotal = 250 at line 15

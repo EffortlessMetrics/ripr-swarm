@@ -1,0 +1,18 @@
+//! map_or_else is not the map_or the limitation names.
+
+pub fn ext_starts_at_else(path: &str, at: usize) -> bool {
+    let start = path.rfind('.').map_or_else(|| 0, |i| i + 1);
+    start == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_extension_starts_after_the_dot_b_else() {
+        assert!(ext_starts_at_else("a.rs", 2));
+        assert!(!ext_starts_at_else("a.rs", 1));
+        assert!(ext_starts_at_else("ars", 0));
+    }
+}

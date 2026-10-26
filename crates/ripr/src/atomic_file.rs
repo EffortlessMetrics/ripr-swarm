@@ -446,9 +446,9 @@ mod tests {
         CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new, is_stranded_temp_name,
         sweep_stale_temp_files, write, write_cache,
     };
-    // Only the unix symlink-escape guard test calls this; importing it
-    // unconditionally is an unused import on Windows (#8485).
-    #[cfg(unix)]
+    // The unix symlink-escape tests and the platform-independent enumeration
+    // test (#9339) both call this, so the import is unconditional: gating it
+    // to unix left the Windows test build without the function.
     use super::ensure_default_output_contained_with;
     use std::path::{Path, PathBuf};
 

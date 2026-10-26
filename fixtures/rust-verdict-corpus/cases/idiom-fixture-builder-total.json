@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-fixture-builder-total",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-fixture-builder-total.diff",
+  "anchor": {
+    "file": "src/unwinding.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_fixture_function_total",
+  "hard_case": "The test builds its input in a `fixture()` helper and asserts the total of two items.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.items.iter().map(|(_, p)| p).take(1).sum()",
+        "mutated_line": "self.items.iter().map(|(_, p)| p).take(1).sum()",
+        "outcome": "tests_failed",
+        "failing_test": "unwinding::tests::fixture_total",
+        "equivalence_review": "not equivalent: `self.items.iter().map(|(_, price)| price).sum()` becomes `self.items.iter().map(|(_, p)| p).take(1).sum()`"
+      },
+      {
+        "replacement": "self.items.iter().map(|(_, p)| p).skip(1).sum()",
+        "mutated_line": "self.items.iter().map(|(_, p)| p).skip(1).sum()",
+        "outcome": "tests_failed",
+        "failing_test": "unwinding::tests::fixture_total",
+        "equivalence_review": "not equivalent: `self.items.iter().map(|(_, price)| price).sum()` becomes `self.items.iter().map(|(_, p)| p).skip(1).sum()`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "fixture_total pins 42; the first item alone is 30 and the second alone is 12. Shape: fixture builder function feeding the assertion.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

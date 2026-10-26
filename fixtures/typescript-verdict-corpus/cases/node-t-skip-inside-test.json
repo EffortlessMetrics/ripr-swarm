@@ -1,0 +1,44 @@
+{
+  "case_id": "node-t-skip-inside-test",
+  "subject_id": "authored-ts-nodetest-mocks",
+  "diff": "cases/node-t-skip-inside-test.diff",
+  "anchor": {
+    "file": "src/flaky.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_t_skip_then_assert",
+  "hard_case": "t.skip() marks the test skipped but does not stop the body",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "Node.js v22.22.0, node:test, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "`again ${attempt}`",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: The test calls t.skip() and then still executes its assertion."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test calls t.skip() and then still executes its assertion. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

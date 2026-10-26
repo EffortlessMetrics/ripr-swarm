@@ -57,7 +57,8 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0227#11"
+    "RIPR-SPEC-0227#11",
+    "RIPR-SPEC-0107#1"
   ],
   "expected_oracle": {
     "kind": "broad_error",

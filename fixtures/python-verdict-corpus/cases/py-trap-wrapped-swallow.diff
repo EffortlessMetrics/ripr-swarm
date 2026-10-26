@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -86,7 +86,7 @@
+ 
+ 
+ def wrapped_swallow(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def wrapped_through(a, b):

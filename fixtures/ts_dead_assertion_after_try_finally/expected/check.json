@@ -28,14 +28,14 @@
         "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `isEligible`"},
         "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
         "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
-        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `age == 18`."}
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `age == 18`."}
        },
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `isEligible`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `age == 18`.", "related test tests/eligibility.test.ts:3 eligibility uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator age == 18: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `isEligible`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `age == 18`.", "related test tests/eligibility.test.ts:3 eligibility uses strong exact value oracle: expect(...).toBeTruthy(...)", "missing discriminator age == 18: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
       "evidence": ["owner: isEligible", "missing_discriminator: age == 18", "typescript_boundary_input: parameter=age;index=0;operand=18;value=18", "typescript_oracle_observed: isEligible(30)", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/eligibility.test.ts:4", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/eligibility.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_eligibility.ts:typescript_preview:013a8947;owner=isEligible", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `isEligible` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "missing": ["Related tests reach `isEligible` with a strong oracle, but no strong assertion observes a `isEligible(...)` call at the changed predicate boundary `age == 18`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -64,11 +64,13 @@
           "name": "eligibility",
           "file": "tests/eligibility.test.ts",
           "line": 3,
-          "oracle_strength": "smoke",
-          "oracle_kind": "smoke_only",
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
           "oracle": "expect(...).toBeTruthy(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -84,8 +86,8 @@
           "This card is advisory and is not a repair packet."
         ],
         "missing_discriminator": "age == 18",
-        "oracle_kind": "smoke_only",
-        "oracle_strength": "smoke",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
         "owner": "isEligible",
         "owner_kind": "function",
         "probe_family": "predicate",
@@ -98,7 +100,7 @@
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
         "verify": {
           "command": null
         },
@@ -139,10 +141,10 @@
         "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
       },
       "stop_reasons": [],
-      "oracle_kind": "smoke_only",
-      "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
-      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

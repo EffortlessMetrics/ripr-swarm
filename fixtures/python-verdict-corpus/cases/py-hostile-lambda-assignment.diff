@@ -1,0 +1,6 @@
+diff --git a/hostile/lam.py b/hostile/lam.py
+--- a/hostile/lam.py
++++ b/hostile/lam.py
+@@ -1 +1 @@
+-triple = lambda x: x * 3
++triple = lambda x: x * 4

@@ -186,6 +186,18 @@ projection does not analyze those regions.
   explicitly mark repo-only and gap-ledger packets as not applicable; their
   seam-budget `run_status` is not a diff-completeness authority.
 
+GitHub annotation output discloses advisory limitations that ride on a
+complete outcome (for example `eol_only_churn`, #4952) as a leading
+`ripr analysis limitations` notice naming the outcome kind and each
+limitation's recovery. The notice is a disclosure, not a scope reduction:
+the `ripr analysis incomplete` warning does not fire for a complete
+outcome, with or without findings, and an empty complete stream still
+prints its clean-result notice. This is pinned by
+`output::github::tests::render_discloses_complete_outcome_advisory_limitations`
+and
+`output::github::tests::render_discloses_empty_complete_outcome_advisory_limitations`
+(#10520).
+
 Review-comments complete, partial, and unsupported producer-backed fixtures
 preserve the typed kind, completeness, limitation, and recovery route in JSON
 and Markdown. Missing or malformed producer output is an error rather than a
@@ -206,6 +218,10 @@ PR-B1 adds
 `output::sarif::tests::sarif_discloses_incomplete_zero_finding_outcome_at_run_level`
 and
 `output::badge::tests::incomplete_zero_finding_diff_is_not_a_green_badge`.
+A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
+`no_behavioral_candidates` shows a yellow warning naming that kind, not a green
+`0`; `complete_no_findings` keeps the green zero. This is pinned by
+`output::badge::tests::no_subject_badges_do_not_claim_a_clean_zero`.
 
 ## Required Evidence
 
@@ -215,6 +231,9 @@ and
 - stable outcome identity excludes absolute checkout paths;
 - SARIF run-level and diff-scoped badge projections disclose the typed outcome
   and fail closed for incomplete zero-result input.
+- GitHub annotations disclose complete-outcome advisory limitations as a
+  leading `ripr analysis limitations` notice on both the with-findings and
+  empty complete branches (#10520).
 - Gate and PR-evidence-summary projections are covered by PR-B2.
 - LSP status, workspace status, top limitation, and diagnostic severity retain
   the typed outcome and suppress full-run repair authority for incomplete

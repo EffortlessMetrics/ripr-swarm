@@ -752,6 +752,44 @@ fn inline_impl_bound_removed_stays_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn wrapped_impl_header_first_line_seeds_only_static_unknown() -> Result<(), String> {
+    // rustfmt wraps a long header so its first line opens no body (#10244).
+    for source in [
+        "struct Holder<Item, const N: usize>(Item);\nimpl<Item, const N: usize> Drop\n    for Holder<Item, N>\n{\n    fn drop(&mut self) {}\n}\n",
+        "struct H<T>(T);\nimpl<#[cfg_attr(feature = \"x\", may_dangle)] T, const N: usize> Drop\n    for H<T>\n{\n    fn drop(&mut self) {}\n}\n",
+    ] {
+        let result = added(source, 2)?;
+        assert!(!result.is_empty(), "header vanished: {source}");
+        for probe in &result {
+            assert_eq!(
+                probe.family,
+                ProbeFamily::StaticUnknown,
+                "wrapped header first line must stay declaration-only: {source}"
+            );
+        }
+    }
+    // A header whose generics hold an array-length call can run code: the
+    // wrapped first line keeps its call probe (Devin finding on #10265).
+    let result = added(
+        "const fn width() -> usize { 4 }\nstruct Foo<T>(T);\nimpl Foo<[u8; width()]>\n{\n}\n",
+        3,
+    )?;
+    assert!(
+        result.iter().any(|p| p.family == ProbeFamily::CallDeletion),
+        "const-call header lost its call probe: {result:?}"
+    );
+    // A statement that merely starts with the letters `impl` keeps its probes.
+    let result = added("fn impl_run(x: u32) {}\nfn f() {\n    impl_run(3);\n}\n", 3)?;
+    assert!(
+        result
+            .iter()
+            .any(|p| p.family != ProbeFamily::StaticUnknown),
+        "behavior line must keep a runtime family: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn inline_type_alias_bound_added_stays_unknown() -> Result<(), String> {
     inline_item_bound("type Packet<T: Clone> = Vec<T>;", "", false)
 }
@@ -969,5 +1007,75 @@ fn impl_header_with_fn_bound_or_comment_is_static_unknown() -> Result<(), String
             "`{header}` was probed as something else, or lost: {result:?}"
         );
     }
+    Ok(())
+}
+
+/// #9170: a replaced `struct`/`enum`/`union`/`trait` header with generic bounds
+/// is one `static_unknown` probe, not a field; a const-generic default holding
+/// a call keeps its call probe.
+#[test]
+fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> Result<(), String> {
+    let probes_for = |header: &str, before: &str| -> Result<Vec<_>, String> {
+        let body = if header.starts_with("enum") {
+            "A,"
+        } else {
+            "x: u8,"
+        };
+        let source = format!("{header}\n    {body}\n}}\n");
+        probes(
+            &source,
+            ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![ChangedLine {
+                    line: 1,
+                    new_side_line: 1,
+                    text: header.into(),
+                }],
+                removed_lines: vec![ChangedLine {
+                    line: 1,
+                    new_side_line: 1,
+                    text: before.into(),
+                }],
+            },
+        )
+    };
+    for (header, before) in [
+        (
+            "pub struct Wrapper<T: Clone + Send> {",
+            "pub struct Wrapper<T: Clone> {",
+        ),
+        ("enum Op<Q: Ord + Copy> {", "enum Op<Q: Ord> {"),
+        ("union Bits<T: Copy> {", "union Bits<T> {"),
+        ("enum É<T: Copy> {", "enum É<T> {"),
+        (
+            "enum Op<T> where [([u8; 4], fn()); 3]: Copy {",
+            "enum Op<T> {",
+        ),
+    ] {
+        let result = probes_for(header, before)?;
+        assert!(
+            !result.is_empty()
+                && result
+                    .iter()
+                    .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "`{header}` was probed as something else, or lost: {result:?}"
+        );
+    }
+    let call = probes_for(
+        "struct Buffer<const N: usize = { capacity() }> {",
+        "struct Buffer<const N: usize = 4> {",
+    )?;
+    assert!(
+        call.iter()
+            .any(|probe| probe.family == ProbeFamily::CallDeletion),
+        "a call in a const-generic default lost its call probe: {call:?}"
+    );
+    // A brace-free macro in a generic default is evidence too.
+    let mac = probes_for("struct S<T = m!()> {", "struct S<T = u8> {")?;
+    assert!(
+        mac.iter()
+            .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "a macro in a generic default was read as declaration-only: {mac:?}"
+    );
     Ok(())
 }

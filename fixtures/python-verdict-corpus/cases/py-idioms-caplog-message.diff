@@ -1,0 +1,11 @@
+diff --git a/idioms/audit.py b/idioms/audit.py
+--- a/idioms/audit.py
++++ b/idioms/audit.py
+@@ -5,6 +5,6 @@
+ 
+ def check_balance(balance):
+     if balance < 10:
+-        log.warning("low balance: %s", balance)
++        log.warning("balance low: %s", balance)
+         return False
+     return True

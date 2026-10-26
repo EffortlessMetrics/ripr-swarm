@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-iterator-next-collect",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-iterator-next-collect.diff",
+  "anchor": {
+    "file": "src/ops.rs",
+    "line": 65
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "iterator_impl_collect_assert",
+  "hard_case": "The owner is `Iterator::next`, driven by `collect`, and the test never calls `next` by name.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Some(self.0)",
+        "mutated_line": "Some(self.0)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::countdown_yields_descending",
+        "equivalence_review": "not equivalent: `Some(1 + self.0)` becomes `Some(self.0)`"
+      },
+      {
+        "replacement": "Some(self.0 + 2)",
+        "mutated_line": "Some(self.0 + 2)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::countdown_yields_descending",
+        "equivalence_review": "not equivalent: `Some(1 + self.0)` becomes `Some(self.0 + 2)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "countdown_yields_descending collects Countdown(3) and compares [3, 2, 1]; both mutants change the items. Shape: `impl Iterator` reached through an adaptor.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

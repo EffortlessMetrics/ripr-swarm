@@ -37,11 +37,11 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return amount * 3 (line 2)
-  - related test tests/test_aliased_mock.py:5 test_local_aliased_mock uses strong exact value oracle: assert fee(10) == 30
-  - related test tests/test_def.py:4 test_local_def uses strong exact value oracle: assert fee(10) == 30
-  - related test tests/test_lambda.py:4 test_local_lambda uses strong exact value oracle: assert fee(10) == 30
-  - related test tests/test_match.py:4 test_match_capture_stand_in uses strong exact value oracle: assert fee(10) == 30
-  - related test tests/test_mock.py:5 test_local_mock uses strong exact value oracle: assert fee(10) == 30
+  - related test tests/test_aliased_mock.py:5 test_local_aliased_mock uses strong exact value oracle: assert fee(10) == 30; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_def.py:4 test_local_def uses strong exact value oracle: assert fee(10) == 30; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_lambda.py:4 test_local_lambda uses strong exact value oracle: assert fee(10) == 30; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_match.py:4 test_match_capture_stand_in uses strong exact value oracle: assert fee(10) == 30; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_mock.py:5 test_local_mock uses strong exact value oracle: assert fee(10) == 30; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related tests (showing 5 of 7; more in --format json)
 
 Weakness

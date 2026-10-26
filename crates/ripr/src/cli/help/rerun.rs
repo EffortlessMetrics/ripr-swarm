@@ -1,7 +1,7 @@
 pub(super) const RERUN_HELP: &str = r#"Re-evaluate static evidence affected by one edited Rust test.
 
-Usage: ripr rerun --changed-test PATH[::TEST_NODE] [--before PATH] [--root PATH] [--json] [--out PATH]
-       ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--before PATH] [--root PATH] [--json] [--out PATH]
+Usage: ripr rerun --changed-test PATH[::TEST_NODE] [--before PATH] [--root PATH] [--json] [--out PATH] [--check-parity]
+       ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--before PATH] [--root PATH] [--json] [--out PATH] [--check-parity]
 
 Options:
   --changed-test PATH[::TEST_NODE]

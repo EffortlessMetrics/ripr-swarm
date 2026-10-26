@@ -1,0 +1,12 @@
+diff --git a/src/returns.ts b/src/returns.ts
+--- a/src/returns.ts
++++ b/src/returns.ts
+@@ -15,7 +15,7 @@
+ }
+ 
+ export function banner(title: string): string {
+-  return `== ${title} ==`;
++  return "== " + title + " ==";
+ }
+ 
+ export function fullName(first: string, last: string): string {

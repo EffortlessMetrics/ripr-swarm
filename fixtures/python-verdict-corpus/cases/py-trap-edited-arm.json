@@ -1,0 +1,52 @@
+{
+  "case_id": "py-trap-edited-arm",
+  "subject_id": "authored-py-trap-kit",
+  "diff": "cases/py-trap-edited-arm.diff",
+  "anchor": {
+    "file": "trapkit/core.py",
+    "line": 112
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "edited_arm_pinned_control",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return qty + 2",
+        "mutated_line": "return qty + 2",
+        "outcome": "tests_failed",
+        "failing_test": "test_single_rate",
+        "equivalence_review": "not equivalent: 5 + 2 is 7, not 10"
+      },
+      {
+        "replacement": "return qty / 2",
+        "mutated_line": "return qty / 2",
+        "outcome": "tests_failed",
+        "failing_test": "test_single_rate",
+        "equivalence_review": "not equivalent: 5 / 2 is 2.5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Control for sibling_arm: the test pins the arm the edit touches.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

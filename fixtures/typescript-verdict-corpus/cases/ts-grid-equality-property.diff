@@ -1,0 +1,12 @@
+diff --git a/src/equality.ts b/src/equality.ts
+--- a/src/equality.ts
++++ b/src/equality.ts
+@@ -7,7 +7,7 @@
+ }
+ 
+ export function samePair(a: number, b: number): boolean {
+-  return a === b;
++  return b === a;
+ }
+ 
+ export function isHttps(port: number): boolean {

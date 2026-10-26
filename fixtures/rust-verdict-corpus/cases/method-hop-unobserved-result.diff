@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index aca460d..67aadaa 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -151,7 +151,7 @@ pub fn masked(bytes: u64, si: bool) -> String {
+ 
+ pub fn unseen(bytes: u64, si: bool) -> String {
+     let unit = if si { KIB } else { KB };
+-    if bytes < unit {
++    if bytes <= unit {
+         format!("{bytes} B")
+     } else {
+         format!("{} big", bytes / unit)

@@ -324,7 +324,75 @@ fn replace_npm_launcher_versions(
             new_version,
         )?;
     }
-    Ok(updated)
+    set_npm_launcher_publish_tag(
+        &updated,
+        crate::policy::distribution::is_prerelease_version(new_version),
+    )
+}
+
+/// Keeps `publishConfig.tag` consistent with the target version: a prerelease
+/// gets the non-`latest` tag `next` (an existing non-`latest` tag is kept), a
+/// stable version has the tag removed. The result is validated by the caller.
+fn set_npm_launcher_publish_tag(text: &str, prerelease: bool) -> Result<String, String> {
+    let tag_at = text.find("\"tag\"");
+    match (prerelease, tag_at) {
+        (true, Some(_)) | (false, None) => Ok(text.to_string()),
+        (true, None) => {
+            let access = text
+                .find("\"access\"")
+                .ok_or_else(|| "publishConfig.access not found in launcher manifest".to_string())?;
+            let colon = access
+                + text[access..]
+                    .find(':')
+                    .ok_or_else(|| "publishConfig.access has no colon".to_string())?;
+            let open = colon
+                + 1
+                + text[colon + 1..]
+                    .find('"')
+                    .ok_or_else(|| "publishConfig.access has no string value".to_string())?;
+            let close = open
+                + 1
+                + text[open + 1..]
+                    .find('"')
+                    .ok_or_else(|| "publishConfig.access value is unterminated".to_string())?;
+            let line_start = text[..access].rfind('\n').map_or(0, |index| index + 1);
+            let indent = &text[line_start..access];
+            let insertion = if !indent.is_empty() && indent.trim().is_empty() {
+                format!(",\n{indent}\"tag\": \"next\"")
+            } else {
+                ",\"tag\":\"next\"".to_string()
+            };
+            let mut updated = String::with_capacity(text.len() + insertion.len());
+            updated.push_str(&text[..=close]);
+            updated.push_str(&insertion);
+            updated.push_str(&text[close + 1..]);
+            Ok(updated)
+        }
+        (false, Some(tag_at)) => {
+            let colon = tag_at
+                + text[tag_at..]
+                    .find(':')
+                    .ok_or_else(|| "publishConfig.tag has no colon".to_string())?;
+            let open = colon
+                + 1
+                + text[colon + 1..]
+                    .find('"')
+                    .ok_or_else(|| "publishConfig.tag has no string value".to_string())?;
+            let close = open
+                + 1
+                + text[open + 1..]
+                    .find('"')
+                    .ok_or_else(|| "publishConfig.tag value is unterminated".to_string())?;
+            let before = text[..tag_at].trim_end();
+            let start = before
+                .strip_suffix(',')
+                .ok_or_else(|| {
+                    "publishConfig.tag must follow another publishConfig field".to_string()
+                })?
+                .len();
+            Ok(format!("{}{}", &text[..start], &text[close + 1..]))
+        }
+    }
 }
 
 /// Replaces exactly one string-valued JSON object key, whatever formatting the
@@ -1109,6 +1177,56 @@ mod npm_launcher_version_tests {
             "0.11.0",
             &contract,
         )
+    }
+
+    fn bump(launcher: &str, to: &str) -> Result<String, String> {
+        let contract = contract()?;
+        let updated = replace_npm_launcher_versions(
+            launcher,
+            if launcher.contains("0.12.0-rc.1") {
+                "0.12.0-rc.1"
+            } else {
+                "0.11.0"
+            },
+            to,
+            &contract,
+        )?;
+        crate::policy::distribution::validate_npm_launcher_manifest(
+            NPM_LAUNCHER_MANIFEST,
+            &updated,
+            to,
+            &contract,
+        )?;
+        Ok(updated)
+    }
+
+    #[test]
+    fn stable_to_prerelease_adds_next_tag_and_back_removes_it() -> Result<(), String> {
+        let prerelease = bump(LAUNCHER, "0.12.0-rc.1")?;
+        if !prerelease.contains("\"tag\": \"next\"") {
+            return Err(format!("prerelease bump lacks tag: {prerelease}"));
+        }
+        let stable = bump(&prerelease, "0.12.0")?;
+        if stable.contains("\"tag\"") || !stable.contains("\"access\": \"public\"\n  }") {
+            return Err(format!("stable bump kept the tag: {stable}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_manifest_prerelease_bump_round_trips() -> Result<(), String> {
+        let value: serde_json::Value = serde_json::from_str(LAUNCHER)
+            .map_err(|error| format!("launcher fixture is not valid JSON: {error}"))?;
+        let compact = serde_json::to_string(&value).map_err(|error| error.to_string())?;
+        let prerelease = bump(&compact, "0.12.0-rc.1")?;
+        if !prerelease.contains("\"tag\":\"next\"") {
+            return Err(format!("compact prerelease bump lacks tag: {prerelease}"));
+        }
+        let stable = bump(&prerelease, "0.12.0")?;
+        if stable.contains("\"tag\"") {
+            return Err(format!("compact stable bump kept the tag: {stable}"));
+        }
+        Ok(())
     }
 
     #[test]

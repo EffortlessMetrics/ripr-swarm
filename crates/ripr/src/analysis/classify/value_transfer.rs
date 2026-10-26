@@ -16,6 +16,9 @@
 //! - `checked_add` / `checked_sub` on exact integers
 //! - bounded string slicing from exact indices on established UTF-8
 //!   boundaries
+//! - exact integer arithmetic (`+ - * / %`) over exact indices, plus
+//!   `split_whitespace().count()` and `chars().count()`
+//!   (#9637). These families are credit-only: see `CREDIT_ONLY_OPERATIONS`.
 //!
 //! Literal-driven match arms are NOT an evaluated family: their arms
 //! feed sinks, not comparison operands (RIPR-SPEC-0158 Non-Goals).
@@ -40,6 +43,8 @@ pub(crate) enum TypedValue {
     /// The char sequence produced by `chars()`; only `next()` /
     /// `next_back()` consume it.
     CharSeq(Vec<char>),
+    /// The words `split_whitespace()` yields; only `count()` consumes them.
+    Words(Vec<String>),
 }
 
 impl TypedValue {
@@ -56,6 +61,7 @@ impl TypedValue {
                 "none".to_string()
             }
             TypedValue::CharSeq(chars) => chars.iter().collect::<String>(),
+            TypedValue::Words(words) => format!("words{words:?}"),
             TypedValue::OptIndex(Some(value)) => value.to_string(),
             TypedValue::OptChar(Some(value)) => format!("'{value}'"),
             TypedValue::OptStr(Some(value)) => format!("\"{value}\""),
@@ -109,6 +115,40 @@ pub(crate) fn evaluate_initializer(initializer: &str, inputs: &ExactInputs) -> E
     }
 }
 
+/// The exact value of a product of non-negative integers (#9329): factors
+/// joined by `*`, each a plain decimal literal or an identifier bound in
+/// `inputs` to a plain decimal. Nothing else is read: no parentheses, sums,
+/// casts, suffixes or method calls. The product is checked against `max`
+/// (the result type's largest value), so an overflow answers `None` instead
+/// of a wrapped or clamped value. This is a separate entry from
+/// [`evaluate_initializer`]: it never changes what a `let` initializer
+/// evaluates to.
+pub(crate) fn evaluate_integer_product(
+    expression: &str,
+    inputs: &ExactInputs,
+    max: u128,
+) -> Option<u128> {
+    let mut product: u128 = 1;
+    for factor in expression.trim().split('*') {
+        let factor = factor.trim();
+        let digits = if factor.chars().all(|ch| ch.is_ascii_digit()) {
+            factor
+        } else if is_identifier(factor) {
+            inputs.get(factor)?.as_str()
+        } else {
+            return None;
+        };
+        if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        product = product.checked_mul(digits.parse::<u128>().ok()?)?;
+        if product > max {
+            return None;
+        }
+    }
+    Some(product)
+}
+
 type EvalResult = Result<TypedValue, EvalOutcome>;
 
 fn unsupported(edge: &str) -> EvalOutcome {
@@ -149,6 +189,15 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
     if let Some(outcome) = eval_if_else(text, inputs, steps) {
         return outcome;
     }
+    if text.starts_with("if ") {
+        // An `if` expression with trailing text is not a binary operation.
+        return Err(unsupported(&format!(
+            "expression `{text}` is not a supported operation chain"
+        )));
+    }
+    if let Some(outcome) = eval_arithmetic(text, inputs, steps) {
+        return outcome;
+    }
     if let Some(outcome) = eval_slicing(text, inputs, steps) {
         return outcome;
     }
@@ -156,6 +205,127 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
         return outcome;
     }
     eval_method_chain(text, inputs, steps)
+}
+
+/// Operation families added for #9637. They may close a boundary through an
+/// observed equality row (credit) but never name a missing input, so a
+/// consumer that would otherwise turn "no row lands on the boundary" into a
+/// repair signal treats a chain using one as unknown instead.
+pub(crate) const CREDIT_ONLY_OPERATIONS: [&str; 3] = ["arith", "split_whitespace", "count"];
+
+/// Results above this bound fail closed: the unwritten integer type of a
+/// literal-only expression could change the answer beyond it.
+const ARITHMETIC_LIMIT: usize = (1 << 31) - 1;
+
+/// Exact integer arithmetic (`+ - * / %`) over two exact `Index` operands
+/// (`data.len() % 2`, `2 + 2`, `(n + 1) * 2`). The split is at the lowest
+/// precedence, rightmost top-level operator, outside literals and brackets.
+/// A leading sign, a non-index operand, an overflow, an underflow, a
+/// division by zero, or a result at or beyond `ARITHMETIC_LIMIT` (below `i32::MAX`) fails closed.
+/// `None` means the text has no top-level binary operator and is some other
+/// shape.
+fn eval_arithmetic(
+    text: &str,
+    inputs: &ExactInputs,
+    steps: &mut Vec<EvalStep>,
+) -> Option<EvalResult> {
+    let mut depth = 0usize;
+    let mut literal: Option<char> = None;
+    let mut escaped = false;
+    let mut additive: Option<usize> = None;
+    let mut multiplicative: Option<usize> = None;
+    let mut seen_significant = false;
+    let mut outer_group_closes_at: Option<usize> = None;
+    for (at, character) in text.char_indices() {
+        if let Some(quote) = literal {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == quote {
+                literal = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' => literal = Some(character),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 && outer_group_closes_at.is_none() && text.starts_with('(') {
+                    outer_group_closes_at = Some(at);
+                }
+            }
+            '+' | '-' | '*' | '/' | '%' if depth == 0 => {
+                if !seen_significant {
+                    return Some(Err(unsupported(&format!(
+                        "expression `{text}` starts with an operator"
+                    ))));
+                }
+                let slot = if matches!(character, '+' | '-') {
+                    &mut additive
+                } else {
+                    &mut multiplicative
+                };
+                *slot = Some(at);
+            }
+            _ => {}
+        }
+        if !character.is_whitespace() {
+            seen_significant = true;
+        }
+    }
+    let Some(at) = additive.or(multiplicative) else {
+        // `(expr)` whose first group spans the whole text.
+        return (outer_group_closes_at == Some(text.len().saturating_sub(1)) && text.len() >= 2)
+            .then(|| eval_expression(text[1..text.len() - 1].trim(), inputs, steps));
+    };
+    let operator = text[at..].chars().next()?;
+    let left_text = text[..at].trim();
+    let right_text = text[at + 1..].trim();
+    if left_text.is_empty()
+        || right_text.is_empty()
+        || left_text.ends_with(['+', '-', '*', '/', '%'])
+        || right_text.starts_with(['+', '-', '*', '/', '%'])
+    {
+        return Some(Err(unsupported(&format!(
+            "expression `{text}` is not a binary integer operation"
+        ))));
+    }
+    let mut operand = |operand: &str| match eval_expression(operand, inputs, steps) {
+        Ok(TypedValue::Index(value)) if value < ARITHMETIC_LIMIT => Ok(value),
+        Ok(other) => Err(unsupported(&format!(
+            "operand `{operand}` is {} where integer arithmetic needs an exact bounded integer",
+            other.render()
+        ))),
+        Err(outcome) => Err(outcome),
+    };
+    let left = match operand(left_text) {
+        Ok(value) => value,
+        Err(outcome) => return Some(Err(outcome)),
+    };
+    let right = match operand(right_text) {
+        Ok(value) => value,
+        Err(outcome) => return Some(Err(outcome)),
+    };
+    let result = match operator {
+        '+' => left.checked_add(right),
+        '-' => left.checked_sub(right),
+        '*' => left.checked_mul(right),
+        '/' => left.checked_div(right),
+        '%' => left.checked_rem(right),
+        _ => None,
+    };
+    let Some(result) = result.filter(|value| *value < ARITHMETIC_LIMIT) else {
+        return Some(Err(unsupported(&format!(
+            "`{left} {operator} {right}` overflows, underflows or divides by zero"
+        ))));
+    };
+    steps.push(EvalStep {
+        operation: "arith".to_string(),
+        detail: format!("{left} {operator} {right}"),
+    });
+    Some(Ok(TypedValue::Index(result)))
 }
 
 fn eval_method_chain(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> EvalResult {
@@ -220,7 +390,7 @@ fn apply_method(
     };
     // Reject an unknown family before evaluating its arguments so the
     // named edge is the unsupported method itself, not its argument.
-    const EVALUATED_METHODS: [&str; 14] = [
+    const EVALUATED_METHODS: [&str; 16] = [
         "rfind",
         "find",
         "len",
@@ -235,6 +405,8 @@ fn apply_method(
         "chars",
         "next",
         "next_back",
+        "split_whitespace",
+        "count",
     ];
     if !EVALUATED_METHODS.contains(&name) {
         return Err(unsupported(&format!(
@@ -268,6 +440,11 @@ fn apply_method(
             TypedValue::OptIndex(haystack.find(needle.as_str()))
         }
         (TypedValue::Str(value), "len", None) => TypedValue::Index(value.len()),
+        (TypedValue::Str(value), "split_whitespace", None) => {
+            TypedValue::Words(value.split_whitespace().map(str::to_string).collect())
+        }
+        (TypedValue::Words(words), "count", None) => TypedValue::Index(words.len()),
+        (TypedValue::CharSeq(chars), "count", None) => TypedValue::Index(chars.len()),
         (TypedValue::Str(value), "starts_with", Some(TypedValue::Str(prefix))) => {
             TypedValue::Bool(value.starts_with(&prefix))
         }
@@ -747,6 +924,63 @@ mod tests {
     }
 
     #[test]
+    fn integer_arithmetic_over_exact_indices_resolves_with_precedence() {
+        let table = &[("input", "\"abcde\""), ("n", "6")];
+        assert_eq!(exact("2 + 2", &[]), TypedValue::Index(4));
+        assert_eq!(exact("input.len() % 2", table), TypedValue::Index(1));
+        assert_eq!(exact("2 + 3 * 4", &[]), TypedValue::Index(14));
+        assert_eq!(exact("(2 + 3) * 4", &[]), TypedValue::Index(20));
+        assert_eq!(exact("n - 1 - 2", table), TypedValue::Index(3));
+        assert_eq!(exact("n / 4", table), TypedValue::Index(1));
+        assert_eq!(exact("\"a-b\".len() + 1", &[]), TypedValue::Index(4));
+        assert_eq!(exact("(input).len()", table), TypedValue::Index(5));
+    }
+
+    #[test]
+    fn integer_arithmetic_fails_closed() {
+        let table = &[("input", "\"abcde\""), ("n", "6")];
+        for expression in [
+            "n - 7",
+            "n / 0",
+            "n % 0",
+            "-1 + n",
+            "n + -1",
+            "2147483648 + 1",
+            "2147483647 + 1",
+            "2147483649 - 2147483649",
+            "46341 * 46341",
+            "input + 1",
+            "2u8 + 2",
+            "200u8 * 2",
+            "200 + 100u8",
+            "n + missing",
+            "n *",
+        ] {
+            assert!(
+                matches!(
+                    evaluate_initializer(expression, &inputs(table)),
+                    EvalOutcome::Unsupported { .. }
+                ),
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn char_and_word_counts_resolve_from_a_text_literal() {
+        let table = &[("input", "\"héllo wörld  x\"")];
+        assert_eq!(
+            exact("input.split_whitespace().count()", table),
+            TypedValue::Index(3)
+        );
+        assert_eq!(exact("input.chars().count()", table), TypedValue::Index(14));
+        assert!(matches!(
+            evaluate_initializer("input.chars().count().count()", &inputs(table)),
+            EvalOutcome::Unsupported { .. }
+        ));
+    }
+
+    #[test]
     fn literals_and_identifiers_resolve_exactly() {
         assert_eq!(exact("\"done\"", &[]), TypedValue::Str("done".into()));
         assert_eq!(exact("'x'", &[]), TypedValue::Char('x'));
@@ -1051,5 +1285,57 @@ mod tests {
             other => return Err(format!("expected exact, got {other:?}")),
         }
         Ok(())
+    }
+
+    // #9329: the integer product reader stays a separate, closed entry.
+    #[test]
+    fn integer_product_reads_only_factors_and_checks_the_type_bound() {
+        let inputs: ExactInputs = [("size", "3"), ("KIB", "1024"), ("name", "x1")]
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        let max = u128::from(u64::MAX);
+        assert_eq!(
+            evaluate_integer_product("size * KIB", &inputs, max),
+            Some(3072)
+        );
+        assert_eq!(
+            evaluate_integer_product(" 4 * 1024 ", &inputs, max),
+            Some(4096)
+        );
+        assert_eq!(evaluate_integer_product("size", &inputs, max), Some(3));
+        // The bound is the result type's maximum, checked at every step.
+        assert_eq!(evaluate_integer_product("size * KIB", &inputs, 3071), None);
+        let huge: ExactInputs = [("n", u64::MAX.to_string())]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        assert_eq!(evaluate_integer_product("n * 2", &huge, max), None);
+        assert_eq!(evaluate_integer_product("n * 1", &huge, max), Some(max));
+        // Nothing but `*` over literals and bound plain decimals.
+        for expression in [
+            "",
+            "size *",
+            "* size",
+            "size * * KIB",
+            "size + KIB",
+            "size - 1",
+            "(size) * 2",
+            "size * missing",
+            "name * 2",
+            "size as u64",
+            "size * 1u64",
+            "size * -1",
+            "size.pow(2)",
+            "size ** 2",
+            "1_024 * 2",
+            "0x10 * 2",
+        ] {
+            assert_eq!(
+                evaluate_integer_product(expression, &inputs, max),
+                None,
+                "{expression:?}"
+            );
+        }
     }
 }

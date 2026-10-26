@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-iterator-next-collect",
+  "subject_id": "authored-shape-kit",
+  "origin": "authored",
+  "anchor": "src/ops.rs:65",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "iterator_impl_collect_assert",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

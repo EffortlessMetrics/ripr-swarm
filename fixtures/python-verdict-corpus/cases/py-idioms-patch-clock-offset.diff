@@ -1,0 +1,9 @@
+diff --git a/idioms/clock.py b/idioms/clock.py
+--- a/idioms/clock.py
++++ b/idioms/clock.py
+@@ -2,4 +2,4 @@
+ 
+ 
+ def stamp(prefix):
+-    return f"{prefix}-{int(time.time())}"
++    return f"{prefix}-{int(time.time()) + 1}"

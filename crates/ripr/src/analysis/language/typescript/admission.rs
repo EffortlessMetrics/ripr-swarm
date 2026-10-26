@@ -139,6 +139,16 @@ impl TypeScriptAdmissionContext {
             .collect();
         let known_require =
             program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
+        // Only a non-`const` declaration holding a `require()` needs the scan.
+        let scan = statements
+            .iter()
+            .any(|statement| {
+                matches!(statement, Statement::VariableDeclaration(declaration)
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                        && declaration.declarations.iter().any(require_declarator))
+            })
+            .then(|| BindingScan::of_source(program.source_text, program.source_type))
+            .flatten();
         let mut context = Self {
             block_functions_are_lexical,
             imports: imports.to_vec(),
@@ -148,7 +158,8 @@ impl TypeScriptAdmissionContext {
                     matches!(statement, Statement::ImportDeclaration(_))
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
-                                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+                                && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                                    || !unwritten_declarator_locals(declaration, scan.as_ref()).is_empty()))
                 })
                 .flat_map(|statement| {
                     let mut imports =
@@ -173,6 +184,10 @@ impl TypeScriptAdmissionContext {
                                     namespace: false,
                                 });
                             }
+                        }
+                        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                            let kept = unwritten_declarator_locals(declaration, scan.as_ref());
+                            imports.retain(|import| kept.contains(&import.local));
                         }
                     }
                     imports
@@ -248,6 +263,15 @@ impl TypeScriptAdmissionContext {
         expected_describe: bool,
         bindings: impl Iterator<Item = (String, bool)>,
     ) -> bool {
+        let context = self.registration_context();
+        let names = RegistrationNames::new(bindings);
+        context.registration_is_known_in(call, expected_describe, &names)
+    }
+
+    /// The context a registration is resolved in: the runner imports only,
+    /// with every other import and re-export carried as an enclosing name.
+    /// Built once per statement list, not once per registration.
+    pub(crate) fn registration_context(&self) -> Self {
         let imports: Vec<_> = self
             .registration_imports
             .iter()
@@ -256,7 +280,7 @@ impl TypeScriptAdmissionContext {
             .filter(|import| import.imported.is_some())
             .cloned()
             .collect();
-        let context = Self {
+        Self {
             // A graph-only re-export or namespace object must not fall back
             // to an ambient global registration with the same spelling. Test
             // files no longer record re-exports as imports (#7507), so their
@@ -271,16 +295,27 @@ impl TypeScriptAdmissionContext {
             imports,
             test_dir: self.test_dir.clone(),
             ..Self::default()
-        };
-        let mut scan = Scan::new(&context, false);
-        scan.scopes.push(
-            bindings
-                .filter(|(name, file_declaration)| {
-                    !file_declaration || !context.imports.iter().any(|import| import.local == *name)
-                })
-                .map(|(name, _)| (name, Bound::Local))
-                .collect(),
-        );
+        }
+    }
+
+    /// `registration_is_known` against a context from `registration_context`
+    /// and an indexed set of visible bindings. Only the callee's root name is
+    /// ever resolved, so only that name's bindings are put in scope.
+    pub(crate) fn registration_is_known_in(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        expected_describe: bool,
+        names: &RegistrationNames,
+    ) -> bool {
+        let mut scan = Scan::new(self, false);
+        if let Some((Expression::Identifier(root), _, _)) = registration_shape(call)
+            && names.binds(root.name.as_str(), &self.imports)
+        {
+            scan.scopes
+                .push(BTreeMap::from([(root.name.to_string(), Bound::Local)]));
+        } else {
+            scan.scopes.push(BTreeMap::new());
+        }
         let expected = if expected_describe {
             RegistrationKind::Describe
         } else {
@@ -295,6 +330,126 @@ impl TypeScriptAdmissionContext {
     }
 }
 
+/// The names the enclosing scopes of a registration bind, indexed by name.
+/// A name is kept per kind of binding: one a file-level declaration makes
+/// (exempt from shadowing only when an import supplies the same name) and one
+/// any other level makes (always shadows).
+#[derive(Default)]
+pub(crate) struct RegistrationNames {
+    by_name: std::collections::HashMap<String, (bool, bool)>,
+}
+
+impl RegistrationNames {
+    pub(crate) fn new(bindings: impl Iterator<Item = (String, bool)>) -> Self {
+        let mut by_name: std::collections::HashMap<String, (bool, bool)> =
+            std::collections::HashMap::new();
+        for (name, file_declaration) in bindings {
+            let kinds = by_name.entry(name).or_default();
+            if file_declaration {
+                kinds.1 = true;
+            } else {
+                kinds.0 = true;
+            }
+        }
+        Self { by_name }
+    }
+
+    /// Whether `name` is a local binding that shadows a runner import of the
+    /// same name: any non-file binding, or a file-level declaration no
+    /// runner import supplies.
+    fn binds(&self, name: &str, runner_imports: &[TypeScriptImport]) -> bool {
+        self.by_name.get(name).is_some_and(|&(local, file)| {
+            local || (file && !runner_imports.iter().any(|import| import.local == name))
+        })
+    }
+}
+
+/// The writes and function-declaration names of one file, computed once.
+/// `None` when the masked source is unreadable (parse-width mismatch,
+/// `eval`, `with`, `\u` escapes), so nothing qualifies.
+struct BindingScan {
+    writes: Vec<(String, usize)>,
+    functions: Vec<(String, usize)>,
+}
+
+impl BindingScan {
+    fn of_source(source: &str, source_type: SourceType) -> Option<Self> {
+        let code =
+            super::tests_extract::byte_preserving_code_mask_for_source_type(source, source_type)
+                .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+        Some(Self {
+            writes: super::tests_extract::strict_identifier_writes(&code),
+            functions: super::tests_extract::function_declaration_names(&code),
+        })
+    }
+
+    /// `name` is written, or re-bound by a function declaration, outside the
+    /// declarator spanning `span`.
+    fn writes_outside(&self, name: &str, span: oxc_span::Span) -> bool {
+        let outside =
+            |offset: &usize| (*offset as u32) < span.start || (*offset as u32) >= span.end;
+        self.writes
+            .iter()
+            .any(|(written, offset)| written == name && outside(offset))
+            || self
+                .functions
+                .iter()
+                .any(|(declared, offset)| declared == name && outside(offset))
+    }
+}
+
+/// A declarator initialized by `require("...")` or a member of it.
+fn require_declarator(declarator: &oxc_ast::ast::VariableDeclarator<'_>) -> bool {
+    let Some(init) = declarator
+        .init
+        .as_ref()
+        .map(Expression::get_inner_expression)
+    else {
+        return false;
+    };
+    let call = match init {
+        Expression::StaticMemberExpression(member) => &member.object,
+        other => other,
+    };
+    require_string_literal_source(call.get_inner_expression()).is_some()
+}
+
+/// The binding names of the declarators of a `var`/`let` declaration whose own
+/// bindings the file never writes (RIPR-SPEC-0243 rule 1; pre-ES2015 CommonJS
+/// binds `var test = require('tape')`), so each is as immutable as a `const`.
+/// Only `require()`-initialized declarators can yield a runner import, so only
+/// they are judged; an unrelated written declarator
+/// (`var counter = 0, test = require('tape'); counter++`) does not withdraw
+/// the runner declarator. A reassignment, update, loop target, wrapped target
+/// or block-level function declaration of the name refuses.
+fn unwritten_declarator_locals(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    scan: Option<&BindingScan>,
+) -> Vec<String> {
+    use oxc_ast::ast::VariableDeclarationKind::{Let, Var};
+    let Some(scan) = scan else {
+        return Vec::new();
+    };
+    if !matches!(declaration.kind, Var | Let) {
+        return Vec::new();
+    }
+    let mut locals = Vec::new();
+    for declarator in declaration
+        .declarations
+        .iter()
+        .filter(|d| require_declarator(d))
+    {
+        let names = declarator.id.get_binding_identifiers();
+        if names
+            .iter()
+            .all(|id| !scan.writes_outside(id.name.as_str(), declarator.span))
+        {
+            locals.extend(names.iter().map(|id| id.name.to_string()));
+        }
+    }
+    locals
+}
+
 /// A bounded fixture-extension registration: one immutable top-level result
 /// of a named Vitest/Playwright test import's `.extend(...)`. Other uses of
 /// that imported receiver remain unresolved: they could replace or expose
@@ -303,7 +458,10 @@ fn verified_extended_registrations(
     program: &oxc_ast::ast::Program<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptImport> {
-    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+        program.source_text,
+        program.source_type,
+    ) else {
         return Vec::new();
     };
     if super::tests_extract::file_is_opaque(&code) {
@@ -414,7 +572,7 @@ fn reexport_spellings(statements: &[Statement<'_>]) -> BTreeSet<String> {
 /// Loader identity for the bounded awaited-root import exemption. Mutable
 /// loaders and same-spelled helpers cannot establish a callable runner. The
 /// ambient `require` syntax contract does not prove runtime module resolution.
-fn program_require_is_known(
+pub(super) fn program_require_is_known(
     statements: &[Statement<'_>],
     imports: &[TypeScriptImport],
     block_functions_are_lexical: bool,
@@ -799,6 +957,58 @@ enum RegistrationKind {
     Describe,
 }
 
+/// A registration callee's root, its factory call (`.each(table)`) and whether
+/// it is a Playwright suite.
+type RegistrationShape<'a, 'b> = (
+    &'b Expression<'a>,
+    Option<(&'b str, &'b [Argument<'a>])>,
+    bool,
+);
+
+/// The root, factory call and Playwright-suite flag of a registration callee,
+/// or `None` when the callee is not a registration chain.
+fn registration_shape<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+) -> Option<RegistrationShape<'a, 'b>> {
+    // Playwright's `test.describe(...)`: a suite spelled as a member of the
+    // `test` root rather than as a `describe` root of its own.
+    let mut playwright_describe = false;
+    let (root, factory) = match call.callee.get_inner_expression() {
+        // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
+        Expression::CallExpression(factory) => {
+            let (root, segments) = static_chain(factory.callee.get_inner_expression())?;
+            let (last, modifiers) = segments.split_last()?;
+            if !REGISTRATION_FACTORIES.contains(last)
+                || !modifiers
+                    .iter()
+                    .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
+            {
+                return None;
+            }
+            (root, Some((*last, factory.arguments.as_slice())))
+        }
+        Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
+        other => {
+            let (root, segments) = static_chain(other)?;
+            let modifiers = match segments.split_first() {
+                Some((&"describe", rest)) => {
+                    playwright_describe = true;
+                    rest
+                }
+                _ => &segments[..],
+            };
+            if !modifiers.iter().all(|segment| {
+                REGISTRATION_MODIFIERS.contains(segment)
+                    || (playwright_describe && *segment == "parallel")
+            }) {
+                return None;
+            }
+            (root, None)
+        }
+    };
+    Some((root, factory, playwright_describe))
+}
+
 /// A recognized `test`/`describe` registration call.
 struct Registration<'a, 'b> {
     kind: RegistrationKind,
@@ -899,32 +1109,7 @@ impl<'c> Scan<'c> {
         &self,
         call: &'b oxc_ast::ast::CallExpression<'a>,
     ) -> Option<Registration<'a, 'b>> {
-        let (root, factory) = match call.callee.get_inner_expression() {
-            // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
-            Expression::CallExpression(factory) => {
-                let (root, segments) = static_chain(factory.callee.get_inner_expression())?;
-                let (last, modifiers) = segments.split_last()?;
-                if !REGISTRATION_FACTORIES.contains(last)
-                    || !modifiers
-                        .iter()
-                        .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
-                {
-                    return None;
-                }
-                (root, Some((*last, factory.arguments.as_slice())))
-            }
-            Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
-            other => {
-                let (root, segments) = static_chain(other)?;
-                if !segments
-                    .iter()
-                    .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
-                {
-                    return None;
-                }
-                (root, None)
-            }
-        };
+        let (root, factory, playwright_describe) = registration_shape(call)?;
         let Expression::Identifier(root) = root else {
             return None;
         };
@@ -938,6 +1123,11 @@ impl<'c> Scan<'c> {
                 }
             }
             _ => return None,
+        };
+        let kind = if playwright_describe {
+            (kind == RegistrationKind::Test).then_some(RegistrationKind::Describe)?
+        } else {
+            kind
         };
         let (factory_args, table) = match factory {
             Some((name, arguments)) => (arguments, matches!(name, "each" | "for")),

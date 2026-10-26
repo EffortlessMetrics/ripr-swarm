@@ -1,0 +1,13 @@
+diff --git a/src/queue.ts b/src/queue.ts
+index 0000000..1111111 100644
+--- a/src/queue.ts
++++ b/src/queue.ts
+@@ -3,7 +3,7 @@
+ 
+   push(item: T): number {
+     this.items.push(item);
+-    return this.items.length;
++    return this.items.length + 1;
+   }
+ 
+   shift(): T | undefined {

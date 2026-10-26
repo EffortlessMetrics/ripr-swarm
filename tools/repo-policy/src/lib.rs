@@ -403,6 +403,12 @@ pub fn fix_kind_name(fix_kind: &FixKind) -> &'static str {
 pub fn check_workflows_impl() -> Result<(), String> {
     let budgets = read_workflow_budgets("policy/workflow_allowlist.txt")?;
     let runtime_allowlist = read_count_allowlist("policy/workflow_action_runtime_allowlist.txt")?;
+    let unpinned_allowlist = read_count_allowlist(UNPINNED_ACTION_ALLOWLIST)?;
+    if !unpinned_allowlist.is_empty() {
+        return Err(format!(
+            "{UNPINNED_ACTION_ALLOWLIST} must remain empty after burn-down (#9529); pin third-party actions instead of restoring exceptions"
+        ));
+    }
     let mut violations = Vec::new();
 
     // Share only this invocation's YAML inputs; unbudgeted files still reach
@@ -432,6 +438,15 @@ pub fn check_workflows_impl() -> Result<(), String> {
         ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
+        violations.extend(workflow_unpinned_action_violations(
+            &normalized,
+            &text,
+            &unpinned_allowlist,
+        ));
+        violations.extend(workflow_level_write_permission_violations(
+            &normalized,
+            &text,
+        ));
         violations.extend(scratch_gc_concurrency_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
@@ -458,6 +473,11 @@ pub fn check_workflows_impl() -> Result<(), String> {
             }
         }
     }
+    let workflow_paths: BTreeSet<String> = workflows.iter().map(|(path, _)| path.clone()).collect();
+    violations.extend(unpinned_allowlist_missing_file_violations(
+        &unpinned_allowlist,
+        &workflow_paths,
+    ));
     violations.extend(composite_action_run_block_violations(&budgets)?);
     violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
@@ -602,12 +622,57 @@ pub fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> 
 /// re-enter unnoticed. Repository-owned delegated automation is scanned too,
 /// so a local composite action or xtask helper cannot hide the mutation.
 pub fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec<String> {
-    if text.lines().any(review_thread_mutation_line) {
+    if text_has_review_thread_mutation(text) {
         return vec![format!(
             "{path}: workflow contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
         )];
     }
     Vec::new()
+}
+
+/// Scans each line and every window of up to four consecutive lines, so a
+/// token split across lines (a folded YAML query, a multi-line concatenation)
+/// is still found.
+pub fn text_has_review_thread_mutation(text: &str) -> bool {
+    scan_review_thread_windows(text, true)
+}
+
+fn scan_review_thread_windows(text: &str, join_literals: bool) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    (0..lines.len()).any(|start| {
+        let end = (start + 4).min(lines.len());
+        (start + 1..=end).any(|stop| {
+            let window = lines[start..stop].join("\n");
+            review_thread_mutation_line(&window)
+                || (join_literals
+                    && is_graphql_call(&window)
+                    && review_thread_mutation_line(&quoted_literals(&window)))
+        })
+    })
+}
+
+/// A split token only matters when the same window issues a GraphQL call, so
+/// unrelated adjacent quoted strings (two `echo` lines) stay allowed.
+fn is_graphql_call(window: &str) -> bool {
+    let lowered = window.to_ascii_lowercase();
+    lowered.contains("graphql") || lowered.contains("mutation")
+}
+
+/// Concatenates only the quoted string literals of `text`, so a token assigned
+/// to two separate variables is joined without the variable names between its
+/// halves.
+fn quoted_literals(text: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    for character in text.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => out.push(character),
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None => {}
+        }
+    }
+    out
 }
 
 pub fn review_thread_mutation_line(line: &str) -> bool {
@@ -692,6 +757,185 @@ pub fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<S
         }
     }
     violations
+}
+
+/// Retired exceptions to the third-party action SHA-pin rule (#9303, #9529).
+pub const UNPINNED_ACTION_ALLOWLIST: &str = "policy/workflow_unpinned_action_allowlist.txt";
+
+/// Third-party `uses:` references in one workflow, as `(line, action@ref)`.
+///
+/// First-party `actions/*`, local `./` actions and comments are not third-party.
+/// A `uses:` is recognised only as a step/job key (optionally after `- `), so
+/// the same text inside a `run:` string or a comment is not mistaken for one.
+fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
+    let mut refs = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+        let Some(value) = trimmed.strip_prefix("uses:") else {
+            continue;
+        };
+        let value = value.split(" #").next().unwrap_or("").trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'');
+        if value.is_empty() || value.starts_with("./") || value.starts_with("actions/") {
+            continue;
+        }
+        refs.push((index + 1, value.to_string()));
+    }
+    refs
+}
+
+fn is_full_commit_sha(reference: &str) -> bool {
+    reference.len() == 40
+        && reference
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Fail a third-party action (or reusable workflow) that is not pinned to a
+/// full 40-hex commit SHA.
+///
+/// A tag or branch is mutable: whoever controls it can change the code that
+/// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
+/// follow the existing tag policy (`deprecated_workflow_action_refs`). Existing
+/// exceptions were held in `policy/workflow_unpinned_action_allowlist.txt` with
+/// a per-file count. The production entry point now requires that retired
+/// allowlist to remain empty, including rows whose count is zero (#9529).
+pub fn workflow_unpinned_action_violations(
+    path: &str,
+    text: &str,
+    allowlist: &BTreeMap<(String, String), usize>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut found: BTreeMap<String, usize> = BTreeMap::new();
+    for (line_number, reference) in third_party_action_refs(text) {
+        let pinned = reference
+            .rsplit_once('@')
+            .is_some_and(|(_, tail)| is_full_commit_sha(tail));
+        if pinned {
+            continue;
+        }
+        *found.entry(reference.clone()).or_default() += 1;
+        if !allowlist.contains_key(&(path.to_string(), reference.clone())) {
+            violations.push(format!(
+                "{path}:{line_number} third-party action `{reference}` is not pinned to a full commit SHA; pin `owner/repo@<40-hex> # <ref>` (resolve the ref to its commit); {UNPINNED_ACTION_ALLOWLIST} must remain empty"
+            ));
+        }
+    }
+    for ((allowed_path, reference), allowed) in allowlist {
+        if allowed_path != path {
+            continue;
+        }
+        let count = found.get(reference).copied().unwrap_or(0);
+        if count > *allowed {
+            violations.push(format!(
+                "{path} uses unpinned `{reference}` {count} time(s), allowed {allowed} in {UNPINNED_ACTION_ALLOWLIST}"
+            ));
+        } else if count < *allowed {
+            violations.push(format!(
+                "{UNPINNED_ACTION_ALLOWLIST} allows `{reference}` {allowed} time(s) in {path} but only {count} remain; lower or remove the row"
+            ));
+        }
+    }
+    violations
+}
+
+/// Drop a YAML trailing comment: ` #` or a tab-then-`#` starts one.
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'#' && (index == 0 || matches!(bytes[index - 1], b' ' | b'\t')) {
+            return &line[..index];
+        }
+    }
+    line
+}
+
+fn yaml_scalar(value: &str) -> &str {
+    value.trim().trim_matches(|c| c == '"' || c == '\'')
+}
+
+/// Fail a workflow whose top-level `permissions:` grants `contents: write`
+/// (block or flow style) or `write-all`.
+///
+/// A workflow-wide write token reaches every job, including secret-holding
+/// ones (#9303). Grant write at job level, on the job that needs it.
+pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    // The document's top level is the indent of its first real key, so a
+    // uniformly indented file cannot hide a workflow-level `permissions:`.
+    let base = text
+        .lines()
+        .map(strip_yaml_comment)
+        .find(|line| !line.trim().is_empty())
+        .map_or(0, |line| line.len() - line.trim_start().len());
+    let mut in_block = false;
+    for (index, raw) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let line = strip_yaml_comment(raw).trim_end();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent == base
+            && let Some(value) = line.trim_start().strip_prefix("permissions:")
+        {
+            in_block = true;
+            let value = yaml_scalar(value);
+            if value == "write-all" {
+                violations.push(format!(
+                    "{path}:{line_number} workflow-level `permissions: write-all`; grant scopes per job"
+                ));
+            }
+            if let Some(flow) = value.strip_prefix('{') {
+                let flow = flow.trim_end_matches('}');
+                let grants_write = flow.split(',').any(|entry| {
+                    entry.split_once(':').is_some_and(|(key, v)| {
+                        yaml_scalar(key) == "contents" && yaml_scalar(v) == "write"
+                    })
+                });
+                if grants_write {
+                    violations.push(format!(
+                        "{path}:{line_number} workflow-level `contents: write` reaches every job; declare it on the job that needs it"
+                    ));
+                }
+            }
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        if indent <= base {
+            in_block = false;
+            continue;
+        }
+        if let Some((key, value)) = line.trim().split_once(':')
+            && yaml_scalar(key) == "contents"
+            && yaml_scalar(value) == "write"
+        {
+            violations.push(format!(
+                "{path}:{line_number} workflow-level `contents: write` reaches every job; declare it on the job that needs it"
+            ));
+        }
+    }
+    violations
+}
+
+/// Allowlist rows naming a workflow file that no longer exists would silently
+/// keep their exception; the per-file ratchet never sees them.
+pub fn unpinned_allowlist_missing_file_violations(
+    allowlist: &BTreeMap<(String, String), usize>,
+    existing_paths: &BTreeSet<String>,
+) -> Vec<String> {
+    allowlist
+        .keys()
+        .filter(|(path, _)| !existing_paths.contains(path))
+        .map(|(path, reference)| {
+            format!(
+                "{UNPINNED_ACTION_ALLOWLIST} has a row for `{reference}` in {path}, which is not a checked-in workflow; remove the row"
+            )
+        })
+        .collect()
 }
 
 pub fn workflow_bare_self_hosted_violations(path: &str, text: &str) -> Vec<String> {

@@ -60,6 +60,10 @@ mutants, and it does not prove that a test would fail.
 
 ## The first useful run
 
+> This section uses the published 0.10 release. The output at the top of this
+> page, `--worktree`, and the repair flow come from the 0.11 development
+> build, installed further down this page.
+
 Install the published CLI, then run it in a Rust repository on a branch with
 committed changes. The 0.10 release resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
@@ -82,6 +86,11 @@ echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar x
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ripr check
 ```
+
+The `export PATH` change lasts only for the current shell. To keep `ripr`
+available in future sessions, move the extracted binary onto your permanent
+PATH (for example `mv ripr ~/.local/bin/`, adding `~/.local/bin` to PATH in
+your shell profile if it is not already there).
 
 The macOS archives are not signed or notarized. A `curl` and `tar` download like
 the one above normally carries no quarantine attribute, so `./ripr` runs
@@ -107,7 +116,8 @@ base branch itself there are no changed files, and ripr says so. A result with
 no findings or limited evidence is not a clean bill of health.
 
 Use `ripr doctor` to diagnose setup when a check cannot complete; it is not a
-required step before analysis. For whole-repository exploration when there is
+required step before analysis. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) For whole-repository exploration when there is
 no active diff, use `ripr pilot --root .` with the development build below.
 
 Cargo installation requires Rust 1.95 or newer; the diff workflow needs Git.
@@ -151,6 +161,7 @@ time so a rise shows.
 | Task | Use ripr to | Start here |
 | --- | --- | --- |
 | Review a change | Inspect possible assertion gaps and the evidence behind them. | [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) |
+| Analyze a Python change (preview) | Auto-enable the preview from project markers, inspect the advisory boundary gap, and follow the printed pytest/unittest route. | [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) |
 | Write a focused test | Prepare a supported repair, edit the test yourself or with an agent, and compare the static evidence afterward. | [Repair a gap](docs/QUICKSTART.md#agent-or-reviewer-first-hour) |
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
@@ -230,7 +241,7 @@ a promise that every surface is available from the published package.
 | Language | Current scope |
 | --- | --- |
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
-| Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
+| Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. The [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) quickstart covers the marker-based auto-enable, the `check`/`pilot` flow, and the preview caveat. |
 | TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 

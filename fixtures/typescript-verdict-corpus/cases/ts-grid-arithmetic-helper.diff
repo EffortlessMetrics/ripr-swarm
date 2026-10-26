@@ -1,0 +1,12 @@
+diff --git a/src/arithmetic.ts b/src/arithmetic.ts
+--- a/src/arithmetic.ts
++++ b/src/arithmetic.ts
+@@ -11,7 +11,7 @@
+ }
+ 
+ export function tip(bill: number, rate: number): number {
+-  return bill * rate;
++  return rate * bill;
+ }
+ 
+ export function seconds(minutes: number): number {

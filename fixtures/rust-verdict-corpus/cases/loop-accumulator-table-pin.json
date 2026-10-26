@@ -1,0 +1,62 @@
+{
+  "case_id": "loop-accumulator-table-pin",
+  "subject_id": "authored-loop-accumulator-table",
+  "diff": "cases/loop-accumulator-table-pin.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The accumulator is pinned by a constant-row table of (input, total) rows; one row is empty and pins 0, and two rows walk non-empty inputs and pin 7 and 10.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total -= p;",
+        "mutated_line": "total -= p;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tallies_match_the_table",
+        "equivalence_review": "not equivalent: tallies_match_the_table fails on it"
+      },
+      {
+        "replacement": "total *= p;",
+        "mutated_line": "total *= p;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tallies_match_the_table",
+        "equivalence_review": "not equivalent: tallies_match_the_table fails on it"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tallies_match_the_table",
+        "equivalence_review": "not equivalent: tallies_match_the_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The table runs the call once per row, and the [3, 4] and [10] rows walk non-empty inputs and pin nonzero totals, so each mutant of the update (opposite sign, product, deleted statement) returns a different value and fails the loop.",
+  "labeling_observation": {
+    "ripr_commit": "cf8be83",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#6"
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -18,7 +18,7 @@
+     let mut found = None;
+     'outer: for (i, row) in grid.iter().enumerate() {
+         for (j, &v) in row.iter().enumerate() {
+-            if v == target {
++            if target == v {
+                 found = Some((i, j));
+                 break 'outer;
+             }

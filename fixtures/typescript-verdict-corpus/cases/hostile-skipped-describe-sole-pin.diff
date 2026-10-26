@@ -1,0 +1,11 @@
+diff --git a/src/skipped.ts b/src/skipped.ts
+index 0000000..1111111 100644
+--- a/src/skipped.ts
++++ b/src/skipped.ts
+@@ -3,5 +3,5 @@
+ }
+ 
+ export function bucket(n: number): string {
+-  return n < 10 ? "small" : "large";
++  return n < 5 ? "small" : "large";
+ }

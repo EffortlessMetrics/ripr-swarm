@@ -13,6 +13,7 @@ pub(crate) mod check_artifact;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
+pub(crate) mod gap_bound_repair;
 pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
@@ -105,8 +106,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, RepairRoute,
-    finding_navigation, finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute, finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -253,6 +254,7 @@ impl Mode {
 /// Result payload produced by [`check_workspace`].
 #[derive(Clone, Debug)]
 pub struct CheckOutput {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     /// Output schema version for machine consumers.
     pub schema_version: String,
     /// Test-harness registry projections (#3532): what each exact
@@ -384,3 +386,12 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
 
 #[cfg(test)]
 mod tests;
+
+impl CheckOutput {
+    /// Producer-recorded test files for the ordered source values of `finding`.
+    /// Returns `None` for findings with no matching producer receipt, changed probes/value payloads, or
+    /// ambiguous provenance. Unknown individual origins stay `None`.
+    pub fn source_value_files(&self, finding: &Finding) -> Option<&[Option<PathBuf>]> {
+        self.value_origins.files(finding)
+    }
+}

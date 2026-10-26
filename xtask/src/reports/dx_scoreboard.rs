@@ -47,6 +47,10 @@ const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 const MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
+/// The walk's reading of a verdict that is decisive (not `*_unknown`) and
+/// matches what the committed edit's tests catch (`verdict_reading` in
+/// `xtask/src/first_run.rs`).
+const FIRST_RUN_AGREEING_READING: &str = "agrees with the tests";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
 /// judged against the checked-in mutation answer key); converted on ingest.
@@ -121,6 +125,20 @@ pub(crate) struct CorpusEntry {
     pub(crate) note: String,
     #[serde(default)]
     pub(crate) heavy: bool,
+    /// Language of the pinned change; `rust` when absent. Names which
+    /// analyzer path the warm check exercises, so rows for different
+    /// languages are read as separate populations.
+    #[serde(default)]
+    pub(crate) language: Option<String>,
+}
+
+/// Languages a corpus entry may declare.
+pub(crate) const CORPUS_LANGUAGES: [&str; 4] = ["rust", "python", "typescript", "perl"];
+
+impl CorpusEntry {
+    pub(crate) fn language(&self) -> &str {
+        self.language.as_deref().unwrap_or("rust")
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -399,6 +417,17 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             base_sha: repo["base_sha"].as_str().map(str::to_string),
             note: repo["why"].as_str().unwrap_or_default().to_string(),
             heavy: repo["tier"].as_str() != Some("fast"),
+            // A present non-string value is an error, not an absent field:
+            // reading it as absent would file the entry under `rust`.
+            language: match &repo["language"] {
+                Value::Null => None,
+                Value::String(language) => Some(language.clone()),
+                other => {
+                    return Err(format!(
+                        "manifest repo `language` must be a string, got {other}"
+                    ));
+                }
+            },
         });
     }
     Ok((version, corpus))
@@ -413,6 +442,14 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
     for entry in corpus {
         if seen.insert(entry.id.as_str(), ()).is_some() {
             return Err(format!("duplicate corpus id `{}`", entry.id));
+        }
+        if !CORPUS_LANGUAGES.contains(&entry.language()) {
+            return Err(format!(
+                "corpus `{}` names unknown language `{}`; expected one of {}",
+                entry.id,
+                entry.language(),
+                CORPUS_LANGUAGES.join(", ")
+            ));
         }
         if !full_sha(&entry.sha)
             || entry
@@ -740,9 +777,15 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     };
     let mut friction = friction_in(setup);
     let mut unknown = 0_usize;
+    let mut decisive = 0_usize;
+    let mut read = 0_usize;
     let mut rows = Vec::new();
     for case in cases {
         let name = case["case"].as_str().unwrap_or("case");
+        if let Some(reading) = case["verdict_reading"].as_str() {
+            read += 1;
+            decisive += usize::from(reading == FIRST_RUN_AGREEING_READING);
+        }
         let steps = case["steps"].as_array().map(Vec::as_slice).unwrap_or(&[]);
         friction += friction_in(steps);
         if case["verdict"]
@@ -790,6 +833,12 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
+    // A receipt from before `verdict_reading` (or one missing a case's
+    // reading) leaves the metric unmeasured: a count over fewer readings than
+    // cases would read as a false drop.
+    if read == cases.len() {
+        rows.push(json!({"id": "first_run.decisive_verdicts", "value": decisive}));
+    }
     Ok(json!({
         "schema_version": INPUT_SCHEMA_VERSION,
         "source": "first-run",
@@ -883,6 +932,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
+    let mut readings = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let line = index + 1;
         let text = |key: &str| {
@@ -952,6 +1002,12 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
                     format!("row {line} ({case}/{step} verdict): value must be a class name")
                 })?;
                 verdicts.push(format!("{case}={class}"));
+            }
+            "verdict_reading" => {
+                let reading = row["value"].as_str().ok_or_else(|| {
+                    format!("row {line} ({case}/{step} verdict_reading): value must be a reading")
+                })?;
+                readings.push(format!("{case}={reading}"));
             }
             _ => {}
         }
@@ -1065,6 +1121,21 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     if !cases.is_empty() {
         out.push(json!({"id": "first_run.friction_events", "value": friction}));
         out.push(json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}));
+        // Rows from a walk that predates `verdict_reading` carry none, so the
+        // count is left unmeasured rather than read as zero decisive verdicts;
+        // a cut-off file with fewer readings than cases is an incomplete
+        // sample, not a lower count.
+        if !readings.is_empty() {
+            let decisive = readings
+                .iter()
+                .filter(|reading| reading.ends_with(&format!("={FIRST_RUN_AGREEING_READING}")))
+                .count();
+            let mut row = json!({"id": "first_run.decisive_verdicts", "value": decisive, "evidence": format!("readings: {}", list(&readings))});
+            if readings.len() < cases.len() {
+                row["completed"] = json!(false);
+            }
+            out.push(row);
+        }
     }
     if let Some(install) = install {
         // The install alone, so a slower compile is visible even when the
@@ -2056,6 +2127,7 @@ fn repo_view(config: &Config, metrics: &[Value]) -> Vec<Value> {
         repos.push(json!({
             "id": entry.id,
             "sha": entry.sha,
+            "language": entry.language(),
             "note": entry.note,
             "status": if rows.is_empty() { "not_measured" } else { board_status(&counts) },
             "counts": counts,

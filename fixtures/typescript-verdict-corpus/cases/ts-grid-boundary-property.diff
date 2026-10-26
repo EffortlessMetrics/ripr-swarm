@@ -1,0 +1,12 @@
+diff --git a/src/boundary.ts b/src/boundary.ts
+--- a/src/boundary.ts
++++ b/src/boundary.ts
+@@ -7,7 +7,7 @@
+ }
+ 
+ export function canRetire(age: number): boolean {
+-  return age >= 67;
++  return 67 <= age;
+ }
+ 
+ export function passes(score: number): boolean {

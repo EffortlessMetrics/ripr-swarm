@@ -1906,7 +1906,15 @@ fn relative_root_follow_ups(base: &Path, bash: &Path) -> Result<(), String> {
         .ok_or_else(|| format!("no start command in the refusal:\n{after_stderr}"))?;
 
     for command in [&packet, &start] {
-        if !command.contains(&bound.replace('\'', "'\\''")) {
+        // `shell_arg`'s host form (#7729): POSIX escapes the apostrophe, the
+        // Windows console form double-quotes it unchanged. Printed roots drop
+        // the verbatim `\\?\` prefix canonicalize adds on Windows.
+        let spelled = if cfg!(windows) {
+            format!("\"{}\"", bound.strip_prefix("//?/").unwrap_or(&bound))
+        } else {
+            bound.replace('\'', "'\\''")
+        };
+        if !command.contains(&spelled) {
             return Err(format!(
                 "printed command does not bind the selected root {bound}: {command}"
             ));

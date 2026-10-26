@@ -30,9 +30,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: input * 3 (line 2)
-  - related test tests/weight_tests.rs:4 checks_weight uses strong relational check oracle: if weight(4) != 12 {
-return Err(format!("weight(4) was {}", weight(4)));
-}
+  - related test tests/weight_tests.rs:4 checks_weight uses strong relational check oracle: if weight(4) != 12 { return Err(format!("weight(4) was {}", weight(4))); }
   - source function argument value input = 4 at line 5
   - source function argument value input = 4 at line 6
 Drill in:

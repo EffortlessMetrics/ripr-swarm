@@ -1,0 +1,51 @@
+{
+  "case_id": "py-grid-returns-property",
+  "subject_id": "authored-py-grid-returns",
+  "diff": "cases/py-grid-returns-property.diff",
+  "anchor": {
+    "file": "grid_returns/core.py",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_property_invariant_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"\"",
+        "mutated_line": "return \"\"",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      },
+      {
+        "replacement": "return \"xyzzy\"",
+        "mutated_line": "return \"xyzzy\"",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: return value x property loop. Idempotence holds for any constant, so a replaced return value survives.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

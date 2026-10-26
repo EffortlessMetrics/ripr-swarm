@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:0158728303d9da434cd48618ae58165acf2fd1e84a57dcea85747f2a208949f5","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:util_src_stream_take.rs:predicate:b1141696",
+      "canonical_gap_id": "gap:rust:util/src/stream/take.rs:impl Display for Take::fmt:predicate_boundary:predicate:self.remaining==4",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:util/src/stream/take.rs:impl Display for Take::fmt:predicate_boundary:predicate:self.remaining==4",
+        "language": "rust",
+        "file": "util/src/stream/take.rs",
+        "owner": "impl Display for Take::fmt",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "self.remaining==4"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:util_src_stream_take.rs:predicate:b1141696",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./util/src/stream/take.rs",
+        "line": 9,
+        "expression": "self.remaining <= 4"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling fmt; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain the changed boundary literal [4] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: write!(f, \"few\")"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling fmt; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "infection weak: Related tests contain the changed boundary literal [4] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected", "propagation yes: Changed behavior appears to influence returned value: write!(f, \"few\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: write!(f, \"few\") (line 10)", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 4 at line 8"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"write!(f, \"few\")","line":10}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: write!(f, \"few\")", "No test is seen calling fmt; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "Related tests contain the changed boundary literal [4] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No detected boundary input for the changed predicate"],
+      "assertion_texts": {
+        "8": "assert_eq!(t.limit(), 4);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "4",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "4",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "util/src/io/take.rs - limit (line 6)",
+          "file": "util/src/io/take.rs",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(t.limit(), 4);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

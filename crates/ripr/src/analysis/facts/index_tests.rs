@@ -601,3 +601,416 @@ fn unresolved_property_macros_survive_file_view_wire_and_owned_round_trip() -> R
     assert_eq!(decoded.owned_file(&path).as_ref(), Some(&facts));
     Ok(())
 }
+
+#[test]
+fn finalization_observes_deadline_while_releasing_build_slack() -> Result<(), String> {
+    use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::{Duration, Instant};
+
+    let path = PathBuf::from("tests/surviving.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, "#[test]\nfn surviving() {}\n")?;
+    let mut candidate = RustIndex::default();
+    candidate.insert_file(path.clone(), facts, true);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let started = Instant::now();
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_millis(1),
+        Arc::new(move || {
+            // Stay inside the budget through the checkpoint that follows the
+            // membership refresh, then expire at the first checkpoint of the
+            // slack pass.
+            if clock_calls.fetch_add(1, Ordering::SeqCst) < 12 {
+                started
+            } else {
+                started + Duration::from_millis(1)
+            }
+        }),
+    );
+    let result = with_token(&token, || candidate.finalize());
+    assert_eq!(
+        result.err().as_deref(),
+        Some("analysis cancelled: DeadlineExceeded")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 13);
+    Ok(())
+}
+
+/// Unused capacity per shrunk field, keyed by a label naming the field, so a
+/// missing shrink shows up on its own field rather than in a grand total.
+fn spare_by_field(index: &RustIndex) -> std::collections::BTreeMap<&'static str, usize> {
+    fn spare<T>(items: &Vec<T>) -> usize {
+        items.capacity() - items.len()
+    }
+    fn spare_str(text: &String) -> usize {
+        text.capacity() - text.len()
+    }
+    let mut spare_of = std::collections::BTreeMap::new();
+    let mut note = |label: &'static str, slots: usize| {
+        *spare_of.entry(label).or_insert(0) += slots;
+    };
+    note("function_order", spare(&index.function_order));
+    note("test_order", spare(&index.test_order));
+    note("function_positions", spare(&index.function_positions));
+    note("test_positions", spare(&index.test_positions));
+    note("function_records", spare(&index.function_facts.records));
+    note("test_records", spare(&index.test_facts.records));
+    for fact in index.function_facts.iter() {
+        note("fn.name", spare_str(&fact.name));
+        note("fn.calls", spare(&fact.calls));
+        note("fn.returns", spare(&fact.returns));
+        note("fn.literals", spare(&fact.literals));
+        note("fn.attrs", spare(&fact.attrs));
+        note("fn.impl_attrs", spare(&fact.impl_attrs));
+        note("fn.nested_fn_names", spare(&fact.nested_fn_names));
+        note("fn.let_bindings", spare(&fact.let_bindings));
+        for call in &fact.calls {
+            note("fn.call.name", spare_str(&call.name));
+        }
+        for ret in &fact.returns {
+            note("fn.return.text", spare_str(&ret.text));
+        }
+        for literal in &fact.literals {
+            note("fn.literal.value", spare_str(&literal.value));
+        }
+        for attr in &fact.attrs {
+            note("fn.attr", spare_str(attr));
+        }
+        for attr in &fact.impl_attrs {
+            note("fn.impl_attr", spare_str(attr));
+        }
+        for name in &fact.nested_fn_names {
+            note("fn.nested_fn_name", spare_str(name));
+        }
+        for binding in &fact.let_bindings {
+            note("fn.let_binding.name", spare_str(&binding.name));
+        }
+    }
+    for fact in index.test_facts.iter() {
+        note("test.name", spare_str(&fact.name));
+        note("test.calls", spare(&fact.calls));
+        note("test.assertions", spare(&fact.assertions));
+        note("test.literals", spare(&fact.literals));
+        note("test.attrs", spare(&fact.attrs));
+        note("test.nested_fn_names", spare(&fact.nested_fn_names));
+        note("test.let_bindings", spare(&fact.let_bindings));
+        for call in &fact.calls {
+            note("test.call.name", spare_str(&call.name));
+        }
+        for assertion in &fact.assertions {
+            note("test.assertion.text", spare_str(&assertion.text));
+            note(
+                "test.assertion.observed_tokens",
+                spare(&assertion.observed_tokens),
+            );
+            for token in &assertion.observed_tokens {
+                note("test.assertion.observed_token", spare_str(token));
+            }
+        }
+        for literal in &fact.literals {
+            note("test.literal.value", spare_str(&literal.value));
+        }
+        for attr in &fact.attrs {
+            note("test.attr", spare_str(attr));
+        }
+        for name in &fact.nested_fn_names {
+            note("test.nested_fn_name", spare_str(name));
+        }
+        for binding in &fact.let_bindings {
+            note("test.let_binding.name", spare_str(&binding.name));
+        }
+    }
+    for file in index.files.values() {
+        note("file.functions", spare(&file.functions));
+        note("file.tests", spare(&file.tests));
+        note("file.returns", spare(&file.data.returns));
+        note("file.literals", spare(&file.data.literals));
+        note("file.probe_shapes", spare(&file.data.probe_shapes));
+        note(
+            "file.module_declarations",
+            spare(&file.data.module_declarations),
+        );
+        note(
+            "file.unresolved_property_macros",
+            spare(&file.data.unresolved_property_macros),
+        );
+        note("file.edges", spare(&file.data.role_provenance.edges));
+        for ret in &file.data.returns {
+            note("file.return.text", spare_str(&ret.text));
+        }
+        for literal in &file.data.literals {
+            note("file.literal.value", spare_str(&literal.value));
+        }
+        for edge in &file.data.role_provenance.edges {
+            note("file.edge.declaration", spare_str(&edge.declaration));
+        }
+    }
+    spare_of
+}
+
+#[test]
+fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<(), String> {
+    use crate::analysis::facts::model::{
+        ReturnFact, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
+    };
+
+    let mut facts = large_file()?;
+    // Producers push facts one at a time and leave spare room on every
+    // buffer. Populate every nested collection the pass shrinks (the parsed
+    // functions carry no impl attributes, nested functions or provenance
+    // edges), then reserve extra on each so a deleted shrink call leaves its
+    // own field with the room it started with.
+    let test = facts.tests.first_mut().ok_or("missing test")?;
+    let binding = test
+        .let_bindings
+        .first()
+        .cloned()
+        .ok_or("missing binding")?;
+    let literal = test.literals.first().cloned().ok_or("missing literal")?;
+    let function = facts.functions.first_mut().ok_or("missing function")?;
+    function.attrs.push("#[inline]".into());
+    function.impl_attrs.push("#[cfg(test)]".into());
+    function.nested_fn_names.push("inner".into());
+    function.let_bindings.push(binding);
+    function.literals.push(literal.clone());
+    function.returns.push(ReturnFact {
+        line: 1,
+        text: "input.len()".into(),
+    });
+    function.name.reserve_exact(8);
+    function.calls.reserve_exact(8);
+    function.returns.reserve_exact(8);
+    function.literals.reserve_exact(8);
+    function.attrs.reserve_exact(8);
+    function.impl_attrs.reserve_exact(8);
+    function.nested_fn_names.reserve_exact(8);
+    function.let_bindings.reserve_exact(8);
+    for call in &mut function.calls {
+        call.name.reserve_exact(8);
+    }
+    for ret in &mut function.returns {
+        ret.text.reserve_exact(8);
+    }
+    for literal in &mut function.literals {
+        literal.value.reserve_exact(8);
+    }
+    for attr in function.attrs.iter_mut().chain(&mut function.impl_attrs) {
+        attr.reserve_exact(8);
+    }
+    for name in &mut function.nested_fn_names {
+        name.reserve_exact(8);
+    }
+    for binding in &mut function.let_bindings {
+        binding.name.reserve_exact(8);
+    }
+    let test = facts.tests.first_mut().ok_or("missing test")?;
+    test.attrs.push("#[ignore]".into());
+    test.nested_fn_names.push("helper".into());
+    test.name.reserve_exact(8);
+    test.calls.reserve_exact(8);
+    test.assertions.reserve_exact(8);
+    test.literals.reserve_exact(8);
+    test.attrs.reserve_exact(8);
+    test.nested_fn_names.reserve_exact(8);
+    test.let_bindings.reserve_exact(8);
+    for call in &mut test.calls {
+        call.name.reserve_exact(8);
+    }
+    for assertion in &mut test.assertions {
+        assertion.text.reserve_exact(8);
+        assertion.observed_tokens.push("token".into());
+        assertion.observed_tokens.reserve_exact(8);
+        for token in &mut assertion.observed_tokens {
+            token.reserve_exact(8);
+        }
+    }
+    for literal in &mut test.literals {
+        literal.value.reserve_exact(8);
+    }
+    for attr in &mut test.attrs {
+        attr.reserve_exact(8);
+    }
+    for name in &mut test.nested_fn_names {
+        name.reserve_exact(8);
+    }
+    for binding in &mut test.let_bindings {
+        binding.name.reserve_exact(8);
+    }
+    facts.literals.push(literal);
+    facts.returns.push(ReturnFact {
+        line: 1,
+        text: "input.len()".into(),
+    });
+    for ret in &mut facts.returns {
+        ret.text.reserve_exact(8);
+    }
+    for literal in &mut facts.literals {
+        literal.value.reserve_exact(8);
+    }
+    facts.returns.reserve_exact(8);
+    facts.literals.reserve_exact(8);
+    facts.probe_shapes.reserve_exact(8);
+    facts.module_declarations.reserve_exact(8);
+    facts.unresolved_property_macros.reserve_exact(8);
+    facts.role_provenance.edges.push(SourceRoleProvenanceEdge {
+        kind: SourceRoleProvenanceEdgeKind::Module,
+        parent: PathBuf::from("src/lib.rs"),
+        child: PathBuf::from("tests/large.rs"),
+        declaration: "mod large;".into(),
+        line: 1,
+        requires_test: true,
+    });
+    facts.role_provenance.edges.reserve_exact(8);
+    for edge in &mut facts.role_provenance.edges {
+        edge.declaration.reserve_exact(8);
+    }
+    let mut index = RustIndex::default();
+    let path = PathBuf::from("tests/large.rs");
+    index.insert_file(path.clone(), facts, true);
+    let file = index.files.get_mut(&path).ok_or("missing file")?;
+    file.functions.reserve_exact(8);
+    file.tests.reserve_exact(8);
+    let before = spare_by_field(&index);
+    // A label only appears once the fixture holds an element for it, and the
+    // checks below walk the labels present, so pin the count: a field the
+    // fixture stops populating must fail here rather than drop out.
+    assert_eq!(before.len(), 47, "labels: {:?}", before.keys());
+    // The fixture must leave room on every claimed field, so a field that
+    // stays at its starting room after finalization names the shrink call
+    // that stopped running.
+    let empty: Vec<_> = before
+        .iter()
+        .filter(|(_, spare)| **spare == 0)
+        .map(|(label, _)| *label)
+        .collect();
+    assert_eq!(empty, Vec::<&str>::new(), "fields the fixture left tight");
+    index.finalize()?;
+    let after = spare_by_field(&index);
+    let unreleased: Vec<_> = before
+        .iter()
+        .filter(|(label, spare)| after.get(*label).is_none_or(|left| left >= *spare))
+        .map(|(label, _)| *label)
+        .collect();
+    assert_eq!(
+        unreleased,
+        Vec::<&str>::new(),
+        "fields finalize left as wide"
+    );
+    Ok(())
+}
+
+/// Facts are shrunk in three passes (functions, tests, files); a stride of 2
+/// puts checkpoints at the first and third fact of each pass.
+fn slack_pass_fixture() -> Result<RustIndex, String> {
+    let source = (0..4)
+        .map(|n| format!("fn helper_{n}() {{}}\n#[test]\nfn case_{n}() {{}}\n"))
+        .collect::<String>();
+    let path = PathBuf::from("tests/strided.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, &source)?;
+    let mut index = RustIndex::default();
+    index.insert_file(path, facts, true);
+    for_each_name(&mut index, |name| name.reserve_exact(8));
+    Ok(index)
+}
+
+fn for_each_name(index: &mut RustIndex, mut visit: impl FnMut(&mut String)) {
+    for fact in index.function_facts.iter_mut() {
+        visit(&mut fact.name);
+    }
+    for fact in index.test_facts.iter_mut() {
+        visit(&mut fact.name);
+    }
+}
+
+#[test]
+fn the_slack_pass_stops_at_each_interior_checkpoint_and_leaves_later_work_untouched()
+-> Result<(), String> {
+    use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::{Duration, Instant};
+
+    let stride = 2;
+    let fixture = slack_pass_fixture()?;
+    let (functions, tests) = (fixture.function_facts.len(), fixture.test_facts.len());
+    let checkpoints = |facts: usize| facts.div_ceil(stride);
+    let total = checkpoints(functions) + checkpoints(tests) + fixture.files.len();
+    assert!(checkpoints(functions) > 1 && checkpoints(tests) > 1);
+    // Facts a pass has released when it stops at its `local`th checkpoint.
+    let released_before = |facts: usize, local: usize| {
+        if local < checkpoints(facts) {
+            stride * local
+        } else {
+            facts
+        }
+    };
+    for expire_at in 0..total {
+        let mut index = slack_pass_fixture()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let clock_calls = Arc::clone(&calls);
+        let started = Instant::now();
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(1),
+            Arc::new(move || {
+                if clock_calls.fetch_add(1, Ordering::SeqCst) < expire_at {
+                    started
+                } else {
+                    started + Duration::from_millis(1)
+                }
+            }),
+        );
+        let result = with_token(&token, || index.release_build_slack_in_strides(stride));
+        assert_eq!(
+            result.err().as_deref(),
+            Some("analysis cancelled: DeadlineExceeded"),
+            "checkpoint {expire_at} was not observed inside the pass"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), expire_at + 1);
+        // Work before the stopping checkpoint is released; later work, in
+        // this pass and the ones after it, stays untouched.
+        let mut released = Vec::new();
+        for_each_name(&mut index, |name| {
+            released.push(name.capacity() == name.len())
+        });
+        let (function_work, test_work) = released.split_at(functions);
+        let released_functions = released_before(functions, expire_at);
+        let released_tests =
+            released_before(tests, expire_at.saturating_sub(checkpoints(functions)));
+        let expect =
+            |count: usize, facts: usize| (0..facts).map(|n| n < count).collect::<Vec<bool>>();
+        assert_eq!(
+            function_work,
+            expect(released_functions, functions),
+            "function work at checkpoint {expire_at}"
+        );
+        let test_count = if expire_at < checkpoints(functions) {
+            0
+        } else {
+            released_tests
+        };
+        assert_eq!(
+            test_work,
+            expect(test_count, tests),
+            "test work at checkpoint {expire_at}"
+        );
+    }
+
+    // With no checkpoint expiring the pass finishes and releases everything.
+    let mut index = slack_pass_fixture()?;
+    index.release_build_slack_in_strides(stride)?;
+    let mut released = Vec::new();
+    for_each_name(&mut index, |name| {
+        released.push(name.capacity() == name.len())
+    });
+    assert!(released.iter().all(|done| *done));
+    Ok(())
+}

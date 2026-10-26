@@ -34,8 +34,10 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
     for (route, command) in routes {
         let action = if route == "ub-review.yml" {
             "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
+        } else if matches!(route, "coverage.yml" | "test-analytics.yml") {
+            "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master"
         } else {
-            "v1"
+            "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
         };
         let prepared = |text: &str, command: &str| {
             let setup = format!(
@@ -325,6 +327,45 @@ jobs:
         workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
 
     assert_eq!(violations.len(), 1);
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_rejects_token_split_across_lines() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: |
+          R='__head__'
+          T='__tail__'
+          gh api graphql -f query="mutation { $R$T }"
+"#
+    .replace("__head__", "resolve")
+    .replace("__tail__", "ReviewThread");
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
+
+    assert_eq!(violations.len(), 1);
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_accepts_unrelated_adjacent_strings() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: |
+          echo '__head__'
+          echo '__tail__'
+"#
+    .replace("__head__", "resolve")
+    .replace("__tail__", "ReviewThread");
+
+    assert!(
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1473,6 +1514,392 @@ fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String
             !prepared(&wrong),
             "invalid fixture preparation must be rejected"
         );
+    }
+    Ok(())
+}
+
+const PINNED_CODECOV: &str =
+    "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2";
+
+fn repo_workflow(name: &str) -> Result<String, String> {
+    let root = crate::test_support::workspace_root()?;
+    fs::read_to_string(root.join(".github/workflows").join(name)).map_err(|error| error.to_string())
+}
+
+#[test]
+fn unpinned_third_party_action_is_rejected_and_the_sha_pin_passes() -> Result<(), String> {
+    let pinned = repo_workflow("coverage.yml")?;
+    assert!(
+        pinned.contains(PINNED_CODECOV),
+        "fixture must start from the SHA-pinned codecov step"
+    );
+    let empty = BTreeMap::new();
+    assert_eq!(
+        workflow_unpinned_action_violations("coverage.yml", &pinned, &empty),
+        Vec::<String>::new(),
+        "the checked-in SHA-pinned workflow must pass with no exception"
+    );
+
+    let unpinned = pinned.replace(PINNED_CODECOV, "codecov/codecov-action@v6");
+    let violations = workflow_unpinned_action_violations("coverage.yml", &unpinned, &empty);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("codecov/codecov-action@v6"));
+    assert!(violations[0].contains("full commit SHA"));
+    Ok(())
+}
+
+#[test]
+fn unpinned_action_rule_scopes_to_third_party_and_rejects_short_or_branch_refs() {
+    let text = r#"
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/local
+      - uses: peter-evans/create-pull-request@5f6978f # short sha is mutable-ambiguous
+      - name: branch
+        uses: Swatinem/rust-cache@main
+      - run: echo "uses: evil/action@v1"
+      # uses: commented/out@v1
+      - uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@8ff77e5876b4a7808a58e053aa6248b1020e02d0
+"#;
+    let violations = workflow_unpinned_action_violations("w.yml", text, &BTreeMap::new());
+    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("create-pull-request@5f6978f"))
+    );
+    assert!(violations.iter().any(|v| v.contains("rust-cache@main")));
+}
+
+#[test]
+fn full_action_commit_sha_has_exact_lowercase_sha1_boundaries() {
+    assert!(is_full_commit_sha(
+        "0123456789abcdef0123456789abcdef01234567"
+    ));
+    for reference in [
+        "0123456".to_string(),
+        "a".repeat(39),
+        "a".repeat(41),
+        "a".repeat(64),
+        "A".repeat(40),
+        "g".repeat(40),
+    ] {
+        assert!(!is_full_commit_sha(&reference), "{reference}");
+    }
+}
+
+#[test]
+fn unpinned_action_allowlist_is_a_ratchet() {
+    let text = "      - uses: Swatinem/rust-cache@v2\n";
+    let row = |count| {
+        BTreeMap::from([(
+            ("w.yml".to_string(), "Swatinem/rust-cache@v2".to_string()),
+            count,
+        )])
+    };
+    assert!(workflow_unpinned_action_violations("w.yml", text, &row(1)).is_empty());
+    let over = workflow_unpinned_action_violations("w.yml", &format!("{text}{text}"), &row(1));
+    assert_eq!(over.len(), 1, "{over:?}");
+    assert!(over[0].contains("allowed 1"));
+    let stale = workflow_unpinned_action_violations("w.yml", "steps: []\n", &row(1));
+    assert_eq!(stale.len(), 1, "{stale:?}");
+    assert!(stale[0].contains("only 0 remain"));
+    // A row for another file never excuses this file.
+    assert_eq!(
+        workflow_unpinned_action_violations("other.yml", text, &row(1)).len(),
+        1
+    );
+}
+
+#[test]
+fn secret_and_write_token_workflows_have_no_unpinned_third_party_actions() -> Result<(), String> {
+    let allowlist = parse_count_allowlist(
+        UNPINNED_ACTION_ALLOWLIST,
+        &fs::read_to_string(crate::test_support::workspace_root()?.join(UNPINNED_ACTION_ALLOWLIST))
+            .map_err(|error| error.to_string())?,
+    )?;
+    for name in [
+        "publish-extension.yml",
+        "badge-endpoints.yml",
+        "coverage.yml",
+        "test-analytics.yml",
+        "ub-review.yml",
+    ] {
+        let path = format!(".github/workflows/{name}");
+        assert!(
+            !allowlist.keys().any(|(allowed, _)| *allowed == path),
+            "{path} holds a secret or write token and must not be allowlisted"
+        );
+        let text = repo_workflow(name)?;
+        // publish-extension.yml is the one explicit exemption from the
+        // non-empty-subject check: it uses only first-party `actions/*`, which
+        // the rule does not scan, so it has no third-party refs to find. It
+        // still must not be allowlisted (asserted above) and must pass the rule.
+        assert!(
+            !third_party_action_refs(&text).is_empty() || name == "publish-extension.yml",
+            "{name} must have third-party steps for the pin check to grip"
+        );
+        assert_eq!(
+            workflow_unpinned_action_violations(&path, &text, &allowlist),
+            Vec::<String>::new()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn workflow_level_contents_write_is_rejected_but_job_level_is_allowed() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    assert!(workflow_level_write_permission_violations("p.yml", &text).is_empty());
+    assert!(
+        text.contains("\n    permissions:\n      contents: write\n"),
+        "attach-release-asset must keep its job-level write"
+    );
+    let widened = text.replacen(
+        "permissions:\n  contents: read\n",
+        "permissions:\n  contents: write\n",
+        1,
+    );
+    assert_ne!(
+        widened, text,
+        "the workflow-level block must exist to mutate"
+    );
+    let violations = workflow_level_write_permission_violations("p.yml", &widened);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("workflow-level `contents: write`"));
+    Ok(())
+}
+
+#[test]
+fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
+    for (label, text) in [
+        (
+            "trailing comment",
+            "permissions:\n  contents: write # release\n",
+        ),
+        (
+            "tab comment",
+            "permissions:\n  contents: write\t# release\n",
+        ),
+        ("quoted value", "permissions:\n  contents: \"write\"\n"),
+        ("flow style", "permissions: { contents: write }\n"),
+        (
+            "flow style with others",
+            "permissions: { issues: read, contents: write }  # x\n",
+        ),
+        ("write-all", "permissions: write-all\n"),
+        ("write-all with comment", "permissions: write-all # note\n"),
+        (
+            "uniformly indented document",
+            "  permissions:\n    contents: write\n  jobs:\n    build:\n      runs-on: x\n",
+        ),
+        (
+            "uniformly indented flow",
+            "    permissions: { contents: write }\n",
+        ),
+    ] {
+        assert_eq!(
+            workflow_level_write_permission_violations("w.yml", text).len(),
+            1,
+            "{label} must be rejected"
+        );
+    }
+    for (label, text) in [
+        ("read", "permissions:\n  contents: read # no write here\n"),
+        ("flow read", "permissions: { contents: read }\n"),
+        (
+            "job level",
+            "permissions:\n  contents: read\njobs:\n  build:\n    permissions:\n      contents: write\n",
+        ),
+        ("other scope", "permissions:\n  pull-requests: write\n"),
+        (
+            "indented document, job-level write only",
+            "  permissions:\n    contents: read\n  jobs:\n    build:\n      permissions:\n        contents: write\n",
+        ),
+    ] {
+        assert!(
+            workflow_level_write_permission_violations("w.yml", text).is_empty(),
+            "{label} must pass"
+        );
+    }
+}
+
+#[test]
+fn unpinned_allowlist_row_for_a_missing_workflow_is_rejected() {
+    let allowlist = BTreeMap::from([(
+        (
+            ".github/workflows/deleted.yml".to_string(),
+            "Swatinem/rust-cache@v2".to_string(),
+        ),
+        1,
+    )]);
+    let existing = BTreeSet::from([".github/workflows/kept.yml".to_string()]);
+    let violations = unpinned_allowlist_missing_file_violations(&allowlist, &existing);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("deleted.yml"));
+    let present = BTreeSet::from([".github/workflows/deleted.yml".to_string()]);
+    assert!(unpinned_allowlist_missing_file_violations(&allowlist, &present).is_empty());
+}
+
+fn job_block(text: &str, job: &str) -> String {
+    let header = format!("  {job}:");
+    let mut block = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let top_level_job =
+            line.starts_with("  ") && !line.starts_with("   ") && line.trim_end().ends_with(':');
+        if top_level_job {
+            inside = line == header;
+        }
+        if inside {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    block
+}
+
+/// Contract violations for one PAT-holding publish job; comment lines ignored.
+fn publish_job_violations(
+    text: &str,
+    job: &str,
+    environment: &str,
+    pat: &str,
+    tool_invocation: &str,
+) -> Vec<String> {
+    let block = job_block(text, job);
+    if block.is_empty() {
+        return vec![format!("missing job {job}")];
+    }
+    let code: Vec<&str> = block
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    let code_text = code.join("\n");
+    let mut violations = Vec::new();
+    if !code.contains(&format!("    environment: {environment}").as_str()) {
+        violations.push(format!("{job} must declare environment {environment}"));
+    }
+    if !code_text.contains("\n    permissions:\n      contents: read\n") {
+        violations.push(format!("{job} must declare job-level contents: read"));
+    }
+    let job_env = code_text
+        .split("\n    env:\n")
+        .nth(1)
+        .map(|rest| rest.split("\n    steps:").next().unwrap_or(""))
+        .unwrap_or("");
+    if job_env.contains(pat) {
+        violations.push(format!("{job} exposes {pat} at job level"));
+    }
+    if code_text.matches("secrets.").count() != 1
+        || !code_text.contains(&format!("{pat}: ${{{{ secrets.{pat} }}}}"))
+    {
+        violations.push(format!("{job} must reference exactly the {pat} secret"));
+    }
+    let publish_step = code_text.find("      - name: Publish to ");
+    let pat_env = code_text.find(&format!("{pat}: ${{{{ secrets."));
+    if !matches!((pat_env, publish_step), (Some(env), Some(step)) if env > step) {
+        violations.push(format!("{job} {pat} must be env of the publish step only"));
+    }
+    if !code_text.contains("npm ci --ignore-scripts") {
+        violations.push(format!("{job} must install the locked graph"));
+    }
+    if !code_text.contains(tool_invocation) {
+        violations.push(format!(
+            "{job} must run the lockfile-installed {tool_invocation}"
+        ));
+    }
+    if code_text.contains("npx -y") || code_text.contains("npx @") {
+        violations.push(format!("{job} runs a registry-latest tool"));
+    }
+    if !code_text.contains("persist-credentials: false") {
+        violations.push(format!(
+            "{job} checkout must set persist-credentials: false"
+        ));
+    }
+    violations
+}
+
+#[test]
+fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    let jobs = [
+        (
+            "publish-vs-marketplace",
+            "vs-marketplace-publish",
+            "VSCE_PAT",
+            "editors/vscode/node_modules/.bin/vsce",
+        ),
+        (
+            "publish-open-vsx",
+            "open-vsx-publish",
+            "OVSX_PAT",
+            ".github/ovsx/node_modules/.bin/ovsx",
+        ),
+    ];
+    for (job, environment, pat, tool) in jobs {
+        // Positive control: the checked-in workflow satisfies the contract.
+        assert_eq!(
+            publish_job_violations(&text, job, environment, pat, tool),
+            Vec::<String>::new()
+        );
+        // Negative experiments: each mutation must be caught for this job.
+        let block = job_block(&text, job);
+        let step_env = format!("          {pat}: ${{{{ secrets.{pat} }}}}\n");
+        let job_env = format!("      {pat}: ${{{{ secrets.{pat} }}}}\n");
+        assert!(block.contains(&step_env), "{job} step-level PAT must exist");
+        for (label, mutated_block, expect) in [
+            (
+                "PAT back at job level",
+                block.replace(&step_env, "").replacen(
+                    "    env:\n",
+                    &format!("    env:\n{job_env}"),
+                    1,
+                ),
+                "job level",
+            ),
+            (
+                "environment removed",
+                block.replace(&format!("    environment: {environment}\n"), ""),
+                "environment",
+            ),
+            (
+                "contents: read removed",
+                block.replace("    permissions:\n      contents: read\n", ""),
+                "contents: read",
+            ),
+            (
+                "credentials persisted",
+                block.replace("          persist-credentials: false\n", ""),
+                "persist-credentials",
+            ),
+            (
+                "registry-latest tool",
+                block.replace("npm ci --ignore-scripts", "npx -y ovsx --version"),
+                "locked graph",
+            ),
+            (
+                "tool no longer the locked binary",
+                block.replace(tool, "ovsx"),
+                "lockfile-installed",
+            ),
+        ] {
+            assert_ne!(mutated_block, block, "{label} mutation must change {job}");
+            let mutated = text.replace(&block, &mutated_block);
+            let violations = publish_job_violations(&mutated, job, environment, pat, tool);
+            assert!(
+                violations.iter().any(|v| v.contains(expect)),
+                "{label} on {job} must be rejected ({expect}); got {violations:?}"
+            );
+        }
+        // A commented-out gate does not count.
+        let commented = text.replace(
+            &format!("    environment: {environment}\n"),
+            &format!("    # environment: {environment}\n"),
+        );
+        assert!(!publish_job_violations(&commented, job, environment, pat, tool).is_empty());
     }
     Ok(())
 }

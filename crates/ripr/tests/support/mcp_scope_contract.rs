@@ -43,6 +43,18 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
                 },
                 "required": ["files", "total", "more", "listing_example", "remedy"],
                 "additionalProperties": false
+            },
+            "ignored_edits": {
+                "type": "object",
+                "properties": {
+                    "files": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 3 },
+                    "total": { "type": "integer", "minimum": 1 },
+                    "more": { "type": "integer", "minimum": 0 },
+                    "languages_analyzed": { "type": "string" },
+                    "remedy": { "type": "string" }
+                },
+                "required": ["files", "total", "more", "languages_analyzed", "remedy"],
+                "additionalProperties": false
             }
         },
         "required": ["analyzed", "uncommitted_edits", "note"],

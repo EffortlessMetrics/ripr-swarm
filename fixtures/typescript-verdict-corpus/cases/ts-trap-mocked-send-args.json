@@ -1,0 +1,52 @@
+{
+  "case_id": "ts-trap-mocked-send-args",
+  "subject_id": "authored-ts-trap-kit",
+  "diff": "cases/ts-trap-mocked-send-args.diff",
+  "anchor": {
+    "file": "src/core.ts",
+    "line": 90
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_argument",
+  "test_shape": "mock_fn_arguments_pinned_control",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "sender.send(orderId + 2);",
+        "mutated_line": "sender.send(orderId + 2);",
+        "outcome": "tests_failed",
+        "failing_test": "mocked send args",
+        "equivalence_review": "not equivalent: sends 6 instead of 8"
+      },
+      {
+        "replacement": "sender.send(orderId / 2);",
+        "mutated_line": "sender.send(orderId / 2);",
+        "outcome": "tests_failed",
+        "failing_test": "mocked send args",
+        "equivalence_review": "not equivalent: sends 2 instead of 8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Control for mockedSend: the recorded argument is pinned to 8.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

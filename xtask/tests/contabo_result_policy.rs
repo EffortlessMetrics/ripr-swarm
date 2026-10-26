@@ -1,17 +1,22 @@
 //! Execute the real lightweight result policy. Native artifact authentication is
 //! central-owned; these synthetic imported contexts test only consumer refusal.
-#![cfg(target_os = "linux")]
+//! The policy executes under Linux Bash, so only the execution tests are
+//! Linux-scoped; the static contracts select on every host (#9660).
 
+use std::{fs, path::Path};
+#[cfg(target_os = "linux")]
 use std::{
-    fs,
-    path::Path,
     process::Command,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
 const POLICY: &str = include_str!("../../.ci/contabo-result.sh");
+#[cfg(target_os = "linux")]
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+const SOURCE_GUARD: &str = ".identity.attempt == $attempt and";
+const VERDICT_GUARD: &str = ".verdict == {\"disposition\":\"product_pass\",\"exit\":0}";
 
+#[cfg(target_os = "linux")]
 fn policy_exit(policy: &str, context: &str, evidence: &str, setup: &str) -> Result<i32, String> {
     let root = std::env::temp_dir().join(format!(
         "ripr-result-{}-{}",
@@ -55,6 +60,7 @@ bash "$FIXTURE/policy.sh"
     result
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn accepts_exact_import_and_refuses_stale_missing_or_nonproduct_success() -> Result<(), String> {
     assert_eq!(policy_exit(POLICY, ".", ".", ":")?, 0);
@@ -109,6 +115,7 @@ fn accepts_exact_import_and_refuses_stale_missing_or_nonproduct_success() -> Res
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn refuses_malformed_dispatch_base_before_shell_normalization() -> Result<(), String> {
     for change in [
@@ -131,24 +138,21 @@ fn refuses_malformed_dispatch_base_before_shell_normalization() -> Result<(), St
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn source_and_product_guards_have_discriminating_controls() -> Result<(), String> {
-    let source_guard = ".identity.attempt == $attempt and";
-    assert!(POLICY.contains(source_guard));
     assert_eq!(
         policy_exit(
-            &POLICY.replace(source_guard, "true and"),
+            &POLICY.replace(SOURCE_GUARD, "true and"),
             ".identity.attempt = \"1\"",
             ".",
             ":"
         )?,
         0
     );
-    let verdict_guard = ".verdict == {\"disposition\":\"product_pass\",\"exit\":0}";
-    assert!(POLICY.contains(verdict_guard));
     assert_eq!(
         policy_exit(
-            &POLICY.replace(verdict_guard, "true"),
+            &POLICY.replace(VERDICT_GUARD, "true"),
             ".verdict.disposition = \"incomplete\"",
             ".",
             ":"
@@ -156,6 +160,14 @@ fn source_and_product_guards_have_discriminating_controls() -> Result<(), String
         0
     );
     Ok(())
+}
+
+/// The execution test mutates these guards; their presence is a static fact
+/// that holds on every host.
+#[test]
+fn policy_text_keeps_its_source_and_verdict_guards() {
+    assert!(POLICY.contains(SOURCE_GUARD));
+    assert!(POLICY.contains(VERDICT_GUARD));
 }
 
 #[test]

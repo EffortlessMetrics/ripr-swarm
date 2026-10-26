@@ -51,10 +51,17 @@ fn classify_at_changed(
 }
 
 fn relations_of(owner: &TypeScriptOwner, tests: &[TypeScriptTest]) -> Vec<TypeScriptRelationKind> {
-    related_test_candidates(owner, tests, None, &ReExportIndex::empty(), None)
-        .into_iter()
-        .map(|candidate| candidate.relation)
-        .collect()
+    related_test_candidates(
+        owner,
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    )
+    .into_iter()
+    .map(|candidate| candidate.relation)
+    .collect()
 }
 
 fn price_owner_named(owners: &[TypeScriptOwner]) -> Result<&TypeScriptOwner, String> {

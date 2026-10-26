@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-hand-mock-sum-window",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-hand-mock-sum-window.diff",
+  "anchor": {
+    "file": "src/mocks.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "hand_rolled_recorder_exact_lines",
+  "hard_case": "Both tests pass exactly two items, so limiting the sum to two items changes nothing they can see.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let total: u32 = items.iter().take(2).sum();",
+        "mutated_line": "let total: u32 = items.iter().take(2).sum();",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `let total: u32 = items.iter().copied().sum();` becomes `let total: u32 = items.iter().take(2).sum();`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "let total: u32 = items.iter().map(|n| n * 2).sum();",
+        "mutated_line": "let total: u32 = items.iter().map(|n| n * 2).sum();",
+        "outcome": "tests_failed",
+        "failing_test": "mocks::tests::total_is_reported",
+        "equivalence_review": "not equivalent: `let total: u32 = items.iter().copied().sum();` becomes `let total: u32 = items.iter().map(|n| n * 2).sum();`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`take(2)` equals the full sum for two items and survives; doubling each item gives total=60 and fails total_is_reported while the count test stays at two lines. Shape: input length never exceeds the window.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

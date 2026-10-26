@@ -47,5 +47,8 @@
       "no_static_path"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "axes": [
+    "test_library_idiom"
+  ]
 }

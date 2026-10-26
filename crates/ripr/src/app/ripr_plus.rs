@@ -315,7 +315,7 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("{PLUS_HELP}");
+    println!("{}", crate::cli::help::render_command_help(PLUS_HELP, &[]));
 }
 
 /// Help body for `ripr plus`. Also the flag source for unknown-argument

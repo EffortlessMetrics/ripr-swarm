@@ -1,0 +1,378 @@
+{
+  "changes": [
+    {
+      "behavior_hint": "return_value",
+      "change_id": "change:file:lib/Inventory.pm:31:31",
+      "changed_observable": "{ name => lc($name), id => $id }",
+      "changed_text_digest": "fnv64:301bc8cb8353a316",
+      "file_id": "file:lib/Inventory.pm",
+      "missing_discriminator": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::make_record:443-533",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 44,
+        "end_line": 31,
+        "start_column": 0,
+        "start_line": 31
+      }
+    }
+  ],
+  "dynamic_boundaries": [],
+  "files": [
+    {
+      "digest": "sha256:154acaa98909ac5dfcdc2c41004d9e83a4b35b23e7e9fa7d5f80e90ea44565f3",
+      "file_id": "file:lib/Inventory.pm",
+      "package_names": [
+        "Inventory"
+      ],
+      "path": "lib/Inventory.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:54940e0d72a3f29c8f7c45db6b029cd30185515946d407d4e264a7e685dc9199",
+      "file_id": "file:t/inventory.t",
+      "package_names": [],
+      "path": "t/inventory.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/inventory.t"
+      ],
+      "role": [
+        "test"
+      ]
+    }
+  ],
+  "input": {
+    "base": "base",
+    "diff_id": null,
+    "head": "HEAD",
+    "requested_fact_classes": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance"
+    ]
+  },
+  "limitations": [
+    {
+      "evidence_refs": [],
+      "kind": "partial_emitter",
+      "limitation_id": "emitter-partial",
+      "message": "Parser-backed tests/oracles, relations/discriminators (incl. a parser-backed direct_owner_call), boundaries/commands, files/owners, (when a diff is supplied) diff-owned changes, and a deterministic packet_fingerprint are emitted. Export-aware relation reachability and the managed-producer diff source land in later slices."
+    },
+    {
+      "evidence_refs": [
+        "file:t/inventory.t"
+      ],
+      "kind": "framework_indirection",
+      "limitation_id": "no-oracles:file:t/inventory.t",
+      "message": "`t/inventory.t` uses Test::More but no supported assertion call was found; assertions may be wrapped, aliased, or dynamically generated"
+    },
+    {
+      "evidence_refs": [],
+      "kind": "unverified_provenance",
+      "limitation_id": "diff-provenance-unverified",
+      "message": "base/head/diff are caller-asserted and not verified against a repository; this packet does not confirm the supplied diff is the actual base->head diff."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "range_precision",
+      "limitation_id": "change-range-imprecise",
+      "message": "change ranges are line-granular with best-effort column data derived from the diff, not the byte-accurate LineIndex ranges used for owners."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_inference",
+      "limitation_id": "change-behavior-hint-partial",
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
+    }
+  ],
+  "oracles": [],
+  "owners": [
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "package",
+      "name": "Inventory",
+      "owner_id": "owner:lib/Inventory.pm:package:Inventory:0-17",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 17,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "sub",
+      "name": "restock",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::restock:47-176",
+      "package": "Inventory",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 10,
+        "start_column": 0,
+        "start_line": 5
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "sub",
+      "name": "adjust",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::adjust:178-310",
+      "package": "Inventory",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 17,
+        "start_column": 0,
+        "start_line": 12
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "sub",
+      "name": "tag_list",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::tag_list:312-374",
+      "package": "Inventory",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 22,
+        "start_column": 0,
+        "start_line": 19
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "sub",
+      "name": "sku_for",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::sku_for:376-441",
+      "package": "Inventory",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 27,
+        "start_column": 0,
+        "start_line": 24
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "sub",
+      "name": "make_record",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::make_record:443-533",
+      "package": "Inventory",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 32,
+        "start_column": 0,
+        "start_line": 29
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "kind": "sub",
+      "name": "label_pair",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:535-608",
+      "package": "Inventory",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Inventory.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 37,
+        "start_column": 0,
+        "start_line": 34
+      }
+    }
+  ],
+  "packet_fingerprint": "sha256:e4dab9521715d19b795054648bc32039782a3ca3d7216f2870e84187a43402ea",
+  "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
+  "packet_status": "partial",
+  "producer": {
+    "capabilities": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance",
+      "test_facts"
+    ],
+    "name": "perl-lsp",
+    "version": "0.17.0"
+  },
+  "provenance": [
+    {
+      "confidence": "high",
+      "provenance_id": "cli-surface",
+      "source": "operator_config"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/inventory.t",
+      "provenance_id": "prov:test_discovery:file:t/inventory.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Inventory.pm",
+      "provenance_id": "prov:syntax:file:lib/Inventory.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/inventory.t",
+      "provenance_id": "prov:syntax:file:t/inventory.t",
+      "source": "syntax"
+    }
+  ],
+  "relations": [
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::adjust:178-310",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__adjust_178-310",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/inventory.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:535-608",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__label_pair_535-608",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/inventory.t"
+    },
+    {
+      "change_id": "change:file:lib/Inventory.pm:31:31",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::make_record:443-533",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__make_record_443-533:change:file:lib/Inventory.pm:31:31",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/inventory.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::restock:47-176",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__restock_47-176",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/inventory.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::sku_for:376-441",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__sku_for_376-441",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/inventory.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::tag_list:312-374",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__tag_list_312-374",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/inventory.t"
+    }
+  ],
+  "root": {
+    "path_style": "posix",
+    "repo_relative": "s",
+    "vcs_head": "HEAD"
+  },
+  "schema_version": "ripr-perl-facts-v1",
+  "tests": [
+    {
+      "confidence": "high",
+      "file_id": "file:t/inventory.t",
+      "framework": "Test::More",
+      "name": "t/inventory.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/inventory.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 21,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/inventory.t"
+    }
+  ],
+  "verify_commands": [
+    {
+      "argv": [
+        "prove",
+        "t/inventory.t"
+      ],
+      "command_id": "verify_cmd:t/inventory.t:1",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/inventory.t"
+    }
+  ]
+}

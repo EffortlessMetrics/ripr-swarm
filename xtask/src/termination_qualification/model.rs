@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 pub(crate) const SCHEMA: &str = "ripr-termination-qualification-v1";
-pub(crate) const CORPUS_SCHEMA: &str = "ripr-termination-corpus-v1";
+pub(crate) const CORPUS_SCHEMA: &str = "ripr-termination-corpus-v2";
 
 /// The #4505 row taxonomy. Only the first two are passing product results.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -49,15 +49,24 @@ impl RowResult {
 pub(crate) enum Family {
     RustNesting,
     PythonNesting,
+    PathGlobSuppression,
+    PathGlobGeneratedFile,
 }
 
 impl Family {
-    pub(crate) const ALL: [Family; 2] = [Family::RustNesting, Family::PythonNesting];
+    pub(crate) const ALL: [Family; 4] = [
+        Family::RustNesting,
+        Family::PythonNesting,
+        Family::PathGlobSuppression,
+        Family::PathGlobGeneratedFile,
+    ];
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::RustNesting => "rust_nesting",
             Self::PythonNesting => "python_nesting",
+            Self::PathGlobSuppression => "path_glob_suppression",
+            Self::PathGlobGeneratedFile => "path_glob_generated_file",
         }
     }
 }
@@ -69,7 +78,8 @@ impl Family {
 pub(crate) enum Role {
     /// Ordinary or deep-but-supported input: full analysis, no new limitation.
     Control,
-    /// Previously aborted or hung; must end in a typed limitation.
+    /// Previously aborted or hung; must end in a typed limitation (or, for
+    /// globs, an unsuppressed/unexcluded nonmatch).
     Discriminator,
     /// Comment/string text that looks like the hazard and must not consume the
     /// budget.
@@ -149,6 +159,9 @@ pub(crate) enum ControlKind {
     /// A stub binary the harness must classify as a failure. Proves the
     /// classifier discriminates without a second product build.
     Instrument,
+    /// A stub run through the launch path that must show the harness, not the
+    /// environment, decided what ran (#4510).
+    Execution,
     /// The real pre-repair or budget-disabled binary run over the corpus.
     Removal,
     /// The unchanged binary run over the corpus a second time.
@@ -294,6 +307,7 @@ pub(crate) fn render_markdown(packet: &Packet) -> String {
             control.id,
             match control.kind {
                 ControlKind::Instrument => "instrument",
+                ControlKind::Execution => "execution",
                 ControlKind::Removal => "removal",
                 ControlKind::Repeat => "repeat",
             },

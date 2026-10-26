@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-arithmetic",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_arithmetic/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_arithmetic/core.py",
+      "sha256": "fa43d203d08a916f9a921d75170d5d8e32649a72c152c9d660d996eb0682d07a"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "dfe7d8245176d01715879171938de710da6c0321ed6e3f7dd946c33866098373"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "20e063de7164a917dbd1b32b8e6e584f31d617ebf8eb087a6241028405f71c94"
+    }
+  ]
+}

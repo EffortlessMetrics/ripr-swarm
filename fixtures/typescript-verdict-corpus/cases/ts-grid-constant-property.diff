@@ -1,0 +1,12 @@
+diff --git a/src/constant.ts b/src/constant.ts
+--- a/src/constant.ts
++++ b/src/constant.ts
+@@ -7,7 +7,7 @@
+ }
+ 
+ export function commission(sale: number): number {
+-  return Math.floor((sale * 3) / 100);
++  return Math.floor((3 * sale) / 100);
+ }
+ 
+ export function handling(weight: number): number {

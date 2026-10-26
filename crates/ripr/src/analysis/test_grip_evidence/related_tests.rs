@@ -697,7 +697,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 // #8282: the run's shared instance, like every other walk
                 // stage; a per-key fresh instance re-paid the whole-index
                 // lazily computed facts once per (seam, related test) rank.
-                context.pin_syntax_mutex(),
+                context.pin_syntax(),
             );
             let key =
                 related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);

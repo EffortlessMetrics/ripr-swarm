@@ -1,0 +1,13 @@
+diff --git a/src/basket.ts b/src/basket.ts
+index 0000000..1111111 100644
+--- a/src/basket.ts
++++ b/src/basket.ts
+@@ -6,7 +6,7 @@
+   }
+ 
+   total(): number {
+-    return this.items.reduce((sum, p) => sum + p, 0);
++    return this.items.reduce((sum, p) => sum + p, 1);
+   }
+ 
+   count(): number {

@@ -604,6 +604,7 @@ mod raw_path_tests {
     fn raw_byte_finding() -> Finding {
         let raw = PathBuf::from(OsStr::from_bytes(b"pricing_\xff.rs"));
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:pricing:1:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -649,6 +650,8 @@ mod raw_path_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,

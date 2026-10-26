@@ -336,7 +336,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
                 let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
-                assert_eq!(envelope["schema_version"], "0.2");
+                assert_eq!(envelope["schema_version"], "0.3");
                 assert_eq!(envelope["state"], "refused");
                 assert!(
                     stdout.contains(&format!("\"kind\": \"{kind}\"")),
@@ -353,7 +353,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-                assert_eq!(ready["schema_version"], "0.2");
+                assert_eq!(ready["schema_version"], "0.3");
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
@@ -1005,7 +1005,7 @@ fn split_refusal_envelope<'a>(
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
-    assert_eq!(envelope["schema_version"], "0.2");
+    assert_eq!(envelope["schema_version"], "0.3");
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], kind);
@@ -1030,6 +1030,7 @@ fn fixture_files(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<
                     "ambiguous-files-repeat",
                     "ambiguous-seams",
                     "ambiguous-seams-repeat",
+                    "filtered-family",
                 ]
                 .iter()
                 .any(|label| {
@@ -1084,7 +1085,7 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
-        assert_eq!(envelope["schema_version"], "0.2");
+        assert_eq!(envelope["schema_version"], "0.3");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
         for field in ["owner", "grip_class", "classification"] {
@@ -1181,7 +1182,7 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
             );
             let ready: serde_json::Value =
                 serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
-            assert_eq!(ready["schema_version"], "0.2");
+            assert_eq!(ready["schema_version"], "0.3");
             assert_eq!(ready["state"], "ready");
             assert_eq!(
                 ready["owner"],
@@ -1244,7 +1245,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
         );
         let ready: serde_json::Value =
             serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
-        assert_eq!(ready["schema_version"], "0.2");
+        assert_eq!(ready["schema_version"], "0.3");
         assert_eq!(ready["state"], "ready");
         assert_eq!(ready["seam_id"], id);
         assert_eq!(ready["written"], false);
@@ -1271,7 +1272,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     );
     let ready: serde_json::Value =
         serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(ready["schema_version"], "0.2");
+    assert_eq!(ready["schema_version"], "0.3");
     assert_eq!(ready["state"], "ready");
     assert_eq!(ready["owner"], "src/lib.rs::fallible");
     scratch.cleanup()
@@ -1341,7 +1342,9 @@ const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x
 
 /// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
 /// seam inventory classifies `strongly_gripped`, and both JSON and human
-/// output disclose that class with the packet/repair omission reason.
+/// output disclose that class. #8891: the disclosure names the real reason
+/// (the seam is exposed; nothing was configured off), not the packet/brief
+/// "configured off" wording.
 #[test]
 fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
     let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
@@ -1376,10 +1379,13 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
         .as_str()
         .ok_or_else(|| format!("warning must be a string: {document}"))?;
     assert!(
-        warning.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        warning.contains("is strongly_gripped")
+            && warning.contains("existing tests already discriminate it"),
         "{warning}"
+    );
+    assert!(
+        !warning.contains("configured off"),
+        "nothing was configured off for an exposed seam: {warning}"
     );
 
     let mut human = ripr_command();
@@ -1403,15 +1409,84 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
     );
     let stdout = String::from_utf8_lossy(&human.stdout);
     assert!(
-        stdout.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        stdout.contains("is strongly_gripped")
+            && stdout.contains("existing tests already discriminate it"),
         "{stdout}"
+    );
+    assert!(
+        !stdout.contains("configured off"),
+        "nothing was configured off for an exposed seam: {stdout}"
     );
     assert!(
         stdout.contains("Test stub"),
         "scaffold text remains after the disclosure: {stdout}"
     );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_suffix_refusal_does_not_claim_filtered_family_is_absent() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    let member = root.join("crates/a");
+    std::fs::create_dir_all(member.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/a\"]\nresolver = \"3\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let source = format!("{STRONGLY_GRIPPED_CLAMP}\npub fn other(n: u8) -> u8 {{ n + 1 }}\n");
+    std::fs::write(member.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    let other_line = source.lines().count();
+    for (at, kind, owner) in [
+        ("crates/a/src/lib.rs:2".to_string(), "predicate", "clamp_to"),
+        (format!("src/lib.rs:{other_line}"), "return_value", "other"),
+    ] {
+        let ready = run_bounded(
+            kind_refusal_command(root, &at, Some(kind)),
+            root,
+            owner,
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            ready.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&ready.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["owner"], format!("crates/a/src/lib.rs::{owner}"));
+        assert_eq!(document["written"], false);
+        if kind == "predicate" {
+            assert_eq!(document["grip_class"], "strongly_gripped");
+        }
+    }
+
+    // The suffix uses reported gaps, which omit the existing gripped predicate.
+    // Its empty nearest list cannot establish that the family has no seam.
+    let before = fixture_files(root)?;
+    let mut command = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
+    command.arg("--write");
+    let refused = run_bounded(command, root, "filtered-family", Duration::from_mins(2))?;
+    assert_eq!(refused.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
+    assert_selector_refusal(&envelope, "seam_not_found");
+    assert_eq!(
+        envelope["refusal"]["reason"],
+        "no predicate reported gap is in the function at src/lib.rs:2; nearest: none"
+    );
+    assert!(prose.starts_with(
+        "ripr: agent stub: no predicate reported gap is in the function at src/lib.rs:2; nearest: none. Run "
+    ), "{prose}");
+    assert_eq!(fixture_files(root)?, before);
     scratch.cleanup()
 }
 
@@ -1576,12 +1651,12 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         .split_once(". Run ")
         .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
     assert_eq!(
-        nearest, "",
+        nearest, "none",
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
         prose.starts_with(
-            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: none",
         ),
         "{stderr}"
     );

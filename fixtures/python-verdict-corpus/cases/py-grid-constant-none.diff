@@ -1,0 +1,9 @@
+diff --git a/grid_constant/core.py b/grid_constant/core.py
+--- a/grid_constant/core.py
++++ b/grid_constant/core.py
+@@ -18,4 +18,4 @@
+ 
+ 
+ def rounding_unit(value):
+-    return value // 10 * 10
++    return value // 5 * 5

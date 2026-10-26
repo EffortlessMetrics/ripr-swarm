@@ -23,11 +23,12 @@
 //! evidence — it can only withhold it.
 
 use crate::analysis::extract::equality_assertion_arguments;
-use crate::analysis::facts::FunctionSummary;
 use crate::analysis::facts::TestFact as TestSummary;
+use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 /// The fixed disclosure a contradicted oracle carries in every evidence
 /// summary: stage summaries, related-test records, and the outcome
@@ -215,6 +216,210 @@ fn verdict_in(
     }
 }
 
+/// The before/after comparison for a selected typed-pointer call. Preparing
+/// the separating-input witness is lazy and shared by this owner pin, so
+/// ordinary direct calls pay no grid scan and later assertions reuse it.
+/// Call identity and assertion admission remain the caller's responsibility.
+pub(in crate::analysis) struct PointerReturnChange {
+    current: SourceText,
+    before: String,
+    after: String,
+    baseline: OnceLock<Option<String>>,
+}
+
+impl PointerReturnChange {
+    pub(in crate::analysis) fn new(
+        owner: &FunctionSummary,
+        before: Option<&str>,
+        after: &str,
+    ) -> Option<Self> {
+        let before = before?;
+        if before == after || owner.body.matches(after).count() != 1 {
+            return None;
+        }
+        Some(Self {
+            current: owner.body.clone(),
+            before: before.to_string(),
+            after: after.to_string(),
+            baseline: OnceLock::new(),
+        })
+    }
+
+    /// Refuse only a completed comparison that proves this call misses the
+    /// change. Unknown folds and equivalent rewrites keep today's reading.
+    pub(in crate::analysis) fn is_invisible_at_call(&self, call: &str) -> bool {
+        let Some(baseline) = self.baseline.get_or_init(|| {
+            let baseline = self.current.replacen(&self.after, &self.before, 1);
+            versions_differ_on_small_inputs(&self.current, &baseline).then_some(baseline)
+        }) else {
+            return false;
+        };
+        let Some(open) = call.find('(') else {
+            return false;
+        };
+        let Some(inside) = super::delimited_contents_at(call, open) else {
+            return false;
+        };
+        let environment = BTreeMap::new();
+        let mut values = Vec::new();
+        for argument in super::split_top_level_commas(&inside) {
+            let Some(value) = fold_expression(&argument, &environment) else {
+                return false;
+            };
+            values.push(value);
+        }
+        match (
+            fold_function_text(&self.current, &values),
+            fold_function_text(baseline, &values),
+        ) {
+            (Some(changed), Some(unchanged)) => changed == unchanged,
+            _ => false,
+        }
+    }
+}
+
+/// Whether the changed expression is invisible to every call the related
+/// tests make (#8659): each test is a plain `#[test]` whose assertions are all
+/// equality assertions over one bare call of `owner` with literal arguments,
+/// and the owner folds to the same value at each call whether it holds
+/// `after` (the current text) or `before`, while a small input grid does find
+/// a call where the two differ (an equivalent rewrite is not reported). Such a test passes on the baseline
+/// and on the change, so it cannot reveal the difference even though its
+/// exact assertion shares the owner. Every other shape (a call outside an
+/// assertion, a case table, a value that does not fold, a body where `after`
+/// is not found exactly once) is `false` and keeps today's credit.
+pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
+    owner: &FunctionSummary,
+    before: &str,
+    after: &str,
+    tests: &[&TestSummary],
+) -> bool {
+    let current = owner.body.as_str();
+    if tests.is_empty() || before == after || current.matches(after).count() != 1 {
+        return false;
+    }
+    let baseline = current.replacen(after, before, 1);
+    // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
+    // too, but "no input reaches a difference" would send the reader after a
+    // test that cannot exist. The change must differ somewhere: a small input
+    // grid has to find a call at which the two bodies fold to different values.
+    if !versions_differ_on_small_inputs(current, &baseline) {
+        return false;
+    }
+    // A related test that never names the owner exercises it through no call
+    // the fold could miss (a helper that calls it makes the owner have other
+    // callers, which the caller checks), so it neither blocks nor supports
+    // the reading; at least one test must name the owner.
+    let mut naming_tests = tests
+        .iter()
+        .filter(|test| count_name_tokens(test.body.as_str(), &owner.name) > 0);
+    if naming_tests.clone().next().is_none() {
+        return false;
+    }
+    naming_tests.all(|test| {
+        if case_row_bindings(test).is_some()
+            || bare_owner_call_is_shadowed(test, &owner.name)
+            || test.assertions.is_empty()
+        {
+            return false;
+        }
+        // Every mention of the owner must be the one call an assertion folds:
+        // a second call in the expected operand, or one outside an
+        // assertion, may separate the versions at an input the fold never saw.
+        if count_name_tokens(test.body.as_str(), &owner.name) != test.assertions.len() {
+            return false;
+        }
+        test.assertions.iter().all(|oracle| {
+            if count_name_tokens(&oracle.text, &owner.name) != 1 {
+                return false;
+            }
+            let Some((_, arguments)) = equality_assertion_shape(&oracle.text) else {
+                return false;
+            };
+            let [actual, ..] = arguments.as_slice() else {
+                return false;
+            };
+            let Some(call_arguments) = owner_call_arguments(actual, &owner.name) else {
+                return false;
+            };
+            let environment = BTreeMap::new();
+            let mut values = Vec::with_capacity(call_arguments.len());
+            for argument in &call_arguments {
+                let Some(value) = fold_expression(argument, &environment) else {
+                    return false;
+                };
+                values.push(value);
+            }
+            match (
+                fold_function_text(current, &values),
+                fold_function_text(&baseline, &values),
+            ) {
+                (Some(changed), Some(unchanged)) => changed == unchanged,
+                _ => false,
+            }
+        })
+    })
+}
+
+/// How many whole-identifier occurrences of `name` the `text` holds.
+fn count_name_tokens(text: &str, name: &str) -> usize {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| *token == name)
+        .count()
+}
+
+/// Whether `current` and `baseline` fold to different values at some call
+/// over a small grid of integer arguments (every parameter takes each of
+/// [`SEPARATION_GRID`]). More than [`SEPARATION_MAX_PARAMETERS`] parameters
+/// are not searched.
+fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
+    const SEPARATION_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
+    const SEPARATION_MAX_PARAMETERS: usize = 3;
+    let Some(parameters) = parse_clean_source_file(current)
+        .and_then(|parse| {
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::Fn::cast)
+                .and_then(|function| function.param_list())
+        })
+        .map(|list| list.params().count())
+    else {
+        return false;
+    };
+    if parameters == 0 || parameters > SEPARATION_MAX_PARAMETERS {
+        return false;
+    }
+    let mut arguments = vec![SEPARATION_GRID[0]; parameters];
+    let mut counters = vec![0usize; parameters];
+    loop {
+        for (argument, counter) in arguments.iter_mut().zip(&counters) {
+            *argument = SEPARATION_GRID[*counter];
+        }
+        if let (Some(changed), Some(unchanged)) = (
+            fold_function_text(current, &arguments),
+            fold_function_text(baseline, &arguments),
+        ) && changed != unchanged
+        {
+            return true;
+        }
+        // Advance the odometer.
+        let mut position = 0;
+        loop {
+            let Some(counter) = counters.get_mut(position) else {
+                return false;
+            };
+            *counter += 1;
+            if *counter < SEPARATION_GRID.len() {
+                break;
+            }
+            *counter = 0;
+            position += 1;
+        }
+    }
+}
+
 /// The one-line disclosure a receipt carries when the oracle is downgraded.
 pub(super) fn contradiction_summary(expected: &str, evaluated: i128) -> String {
     format!("{CONTRADICTION_DISCLOSURE} (asserts {expected}, owner folds to {evaluated})")
@@ -299,7 +504,13 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
 /// Free functions only: a method or nested fn is reached through a receiver
 /// or closure that the bare-path assertion does not name.
 fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> {
-    let parse = parse_clean_source_file(owner.body.as_str())?;
+    fold_function_text(owner.body.as_str(), arguments)
+}
+
+/// [`fold_owner_call`] over the function's source text, so a baseline body
+/// can be folded beside the current one.
+fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
+    let parse = parse_clean_source_file(body)?;
     let function = parse
         .tree()
         .syntax()
@@ -479,6 +690,18 @@ fn tokenize(text: &str) -> Option<Vec<Token>> {
                 b'}' => "}",
                 b',' => ",",
                 b';' => ";",
+                // A method call's dot (`x.min(5)`): it follows a value and
+                // precedes a name. A float's dot (`0.85`) is followed by a
+                // digit and still fails the whole fold.
+                b'.' if matches!(
+                    tokens.last(),
+                    Some(Token::Int(_) | Token::Ident(_) | Token::Symbol(")"))
+                ) && bytes
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphabetic()) =>
+                {
+                    "."
+                }
                 _ => return None,
             }
         };
@@ -808,7 +1031,35 @@ impl<'a> Parser<'a> {
             let value = self.parse_unary()?;
             return Some(Value::Bool(!bool_value(value)?));
         }
-        self.parse_primary()
+        let mut value = self.parse_primary()?;
+        while self.eat_symbol(".") {
+            value = self.parse_integer_method(value)?;
+        }
+        Some(value)
+    }
+
+    /// `.pow(n)`, `.min(n)` or `.max(n)` on an integer value: the only
+    /// methods the fold evaluates. Their receivers are integers by
+    /// construction (every bound name and literal is one), so the std
+    /// integer methods are the ones that run.
+    fn parse_integer_method(&mut self, receiver: Value) -> Option<Value> {
+        let Value::Int(receiver) = receiver else {
+            return None;
+        };
+        let name = self.peek_ident()?.to_string();
+        self.position += 1;
+        self.expect_symbol("(")?;
+        let Value::Int(argument) = self.parse_expression()? else {
+            return None;
+        };
+        self.expect_symbol(")")?;
+        let value = match name.as_str() {
+            "pow" => receiver.checked_pow(u32::try_from(argument).ok()?)?,
+            "min" => receiver.min(argument),
+            "max" => receiver.max(argument),
+            _ => return None,
+        };
+        Some(Value::Int(self.check_range(value)?))
     }
 
     fn parse_primary(&mut self) -> Option<Value> {
@@ -842,7 +1093,7 @@ impl<'a> Parser<'a> {
                 // Calls, method chains, paths and field access are outside
                 // the fold's scope; only bound parameters evaluate.
                 match self.peek_symbol() {
-                    Some("(" | "." | "::") => None,
+                    Some("(" | "::") => None,
                     _ => self.environment.get(&name).copied().map(Value::Int),
                 }
             }
@@ -1438,6 +1689,89 @@ mod tests {
             verdict("    #[case(4, 12)]\n    #[case(5, LIMIT)]")?,
             ExactValueVerdict::NotEvaluable
         );
+        Ok(())
+    }
+
+    fn fold_text(body: &str, arguments: &[i128]) -> Option<i128> {
+        fold_function_text(body, arguments)
+    }
+
+    #[test]
+    fn integer_methods_fold_on_integer_receivers() {
+        let pow = "fn f(a: u32, b: u64) -> u64 { b * 3u64.pow(a) }";
+        assert_eq!(fold_text(pow, &[0, 100]), Some(100));
+        assert_eq!(fold_text(pow, &[2, 10]), Some(90));
+        let min = "fn f(a: u32) -> u32 { a.min(5) }";
+        assert_eq!(fold_text(min, &[3]), Some(3));
+        assert_eq!(fold_text(min, &[9]), Some(5));
+        let max = "fn f(a: u32) -> u32 { a.max(5).min(8) }";
+        assert_eq!(fold_text(max, &[1]), Some(5));
+        assert_eq!(fold_text(max, &[9]), Some(8));
+    }
+
+    #[test]
+    fn unsupported_methods_floats_and_overflow_stay_not_evaluable() {
+        // Only pow/min/max fold; any other method, a float literal and a
+        // `pow` that overflows the declared width fail the whole fold.
+        assert_eq!(fold_text("fn f(a: u32) -> u32 { a.abs() }", &[1]), None);
+        assert_eq!(fold_text("fn f(a: u32) -> u32 { a.pow(-1) }", &[1]), None);
+        assert_eq!(fold_text("fn f(a: u32) -> u32 { a * 0.85 }", &[1]), None);
+        assert_eq!(fold_text("fn f(a: u32) -> u8 { 3u8.pow(a) }", &[9]), None);
+    }
+
+    fn invisible(owner: &str, before: &str, after: &str, test: &str) -> Result<bool, String> {
+        let adapter = RaRustSyntaxAdapter;
+        let source = format!("{owner}\n\n{test}\n");
+        let facts = adapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), &source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "owner")
+            .ok_or("owner function is indexed")?;
+        let tests = facts.tests.iter().collect::<Vec<_>>();
+        Ok(change_is_invisible_to_every_assertion(
+            owner, before, after, &tests,
+        ))
+    }
+
+    const CAP: &str = "pub fn owner(n: u32) -> u32 {\n    n.min(6)\n}";
+
+    #[test]
+    fn an_assertion_below_the_cap_cannot_see_the_raised_cap() -> Result<(), String> {
+        let test = "#[test]\nfn low() {\n    assert_eq!(owner(3), 3);\n}";
+        assert!(invisible(CAP, "n.min(5)", "n.min(6)", test)?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_equivalent_rewrite_is_not_reported_as_invisible() -> Result<(), String> {
+        let owner = "pub fn owner(n: u32) -> u32 {\n    3 * n\n}";
+        let test = "#[test]\nfn a() {\n    assert_eq!(owner(4), 12);\n}";
+        assert!(!invisible(owner, "n * 3", "3 * n", test)?);
+        Ok(())
+    }
+
+    #[test]
+    fn one_separating_call_or_an_unreadable_call_is_not_invisible() -> Result<(), String> {
+        let separating = "#[test]\nfn a() {\n    assert_eq!(owner(3), 3);\n}\n#[test]\nfn b() {\n    assert_eq!(owner(9), 6);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", separating)?);
+        let unreadable = "#[test]\nfn a() {\n    assert_eq!(owner(compute()), 3);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", unreadable)?);
+        // A call outside an equality assertion is not folded either.
+        let outside = "#[test]\nfn a() {\n    let v = owner(3);\n    assert!(v > 0);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", outside)?);
+        // A second owner call in the expected operand, or beside the
+        // assertion, can separate the versions at an input the fold never saw.
+        let expected_side = "#[test]\nfn a() {\n    assert_eq!(owner(3), owner(9) - 3);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", expected_side)?);
+        let beside =
+            "#[test]\nfn a() {\n    let wide = owner(9);\n    assert_eq!(owner(3), wide);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", beside)?);
+        // The changed text must occur exactly once in the owner.
+        let low = "#[test]\nfn a() {\n    assert_eq!(owner(3), 3);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.max(6)", low)?);
         Ok(())
     }
 }

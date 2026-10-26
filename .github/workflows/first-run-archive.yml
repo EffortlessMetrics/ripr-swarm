@@ -66,7 +66,9 @@ jobs:
           $t = Measure-Command { Invoke-Expression $n; ripr --version | Write-Host }
           Write-Host "TotalSeconds: $($t.TotalSeconds)"; if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
       - name: Walk the first-run path with the released archive
         shell: bash

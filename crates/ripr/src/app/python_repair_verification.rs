@@ -2398,4 +2398,1579 @@ mod python_repair_verification_semantics {
         }
         Ok(())
     }
+
+    // ------------------------------------------------------------------
+    // Fail-closed refusal branches. Each negative first proves its input
+    // constructs (a positive control through the same production function)
+    // so a refusal can only come from the identity under test.
+    // ------------------------------------------------------------------
+
+    fn ensure(condition: bool, message: impl Into<String>) -> Result<(), String> {
+        if condition {
+            Ok(())
+        } else {
+            Err(message.into())
+        }
+    }
+
+    /// The refusal text of a production call that must refuse.
+    fn refusal_of<T>(result: Result<T, String>, what: &str) -> Result<String, String> {
+        match result {
+            Ok(_) => Err(format!("{what}: expected a refusal but the call succeeded")),
+            Err(error) => Ok(error),
+        }
+    }
+
+    fn expect_refusal<T>(
+        result: Result<T, String>,
+        what: &str,
+        needle: &str,
+    ) -> Result<(), String> {
+        let error = refusal_of(result, what)?;
+        ensure(
+            error.contains(needle),
+            format!("{what}: the refusal must name `{needle}`, got: {error}"),
+        )
+    }
+
+    /// Clones `base`, then sets (`Some`) or removes (`None`) the field at
+    /// `path`, failing when the fixture does not carry the path.
+    fn mutated(base: &Value, path: &[&str], replacement: Option<Value>) -> Result<Value, String> {
+        let mut value = base.clone();
+        let (last, parents) = path.split_last().ok_or("empty mutation path")?;
+        let mut cursor = &mut value;
+        for key in parents {
+            cursor = cursor
+                .get_mut(*key)
+                .ok_or_else(|| format!("fixture has no `{key}`"))?;
+        }
+        let object = cursor
+            .as_object_mut()
+            .ok_or("the mutation parent is not an object")?;
+        match replacement {
+            Some(new_value) => {
+                object.insert((*last).to_string(), new_value);
+            }
+            None => {
+                if object.remove(*last).is_none() {
+                    return Err(format!("fixture has no `{last}` to remove"));
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn digest_helpers_pin_the_binding_digest_shape() -> Result<(), String> {
+        ensure(
+            sha256_hex(b"abc") == ABC_SHA256,
+            "sha256_hex must produce the lowercase unprefixed digest",
+        )?;
+        ensure(
+            sha256_hex(b"") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "the empty input digest drifted",
+        )?;
+        ensure(
+            is_sha256_hex(ABC_SHA256),
+            "the produced digest must satisfy its own shape check",
+        )?;
+        let upper = ABC_SHA256.to_ascii_uppercase();
+        let short = &ABC_SHA256[..63];
+        let long = format!("{ABC_SHA256}0");
+        let prefixed = format!("sha256:{ABC_SHA256}");
+        let non_hex = format!("g{}", &ABC_SHA256[1..]);
+        for (label, candidate) in [
+            ("uppercase", upper.as_str()),
+            ("63 characters", short),
+            ("65 characters", long.as_str()),
+            ("prefixed", prefixed.as_str()),
+            ("non-hex character", non_hex.as_str()),
+            ("empty", ""),
+        ] {
+            ensure(
+                !is_sha256_hex(candidate),
+                format!("a {label} digest must not satisfy the shape check"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn json_field_readers_refuse_missing_null_empty_and_mistyped_fields() -> Result<(), String> {
+        let object = json!({
+            "name": "value",
+            "padded": "  ",
+            "nothing": null,
+            "number": 7,
+            "negative": -3,
+            "text_number": "5",
+            "flag": true,
+            "text_flag": "true",
+        });
+        let map = as_object(&object, "fixture")?;
+        ensure(
+            require_string("fixture", map, "name")? == "value",
+            "a non-empty string must be returned verbatim",
+        )?;
+        for (field, needle) in [
+            ("absent", "required field is missing"),
+            ("nothing", "a present null is not a value"),
+            ("padded", "required field must be non-empty"),
+            ("number", "field must be a string"),
+        ] {
+            let error = refusal_of(require_string("fixture", map, field), field)?;
+            ensure(
+                error.contains(needle)
+                    && error.contains("subject=`fixture`")
+                    && error.contains(&format!("field=`{field}`")),
+                format!("`{field}` must refuse with `{needle}` naming subject and field: {error}"),
+            )?;
+        }
+        ensure(
+            opt_string(map, "name").as_deref() == Some("value"),
+            "a present string reads through",
+        )?;
+        ensure(
+            opt_string(map, "padded").is_none()
+                && opt_string(map, "nothing").is_none()
+                && opt_string(map, "number").is_none()
+                && opt_string(map, "absent").is_none(),
+            "blank, null, mistyped and absent strings read as None",
+        )?;
+        ensure(opt_u64(map, "number") == Some(7), "a u64 reads through")?;
+        ensure(
+            opt_u64(map, "negative").is_none()
+                && opt_u64(map, "text_number").is_none()
+                && opt_u64(map, "absent").is_none(),
+            "a negative, text or absent number never reads as a u64",
+        )?;
+        ensure(opt_bool(map, "flag") == Some(true), "a bool reads through")?;
+        ensure(
+            opt_bool(map, "text_flag").is_none() && opt_bool(map, "absent").is_none(),
+            "a text or absent flag never reads as a bool",
+        )?;
+        let refused = refusal_of(
+            as_object(&json!(["not", "an", "object"]), "apply record"),
+            "array",
+        )?;
+        ensure(
+            refused.contains("subject=`apply record`") && refused.contains("must be a JSON object"),
+            format!("a non-object must be refused naming its subject: {refused}"),
+        )
+    }
+
+    #[test]
+    fn parse_seams_keeps_the_strongest_known_oracle_and_refuses_malformed_snapshots()
+    -> Result<(), String> {
+        let snapshot = json!({
+            "seams": [
+                {
+                    "seam_id": "strongest",
+                    "owner": "price",
+                    "expression": "a >= b",
+                    "headline_eligible": true,
+                    "grip_class": "weakly_gripped",
+                    "related_tests": [
+                        {"oracle_strength": "weak"},
+                        {"oracle_strength": "strong"},
+                        {"oracle_strength": "medium"},
+                        {"no_strength": true},
+                    ],
+                },
+                {
+                    "seam_id": "unrecognized-only",
+                    "related_tests": [{"oracle_strength": "mystery"}],
+                },
+                {"seam_id": "no-tests"},
+                {},
+            ],
+        });
+        let seams = parse_seams(&snapshot, "fixture")?;
+        ensure(seams.len() == 4, "every seam entry must be parsed")?;
+        let strongest = seams.first().ok_or("missing first seam")?;
+        ensure(
+            strongest.best_oracle_strength == "strong"
+                && strongest.best_oracle_rank == oracle_rank("strong")
+                && strongest.headline_eligible
+                && strongest.owner == "price"
+                && strongest.expression == "a >= b"
+                && strongest.grip_class == "weakly_gripped"
+                && strongest.seam_id == "strongest",
+            "the strongest related oracle and every read field must be retained",
+        )?;
+        for index in 1..4 {
+            let seam = seams.get(index).ok_or("missing seam")?;
+            ensure(
+                seam.best_oracle_strength == "none"
+                    && seam.best_oracle_rank == 0
+                    && !seam.headline_eligible,
+                format!(
+                    "seam {index} has no recognized oracle and must stay `none`, never count as evidence of strength (got `{}`)",
+                    seam.best_oracle_strength
+                ),
+            )?;
+        }
+        let blank = seams.get(3).ok_or("missing empty seam")?;
+        ensure(
+            blank.seam_id.is_empty() && blank.owner.is_empty() && blank.expression.is_empty(),
+            "absent identity fields default to empty, which can never join",
+        )?;
+        expect_refusal(
+            parse_seams(&json!({"run_status": "complete"}), "after snapshot"),
+            "a snapshot without a seams array",
+            "subject=`after snapshot`: the analysis snapshot carries no seams array",
+        )?;
+        expect_refusal(
+            parse_seams(&json!({"seams": "not-an-array"}), "before snapshot"),
+            "a non-array seams field",
+            "carries no seams array",
+        )?;
+        expect_refusal(
+            parse_seams(&json!({"seams": ["scalar"]}), "before snapshot"),
+            "a non-object seam entry",
+            "subject=`seam entry`",
+        )
+    }
+
+    fn one_seam_snapshot(seam_id: &str, headline: bool, oracle: &str) -> Value {
+        snapshot(vec![seam(
+            seam_id,
+            "price",
+            "amount >= limit",
+            headline,
+            "weakly_gripped",
+            oracle,
+        )])
+    }
+
+    fn compare(before: &Value, after: &Value, status: &str) -> Result<MovementOutcome, String> {
+        compare_movement(before, after, status, "price", "amount >= limit", "s1")
+    }
+
+    #[test]
+    fn movement_classification_covers_every_headline_and_oracle_transition() -> Result<(), String> {
+        // (before headline, before oracle, after headline, after oracle, state)
+        let cases = [
+            (false, "weak", false, "strong", "unchanged"),
+            (false, "weak", true, "weak", "regressed"),
+            (true, "weak", false, "none", "closed"),
+            (true, "weak", true, "medium", "improved"),
+            (true, "medium", true, "medium", "unchanged"),
+            (true, "strong", true, "weak", "regressed"),
+            // An unrecognized after oracle ranks lowest and so regresses.
+            (true, "weak", true, "mystery", "regressed"),
+        ];
+        for (before_headline, before_oracle, after_headline, after_oracle, expected) in cases {
+            let outcome = compare(
+                &one_seam_snapshot("s1", before_headline, before_oracle),
+                &one_seam_snapshot("s1", after_headline, after_oracle),
+                "complete",
+            )?;
+            ensure(
+                outcome.state == expected,
+                format!(
+                    "headline {before_headline}/{after_headline}, oracle {before_oracle}->{after_oracle} must be `{expected}`, got `{}`",
+                    outcome.state
+                ),
+            )?;
+            ensure(
+                outcome.before_seam_id.as_deref() == Some("s1")
+                    && outcome.after_seam_id.as_deref() == Some("s1")
+                    && outcome.before_headline == Some(before_headline)
+                    && outcome.after_headline == Some(after_headline)
+                    && outcome.reason.is_none(),
+                "a joined movement records both exact seam identities and no reason",
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn movement_joins_fail_closed_with_the_identity_state_they_reached() -> Result<(), String> {
+        let before = one_seam_snapshot("s1", true, "weak");
+        let after = one_seam_snapshot("s1", true, "weak");
+        // Positive control for the fixture: the same inputs join and classify.
+        ensure(
+            compare(&before, &after, "complete")?.state == "unchanged",
+            "the control inputs must join",
+        )?;
+
+        // An empty native identity can never be an exact join, and that
+        // refusal outranks the partial-analysis disclosure.
+        for (owner, discriminator) in [("", "amount >= limit"), ("price", "   ")] {
+            let outcome = compare_movement(
+                &before,
+                &after,
+                "seam_limit_applied",
+                owner,
+                discriminator,
+                "s1",
+            )?;
+            ensure(
+                outcome.state == "uncertain"
+                    && outcome
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains("empty owner or discriminator")),
+                format!(
+                    "an empty identity (`{owner}`/`{discriminator}`) must be uncertain, got `{}`",
+                    outcome.state
+                ),
+            )?;
+        }
+
+        // Zero before join: nothing is located, nothing is recorded.
+        let outcome = compare_movement(
+            &before,
+            &after,
+            "complete",
+            "other",
+            "amount >= limit",
+            "s1",
+        )?;
+        ensure(
+            outcome.state == "uncertain"
+                && outcome.before_seam_id.is_none()
+                && outcome.after_seam_id.is_none()
+                && outcome
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("zero seams in the before analysis")),
+            "a zero before join must fail closed to uncertain",
+        )?;
+
+        // Zero after join: the before seam is retained, the after side is not.
+        let vanished = snapshot(vec![seam(
+            "x",
+            "elsewhere",
+            "e",
+            true,
+            "weakly_gripped",
+            "weak",
+        )]);
+        let outcome = compare(&before, &vanished, "complete")?;
+        ensure(
+            outcome.state == "uncertain"
+                && outcome.before_seam_id.as_deref() == Some("s1")
+                && outcome.after_seam_id.is_none()
+                && outcome.after_grip_class.is_none()
+                && outcome
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("zero seams in the after analysis")),
+            "a vanished seam must be uncertain, never closed",
+        )?;
+
+        // Multiple after join is ambiguous and records no after identity.
+        let doubled = snapshot(vec![
+            seam(
+                "s1",
+                "price",
+                "amount >= limit",
+                true,
+                "weakly_gripped",
+                "weak",
+            ),
+            seam(
+                "s2",
+                "price",
+                "amount >= limit",
+                false,
+                "strongly_gripped",
+                "strong",
+            ),
+        ]);
+        let outcome = compare(&before, &doubled, "complete")?;
+        ensure(
+            outcome.state == "uncertain"
+                && outcome.after_seam_id.is_none()
+                && outcome
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("joins 2 seams in the after analysis")),
+            "a multiple after join must fail closed to uncertain",
+        )?;
+
+        // A stale before join stops before the after join is read.
+        let outcome = compare_movement(
+            &before,
+            &after,
+            "complete",
+            "price",
+            "amount >= limit",
+            "other-seam",
+        )?;
+        ensure(
+            outcome.state == "stale"
+                && outcome.before_seam_id.as_deref() == Some("s1")
+                && outcome.after_seam_id.is_none()
+                && outcome
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("names seam `other-seam`")),
+            "a moved identity must be stale and record only the before side",
+        )?;
+
+        // A partial analysis discloses limited and keeps unrelated counts.
+        let with_unrelated = snapshot(vec![
+            seam(
+                "s1",
+                "price",
+                "amount >= limit",
+                true,
+                "weakly_gripped",
+                "weak",
+            ),
+            seam("o", "other", "x", true, "ungripped", "none"),
+        ]);
+        let outcome = compare(&before, &with_unrelated, "seam_limit_applied")?;
+        ensure(
+            outcome.state == "limited"
+                && outcome.unrelated_actionable_after == 1
+                && outcome.unrelated_regressed
+                && outcome.before_seam_id.is_none()
+                && outcome
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("seam_limit_applied")),
+            "a partial analysis must disclose limited without classifying movement",
+        )?;
+
+        // A malformed snapshot is a refusal naming which side was malformed.
+        expect_refusal(
+            compare_movement(
+                &json!({}),
+                &after,
+                "complete",
+                "price",
+                "amount >= limit",
+                "s1",
+            ),
+            "a before snapshot without seams",
+            "before snapshot",
+        )?;
+        expect_refusal(
+            compare_movement(
+                &before,
+                &json!({}),
+                "complete",
+                "price",
+                "amount >= limit",
+                "s1",
+            ),
+            "an after snapshot without seams",
+            "after snapshot",
+        )
+    }
+
+    #[test]
+    fn unrelated_movement_counts_only_other_headline_seams() -> Result<(), String> {
+        let mine = || {
+            seam(
+                "s1",
+                "price",
+                "amount >= limit",
+                true,
+                "weakly_gripped",
+                "weak",
+            )
+        };
+        let before = snapshot(vec![
+            mine(),
+            seam("a", "other", "x", true, "ungripped", "none"),
+            seam("b", "other", "y", true, "ungripped", "none"),
+            // Not headline-eligible: never counted as unrelated actionable.
+            seam("c", "other", "z", false, "ungripped", "none"),
+        ]);
+        let improved_after = snapshot(vec![
+            mine(),
+            seam("a", "other", "x", true, "ungripped", "none"),
+            seam("c", "other", "z", false, "ungripped", "none"),
+        ]);
+        let outcome = compare(&before, &improved_after, "complete")?;
+        ensure(
+            outcome.state == "unchanged"
+                && outcome.unrelated_actionable_before == 2
+                && outcome.unrelated_actionable_after == 1
+                && outcome.unrelated_improved
+                && !outcome.unrelated_regressed,
+            "one fewer unrelated actionable seam is an unrelated improvement and stays out of the intended movement",
+        )?;
+        let same = compare(&before, &before, "complete")?;
+        ensure(
+            same.unrelated_actionable_before == 2
+                && same.unrelated_actionable_after == 2
+                && !same.unrelated_improved
+                && !same.unrelated_regressed,
+            "equal unrelated counts are neither improved nor regressed, and the intended seam is never counted as unrelated",
+        )
+    }
+
+    fn rendered_response(value: Value) -> String {
+        format!("{value}\n")
+    }
+
+    #[test]
+    fn execution_response_maps_the_run_only_when_it_actually_executed() -> Result<(), String> {
+        let result = json!({
+            "process_disposition": "completed",
+            "exit_status": 3,
+            "exit_signal": null,
+            "stdout_sha256": ABC_SHA256,
+            "stderr_sha256": "",
+            "stdout_bytes": 12,
+            "stderr_bytes": 4,
+            "stdout_truncated": true,
+            "stderr_truncated": false,
+            "currentness": "current",
+            "duration_ms": 99,
+            "cancellation_requested": true,
+        });
+        let executed = rendered_response(json!({"executed": true, "result": result.clone()}));
+        let observed = map_execution_response(&executed)?;
+        ensure(
+            observed.state == "failed"
+                && observed.process_disposition == "completed"
+                && observed.exit_status == Some(3)
+                && observed.exit_signal.is_none()
+                && observed.stdout_sha256.as_deref() == Some(ABC_SHA256)
+                && observed.stderr_sha256.is_none()
+                && observed.stdout_bytes == Some(12)
+                && observed.stderr_bytes == Some(4)
+                && observed.stdout_truncated
+                && !observed.stderr_truncated
+                && observed.currentness.as_deref() == Some("current")
+                && observed.duration_ms == Some(99)
+                && observed.cancellation_requested
+                && observed.reason.is_none(),
+            format!("an executed run must keep every committed field, got {observed:?}"),
+        )?;
+
+        // The same result under `executed: false` (or no flag, or a non-bool
+        // flag) is never a run: it maps to a typed pre-execution rejection,
+        // not to the pass/fail the embedded result would suggest.
+        let passing = json!({
+            "process_disposition": "completed",
+            "exit_status": 0,
+        });
+        ensure(
+            map_execution_response(&rendered_response(
+                json!({"executed": true, "result": passing.clone()}),
+            ))?
+            .state
+                == "passed",
+            "control: an executed zero-exit run passes",
+        )?;
+        for response in [
+            json!({"executed": false, "result": passing.clone()}),
+            json!({"result": passing.clone()}),
+            json!({"executed": "true", "result": passing.clone()}),
+            json!({"executed": true, "result": "not-an-object"}),
+        ] {
+            let observed = map_execution_response(&rendered_response(response.clone()))?;
+            ensure(
+                observed.state == "invalid"
+                    && observed.process_disposition == "rejected_before_execution"
+                    && observed.exit_status.is_none(),
+                format!("{response} must not be read as a run, got {observed:?}"),
+            )?;
+        }
+
+        expect_refusal(
+            map_execution_response("not json"),
+            "a non-JSON response",
+            "not well-formed JSON",
+        )?;
+        expect_refusal(
+            map_execution_response(&rendered_response(
+                json!({"executed": true, "result": {"exit_status": 0}}),
+            )),
+            "an executed result without a process disposition",
+            "field=`process_disposition`",
+        )?;
+        expect_refusal(
+            map_execution_response(&rendered_response(
+                json!({"executed": true, "result": {"process_disposition": "mystery", "exit_status": 0}}),
+            )),
+            "an executed result with an unknown disposition",
+            "unknown execution disposition `mystery`",
+        )?;
+        expect_refusal(
+            map_execution_response(&rendered_response(
+                json!({"executed": true, "result": {"process_disposition": "completed"}}),
+            )),
+            "a completed result carrying neither status nor signal",
+            "neither an exit status nor a termination signal",
+        )
+    }
+
+    #[test]
+    fn rejected_responses_distinguish_a_missing_command_from_other_refusals() -> Result<(), String>
+    {
+        let missing = map_execution_response(&rendered_response(json!({
+            "disposition": "verification_command_not_found",
+            "executed": false,
+        })))?;
+        ensure(
+            missing.state == "unavailable"
+                && missing.process_disposition == "rejected_before_execution"
+                && missing.reason.as_deref()
+                    == Some(
+                        "the bounded execution rails reported `verification_command_not_found`",
+                    ),
+            format!("a missing command is unavailable with the fallback reason, got {missing:?}"),
+        )?;
+        let other = map_execution_response(&rendered_response(json!({
+            "disposition": "verification_rejected_policy",
+            "reason": "policy refused",
+            "executed": false,
+        })))?;
+        ensure(
+            other.state == "invalid" && other.reason.as_deref() == Some("policy refused"),
+            format!("any other refusal is invalid and keeps its own reason, got {other:?}"),
+        )?;
+        let unnamed = map_execution_response("{}")?;
+        ensure(
+            unnamed.state == "invalid"
+                && unnamed.reason.as_deref() == Some("the bounded execution rails reported ``"),
+            "an unnamed refusal is invalid, never unavailable",
+        )?;
+        let unavailable = unavailable_route_observation();
+        ensure(
+            unavailable.state == "unavailable"
+                && unavailable.process_disposition == "route_unavailable"
+                && unavailable.exit_status.is_none()
+                && unavailable.stdout_sha256.is_none()
+                && unavailable.duration_ms.is_none()
+                && !unavailable.cancellation_requested
+                && unavailable
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("no canonical typed verify route")),
+            "an absent route runs nothing and is typed unavailable",
+        )
+    }
+
+    fn attempt_id() -> Result<RepairAttemptId, String> {
+        RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")
+    }
+
+    fn verified_selection() -> VerifiedSelection {
+        VerifiedSelection {
+            attempt_id: "trust-attempt".to_string(),
+            selection_manifest_sha256: "m".repeat(8),
+            selection_manifest_path: "selection.json".to_string(),
+            selection_digest: "selection-digest".to_string(),
+            case_id: "case".to_string(),
+            subject_id: "subject".to_string(),
+            repository: "repo".to_string(),
+            base: "base".to_string(),
+            head: "head-1".to_string(),
+            tree: None,
+            source_currentness: None,
+            family: "predicate_boundary".to_string(),
+            owner: "price".to_string(),
+            discriminator: "amount >= limit".to_string(),
+            relation: "boundary".to_string(),
+            oracle: "weak".to_string(),
+            limitation: None,
+            target_path: "tests/test_price.py".to_string(),
+            target_state: "present".to_string(),
+        }
+    }
+
+    fn revalidated_attempt(command_route: Option<(String, String)>) -> RevalidatedAttempt {
+        RevalidatedAttempt {
+            verified: verified_selection(),
+            binding_artifact_sha256: "binding-digest".to_string(),
+            manifest_seam_id: "s1".to_string(),
+            packet_path: PathBuf::from("packet.json"),
+            before_snapshot_path: PathBuf::from("before.json"),
+            packet_sha256: "packet-digest".to_string(),
+            before_snapshot_sha256: "before-digest".to_string(),
+            patch_sha256: "patch-digest".to_string(),
+            changed_paths: vec!["tests/test_price.py".to_string()],
+            allowed_surface: std::collections::BTreeSet::new(),
+            repository_head: "head-1".to_string(),
+            config_profile: "default".to_string(),
+            command_route,
+        }
+    }
+
+    fn observed_execution(state: &'static str) -> ObservedExecution {
+        ObservedExecution {
+            state,
+            process_disposition: "completed".to_string(),
+            exit_status: Some(0),
+            exit_signal: None,
+            stdout_sha256: None,
+            stderr_sha256: None,
+            stdout_bytes: None,
+            stderr_bytes: None,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            currentness: None,
+            duration_ms: None,
+            cancellation_requested: false,
+            reason: None,
+        }
+    }
+
+    fn movement_outcome(state: &'static str) -> MovementOutcome {
+        MovementOutcome {
+            state,
+            reason: None,
+            before_seam_id: Some("s1".to_string()),
+            after_seam_id: Some("s1".to_string()),
+            before_grip_class: None,
+            after_grip_class: None,
+            before_oracle: None,
+            after_oracle: None,
+            before_headline: Some(true),
+            after_headline: Some(true),
+            unrelated_actionable_before: 0,
+            unrelated_actionable_after: 0,
+            unrelated_regressed: false,
+            unrelated_improved: false,
+        }
+    }
+
+    fn rollback_outcome(state: &'static str) -> RollbackOutcome {
+        RollbackOutcome {
+            state,
+            reason: None,
+            post_rollback_head: None,
+        }
+    }
+
+    fn render(
+        route: Option<(String, String)>,
+        execution: &ObservedExecution,
+        movement: &MovementOutcome,
+        rollback: &RollbackOutcome,
+    ) -> Result<Value, String> {
+        let revalidated = revalidated_attempt(route);
+        render_receipt(
+            &attempt_id()?,
+            &revalidated,
+            &revalidated.verified,
+            "operator-a",
+            execution,
+            movement,
+            ABC_SHA256,
+            "complete",
+            "binary-digest",
+            rollback,
+        )
+    }
+
+    #[test]
+    fn receipt_keeps_execution_and_movement_independent_and_refuses_unknown_states()
+    -> Result<(), String> {
+        // Control: a passed command beside a regressed movement renders both,
+        // each as recorded, with nothing derived from the other.
+        let receipt = render(
+            None,
+            &observed_execution("passed"),
+            &movement_outcome("regressed"),
+            &rollback_outcome("not_run"),
+        )?;
+        let field = |pointer: &str| receipt.pointer(pointer).cloned().unwrap_or(Value::Null);
+        ensure(
+            field("/execution/state") == json!("passed")
+                && field("/movement/state") == json!("regressed")
+                && field("/rollback/state") == json!("not_run")
+                && field("/phase") == json!("verify")
+                && field("/kind") == json!(RECEIPT_KIND)
+                && field("/spec") == json!(RECEIPT_SPEC)
+                && field("/schema_version") == json!(RECEIPT_SCHEMA_VERSION)
+                && field("/durable_attempt_id") == json!("repair-attempt-0123456789abcdef01234567")
+                && field("/trust_attempt_id") == json!("trust-attempt")
+                && field("/command/authorization/authority") == json!("operator-a")
+                && field("/command/authorization/status") == json!("granted")
+                && field("/movement/after_snapshot_sha256") == json!(ABC_SHA256)
+                && field("/movement/identity/owner") == json!("price")
+                && field("/identities/analyzer_binary_sha256") == json!("binary-digest")
+                && field("/non_claims") == json!(VERIFICATION_NON_CLAIMS)
+                && field("/claim_boundary") == json!(CLAIM_BOUNDARY),
+            format!("the receipt must restate every verified identity: {receipt}"),
+        )?;
+        ensure(
+            field("/command/command_spec_sha256").is_null() && field("/command/display").is_null(),
+            "a packet with no typed route records a null command, never a reconstructed one",
+        )?;
+        let object = receipt.as_object().ok_or("the receipt is not an object")?;
+        for forbidden in [
+            "state",
+            "status",
+            "lifecycle",
+            "accepted",
+            "closed",
+            "verdict",
+            "result",
+        ] {
+            ensure(
+                !object.contains_key(forbidden),
+                format!("the receipt schema must carry no `{forbidden}` field"),
+            )?;
+        }
+
+        let routed = render(
+            Some(("route-digest".to_string(), "ripr agent verify".to_string())),
+            &observed_execution("failed"),
+            &movement_outcome("closed"),
+            &rollback_outcome("proved"),
+        )?;
+        ensure(
+            routed.pointer("/command/command_spec_sha256") == Some(&json!("route-digest"))
+                && routed.pointer("/command/display") == Some(&json!("ripr agent verify"))
+                && routed.pointer("/execution/state") == Some(&json!("failed"))
+                && routed.pointer("/movement/state") == Some(&json!("closed")),
+            "a typed route is recorded exactly and a failed run beside closed movement stays independent",
+        )?;
+
+        // Every vocabulary member renders; one word outside each refuses.
+        for state in EXECUTION_STATES {
+            render(
+                None,
+                &observed_execution(state),
+                &movement_outcome("unchanged"),
+                &rollback_outcome("not_run"),
+            )?;
+        }
+        for state in MOVEMENT_STATES {
+            render(
+                None,
+                &observed_execution("passed"),
+                &movement_outcome(state),
+                &rollback_outcome("not_run"),
+            )?;
+        }
+        for state in ROLLBACK_STATES {
+            render(
+                None,
+                &observed_execution("passed"),
+                &movement_outcome("unchanged"),
+                &rollback_outcome(state),
+            )?;
+        }
+        expect_refusal(
+            render(
+                None,
+                &observed_execution("succeeded"),
+                &movement_outcome("unchanged"),
+                &rollback_outcome("not_run"),
+            ),
+            "an execution state outside the vocabulary",
+            "execution state `succeeded` is outside the closed vocabulary",
+        )?;
+        expect_refusal(
+            render(
+                None,
+                &observed_execution("passed"),
+                &movement_outcome("accepted"),
+                &rollback_outcome("not_run"),
+            ),
+            "a movement state outside the vocabulary",
+            "movement state `accepted` is outside the closed vocabulary",
+        )?;
+        expect_refusal(
+            render(
+                None,
+                &observed_execution("passed"),
+                &movement_outcome("unchanged"),
+                &rollback_outcome("verified"),
+            ),
+            "a rollback state outside the vocabulary",
+            "rollback state `verified` is outside the closed vocabulary",
+        )
+    }
+
+    fn apply_record() -> Value {
+        json!({
+            "durable_attempt_id": "repair-attempt-0123456789abcdef01234567",
+            "binding_artifact_sha256": "binding-digest",
+            "repository_head": "head-1",
+            "trust": {"attempt_id": "trust-attempt", "selection_digest": "selection-digest"},
+            "apply": {"patch_sha256": "patch-digest", "current": true, "cage_status": "compliant"},
+            "input": {"packet_sha256": "packet-digest", "before_snapshot_sha256": "before-digest"},
+        })
+    }
+
+    fn check_apply(apply: &Value, repository_head: &str) -> Result<(), String> {
+        let binding = RetainedBinding {
+            artifact_sha256: "binding-digest".to_string(),
+            value: json!({}),
+        };
+        check_apply_record(
+            as_object(apply, "apply record")?,
+            &attempt_id()?,
+            &binding,
+            &verified_selection(),
+            ApplyRecordPins {
+                patch_sha256: "patch-digest",
+                packet_sha256: "packet-digest",
+                before_snapshot_sha256: "before-digest",
+                repository_head,
+            },
+        )
+    }
+
+    #[test]
+    fn apply_record_must_restate_every_pinned_identity() -> Result<(), String> {
+        let base = apply_record();
+        check_apply(&base, "head-1")?;
+
+        let cases: [(&str, &[&str], Option<Value>, &str); 17] = [
+            (
+                "another attempt",
+                &["durable_attempt_id"],
+                Some(json!("repair-attempt-ffffffffffffffffffffffff")),
+                "names durable attempt",
+            ),
+            (
+                "missing attempt id",
+                &["durable_attempt_id"],
+                None,
+                "field=`durable_attempt_id`",
+            ),
+            (
+                "another binding digest",
+                &["binding_artifact_sha256"],
+                Some(json!("other-binding")),
+                "chains binding artifact `other-binding`",
+            ),
+            (
+                "another recorded head",
+                &["repository_head"],
+                Some(json!("head-2")),
+                "stale tree",
+            ),
+            (
+                "no trust block",
+                &["trust"],
+                None,
+                "apply record is missing trust",
+            ),
+            (
+                "another trust attempt",
+                &["trust", "attempt_id"],
+                Some(json!("someone-else")),
+                "binds trust attempt `someone-else`",
+            ),
+            (
+                "another selection digest",
+                &["trust", "selection_digest"],
+                Some(json!("other-selection")),
+                "selection digest leaves the retained binding",
+            ),
+            (
+                "no apply block",
+                &["apply"],
+                None,
+                "missing its apply block",
+            ),
+            (
+                "another patch",
+                &["apply", "patch_sha256"],
+                Some(json!("other-patch")),
+                "stale patch",
+            ),
+            (
+                "not a current repository",
+                &["apply", "current"],
+                Some(json!(false)),
+                "does not carry a current repository",
+            ),
+            (
+                "currentness absent",
+                &["apply", "current"],
+                None,
+                "does not carry a current repository",
+            ),
+            (
+                "a non-bool currentness",
+                &["apply", "current"],
+                Some(json!("true")),
+                "does not carry a current repository",
+            ),
+            (
+                "a violated cage",
+                &["apply", "cage_status"],
+                Some(json!("violated")),
+                "edit-cage decision is `violated`, not compliant",
+            ),
+            ("no input block", &["input"], None, "missing input"),
+            (
+                "another packet digest",
+                &["input", "packet_sha256"],
+                Some(json!("other-packet")),
+                "stale packet",
+            ),
+            (
+                "another before digest",
+                &["input", "before_snapshot_sha256"],
+                Some(json!("other-before")),
+                "stale input",
+            ),
+            (
+                "a blank patch digest",
+                &["apply", "patch_sha256"],
+                Some(json!("  ")),
+                "required field must be non-empty",
+            ),
+        ];
+        for (label, path, replacement, needle) in cases {
+            let apply = mutated(&base, path, replacement)?;
+            expect_refusal(check_apply(&apply, "head-1"), label, needle)?;
+        }
+
+        // The record and the binding may agree while the live repository has
+        // moved: all three heads must agree.
+        expect_refusal(
+            check_apply(&base, "head-moved"),
+            "a repository HEAD that moved after the apply record",
+            "stale tree — the apply record pins head `head-1`",
+        )
+    }
+
+    #[test]
+    fn config_profile_distinguishes_a_present_subject_config_from_defaults() -> Result<(), String> {
+        let fixture = rollback_fixture("config-profile")?;
+        ensure(
+            detect_config_profile(&fixture.root) == "default",
+            "control: no ripr.toml is the default profile",
+        )?;
+        std::fs::write(fixture.root.join("ripr.toml"), "")
+            .map_err(|error| format!("write ripr.toml: {error}"))?;
+        ensure(
+            detect_config_profile(&fixture.root) == "subject-ripr-toml",
+            "a regular ripr.toml is the subject profile",
+        )
+    }
+
+    #[test]
+    fn rollback_restores_only_the_declared_surface_and_blocks_unrestorable_paths()
+    -> Result<(), String> {
+        let fixture = rollback_fixture("surface-guard")?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+        let baseline =
+            crate::edit_cage::capture_attempt_baseline(&fixture.root, &rollback_policy()?)?;
+        let edited = "fn boundary() { assert!(true); }\n";
+        std::fs::write(fixture.root.join("tests/pricing.rs"), edited)
+            .map_err(|error| format!("write applied edit: {error}"))?;
+
+        // No changed paths, and changed paths wholly outside the declared
+        // edit surface, both leave nothing to restore: blocked, untouched.
+        for changed in [
+            Vec::new(),
+            vec!["target/ripr/workflow/artifact.json".to_string()],
+        ] {
+            let outcome = run_rollback(
+                &fixture.root,
+                &changed,
+                &rollback_allowed(),
+                &baseline,
+                &head,
+            );
+            ensure(
+                outcome.state == "blocked"
+                    && outcome.post_rollback_head.is_none()
+                    && outcome
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains("names no changed paths")),
+                format!(
+                    "changed paths {changed:?} must block with nothing to restore, got {outcome:?}"
+                ),
+            )?;
+            let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
+                .map_err(|error| format!("read target: {error}"))?;
+            ensure(
+                content == edited,
+                "a blocked rollback must leave the applied edit on disk",
+            )?;
+        }
+
+        // Control: the same fixture proves once the surface path is named.
+        let proved = run_rollback(
+            &fixture.root,
+            &[
+                "tests/pricing.rs".to_string(),
+                "target/ripr/workflow/artifact.json".to_string(),
+            ],
+            &rollback_allowed(),
+            &baseline,
+            &head,
+        );
+        ensure(
+            proved.state == "proved" && proved.reason.is_none(),
+            format!("control: naming the surface path must prove, got {proved:?}"),
+        )?;
+        let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read target: {error}"))?;
+        ensure(
+            content == "fn boundary() {}\n",
+            "a proved rollback restores the baseline bytes",
+        )
+    }
+
+    #[test]
+    fn rollback_refuses_a_path_the_baseline_never_tracked() -> Result<(), String> {
+        let fixture = rollback_fixture("untracked-target")?;
+        std::fs::write(fixture.root.join("tests/fresh.rs"), "fn fresh() {}\n")
+            .map_err(|error| format!("write untracked target: {error}"))?;
+        let policy = crate::edit_cage::EditCagePolicy {
+            selected_target: crate::edit_cage::CagePathRule::exact("tests/fresh.rs")?,
+            allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact("tests/fresh.rs")?],
+            forbidden_paths: Vec::new(),
+            expected_operational_writes: Vec::new(),
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
+            inline_test_module_target: false,
+        };
+        let baseline = crate::edit_cage::capture_attempt_baseline(&fixture.root, &policy)?;
+        ensure(
+            baseline.index_entry("tests/fresh.rs").is_none()
+                && baseline.index_entry("tests/pricing.rs").is_some(),
+            "the fixture must record no index entry for the untracked target and one for the tracked file",
+        )?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+        std::fs::write(
+            fixture.root.join("tests/fresh.rs"),
+            "fn fresh() { assert!(true); }\n",
+        )
+        .map_err(|error| format!("write applied edit: {error}"))?;
+        let mut allowed = std::collections::BTreeSet::new();
+        allowed.insert("tests/fresh.rs".to_string());
+        let outcome = run_rollback(
+            &fixture.root,
+            &["tests/fresh.rs".to_string()],
+            &allowed,
+            &baseline,
+            &head,
+        );
+        ensure(
+            outcome.state == "blocked"
+                && outcome
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("records no git index entry")),
+            format!("an untracked path cannot be restored by checkout, got {outcome:?}"),
+        )?;
+        let content = std::fs::read_to_string(fixture.root.join("tests/fresh.rs"))
+            .map_err(|error| format!("read target: {error}"))?;
+        ensure(
+            content.contains("assert!(true)"),
+            "the refusal happens before any destructive command",
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // Phase entry refusals against a real durable attempt.
+    // ------------------------------------------------------------------
+
+    struct AttemptFixture {
+        root: PathBuf,
+        attempt_id: RepairAttemptId,
+        manifest_path: PathBuf,
+        packet_path: PathBuf,
+    }
+
+    impl Drop for AttemptFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn unique_root(label: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-verify-phase-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create {}: {error}", root.display()))?;
+        root.canonicalize()
+            .map_err(|error| format!("canonicalize {}: {error}", root.display()))
+    }
+
+    /// A real prepared attempt (awaiting_edit) in a throwaway git repository,
+    /// optionally finished with one applied edit on the declared surface.
+    fn attempt_fixture(label: &str, finish: bool) -> Result<AttemptFixture, String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, finish_repair_attempt, write_edit_cage_baseline,
+        };
+        let root = unique_root(label)?;
+        let git = |args: &[&str]| crate::testing::fixture_git::fixture_git_ok(&root, args);
+        git(&["init"])?;
+        git(&["config", "user.email", "ripr-test@example.invalid"])?;
+        git(&["config", "user.name", "RIPR Test"])?;
+        std::fs::write(root.join("README.md"), "# test\n")
+            .map_err(|error| format!("write readme: {error}"))?;
+        git(&["add", "."])?;
+        git(&["commit", "--no-gpg-sign", "-m", "initial"])?;
+        let fixture_root = root.clone();
+        let result = (|| -> Result<AttemptFixture, String> {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|error| format!("create workflow dir: {error}"))?;
+            let before = workflow.join("before-verify.json");
+            let packet = workflow.join("packet-verify.json");
+            let baseline = workflow.join("baseline-verify.json");
+            let before_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+                &root,
+                json!([crate::testing::verify_fixture::snapshot_seam(
+                    "seam:sample",
+                    "predicate_boundary",
+                    "src/lib.rs",
+                    1,
+                    "weakly_gripped",
+                )]),
+            )?;
+            std::fs::write(&before, before_snapshot.as_bytes())
+                .map_err(|error| format!("write before snapshot: {error}"))?;
+            let packet_text = json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/target.rs"],
+                "forbidden_files": [],
+            })
+            .to_string();
+            std::fs::write(&packet, packet_text.as_bytes())
+                .map_err(|error| format!("write packet: {error}"))?;
+            let policy = edit_cage_policy_from_packet(&packet_text, "seam:sample")?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            let prepared = begin_repair_attempt_with(BeginRepairAttemptOptions {
+                root: &root,
+                root_argument: &root,
+                seam_id: "seam:sample",
+                sources: &[
+                    BeforeArtifactSource {
+                        role: "before_snapshot",
+                        path: &before,
+                    },
+                    BeforeArtifactSource {
+                        role: "agent_packet",
+                        path: &packet,
+                    },
+                    BeforeArtifactSource {
+                        role: "edit_cage_baseline",
+                        path: &baseline,
+                    },
+                ],
+                expected_repository_head: None,
+                next_command_suffix: None,
+                store: None,
+            })?;
+            let attempt_id = prepared.manifest.repair_attempt_id.clone();
+            let packet_artifact =
+                find_manifest_artifact_by_role(&prepared.manifest, "agent_packet")
+                    .ok_or("the prepared attempt retains no packet")?;
+            let packet_path = root.join(&packet_artifact.path);
+            if finish {
+                std::fs::create_dir_all(root.join("tests"))
+                    .map_err(|error| format!("create tests dir: {error}"))?;
+                std::fs::write(root.join("tests/target.rs"), "#[test]\nfn focused() {}\n")
+                    .map_err(|error| format!("write applied edit: {error}"))?;
+                finish_repair_attempt(
+                    &root,
+                    &attempt_id,
+                    &packet_path,
+                    crate::edit_cage::HeadMovement::AdmitDescendantCommits,
+                )?;
+            }
+            Ok(AttemptFixture {
+                root: root.clone(),
+                attempt_id,
+                manifest_path: prepared.manifest_path,
+                packet_path,
+            })
+        })();
+        match result {
+            Ok(fixture) => Ok(fixture),
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&fixture_root);
+                Err(error)
+            }
+        }
+    }
+
+    fn granted() -> VerifyAuthorization {
+        VerifyAuthorization {
+            authorized: true,
+            authority: Some("operator-a".to_string()),
+        }
+    }
+
+    fn run_phase(
+        root: &Path,
+        attempt_id: &str,
+        authorization: VerifyAuthorization,
+    ) -> Result<PathBuf, String> {
+        run_verification_phase(VerificationOptions {
+            root,
+            attempt_id,
+            authorization,
+            rollback: false,
+            store: None,
+        })
+    }
+
+    #[test]
+    fn phase_refuses_before_touching_the_root_without_explicit_authorization() -> Result<(), String>
+    {
+        let missing_root = unique_root("auth-order")?.join("no-such-subdir");
+        let attempt = "repair-attempt-0123456789abcdef01234567";
+        // Control: an authorized run reaches the root canonicalization.
+        expect_refusal(
+            run_phase(&missing_root, attempt, granted()),
+            "an authorized run over a missing root",
+            "canonicalize verification root failed",
+        )?;
+        for authorization in [
+            VerifyAuthorization {
+                authorized: false,
+                authority: Some("operator-a".to_string()),
+            },
+            VerifyAuthorization {
+                authorized: true,
+                authority: Some("   ".to_string()),
+            },
+            VerifyAuthorization {
+                authorized: true,
+                authority: None,
+            },
+        ] {
+            let error = refusal_of(
+                run_phase(&missing_root, attempt, authorization.clone()),
+                "an unauthorized run",
+            )?;
+            ensure(
+                error.contains("python repair verification refuses to run")
+                    && error.contains("--verify-authority")
+                    && !error.contains("canonicalize"),
+                format!("{authorization:?} must be refused on authorization first: {error}"),
+            )?;
+        }
+        if let Some(parent) = missing_root.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn phase_refuses_malformed_attempt_ids_before_reading_any_attempt() -> Result<(), String> {
+        let root = unique_root("bad-id")?;
+        let fixture = AttemptFixture {
+            attempt_id: attempt_id()?,
+            manifest_path: root.join("none.json"),
+            packet_path: root.join("none-packet.json"),
+            root,
+        };
+        // Control: a well-formed identity passes the identity gate and fails
+        // later, on the absent attempt itself.
+        let error = refusal_of(
+            run_phase(&fixture.root, fixture.attempt_id.as_str(), granted()),
+            "a well-formed unknown attempt",
+        )?;
+        ensure(
+            !error.contains("repair attempt ID"),
+            format!("a well-formed identity must pass the identity gate: {error}"),
+        )?;
+        expect_refusal(
+            run_phase(&fixture.root, "attempt-0123456789abcdef01234567", granted()),
+            "an identity without the attempt prefix",
+            "repair attempt ID must start with `repair-attempt-`",
+        )?;
+        expect_refusal(
+            run_phase(
+                &fixture.root,
+                "repair-attempt-0123456789ABCDEF01234567",
+                granted(),
+            ),
+            "an identity with an uppercase suffix",
+            "lowercase hexadecimal characters",
+        )?;
+        expect_refusal(
+            run_phase(&fixture.root, "repair-attempt-0123", granted()),
+            "an identity with a short suffix",
+            "24 lowercase hexadecimal characters",
+        )
+    }
+
+    #[test]
+    fn phase_never_overwrites_an_existing_receipt_and_refuses_unapplied_attempts()
+    -> Result<(), String> {
+        let fixture = attempt_fixture("receipt-and-state", false)?;
+        let receipt_path = fixture.root.join(RECEIPT_COMPAT_PATH);
+        let parent = receipt_path.parent().ok_or("receipt path has no parent")?;
+        std::fs::create_dir_all(parent).map_err(|error| format!("create receipt dir: {error}"))?;
+        std::fs::write(&receipt_path, "prior receipt bytes\n")
+            .map_err(|error| format!("write prior receipt: {error}"))?;
+        expect_refusal(
+            run_phase(&fixture.root, fixture.attempt_id.as_str(), granted()),
+            "a run over an existing receipt",
+            "the receipt is immutable",
+        )?;
+        let kept = std::fs::read_to_string(&receipt_path)
+            .map_err(|error| format!("read receipt: {error}"))?;
+        ensure(
+            kept == "prior receipt bytes\n",
+            "an existing receipt must stay byte-identical",
+        )?;
+
+        // Control: with the receipt gone the same call reaches the state gate
+        // and refuses the still-awaiting attempt, writing no receipt.
+        std::fs::remove_file(&receipt_path).map_err(|error| format!("remove receipt: {error}"))?;
+        expect_refusal(
+            run_phase(&fixture.root, fixture.attempt_id.as_str(), granted()),
+            "a run over an attempt that is awaiting its edit",
+            "the attempt is awaiting_edit",
+        )?;
+        ensure(
+            !receipt_path.exists(),
+            "a refused verification must publish no receipt",
+        )
+    }
+
+    fn manifest_with_state(fixture: &AttemptFixture, state: &str) -> Result<(), String> {
+        let text = std::fs::read_to_string(&fixture.manifest_path)
+            .map_err(|error| format!("read manifest: {error}"))?;
+        let mut manifest: Value =
+            serde_json::from_str(&text).map_err(|error| format!("decode manifest: {error}"))?;
+        manifest
+            .as_object_mut()
+            .ok_or("manifest is not an object")?
+            .insert("state".to_string(), json!(state));
+        let rendered = serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("encode manifest: {error}"))?;
+        std::fs::write(&fixture.manifest_path, rendered)
+            .map_err(|error| format!("write manifest: {error}"))
+    }
+
+    #[test]
+    fn revalidation_names_why_each_non_ready_attempt_state_is_refused() -> Result<(), String> {
+        let fixture = attempt_fixture("states", false)?;
+        // Control: the prepared fixture really is awaiting_edit.
+        expect_refusal(
+            revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+            "an awaiting_edit attempt",
+            "the attempt is awaiting_edit; the verification phase requires an applied edit",
+        )?;
+        manifest_with_state(&fixture, "prepared")?;
+        expect_refusal(
+            revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+            "a prepared attempt",
+            "is prepared but its after phase never ran",
+        )?;
+        // A terminal state without the after block it implies is refused by
+        // the durable manifest loader itself, before verification can read it.
+        for state in ["stale", "failed", "incomparable", "ready_to_finish"] {
+            manifest_with_state(&fixture, state)?;
+            expect_refusal(
+                revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+                state,
+                "state/after boundary is inconsistent",
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn revalidation_binds_the_post_edit_tree_before_it_trusts_the_binding() -> Result<(), String> {
+        let fixture = attempt_fixture("tree-identity", true)?;
+        // Control: a finished attempt on its pinned head with the applied edit
+        // passes the state, head, edit-cage and surface gates, then refuses
+        // only because this fixture carries no python repair-trust binding.
+        expect_refusal(
+            revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+            "a finished attempt without a trust binding",
+            "the attempt records no python repair-trust binding",
+        )?;
+
+        // The applied edit leaves the worktree: the cage can no longer prove
+        // the exact post-edit state.
+        let edit = fixture.root.join("tests/target.rs");
+        let edited = std::fs::read(&edit).map_err(|error| format!("read edit: {error}"))?;
+        std::fs::remove_file(&edit).map_err(|error| format!("remove edit: {error}"))?;
+        let error = refusal_of(
+            revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+            "a worktree without the applied edit",
+        )?;
+        ensure(
+            error.contains("stale tree") && !error.contains("trust binding"),
+            format!("a lost edit must refuse as a stale tree before the binding: {error}"),
+        )?;
+        std::fs::write(&edit, edited).map_err(|error| format!("restore edit: {error}"))?;
+        expect_refusal(
+            revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+            "the restored edit",
+            "the attempt records no python repair-trust binding",
+        )?;
+
+        // A moved HEAD is a different tree even when the edit is still there.
+        crate::testing::fixture_git::fixture_git_ok(
+            &fixture.root,
+            &["commit", "--allow-empty", "--no-gpg-sign", "-m", "moved"],
+        )?;
+        let error = refusal_of(
+            revalidate_for_verification(&fixture.root, None, &fixture.attempt_id, "operator-a"),
+            "a repository whose HEAD moved",
+        )?;
+        ensure(
+            error.contains("stale tree — the attempt pins head")
+                && !error.contains("trust binding"),
+            format!("a moved HEAD must refuse as a stale tree: {error}"),
+        )?;
+        ensure(
+            fixture.packet_path.is_file(),
+            "the retained packet the phase reads must be present",
+        )
+    }
+
+    #[test]
+    fn after_verification_snapshot_publishes_one_digest_bound_file_and_no_residue()
+    -> Result<(), String> {
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
+        let root = unique_root("after-snapshot")?;
+        let fixture = AttemptFixture {
+            attempt_id: attempt_id()?,
+            manifest_path: root.join("none.json"),
+            packet_path: root.join("none-packet.json"),
+            root,
+        };
+        let (digest, run_status) = write_after_verification_snapshot(&fixture.root)?;
+        let path = fixture.root.join(AFTER_VERIFICATION_SNAPSHOT_REL);
+        let bytes = std::fs::read(&path).map_err(|error| format!("read snapshot: {error}"))?;
+        ensure(
+            digest == sha256_hex(&bytes) && is_sha256_hex(&digest),
+            "the returned digest must commit the published bytes",
+        )?;
+        ensure(
+            run_status == "complete",
+            format!("an empty analyzed root completes, got `{run_status}`"),
+        )?;
+        let value: Value =
+            serde_json::from_slice(&bytes).map_err(|error| format!("decode snapshot: {error}"))?;
+        ensure(
+            value.get("seams").and_then(Value::as_array).is_some(),
+            "the published snapshot must carry a seams array the movement join can read",
+        )?;
+        let workflow = path.parent().ok_or("snapshot path has no parent")?;
+        let residue = std::fs::read_dir(workflow)
+            .map_err(|error| format!("read workflow dir: {error}"))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        ensure(
+            residue == 0,
+            "staging files must not outlive the publication",
+        )
+    }
 }

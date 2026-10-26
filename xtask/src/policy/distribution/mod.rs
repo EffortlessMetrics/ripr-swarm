@@ -9,10 +9,12 @@ pub(crate) mod wheelhouse;
 mod workflow;
 
 use std::fs;
+use std::path::Path;
 
 use crate::{FixKind, PolicyReportSpec, finish_policy_report};
 
 pub(crate) use contract::{DistributionContract, TargetContract};
+pub(crate) use npm_launcher::is_prerelease_version;
 pub(crate) use version::pep440_version;
 
 pub(crate) const CONTRACT_PATH: &str = "policy/distribution.toml";
@@ -157,6 +159,8 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
         ));
     }
 
+    scan_workflow_npm_tags(Path::new(".github/workflows"), &mut violations);
+
     let python_manifest = read_required_file(PYTHON_MANIFEST_PATH, &mut violations);
     let python_readme = read_required_file(PYTHON_README_PATH, &mut violations);
     let python_license_mit = read_required_file(PYTHON_LICENSE_MIT_PATH, &mut violations);
@@ -298,6 +302,55 @@ fn evaluate_contract(
         &mut violations,
     );
     violations
+}
+
+/// Scans every workflow under `dir` for unsafe npm publish/dist-tag commands.
+/// A missing directory is legitimately empty; any other read failure is a
+/// violation so an unreadable workflow can never read as a pass.
+fn scan_workflow_npm_tags(dir: &Path, violations: &mut Vec<String>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // Fail closed when the repository's `.github` exists but its
+            // workflows directory cannot be found (e.g. wrong working directory).
+            if dir.parent().is_some_and(Path::is_dir) {
+                violations.push(format!(
+                    "{}: workflow directory not found next to an existing parent; run from the repository root",
+                    dir.display()
+                ));
+            }
+            return;
+        }
+        Err(err) => {
+            violations.push(format!(
+                "{}: failed to read workflow directory: {err}",
+                dir.display()
+            ));
+            return;
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => paths.push(entry.path()),
+            Err(err) => violations.push(format!(
+                "{}: failed to read workflow directory entry: {err}",
+                dir.display()
+            )),
+        }
+    }
+    paths.retain(|path| {
+        path.extension()
+            .is_some_and(|ext| ext == "yml" || ext == "yaml")
+    });
+    paths.sort();
+    for path in paths {
+        let display = path.to_string_lossy().replace('\\', "/");
+        match fs::read_to_string(&path) {
+            Ok(text) => npm_launcher::validate_workflow_npm_tags(&display, &text, violations),
+            Err(err) => violations.push(format!("{display}: failed to read workflow: {err}")),
+        }
+    }
 }
 
 #[cfg(test)]

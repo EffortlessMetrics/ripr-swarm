@@ -997,3 +997,290 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
     }
     Ok(())
 }
+
+// A closure tail pinned on a helper-built receiver, and a field of a
+// hand-written recording double, are oracles ripr reads only at the surface
+// (#9609, #9610).
+
+fn cart_source(test_body: &str) -> String {
+    format!(
+        "pub struct Cart {{
+    pub items: Vec<(String, u32)>,
+}}
+impl Cart {{
+    pub fn total(&self) -> u32 {{
+        self.items.iter().map(|(_, price)| price).sum()
+    }}
+}}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    fn fixture() -> Cart {{
+        Cart {{
+            items: vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)],
+        }}
+    }}
+
+    #[test]
+    fn total_is_pinned() {{
+{test_body}
+    }}
+}}
+"
+    )
+}
+
+fn cart_edit() -> String {
+    diff(
+        6,
+        "        self.items.iter().map(|(_, p)| p).sum()",
+        "        self.items.iter().map(|(_, price)| price).sum()",
+    )
+}
+
+#[test]
+fn a_helper_built_receiver_pinned_to_a_literal_is_withheld() -> Result<(), String> {
+    for (label, body) in [
+        ("direct", "        assert_eq!(fixture().total(), 42);"),
+        ("reversed", "        assert_eq!(42, fixture().total());"),
+        (
+            "bound",
+            "        let cart = fixture();\n        assert_eq!(cart.total(), 42);",
+        ),
+    ] {
+        withheld(&cart_source(body), &cart_edit(), 6, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_fixture_receiver_shape_that_differs_keeps_the_finding() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "expected value is not a literal",
+            "        let expected = 42;\n        assert_eq!(fixture().total(), expected);",
+        ),
+        (
+            "receiver is an inline literal, not a helper",
+            "        let cart = Cart { items: vec![] };\n        assert_eq!(cart.total(), 0);",
+        ),
+        (
+            "a rebinding the helper does not build",
+            "        let cart = Cart { items: vec![(\"a\".to_string(), 1)] };\n        assert_eq!(cart.total(), 1);",
+        ),
+        (
+            "assert_ne pins nothing",
+            "        assert_ne!(fixture().total(), 0);",
+        ),
+        (
+            "an unrelated helper call",
+            "        let _ = fixture();\n        assert_eq!(Cart { items: vec![] }.total(), 0);",
+        ),
+    ] {
+        keeps_gap(&cart_source(body), &cart_edit(), 6, label)?;
+    }
+    Ok(())
+}
+
+fn sink_source(param: &str, test_body: &str) -> String {
+    format!(
+        "pub trait Sink {{
+    fn send(&mut self, line: String);
+}}
+pub struct Recorder {{
+    pub lines: Vec<String>,
+}}
+impl Sink for Recorder {{
+    fn send(&mut self, line: String) {{
+        self.lines.push(line);
+    }}
+}}
+pub fn report(sink: {param}, n: u32) {{
+    sink.send(format!(\"n={{}}\", n));
+}}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn n_is_reported() {{
+{test_body}
+    }}
+}}
+"
+    )
+}
+
+fn sink_edit() -> String {
+    diff(
+        13,
+        "    sink.send(format!(\"n={}\", n));",
+        "    sink.send(format!(\"n={n}\"));",
+    )
+}
+
+#[test]
+fn a_hand_written_recorder_compared_by_field_is_withheld() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "whole field",
+            "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
+        ),
+        (
+            "field cloned",
+            "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);",
+        ),
+    ] {
+        withheld(&sink_source("&mut dyn Sink", body), &sink_edit(), 13, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_recorder_shape_that_differs_keeps_the_finding() -> Result<(), String> {
+    let recorder = "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n";
+    for (label, param, body) in [
+        (
+            "the recorder is compared by a method, not a field",
+            "&mut dyn Sink",
+            format!("{recorder}        assert_eq!(recorder.recorded(), 1);"),
+        ),
+        (
+            "the field is read only through its length",
+            "&mut dyn Sink",
+            format!("{recorder}        assert_eq!(recorder.lines.len(), 1);"),
+        ),
+        (
+            "the sink parameter is a concrete type",
+            "&mut Recorder",
+            format!("{recorder}        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+        ),
+        (
+            "the comparison happens before the call",
+            "&mut dyn Sink",
+            "        let mut recorder = Recorder { lines: vec![] };\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);\n        report(&mut recorder, 3);".to_string(),
+        ),
+        (
+            "the double is built by a constructor, not a struct literal",
+            "&mut dyn Sink",
+            "        let mut recorder = Recorder::default();\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);".to_string(),
+        ),
+    ] {
+        keeps_gap(&sink_source(param, &body), &sink_edit(), 13, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_vec_pushed_into_by_the_changed_call_keeps_the_gap() -> Result<(), String> {
+    // The corpus row `spec0231-oracle-events-sent-len-eq`: a length check
+    // cannot notice a changed pushed value, so the weak gap stays.
+    let lib = "pub fn send(events_sent: &mut Vec<u32>, id: u32) {
+    if id > 0 {
+        events_sent.push(id);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_event() {
+        let mut events_sent = Vec::new();
+        send(&mut events_sent, 1);
+        assert_eq!(events_sent.len(), 1);
+    }
+}
+";
+    keeps_gap(
+        lib,
+        &diff(
+            3,
+            "        events_sent.push(id);",
+            "        events_sent.push(0 + id);",
+        ),
+        3,
+        "vec push",
+    )
+}
+
+// An `async` owner driven by a hand-written executor helper of the test's own
+// file: the value the assertion compares comes out of the helper (#9443).
+fn executor_source(owner_decl: &str, assertion: &str) -> String {
+    format!(
+        "{owner_decl} {{
+    p + p / 5
+}}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    fn block_on<T>(value: T) -> T {{
+        value
+    }}
+
+    #[test]
+    fn tax_is_added() {{
+        {assertion}
+    }}
+}}
+"
+    )
+}
+
+fn executor_edit() -> String {
+    diff(2, "    p + p / 10", "    p + p / 5")
+}
+
+#[test]
+fn an_async_owner_driven_by_a_local_executor_helper_is_withheld() -> Result<(), String> {
+    withheld(
+        &executor_source(
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100)), 110);",
+        ),
+        &executor_edit(),
+        2,
+        "local block_on",
+    )
+}
+
+#[test]
+fn an_executor_shape_that_differs_keeps_the_gap() -> Result<(), String> {
+    for (label, owner_decl, assertion) in [
+        (
+            "the owner is not async",
+            "pub fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100)), 110);",
+        ),
+        (
+            "the helper is not defined in the test's file",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(other_executor(add_tax(100)), 110);",
+        ),
+        (
+            "the helper takes more than the owner call",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100), 1), 110);",
+        ),
+        (
+            "the argument only contains the owner call",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on({ let _unused = add_tax(100); 110 }), 110);",
+        ),
+        (
+            "the expected side is not a literal",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100)), add_tax_expected());",
+        ),
+    ] {
+        keeps_gap(
+            &executor_source(owner_decl, assertion),
+            &executor_edit(),
+            2,
+            label,
+        )?;
+    }
+    Ok(())
+}

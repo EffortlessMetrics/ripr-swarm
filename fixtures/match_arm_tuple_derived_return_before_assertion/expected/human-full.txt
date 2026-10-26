@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:27
 Changed
   before: (true, false) => "request_identity_v1",
   after:  (true, false) =>
+          (arm head only; open the arm at ./src/lib.rs:27 to read its new body)
 
 Probe
   family: match_arm
@@ -28,7 +29,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: (true, false) =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: (true, false) => (line 27)
   - related test tests/projection.rs:5 request_only_projection_observes_join uses strong exact value oracle: assert_eq!(terminal.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:5 request_only_projection_observes_join uses strong exact value oracle: assert_eq!(terminal[0].0.id, "receipt-1"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
@@ -71,7 +72,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: "request_identity_v1"
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: "request_identity_v1" (line 27)
   - related test tests/projection.rs:5 request_only_projection_observes_join uses strong exact value oracle: assert_eq!(terminal.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:5 request_only_projection_observes_join uses strong exact value oracle: assert_eq!(terminal[0].0.id, "receipt-1"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior

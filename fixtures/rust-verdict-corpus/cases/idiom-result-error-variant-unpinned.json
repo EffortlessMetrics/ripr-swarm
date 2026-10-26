@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-result-error-variant-unpinned",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-result-error-variant-unpinned.diff",
+  "anchor": {
+    "file": "src/results.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "error_variant_is_err_only",
+  "hard_case": "The only test of the bad-number path is `is_err()`, which cannot tell the variants apart.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let n: u32 = part.trim().parse().map_err(|_| ParseError::Empty)?;",
+        "mutated_line": "let n: u32 = part.trim().parse().map_err(|_| ParseError::Empty)?;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `let n: u32 = part.trim().parse().map_err(|_error| ParseError::NotNumber)?;` becomes `let n: u32 = part.trim().parse().map_err(|_| ParseError::Empty)?;`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "let n: u32 = part.trim().parse().map_err(|_| ParseError::NotNumber).unwrap_or(0);",
+        "mutated_line": "let n: u32 = part.trim().parse().map_err(|_| ParseError::NotNumber).unwrap_or(0);",
+        "outcome": "tests_failed",
+        "failing_test": "results::tests::word_is_an_error",
+        "equivalence_review": "not equivalent: `let n: u32 = part.trim().parse().map_err(|_error| ParseError::NotNumber)?;` becomes `let n: u32 = part.trim().parse().map_err(|_| ParseError::NotNumber).unwrap_or(0);`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "word_is_an_error passes for any error. Returning `Empty` instead keeps it green; swallowing the error to 0 makes `parse_sum(\"a\")` Ok and fails it. Shape: error variant not pinned.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

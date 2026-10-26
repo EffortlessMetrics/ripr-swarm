@@ -166,6 +166,7 @@ jobs:
           $binaryHash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
           [ordered]@{ crate = $crate.Name; crate_sha256 = $crateHash; package_dir = $packageDir.FullName; binary = $binaryPath; binary_sha256 = $binaryHash; version = $metadata.version } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'crate-install-identity.json')
           "RIPR_PACKAGED=$binaryPath" >> $env:GITHUB_ENV
+          "RIPR_PACKAGED_SHA256=$binaryHash" >> $env:GITHUB_ENV
           "RIPR_PACKAGED_VERSION=$($metadata.version)" >> $env:GITHUB_ENV
 
       - name: Run isolated packaged CLI journey
@@ -225,7 +226,7 @@ jobs:
         working-directory: editors/vscode
         run: |
           $ErrorActionPreference = 'Stop'; $extract = Join-Path $env:QUAL_TEMP_ROOT 'vsix-extracted'; New-Item -ItemType Directory -Force -Path $extract | Out-Null; Expand-Archive -LiteralPath $env:RIPR_VSIX -DestinationPath $extract -Force
-          $env:RIPR_TEST_EXTENSION_PATH = Join-Path $extract 'extension'; $env:RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_WORKSPACE_TRUST = 'trusted'; $env:RIPR_TEST_ARTIFACT_ROOT = Join-Path $env:QUAL_TEMP_ROOT 'trusted-editor'
+          $env:RIPR_TEST_EXTENSION_PATH = Join-Path $extract 'extension'; $env:RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_PACKAGED_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_PACKAGED_SERVER_SHA256 = $env:RIPR_PACKAGED_SHA256; $env:RIPR_TEST_WORKSPACE_TRUST = 'trusted'; $env:RIPR_TEST_ARTIFACT_ROOT = Join-Path $env:QUAL_TEMP_ROOT 'trusted-editor'
           npm run test:e2e 2>&1 | Tee-Object (Join-Path $env:QUAL_ROOT 'editor-trusted.log'); if ($LASTEXITCODE -ne 0) { throw "trusted editor journey failed with exit $LASTEXITCODE" }
           $owned = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$env:QUAL_TEMP_ROOT*" -and ($_.Name -match 'ripr|Code|electron') }; if ($owned) { $owned | Format-List Name,ProcessId,CommandLine; throw 'trusted editor journey left an owned process' }
 
@@ -261,8 +262,17 @@ jobs:
             if (-not (Test-Path $logs)) { continue }
             foreach ($file in Get-ChildItem $logs -File -Recurse -Filter *.log) {
               try {
-                $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
-                if ($bytes.Length -gt $cap) { $bytes = $bytes[($bytes.Length - $cap)..($bytes.Length - 1)] }
+                # Share-tolerant open: the hung VS Code host still holds its logs, and ReadAllBytes
+                # fails on a file another process has open for write (run 39720121179).
+                $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'ReadWrite,Delete')
+                try {
+                  $take = [int][Math]::Min($stream.Length, $cap)
+                  $null = $stream.Seek(-$take, 'End')
+                  $bytes = New-Object byte[] $take
+                  $read = 0
+                  while ($read -lt $take) { $n = $stream.Read($bytes, $read, $take - $read); if ($n -le 0) { break }; $read += $n }
+                  if ($read -lt $take) { $bytes = $bytes[0..($read - 1)] }
+                } finally { $stream.Dispose() }
                 $text = [System.Text.Encoding]::UTF8.GetString($bytes)
                 foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
                 $to = Join-Path $dest "$lane\$($file.FullName.Substring($logs.Length + 1))"

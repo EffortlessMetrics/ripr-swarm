@@ -27,7 +27,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: 3 * x
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches returned value: 3 * x (line 14)
   - related test src/lib.rs:27 inner_is_positive uses weak relational check oracle: assert!(inner(2) > 0); misses: assertion too weak to tell the old behavior from the new
   - related test src/lib.rs:22 outer_triples uses strong exact value oracle: assert_eq!(outer(4), 12); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
@@ -40,9 +40,11 @@ Weakness
 
 Stop reasons:
   - macro_reach_unresolved — a candidate test path stops at a same-repo macro ripr does not expand
+    Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge stays unresolved even with an exact assertion.
 
 Static limitation
   rust_macro_reach_unresolved — A test may reach this change through a Rust macro path ripr cannot expand. The macro edge is unresolved; this is a named limitation, not a coverage claim.
+  Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge can stay unresolved even with an exact assertion.
 
 Where to look
   For example, the test `outer_triples` (src/lib.rs:22) calls `outer`, and `outer` invokes macro `call_inner!` at src/lib.rs:10 whose definition lexically mentions the changed owner name. The macro path may lead here. Inspect it to judge whether this change is observed.

@@ -79,7 +79,9 @@
           "line": 4,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "assert result"
+          "oracle": "assert result",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {
@@ -202,7 +204,9 @@
           "line": 7,
           "oracle_strength": "weak",
           "oracle_kind": "broad_error",
-          "oracle": "self.assertRaises(ValueError)"
+          "oracle": "self.assertRaises(ValueError)",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {

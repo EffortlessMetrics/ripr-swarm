@@ -4,7 +4,7 @@
   "boards": [
     {
       "counts": {
-        "below_target": 3,
+        "below_target": 4,
         "comparison_failed": 0,
         "failed": 0,
         "meets_target": 5,
@@ -16,6 +16,7 @@
         "first_run.time_to_first_useful_result_s",
         "first_run.install_seconds",
         "first_run.unknown_verdicts",
+        "first_run.decisive_verdicts",
         "first_run.friction_events",
         "first_run.failed_steps",
         "first_run.over_budget_steps",
@@ -29,21 +30,43 @@
   "corpus": [],
   "corpus_version": null,
   "gate": {
-    "baseline_revision": null,
-    "baseline_runner_class": null,
-    "enabled": false,
+    "baseline_revision": "51acaabe0eeae011395ab07d69d1655ce8d0bafc",
+    "baseline_runner_class": "github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor",
+    "enabled": true,
     "failed_comparisons": [],
     "failed_instruments": [],
     "regressions": [],
     "review": [],
-    "status": "not_run",
-    "uncompared": []
+    "status": "pass",
+    "uncompared": [
+      {
+        "metric": "first_run.time_to_first_useful_result_s",
+        "reason": "runner class differs (baseline `github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor`, current `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor`)"
+      },
+      {
+        "metric": "first_run.install_seconds",
+        "reason": "runner class differs (baseline `github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor`, current `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor`)"
+      },
+      {
+        "metric": "first_run.decisive_verdicts",
+        "reason": "metric absent from baseline"
+      },
+      {
+        "metric": "first_run.over_budget_steps",
+        "reason": "baseline counted breached metric rows, before the step-occurrences-v1 step-occurrence grain; re-run the first-run walk and record a new baseline to compare this metric"
+      },
+      {
+        "metric": "first_run.walk_secs",
+        "reason": "runner class differs (baseline `github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor`, current `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor`)"
+      }
+    ]
   },
   "metrics": [
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "runner class differs (baseline `github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor`, current `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor`)",
+        "value": 87.27
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -56,19 +79,19 @@
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": "semver-1.0.23",
           "status": "meets_target",
-          "value": 87.27
+          "value": 95.84
         },
         {
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": "fastrand-2.3.0",
           "status": "meets_target",
-          "value": 87.26
+          "value": 95.71
         },
         {
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": "bytesize-1.3.0",
           "status": "meets_target",
-          "value": 87.26
+          "value": 95.71
         }
       ],
       "source": "ingest:first-run",
@@ -76,12 +99,13 @@
       "target": 300.0,
       "title": "New developer, fresh machine: install to first useful result",
       "unit": "s",
-      "value": 87.27
+      "value": 95.84
     },
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "runner class differs (baseline `github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor`, current `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor`)",
+        "value": 87.23
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -94,7 +118,7 @@
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": null,
           "status": "meets_target",
-          "value": 87.23
+          "value": 95.68
         }
       ],
       "source": "ingest:first-run",
@@ -102,12 +126,19 @@
       "target": 120.0,
       "title": "Fresh machine: seconds to install ripr by the route the walk times (`cargo install ripr --locked`, a source build)",
       "unit": "s",
-      "value": 87.23
+      "value": 95.68
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 1.0
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -133,7 +164,40 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "metric absent from baseline"
+      },
+      "board": "first_run",
+      "direction": "higher_is_better",
+      "id": "first_run.decisive_verdicts",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from first-run: readings: semver-1.0.23=false gap, fastrand-2.3.0=unresolved, bytesize-1.3.0=understates the tests",
+          "repo": null,
+          "status": "below_target",
+          "value": 0.0
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "below_target",
+      "target": 2.0,
+      "title": "Simple boundary edits on unfamiliar crates where ripr gives a decisive verdict that agrees with what the tests catch (of the 3 first-run crates)",
+      "unit": "cases",
+      "value": 0.0
+    },
+    {
+      "baseline": {
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 9.0
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -158,8 +222,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 0.0
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -185,7 +256,8 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "baseline counted breached metric rows, before the step-occurrences-v1 step-occurrence grain; re-run the first-run walk and record a new baseline to compare this metric",
+        "value": 0.0
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -195,7 +267,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from first-run: none",
+          "detail": "ingested from first-run: step-occurrences-v1: none",
           "repo": null,
           "status": "meets_target",
           "value": 0.0
@@ -210,8 +282,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 3.0
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -237,7 +316,8 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "runner class differs (baseline `github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor`, current `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor`)",
+        "value": 0.25
       },
       "board": "first_run",
       "direction": "lower_is_better",
@@ -250,19 +330,19 @@
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": "semver-1.0.23",
           "status": "meets_target",
-          "value": 0.25
+          "value": 0.39
         },
         {
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": "fastrand-2.3.0",
           "status": "meets_target",
-          "value": 0.09
+          "value": 0.1
         },
         {
           "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
           "repo": "bytesize-1.3.0",
           "status": "meets_target",
-          "value": 0.1
+          "value": 0.12
         }
       ],
       "source": "ingest:first-run",
@@ -270,7 +350,7 @@
       "target": 10.0,
       "title": "Seconds for the scripted walk on one crate, setup excluded",
       "unit": "s",
-      "value": 0.25
+      "value": 0.39
     }
   ],
   "report": "dx-scoreboard",
@@ -336,16 +416,16 @@
       "status": "not_measured"
     }
   ],
-  "revision": "51acaabe0eeae011395ab07d69d1655ce8d0bafc",
+  "revision": "526213b8bb3b5b20654677d980c2f39610a6af80",
   "rollup": {
-    "below_target": 3,
+    "below_target": 4,
     "comparison_failed": 0,
     "failed": 0,
     "meets_target": 5,
     "not_measured": 0,
     "regressed": 0
   },
-  "runner_class": "github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor",
+  "runner_class": "github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor",
   "schema_version": "ripr-dx-scoreboard-v1",
   "tool": "ripr"
 }

@@ -390,3 +390,128 @@ fn distinct_predicates_of_one_owner_both_survive() -> Result<(), String> {
     assert!(exprs.iter().any(|e| e.contains("b > 7")), "{exprs:?}");
     Ok(())
 }
+
+#[test]
+fn capped_run_reports_typed_selected_omitted_total_and_first_stage() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-capped")?;
+    for name in ["a", "b", "c"] {
+        ts_write_file(&root.join(format!("src/{name}.ts")), TS_SRC)?;
+    }
+    ts_write_file(&root.join("test/a.test.ts"), TS_TEST)?;
+    ts_write_file(&root.join("src/types.d.ts"), "export type T = number;\n")?;
+    let result = run(&root, 2);
+    let _ = std::fs::remove_dir_all(&root);
+    let accounting = result?.file_accounting;
+    assert_eq!(accounting.discovered, Some(5));
+    assert_eq!(accounting.selected, Some(3), "two production plus one test");
+    assert_eq!(accounting.skipped, Some(1), "declaration file");
+    assert_eq!(accounting.omitted, Some(1));
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_MAX_REPO_INDEX_FILES",
+            stage: RepoLimitingStage::Selection,
+            limit: 2,
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn uncapped_run_reports_measured_zero_omitted_and_no_cap() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-uncapped")?;
+    ts_write_file(&root.join("src/a.ts"), TS_SRC)?;
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let accounting = result?.file_accounting;
+    assert_eq!(accounting.discovered, Some(1));
+    assert_eq!(accounting.omitted, Some(0), "measured zero, not unknown");
+    assert_eq!(accounting.first_cap_fired, None);
+    Ok(())
+}
+
+#[test]
+fn truncated_walk_names_the_discovery_cap_first_and_leaves_total_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-walk")?;
+    for name in ["a", "b", "c", "d"] {
+        ts_write_file(&root.join(format!("src/{name}.ts")), TS_SRC)?;
+    }
+    let result = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        1,
+        2,
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let accounting = result?.file_accounting;
+    assert_eq!(accounting.discovered, None, "truncated walk has no total");
+    assert_eq!(accounting.selected, Some(1), "selected is exact");
+    assert_eq!(accounting.skipped, None, "lower bound only");
+    assert_eq!(accounting.omitted, None, "lower bound only");
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_TS_MAX_WORKSPACE_FILES",
+            stage: RepoLimitingStage::Discovery,
+            limit: 2,
+        }),
+        "discovery precedes selection even when both fired"
+    );
+    Ok(())
+}
+
+#[test]
+fn unreadable_root_leaves_every_count_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-missing")?;
+    let missing = root.join("absent");
+    let result = run(&missing, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(result?.file_accounting, RepoFileAccounting::default());
+    Ok(())
+}
+
+#[test]
+fn working_set_boundary_omits_only_beyond_the_limit() -> Result<(), String> {
+    let limit = 3;
+    for (count, omitted) in [(limit - 1, 0), (limit, 0), (limit + 1, 1)] {
+        let root = ts_unique_tempdir("repo-accounting-boundary")?;
+        for index in 0..count {
+            ts_write_file(&root.join(format!("src/f{index}.ts")), TS_SRC)?;
+        }
+        let result = run(&root, limit);
+        let _ = std::fs::remove_dir_all(&root);
+        let accounting = result?.file_accounting;
+        assert_eq!(accounting.discovered, Some(count), "count {count}");
+        assert_eq!(accounting.selected, Some(count.min(limit)), "count {count}");
+        assert_eq!(accounting.omitted, Some(omitted), "count {count}");
+        assert_eq!(
+            accounting.first_cap_fired.is_some(),
+            omitted > 0,
+            "count {count}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), String> {
+    use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+    let root = ts_unique_tempdir("repo-accounting-outcome")?;
+    for name in ["a", "b", "c"] {
+        ts_write_file(&root.join(format!("src/{name}.ts")), TS_SRC)?;
+    }
+    let result = run(&root, 2);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    let outcome =
+        LanguageAnalysisOutcomeV1::from_repo_result(DomainLanguage::TypeScript, &result, None);
+    assert_eq!(outcome.resources.files, result.file_accounting);
+    assert_eq!(outcome.resources.files.omitted, Some(1));
+    assert_eq!(
+        outcome.resources.files.first_cap_fired.map(|cap| cap.name),
+        Some("RIPR_MAX_REPO_INDEX_FILES")
+    );
+    Ok(())
+}

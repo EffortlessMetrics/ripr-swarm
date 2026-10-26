@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0098-ex3-non-owner-observer-control",
+  "subject_id": "authored-ts-vitest-unnum",
+  "origin": "authored",
+  "anchor": "src/auditedObserved.ts:2",
+  "behavior_family": "side_effect",
+  "test_shape": "vitest_console_spy_log_array_assertion",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

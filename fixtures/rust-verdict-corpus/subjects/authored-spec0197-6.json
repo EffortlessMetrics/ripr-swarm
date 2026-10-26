@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-spec0197-6",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for RIPR-SPEC-0197 example 6 (three packages)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "cdf30f49ec795e2dc47efa3c1df168d4ae5988fe9002b95530920e0a55fbdd55"
+    },
+    {
+      "path": "meter/Cargo.toml",
+      "sha256": "8b9be5fa92d01ddf83d7682451cdd42018d80d1f4432f2ed9d361c3abb7fd1ba"
+    },
+    {
+      "path": "meter/src/lib.rs",
+      "sha256": "61eee7d1baa34b8d2e9639ca10fe5e49c1b999dcd8066da8513bae1d14d52dea"
+    },
+    {
+      "path": "spare/Cargo.toml",
+      "sha256": "88cdeed2becfbf7e7d1ccaad369290e7b74fc7941a2ad98418a807a1c00cb614"
+    },
+    {
+      "path": "spare/src/lib.rs",
+      "sha256": "e137bf5be491808769a826337e2b408e4a749d95054236ba61a9c3133e1669b9"
+    },
+    {
+      "path": "panel/Cargo.toml",
+      "sha256": "d2dc9c1670241e46758e71c84fe3f8abb523d5efdf7c6d1bed4f67dee5fae77e"
+    },
+    {
+      "path": "panel/src/lib.rs",
+      "sha256": "31b5fe581b70b006c95c2b7761ef26714354e5b10bdb764d669518662e8f06ae"
+    },
+    {
+      "path": "panel/tests/panel.rs",
+      "sha256": "ebd5c77579ede6cc051f3714af7005878cbb9493f08de6ba0ff74fad7168519e"
+    }
+  ]
+}

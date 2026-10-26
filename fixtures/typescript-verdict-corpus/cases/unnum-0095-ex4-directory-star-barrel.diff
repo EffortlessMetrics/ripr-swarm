@@ -1,0 +1,10 @@
+diff --git a/src/ufo/utils.ts b/src/ufo/utils.ts
+--- a/src/ufo/utils.ts
++++ b/src/ufo/utils.ts
+@@ -5,5 +5,5 @@ export function withoutBase(input: string, base: string): string {
+   if (!input.startsWith(base)) {
+     return input;
+   }
+-  return input.slice(base.length);
++  return input.slice(base.length + 1);
+ }

@@ -56,10 +56,10 @@ outputs:
     description: 'Comma-separated trusted competing PR numbers'
     value: ${{ steps.admit.outputs.competing_prs }}
   changed_files:
-    description: 'GitHub changed-files count for the current PR'
+    description: 'Counted changed files for the current PR (GitHub total minus declared generated files)'
     value: ${{ steps.admit.outputs.changed_files }}
   changed_lines:
-    description: 'GitHub additions plus deletions for the current PR'
+    description: 'Counted additions plus deletions for the current PR (GitHub total minus declared generated lines)'
     value: ${{ steps.admit.outputs.changed_lines }}
   cut_status:
     description: 'Hard-cut freeze status'
@@ -213,7 +213,7 @@ runs:
           # while the machinery PR is introduced on a base that has no packet.
           packet_err="$RUNNER_TEMP/packet-err.$$"
           if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
-            jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+            jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$packet"
             packet_from_base=1
           elif grep -q 'HTTP 404' "$packet_err"; then
             cp "$local_packet" "$packet"
@@ -240,7 +240,7 @@ runs:
           proposed_packet="$tmp/proposed-packet.json"
           proposed_args=()
           if [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] && gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${head_sha}" > "$packet_meta" 2>/dev/null; then
-            jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$proposed_packet" || rm -f "$proposed_packet"
+            jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$proposed_packet" || rm -f "$proposed_packet"
             proposed_args=(--proposed-packet "$proposed_packet")
           fi
 
@@ -286,7 +286,7 @@ runs:
             # (when the evaluated base also had none), is benign movement.
             moved_state=""
             if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha_after}" > "$packet_meta" 2>"$packet_err"; then
-              moved_state="$(jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode | jq -r '.state')" || moved_state="unreadable"
+              moved_state="$(jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode | jq -r '.state')" || moved_state="unreadable"
             elif [ "$packet_from_base" = "0" ] && grep -q 'HTTP 404' "$packet_err"; then
               moved_state=inactive
             else

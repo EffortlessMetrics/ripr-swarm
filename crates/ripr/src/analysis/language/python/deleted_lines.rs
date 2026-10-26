@@ -8,15 +8,39 @@
 //! for Python. A base-side record is never a candidate edit target, so every
 //! counted, gated, annotated and diagnostic surface skips it (#3281).
 
-use super::classify::{ChangeSite, classify_change_for_owner, is_python_declaration_line};
+use super::classify::{
+    ChangeSite, classify_change_for_owner_with_value_origins, is_python_declaration_line,
+};
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
     is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
-use crate::domain::SourceCurrentness;
+use crate::analysis::probes::{collision_ordinals, collision_rank_key, normalize_expression};
+use crate::domain::{Probe, SourceCurrentness};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeInclusive;
+
+/// The probe id before any `.N` collision ordinal; a fingerprint is hex, so a
+/// dot followed by digits is always an ordinal.
+fn base_probe_id(id: &str) -> &str {
+    match id.rsplit_once('.') {
+        Some((base, ordinal))
+            if !ordinal.is_empty() && ordinal.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            base
+        }
+        _ => id,
+    }
+}
+
+/// A deleted-line finding awaiting its collision ordinal.
+struct PendingDeleted {
+    finding: Finding,
+    original_probe: Probe,
+    origins: crate::value_origins::ValueOrigins,
+    key: [u8; 32],
+}
 
 /// What the old side of one changed file says about its removed lines.
 pub(super) struct OldSideRanges<'a> {
@@ -33,8 +57,12 @@ pub(super) type NewSource<'a> = Option<&'a str>;
 /// One base-side finding per removed behavior line that no added line pairs
 /// with. `counterparts` is the file's one pairing
 /// (`ChangedFile::aligned_counterparts`); `findings` holds the file's
-/// candidate-side findings so a repeated probe id gets an ordinal suffix.
-pub(super) fn deleted_line_findings(
+/// candidate-side findings so a repeated probe id numbers after them.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "deleted-line inputs plus explicit producer origin context"
+)]
+pub(super) fn deleted_line_findings_with_value_origins(
     changed: &ChangedFile,
     counterparts: &BTreeMap<usize, &ChangedLine>,
     old_side: &OldSideRanges<'_>,
@@ -42,6 +70,7 @@ pub(super) fn deleted_line_findings(
     owners: &[PythonOwner],
     tests: &[PythonTest],
     findings: &[Finding],
+    value_origins: &mut crate::value_origins::ValueOrigins,
 ) -> Vec<Finding> {
     let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
     // Removed headers an added header replaced: the owner they open lives on.
@@ -57,7 +86,8 @@ pub(super) fn deleted_line_findings(
         .collect();
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
-        *ids.entry(finding.probe.id.0.clone()).or_default() += 1;
+        *ids.entry(base_probe_id(&finding.probe.id.0).to_string())
+            .or_default() += 1;
     }
     // A paired line is the candidate side's record, not this deletion's, so
     // it does not use up the one record a run inside a kept statement gets.
@@ -66,7 +96,7 @@ pub(super) fn deleted_line_findings(
             && is_removed_behavior_line(removed, old_side)
             && !opens_only_brackets(&removed.text)
     });
-    let mut out = Vec::new();
+    let mut pending: Vec<PendingDeleted> = Vec::new();
     for removed in &changed.removed_lines {
         if paired.contains(&removed.line)
             || statement_lines.fragments.contains(&removed.line)
@@ -92,7 +122,8 @@ pub(super) fn deleted_line_findings(
             line: removed.new_side_line,
             owner,
         };
-        let Some(mut finding) = classify_change_for_owner(
+        let mut finding_origins = crate::value_origins::ValueOrigins::default();
+        let Some(mut finding) = classify_change_for_owner_with_value_origins(
             site,
             &removed.text,
             None,
@@ -103,9 +134,11 @@ pub(super) fn deleted_line_findings(
             // (#7392) reads new-side guards around a live line, so it stays
             // off here.
             None,
+            Some(&mut finding_origins),
         ) else {
             continue;
         };
+        let original_probe = finding.probe.clone();
         let expression = removed.text.trim();
         // Same-text evidence is the only movement evidence; without it the
         // record stays `base_deleted` (RIPR-SPEC-0156).
@@ -120,12 +153,43 @@ pub(super) fn deleted_line_findings(
         };
         finding.probe.before = Some(removed.text.clone());
         finding.probe.after = None;
-        let count = ids.entry(finding.probe.id.0.clone()).or_default();
-        *count += 1;
-        if *count > 1 {
-            finding.probe.id.0 = format!("{}.{}", finding.probe.id.0, count);
+        let key = collision_rank_key(
+            &finding.probe.id.0,
+            &owner.symbol_id().0,
+            &normalize_expression(&removed.text),
+        );
+        pending.push(PendingDeleted {
+            finding,
+            original_probe,
+            origins: finding_origins,
+            key,
+        });
+    }
+    // Probes sharing an eight-hex base id are told apart by ordinal. Rank
+    // them by payload digest rather than diff order, so the same two lines
+    // keep their ids whichever order the diff lists them in (#8838).
+    let entries: Vec<(&str, [u8; 32])> = pending
+        .iter()
+        .map(|record| (record.finding.probe.id.0.as_str(), record.key))
+        .collect();
+    let ordinals = collision_ordinals(&entries);
+    let mut out = Vec::new();
+    for (record, ordinal) in pending.into_iter().zip(ordinals) {
+        let PendingDeleted {
+            mut finding,
+            original_probe,
+            origins: mut finding_origins,
+            ..
+        } = record;
+        // Candidate-side findings keep the unsuffixed id, so a deleted one
+        // numbers after them.
+        let ordinal = ordinal + ids.get(&finding.probe.id.0).copied().unwrap_or(0) as u32;
+        if ordinal > 1 {
+            finding.probe.id.0 = format!("{}.{ordinal}", finding.probe.id.0);
             finding.id = finding.probe.id.0.clone();
         }
+        finding_origins.rebind_probe(&original_probe, &finding.probe);
+        value_origins.extend(finding_origins);
         out.push(finding);
     }
     out

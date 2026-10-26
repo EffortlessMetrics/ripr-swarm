@@ -36,9 +36,9 @@ Policy impact:
 
 - None. No new output format, gate, badge, or report file is added; the card
   document is a wire payload bounded by the existing MCP byte caps. The wire
-  failure vocabulary gains the five `AgentCardRefusalKind` spellings
+  failure vocabulary gains the six `AgentCardRefusalKind` spellings
   (`seam_not_found`, `policy_omitted`, `witness_unavailable`,
-  `identity_unnameable`, `budget_overflow`); `policy_omitted` and
+  `identity_unnameable`, `budget_overflow`, `incomplete_inventory`); `policy_omitted` and
   `witness_unavailable` stay named for wire stability even though this slice
   cannot reach them.
 
@@ -116,7 +116,13 @@ and without execution authority (ADR 0022):
   the detail budget fails with `budget_overflow`; a document over the
   response bound fails with `result_too_large`; an unavailable workspace
   root (the durable store cannot be read) fails with
-  `workspace_unavailable`; producer operational failures stay
+  `workspace_unavailable`; a card read while the repo-wide seam inventory
+  `ripr agent card` consults is truncated by the seam limit
+  (`analyzed < total`) or its completeness could not be established fails
+  with `incomplete_inventory` (#9231), ahead of every binding lookup, from the
+  same completeness fact the refresh derived for the list/get/prepare
+  `seam_inventory_truncated` refusal, so a truncated inventory never ships a
+  card with `readiness.repair_ready` true; producer operational failures stay
   `analysis_failed`. Refusal kinds travel under their CLI-pinned wire
   spellings via `AgentCardRefusalKind::as_str()`, so one machine state names
   one refusal on every transport. Unknown tool arguments are rejected at
@@ -136,13 +142,27 @@ and without execution authority (ADR 0022):
   workspace cache key, changed-file set and owner set, so a reuse hit
   returns the completeness fact its cold run derived and any corpus,
   configuration, scope or seam-limit change misses.
+- The same classified result is persisted under the cache root
+  (`repo-scoped-classified-seams`, #9899) so a new `ripr mcp --stdio`
+  process on an unchanged workspace skips the evidence context and the
+  per-seam evaluation instead of repeating them (a code-diff refresh on this
+  repository: about 60 s to about 24 s, against about 22 s for a second
+  refresh in one process). An entry is served only when the full workspace
+  cache key and the exact predicate identity embedded in it equal the
+  request's and its semantic digest verifies; a missing, damaged, tampered,
+  Git-tracked-root, unknown-Cargo-configuration or differently keyed entry
+  recomputes exactly what an uncached run computes. A hit rebuilds no
+  index, so its file-fact statistics are zero. The floor that remains is the
+  shared check analysis itself (the diff pipeline and its two index builds,
+  about 22 s here), which this layer does not touch.
 
 ## Required Evidence
 
 - Unit controls over the projection: strict resource-template id parsing;
   fail-closed reads for every missing producer fact (no snapshot,
   producer-less legacy snapshot, unbound item, unknown item, stale
-  snapshot, in-flight attempt); the witness-bound card projects the shared
+  snapshot, in-flight attempt); a truncated or unverified inventory refuses
+  the card read with `incomplete_inventory`; the witness-bound card projects the shared
   handoff card verbatim (same `repair_card.v1` schema, seam subject, finding
   identity, analyzed head, nine detail-reference families, null next action
   on a gated route); refusal kinds map onto their pinned wire spellings with
@@ -153,7 +173,11 @@ and without execution authority (ADR 0022):
   `no_snapshot` failure for the card tool; the stdio success control
   refreshes the B4 repair-ready fixture, calls `ripr_get_repair_card`,
   and pins `schema_version == ripr-mcp-repair-card-v1` plus inner-card
-  equality with `ripr agent card` for the same seam; the inline-version
+  equality with `ripr agent card` for the same seam; the truncated-inventory
+  stdio control runs a refresh under `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`,
+  expects `incomplete_inventory` for every item and no card, and pins the
+  complete-inventory control's `readiness.repair_ready == true` and the CLI
+  refusal under the same limit; the inline-version
   recovery control expects the eight-tool surface.
 
 ## Non-Goals

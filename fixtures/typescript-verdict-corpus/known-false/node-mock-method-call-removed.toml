@@ -1,0 +1,3 @@
+case = "node-mock-method-call-removed"
+issue = 10157
+reason = "False actionable: a counted removed call on a node:test mock is not recognised; the receiver-identity guard needs repair (#10157)."

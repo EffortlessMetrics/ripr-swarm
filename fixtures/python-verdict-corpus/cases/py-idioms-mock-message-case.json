@@ -1,0 +1,45 @@
+{
+  "case_id": "py-idioms-mock-message-case",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-mock-message-case.diff",
+  "anchor": {
+    "file": "idioms/mailer.py",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_argument",
+  "test_shape": "pytest_magicmock_assert_called_once_with",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "client.deliver(user[\"email\"], message.lower())",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_mailer.py::test_send_delivers_the_upper_cased_message",
+        "equivalence_review": "not equivalent: the message is delivered lower-cased"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "client.deliver.assert_called_once_with pins the upper-cased message.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

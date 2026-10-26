@@ -1,0 +1,10 @@
+diff --git a/src/guards.rs b/src/guards.rs
+--- a/src/guards.rs
++++ b/src/guards.rs
+@@ -1,5 +1,5 @@
+ pub fn require_positive(n: i32) -> i32 {
+-    assert!(n > 0, "n must be positive");
++    assert!(n >= 1, "n must be positive");
+     n
+ }
+ 

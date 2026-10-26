@@ -1,0 +1,45 @@
+{
+  "case_id": "node-queue-shift-order",
+  "subject_id": "authored-ts-nodetest-mocks",
+  "diff": "cases/node-queue-shift-order.diff",
+  "anchor": {
+    "file": "src/queue.ts",
+    "line": 10
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_beforeeach_strict_equal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "Node.js v22.22.0, node:test, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return this.items.pop();",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "shift takes from the front",
+        "equivalence_review": "the edit itself: Shifting from a two-item queue is compared to the first element."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Shifting from a two-item queue is compared to the first element. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

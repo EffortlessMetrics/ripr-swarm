@@ -24,6 +24,9 @@ pub(crate) struct MockCallFacts {
     module_calls: Vec<spy::ModuleObjectCall>,
     /// Rule 4: related test files that may spy on a `module_calls` object.
     spy_targets: Vec<spy::SpyTarget>,
+    /// The changed line has no removed counterpart, so it adds a call and a
+    /// mock call count can see the change (RIPR-SPEC-0243 decision 22).
+    line_added: bool,
 }
 
 /// A call `p(...)` or `p.m(...)` through the owner parameter `p` at
@@ -40,6 +43,14 @@ struct ParameterCall {
 const TEST_FRAMEWORK_MODULES: [&str; 2] = ["@jest/globals", "vitest"];
 
 impl MockCallFacts {
+    pub(crate) fn mark_line_added(&mut self, line_added: bool) {
+        self.line_added = line_added;
+    }
+
+    pub(crate) fn line_added(&self) -> bool {
+        self.line_added
+    }
+
     /// `owner_body` is the owner's source after the change; `None` (not
     /// readable) keeps no call, so rule 1 credits nothing.
     ///
@@ -99,7 +110,7 @@ impl MockCallFacts {
         owner_name: &str,
         owner_params: &[String],
         owner_start_line: usize,
-        module_source: Option<&str>,
+        module_source: Option<(&str, SourceType)>,
     ) {
         let (Some(owner_source), Some(module_source)) = (owner_source, module_source) else {
             return;
@@ -136,7 +147,9 @@ impl MockCallFacts {
                 continue;
             }
             seen.push(&test.file);
-            if !read_file(&test.file).is_some_and(|source| spy::spy_safe_test_file(&source)) {
+            if !read_file(&test.file)
+                .is_some_and(|source| spy::spy_safe_test_file(&source, source_type_for(&test.file)))
+            {
                 continue;
             }
             // Importing a module runs its top level before the test body, so
@@ -956,6 +969,10 @@ fn closing_offset(text: &str, open: char, close: char) -> Option<usize> {
 /// to the first top-level `{` or `=>`), or `None` when no body opens.
 pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
     let masked = ts_mask_literals_and_comments(owner_source);
+    owner_body_from_mask(&masked)
+}
+
+pub(super) fn owner_body_from_mask(masked: &str) -> Option<String> {
     let mut parens = 0usize;
     for (index, c) in masked.char_indices() {
         match c {
@@ -1008,7 +1025,7 @@ fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str)
 /// Matching `()` pairs are indexed in one forward pass, and each brace
 /// prefix is classified once, so nested control blocks are near-linear in
 /// depth instead of walking every enclosing `{` again for every nested `{`.
-fn has_method_like_block(body: &str) -> bool {
+pub(super) fn has_method_like_block(body: &str) -> bool {
     const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
     let open_of = matching_parens(body);
     let mut memo = BraceMemo::new(body.len());
@@ -1236,7 +1253,7 @@ fn matching_open_paren(text: &str) -> Option<usize> {
 }
 
 /// The identifier `text` ends with, or `""`.
-fn trailing_identifier(text: &str) -> &str {
+pub(super) fn trailing_identifier(text: &str) -> &str {
     let start = text
         .char_indices()
         .rev()

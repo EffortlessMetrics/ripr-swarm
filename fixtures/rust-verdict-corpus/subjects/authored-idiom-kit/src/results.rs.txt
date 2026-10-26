@@ -1,0 +1,38 @@
+#[derive(Debug, PartialEq)]
+pub enum ParseError {
+    Empty,
+    NotNumber,
+}
+
+pub fn parse_sum(text: &str) -> Result<u32, ParseError> {
+    if text.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let mut total = 0;
+    for part in text.split(',') {
+        let n: u32 = part.trim().parse().map_err(|_| ParseError::NotNumber)?;
+        total += n;
+    }
+    Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sums_two() -> Result<(), ParseError> {
+        assert_eq!(parse_sum("2, 3")?, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_is_rejected() {
+        assert_eq!(parse_sum(""), Err(ParseError::Empty));
+    }
+
+    #[test]
+    fn word_is_an_error() {
+        assert!(parse_sum("a").is_err());
+    }
+}

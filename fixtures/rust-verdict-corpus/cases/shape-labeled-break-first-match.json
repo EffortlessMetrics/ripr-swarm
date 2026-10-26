@@ -1,0 +1,61 @@
+{
+  "case_id": "shape-labeled-break-first-match",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-labeled-break-first-match.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_equality",
+  "test_shape": "labeled_break_grid_search",
+  "hard_case": "The search exits two loops through a labeled `break 'outer`.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if v != target {",
+        "mutated_line": "if v != target {",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::find_cell_in_second_row",
+        "equivalence_review": "not equivalent: `if target == v {` becomes `if v != target {`"
+      },
+      {
+        "replacement": "if v >= target {",
+        "mutated_line": "if v >= target {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if target == v {` becomes `if v >= target {`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "if v <= target {",
+        "mutated_line": "if v <= target {",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::find_cell_in_second_row",
+        "equivalence_review": "not equivalent: `if target == v {` becomes `if v <= target {`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "find_cell_in_second_row looks for 3 in [[1, 2], [3, 4]]. `!=` and `<=` stop on the first cell, but `>=` still first matches at (1, 0), so one mutant survives. Shape: labeled break.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

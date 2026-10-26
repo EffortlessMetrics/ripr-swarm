@@ -116,9 +116,32 @@ pub(super) fn owner_call_only_inside_opaque_wrapper(text: &str, names: &[String]
     calls > 0 && calls == opaque
 }
 
+/// Single-coroutine runners: they drive one awaitable to completion and
+/// return its result unchanged, so the coroutine's output is still what a
+/// strong comparison sees. Matched on the whole callee: a bare `run(...)` or
+/// `task.run(...)` is any function, not a runner.
+const COROUTINE_RUNNERS: &[&str] = &["asyncio.run", "anyio.run", "trio.run"];
+
 fn is_transparent(callee: &str) -> bool {
     let last = callee.rsplit('.').next().unwrap_or(callee);
     TRANSPARENT_WRAPPERS.contains(&last)
+        || COROUTINE_RUNNERS.contains(&callee)
+        || callee
+            .strip_suffix(".run_until_complete")
+            .is_some_and(is_event_loop_receiver)
+}
+
+/// Names an event loop: `loop`, `self.loop`, `event_loop`, `io_loop`,
+/// `asyncio.get_event_loop()`. `run_until_complete` on any other receiver is
+/// that object's own method and can drop the coroutine it was handed, so it
+/// stays opaque rather than being credited for the awaited result.
+fn is_event_loop_receiver(receiver: &str) -> bool {
+    let tail = receiver.rsplit('.').next().unwrap_or(receiver);
+    let tail = tail.split('(').next().unwrap_or(tail);
+    matches!(
+        tail,
+        "loop" | "event_loop" | "get_event_loop" | "new_event_loop" | "get_running_loop"
+    ) || tail.ends_with("_loop")
 }
 
 /// Python keywords that may precede a grouping `(`. They are not callees.
@@ -146,8 +169,47 @@ fn callee_before(text: &str, open: usize) -> Option<&str> {
         .take_while(|(_, ch)| is_python_identifier_char(*ch) || *ch == '.')
         .last()
         .map(|(start, _)| start)?;
+    let start = if head[start..].starts_with('.') {
+        receiver_call_start(head, start).unwrap_or(start)
+    } else {
+        start
+    };
     let callee = &head[start..];
     (!callee.is_empty() && !GROUPING_KEYWORDS.contains(&callee)).then_some(callee)
+}
+
+/// Start of `asyncio.get_event_loop().run_until_complete`: a callee that
+/// begins at the `.` after a call keeps that call's own dotted name and
+/// arguments, so the receiver stays visible. `None` when the parens do not
+/// balance or no name precedes them.
+fn receiver_call_start(head: &str, dot: usize) -> Option<usize> {
+    let before = &head[..dot];
+    if !before.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (idx, ch) in before.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    open = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let name_start = before[..open]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| is_python_identifier_char(*ch) || *ch == '.')
+        .last()
+        .map(|(start, _)| start)?;
+    Some(name_start)
 }
 
 /// Whether one of `names` starts at `idx` as a call (`name(`), not as the

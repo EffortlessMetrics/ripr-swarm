@@ -2142,4 +2142,1540 @@ mod tests {
         }
         Ok(())
     }
+
+    // ------------------------------------------------------------------
+    // Fail-closed refusal coverage for the bind, load, prepare and apply
+    // re-verification paths. Every refusal case is paired with a positive
+    // control, and each tampered input is rebuilt so the refusal can only
+    // come from the check under test.
+    // ------------------------------------------------------------------
+
+    /// Removes its unique directory when the test ends, pass or fail.
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(tag: &str) -> Result<Self, String> {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("test clock failed: {error}"))?
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "ripr-python-repair-binding-{tag}-{}-{stamp}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path)
+                .map_err(|error| format!("create {} failed: {error}", path.display()))?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        crate::testing::fixture_git::fixture_git_ok(root, args)
+    }
+
+    fn write_text(path: &Path, text: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create {} failed: {error}", parent.display()))?;
+        }
+        std::fs::write(path, text)
+            .map_err(|error| format!("write {} failed: {error}", path.display()))
+    }
+
+    /// The sample row with `mutate` applied and its digest recomputed, so a
+    /// refusal cannot be the digest-anchor check.
+    fn redigested_row(mutate: impl FnOnce(&mut Map<String, Value>)) -> Result<Value, String> {
+        let mut row = sample_row()?;
+        let object = row
+            .as_object_mut()
+            .ok_or_else(|| "sample row is not an object".to_string())?;
+        mutate(object);
+        let digest = canonical_selection_digest(object)?;
+        object.insert(SELECTION_DIGEST_FIELD.to_string(), Value::String(digest));
+        Ok(row)
+    }
+
+    fn bind_error(row: &Value, attempt: &str) -> Result<String, String> {
+        match verify_row_binding(as_object(row, "row")?, attempt) {
+            Err(error) => Ok(error),
+            Ok(_) => Err("a row that must be refused was bound".to_string()),
+        }
+    }
+
+    fn manifest_text_of(rows: Vec<Value>) -> Result<String, String> {
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "kind": MANIFEST_KIND,
+            "spec": BINDING_SPEC,
+            "description": "unit fixture",
+            "selections": rows,
+        }))
+        .map_err(|error| format!("serialize manifest: {error}"))
+    }
+
+    fn granted() -> EditAuthorization {
+        EditAuthorization {
+            authorized: true,
+            authority: Some(AUTHORITY_IDENTITY.to_string()),
+        }
+    }
+
+    fn policy_for(target: &str) -> Result<EditCagePolicy, String> {
+        Ok(EditCagePolicy {
+            selected_target: crate::edit_cage::CagePathRule::exact(target)?,
+            allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact(target)?],
+            forbidden_paths: Vec::new(),
+            expected_operational_writes: Vec::new(),
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
+            inline_test_module_target: false,
+        })
+    }
+
+    type Mutation = fn(&mut Map<String, Value>);
+
+    #[test]
+    fn row_binding_refuses_every_unbound_row_shape() -> Result<(), String> {
+        // Positive control: the unmodified row binds and carries its identities.
+        let sample = sample_row()?;
+        let bound = verify_row_binding(as_object(&sample, "row")?, "att-test-1")?;
+        if bound.target_path != "tests/test_pricing.py" || bound.target_state != "existing" {
+            return Err(format!("control row bound the wrong target: {bound:?}"));
+        }
+        if bound.tree.is_some() || bound.source_currentness.is_some() || bound.limitation.is_some()
+        {
+            return Err("control row invented optional identities".to_string());
+        }
+
+        let cases: Vec<(&str, Mutation, &str)> = vec![
+            (
+                "target_state",
+                |row| {
+                    row.insert("target_state".into(), "proposed".into());
+                },
+                "declares target_state `proposed`",
+            ),
+            (
+                "denied surface",
+                |row| {
+                    row.insert("target_path".into(), "vendor/test_x.py".into());
+                },
+                "falls under a production/generated/vendor/environment edit surface",
+            ),
+            (
+                "escaping target",
+                |row| {
+                    row.insert("target_path".into(), "../tests/test_x.py".into());
+                },
+                "target_path: path `../tests/test_x.py` must not contain `..` components",
+            ),
+            (
+                "short head",
+                |row| {
+                    row.insert("head".into(), "abc123".into());
+                },
+                "head must be a bare lowercase 40-character commit SHA",
+            ),
+            (
+                "uppercase base",
+                |row| {
+                    row.insert("base".into(), "B".repeat(40).into());
+                },
+                "base must be a bare lowercase 40-character commit SHA",
+            ),
+            (
+                "malformed tree",
+                |row| {
+                    row.insert("tree".into(), "not-a-digest".into());
+                },
+                "tree must be bare lowercase sha256 hex when present",
+            ),
+            (
+                "empty limitation",
+                |row| {
+                    row.insert("limitation".into(), "  ".into());
+                },
+                "string field must be non-empty when present",
+            ),
+            (
+                "numeric currentness",
+                |row| {
+                    row.insert("source_currentness".into(), serde_json::json!(7));
+                },
+                "field must be a string when present",
+            ),
+            (
+                "missing owner",
+                |row| {
+                    row.remove("owner");
+                },
+                "field=`owner`: required field is missing",
+            ),
+            (
+                "null oracle",
+                |row| {
+                    row.insert("oracle".into(), Value::Null);
+                },
+                "field=`oracle`: a present null is not a value",
+            ),
+            (
+                "blank subject",
+                |row| {
+                    row.insert("subject_id".into(), "   ".into());
+                },
+                "field=`subject_id`: required field must be non-empty",
+            ),
+            (
+                "numeric case",
+                |row| {
+                    row.insert("case_id".into(), serde_json::json!(1));
+                },
+                "field=`case_id`: field must be a string",
+            ),
+        ];
+        for (label, mutate, needle) in cases {
+            let row = redigested_row(mutate)?;
+            if row == sample {
+                return Err(format!("case `{label}` did not change the row"));
+            }
+            let error = bind_error(&row, "att-test-1")?;
+            if !error.contains(needle) {
+                return Err(format!(
+                    "case `{label}` was not refused for `{needle}`: {error}"
+                ));
+            }
+            if error.contains("digest mismatch") {
+                return Err(format!(
+                    "case `{label}` hit the digest anchor instead: {error}"
+                ));
+            }
+        }
+
+        // The optional identities are carried through when well formed.
+        let tree = sha256_hex(b"tree bytes");
+        let carried = redigested_row(|row| {
+            row.insert("tree".into(), sha256_hex(b"tree bytes").into());
+            row.insert("source_currentness".into(), "current".into());
+            row.insert("limitation".into(), "static evidence only".into());
+        })?;
+        let verified = verify_row_binding(as_object(&carried, "row")?, "att-test-1")?;
+        if verified.tree.as_deref() != Some(tree.as_str())
+            || verified.source_currentness.as_deref() != Some("current")
+            || verified.limitation.as_deref() != Some("static evidence only")
+        {
+            return Err(format!("optional identities were dropped: {verified:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn row_binding_anchors_identity_and_digest_before_content() -> Result<(), String> {
+        let sample = sample_row()?;
+        let error = bind_error(&sample, "att-other")?;
+        if !error.contains("does not match the requested attempt `att-other`") {
+            return Err(format!(
+                "substituted attempt was not refused by name: {error}"
+            ));
+        }
+        // Editing a field after the digest was recorded is a replaced row.
+        let mut edited = sample.clone();
+        let object = edited
+            .as_object_mut()
+            .ok_or_else(|| "sample row is not an object".to_string())?;
+        object.insert("oracle".into(), "assert anything".into());
+        let error = bind_error(&edited, "att-test-1")?;
+        if !error.contains("digest mismatch") || !error.contains("requires a new selection") {
+            return Err(format!("edited row was not a digest mismatch: {error}"));
+        }
+        // A prefixed or uppercase recorded digest is not the corpus shape.
+        for bad in [
+            format!("sha256:{}", sha256_hex(b"x")),
+            sha256_hex(b"x").to_ascii_uppercase(),
+        ] {
+            let mut shaped = sample.clone();
+            let object = shaped
+                .as_object_mut()
+                .ok_or_else(|| "sample row is not an object".to_string())?;
+            object.insert(SELECTION_DIGEST_FIELD.into(), bad.clone().into());
+            let error = bind_error(&shaped, "att-test-1")?;
+            if !error.contains("selection_digest must be bare lowercase sha256 hex") {
+                return Err(format!("digest shape `{bad}` was not refused: {error}"));
+            }
+        }
+        // A row with no recorded digest names the missing field.
+        let mut missing = sample.clone();
+        let object = missing
+            .as_object_mut()
+            .ok_or_else(|| "sample row is not an object".to_string())?;
+        object.remove(SELECTION_DIGEST_FIELD);
+        let error = bind_error(&missing, "att-test-1")?;
+        if !error.contains("field=`selection_digest`: required field is missing") {
+            return Err(format!("missing digest was not named: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn strict_accessors_distinguish_missing_null_blank_and_wrong_type() -> Result<(), String> {
+        let value = serde_json::json!({"a": "x", "b": null, "c": "  ", "d": 3});
+        let object = as_object(&value, "accessor fixture")?;
+        if require_string("subject", object, "a")? != "x" {
+            return Err("a present string was not returned".to_string());
+        }
+        for (field, needle) in [
+            ("z", "required field is missing"),
+            ("b", "a present null is not a value"),
+            ("c", "required field must be non-empty"),
+            ("d", "field must be a string"),
+        ] {
+            match require_string("subject", object, field) {
+                Err(error) if error.contains(needle) && error.contains(field) => {}
+                other => return Err(format!("field `{field}` expected `{needle}`: {other:?}")),
+            }
+        }
+        if opt_string(object, "a")?.as_deref() != Some("x")
+            || opt_string(object, "z")?.is_some()
+            || opt_string(object, "b")?.is_some()
+        {
+            return Err("absent and null optionals must read as None".to_string());
+        }
+        for (field, needle) in [
+            ("c", "must be non-empty when present"),
+            ("d", "must be a string when present"),
+        ] {
+            match opt_string(object, field) {
+                Err(error) if error.contains(needle) => {}
+                other => {
+                    return Err(format!("optional `{field}` expected `{needle}`: {other:?}"));
+                }
+            }
+        }
+        let typo = serde_json::json!({"a": 1, "typo": 2});
+        let typo = as_object(&typo, "typo fixture")?;
+        reject_unknown_keys(typo, &["a", "typo"], "typo fixture")?;
+        match reject_unknown_keys(typo, &["a"], "typo fixture") {
+            Err(error) if error.contains("unknown field `typo`") => {}
+            other => return Err(format!("unknown key was not denied: {other:?}")),
+        }
+        let array = serde_json::json!([1]);
+        match as_object(&array, "array fixture") {
+            Err(error) if error.contains("subject=`array fixture`") => {}
+            other => return Err(format!("a non-object was accepted: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn authorization_trims_the_authority_and_refuses_blank_identities() -> Result<(), String> {
+        let padded = EditAuthorization {
+            authorized: true,
+            authority: Some("  reviewer-1  ".to_string()),
+        };
+        if padded.verify("prepare the edit transaction")? != "reviewer-1" {
+            return Err("the authority was not trimmed".to_string());
+        }
+        for blank in [Some("   ".to_string()), Some(String::new()), None] {
+            let authorization = EditAuthorization {
+                authorized: true,
+                authority: blank.clone(),
+            };
+            match authorization.verify("record the applied edit") {
+                Err(error) if error.contains("requires --edit-authority <identity>") => {}
+                other => {
+                    return Err(format!("blank authority {blank:?} was accepted: {other:?}"));
+                }
+            }
+        }
+        // An identity without the flag is still refused: both are required.
+        let identity_only = EditAuthorization {
+            authorized: false,
+            authority: Some("reviewer-1".to_string()),
+        };
+        match identity_only.verify("prepare the edit transaction") {
+            Err(error) if error.contains("--edit-authorized") => {}
+            other => return Err(format!("an unflagged authority was accepted: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn denied_surface_and_path_helpers_pin_their_boundaries() -> Result<(), String> {
+        // Matching is case-insensitive and anchored to the path start.
+        for denied in [
+            "Vendor/Lib.py",
+            "NODE_MODULES/x.py",
+            "tests/gen.GENERATED.py",
+        ] {
+            if !is_denied_edit_surface(denied) {
+                return Err(format!("`{denied}` escaped the denied vocabulary"));
+            }
+        }
+        for allowed in [
+            "src/vendor/lib.py",
+            "environment/test_x.py",
+            "tests/env/test_x.py",
+        ] {
+            if is_denied_edit_surface(allowed) {
+                return Err(format!("`{allowed}` was denied by a non-prefix match"));
+            }
+        }
+        // Built at runtime so no local absolute path is committed as a literal.
+        let drive = char::from(b'Z');
+        let drive_forward = format!("{drive}:/x.py");
+        for rejected in ["   ", "\t", "c:", drive_forward.as_str()] {
+            if check_portable_path(rejected).is_ok() {
+                return Err(format!("portable path check accepted `{rejected}`"));
+            }
+        }
+        for accepted in ["tests/test_x.py", "a/b.c/d", "..hidden/x.py", "a/b..c"] {
+            check_portable_path(accepted)
+                .map_err(|error| format!("`{accepted}` was refused: {error}"))?;
+        }
+        for (raw, expected) in [
+            ("./a//b/./c.py", "a/b/c.py"),
+            ("a/b/", "a/b"),
+            ("tests/test_x.py", "tests/test_x.py"),
+        ] {
+            if normalize_repo_relative_path(raw) != expected {
+                return Err(format!("`{raw}` did not normalize to `{expected}`"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selection_manifest_load_refuses_every_malformed_envelope() -> Result<(), String> {
+        let root = TempRoot::new("manifest-load")?;
+        let path = root.path().join("manifest.json");
+
+        // Positive control: bytes digest exactly, rows come back verbatim.
+        let good = manifest_text_of(vec![sample_row()?])?;
+        write_text(&path, &good)?;
+        let (digest, rows) = load_selection_manifest(&path)?;
+        if digest != sha256_hex(good.as_bytes()) || rows.len() != 1 {
+            return Err(format!(
+                "control manifest did not load: {digest} {}",
+                rows.len()
+            ));
+        }
+
+        let envelope = |overrides: Value| -> Result<String, String> {
+            let mut base = serde_json::json!({
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "kind": MANIFEST_KIND,
+                "spec": BINDING_SPEC,
+                "selections": [],
+            });
+            let target = base
+                .as_object_mut()
+                .ok_or_else(|| "envelope is not an object".to_string())?;
+            for (key, value) in overrides.as_object().cloned().unwrap_or_default() {
+                if value.is_null() {
+                    target.remove(&key);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+            serde_json::to_string(&base).map_err(|error| error.to_string())
+        };
+        let mut unknown_row = sample_row()?;
+        unknown_row
+            .as_object_mut()
+            .ok_or_else(|| "sample row is not an object".to_string())?
+            .insert("surprise".into(), "x".into());
+        let mut no_attempt = sample_row()?;
+        no_attempt
+            .as_object_mut()
+            .ok_or_else(|| "sample row is not an object".to_string())?
+            .remove("attempt_id");
+        let duplicate_rows = serde_json::json!([sample_row()?, sample_row()?]);
+        let cases: Vec<(&str, String, &str)> = vec![
+            ("not json", "{".to_string(), "is not well-formed JSON"),
+            (
+                "duplicate key",
+                "{\"kind\":\"a\",\"kind\":\"b\"}".to_string(),
+                "duplicate object key `kind`",
+            ),
+            (
+                "array top level",
+                "[]".to_string(),
+                "subject=`selection manifest`: must be a JSON object",
+            ),
+            (
+                "unknown top key",
+                envelope(serde_json::json!({"extra": "x"}))?,
+                "unknown field `extra`",
+            ),
+            (
+                "wrong kind",
+                envelope(serde_json::json!({"kind": "other_manifest"}))?,
+                "field `kind` must be `python_repair_trust_manifest`, got `other_manifest`",
+            ),
+            (
+                "wrong schema",
+                envelope(serde_json::json!({"schema_version": "9.9"}))?,
+                "field `schema_version` must be `0.1`, got `9.9`",
+            ),
+            (
+                "wrong spec",
+                envelope(serde_json::json!({"spec": "RIPR-SPEC-0001"}))?,
+                "field `spec` must be `RIPR-SPEC-0176`",
+            ),
+            (
+                "missing selections",
+                envelope(serde_json::json!({"selections": null}))?,
+                "must contain a selections array",
+            ),
+            (
+                "selections not array",
+                envelope(serde_json::json!({"selections": {"a": 1}}))?,
+                "must contain a selections array",
+            ),
+            (
+                "row not object",
+                envelope(serde_json::json!({"selections": [3]}))?,
+                "subject=`selection row`: must be a JSON object",
+            ),
+            (
+                "unknown row key",
+                envelope(serde_json::json!({"selections": [unknown_row]}))?,
+                "subject=`selection row`: unknown field `surprise`",
+            ),
+            (
+                "row without attempt",
+                envelope(serde_json::json!({"selections": [no_attempt]}))?,
+                "field=`attempt_id`: required field is missing",
+            ),
+            (
+                "duplicate attempts",
+                envelope(serde_json::json!({"selections": duplicate_rows}))?,
+                "duplicate attempt identity `att-test-1`",
+            ),
+        ];
+        for (label, text, needle) in cases {
+            write_text(&path, &text)?;
+            match load_selection_manifest(&path) {
+                Err(error) if error.contains(needle) => {}
+                other => return Err(format!("case `{label}` expected `{needle}`: {other:?}")),
+            }
+        }
+
+        // Non-UTF-8 bytes and an absent file are named distinctly.
+        std::fs::write(&path, [0xff_u8, 0xfe, 0x00]).map_err(|error| error.to_string())?;
+        match load_selection_manifest(&path) {
+            Err(error) if error.contains("is not UTF-8") => {}
+            other => return Err(format!("non-UTF-8 manifest was not refused: {other:?}")),
+        }
+        match load_selection_manifest(&root.path().join("absent.json")) {
+            Err(error) if error.contains("is not readable") => {}
+            other => return Err(format!("an absent manifest was not refused: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn target_alignment_requires_the_packet_selected_target() -> Result<(), String> {
+        let sample = sample_row()?;
+        let verified = verify_row_binding(as_object(&sample, "row")?, "att-test-1")?;
+        verify_row_target_alignment(&verified, &policy_for("tests/test_pricing.py")?)
+            .map_err(|error| format!("the selected target was refused: {error}"))?;
+        match verify_row_target_alignment(&verified, &policy_for("tests/test_other.py")?) {
+            Err(error)
+                if error.contains("wrong target")
+                    && error.contains("`tests/test_pricing.py`")
+                    && error.contains("`tests/test_other.py`") => {}
+            other => {
+                return Err(format!(
+                    "a similar-but-different target was bound: {other:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_row_checks_head_inventory_and_target_identity() -> Result<(), String> {
+        let root = TempRoot::new("prepare-row")?;
+        run_git(root.path(), &["init", "-q"])?;
+        let head = "c".repeat(40);
+        let sample = sample_row()?;
+        let row = as_object(&sample, "row")?;
+        let policy = policy_for("tests/test_pricing.py")?;
+
+        // The target is absent from the inventory: a zero-match refusal.
+        match verify_row_for_prepare(row, "att-test-1", &head, &policy, root.path()) {
+            Err(error) if error.contains("matches no file in the repository inventory") => {}
+            other => return Err(format!("a missing target was bound: {other:?}")),
+        }
+
+        // An untracked file counts as inventory: the control now binds.
+        write_text(
+            &root.path().join("tests/test_pricing.py"),
+            "def test_x(): pass\n",
+        )?;
+        let bound = verify_row_for_prepare(row, "att-test-1", &head, &policy, root.path())
+            .map_err(|error| format!("the control row was refused: {error}"))?;
+        if bound.target_path != "tests/test_pricing.py" {
+            return Err(format!("control bound `{}`", bound.target_path));
+        }
+
+        // A selection made at another commit is stale before any attempt exists.
+        let other_head = "d".repeat(40);
+        match verify_row_for_prepare(row, "att-test-1", &other_head, &policy, root.path()) {
+            Err(error)
+                if error.contains("stale selection")
+                    && error.contains(&format!("pins head `{head}`"))
+                    && error.contains(&format!("HEAD is `{other_head}`")) => {}
+            other => return Err(format!("a stale head was bound: {other:?}")),
+        }
+
+        // The packet's selected target must be the row's target.
+        let other_policy = policy_for("tests/test_other.py")?;
+        match verify_row_for_prepare(row, "att-test-1", &head, &other_policy, root.path()) {
+            Err(error) if error.contains("wrong target") => {}
+            other => return Err(format!("a mismatched packet target was bound: {other:?}")),
+        }
+
+        // The shared binding checks run first: a substituted attempt fails.
+        match verify_row_for_prepare(row, "att-other", &head, &policy, root.path()) {
+            Err(error) if error.contains("does not match the requested attempt") => {}
+            other => return Err(format!("a substituted attempt was bound: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn prepare_row_refuses_a_case_ambiguous_target() -> Result<(), String> {
+        let root = TempRoot::new("prepare-ambiguous")?;
+        run_git(root.path(), &["init", "-q"])?;
+        write_text(&root.path().join("tests/test_pricing.py"), "a\n")?;
+        let sample = sample_row()?;
+        let row = as_object(&sample, "row")?;
+        let policy = policy_for("tests/test_pricing.py")?;
+        let head = "c".repeat(40);
+        verify_row_for_prepare(row, "att-test-1", &head, &policy, root.path())
+            .map_err(|error| format!("the unambiguous control was refused: {error}"))?;
+
+        write_text(&root.path().join("tests/Test_Pricing.py"), "b\n")?;
+        let spellings = std::fs::read_dir(root.path().join("tests"))
+            .map_err(|error| error.to_string())?
+            .count();
+        if spellings != 2 {
+            return Err(format!("fixture did not create two spellings: {spellings}"));
+        }
+        match verify_row_for_prepare(row, "att-test-1", &head, &policy, root.path()) {
+            Err(error)
+                if error.contains("matches 2 candidate files") && error.contains("ambiguous") => {}
+            other => return Err(format!("an ambiguous target was bound: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repository_inventory_failure_is_reported_not_swallowed() -> Result<(), String> {
+        let root = TempRoot::new("inventory")?;
+        run_git(root.path(), &["init", "-q"])?;
+        let listed = git_inventory(root.path(), &["ls-files", "-z"])?;
+        if !listed.is_empty() {
+            return Err(format!("an empty repository listed files: {listed:?}"));
+        }
+        match git_inventory(root.path(), &["no-such-git-subcommand"]) {
+            Err(error) if error.contains("repository inventory failed") => {}
+            other => return Err(format!("a failing git call was swallowed: {other:?}")),
+        }
+        Ok(())
+    }
+
+    fn tampered_record(mutate: Mutation) -> Result<RetainedBinding, String> {
+        let mut record = retained_record_fixture();
+        let object = record
+            .as_object_mut()
+            .ok_or_else(|| "retained fixture is not an object".to_string())?;
+        mutate(object);
+        Ok(RetainedBinding {
+            artifact_sha256: String::new(),
+            value: record,
+        })
+    }
+
+    fn reverify_error(retained: &RetainedBinding) -> Result<String, String> {
+        match reverify_for_apply(
+            "seam-under-test",
+            &policy_for("tests/test_pricing.py")?,
+            b"packet bytes",
+            retained,
+            &granted(),
+        ) {
+            Err(error) => Ok(error),
+            Ok(_) => Err("a tampered retained record passed re-verification".to_string()),
+        }
+    }
+
+    fn edit_block(record: &mut Map<String, Value>, block: &str, field: &str, value: Value) {
+        if let Some(object) = record.get_mut(block).and_then(Value::as_object_mut) {
+            object.insert(field.to_string(), value);
+        }
+    }
+
+    #[test]
+    fn reverify_refuses_each_tampered_record_envelope_and_authorization() -> Result<(), String> {
+        // Positive control reaches the manifest stage, so every refusal below
+        // is the targeted structural check rather than a missing manifest.
+        let control = reverify_error(&tampered_record(|_| {})?)?;
+        if !control.contains("selection manifest") {
+            return Err(format!(
+                "control did not reach the manifest stage: {control}"
+            ));
+        }
+
+        let cases: Vec<(&str, Mutation, &str)> = vec![
+            (
+                "schema_version",
+                |record| {
+                    record.insert("schema_version".into(), "0.2".into());
+                },
+                "field `schema_version` must be `0.1` for the apply phase",
+            ),
+            (
+                "kind",
+                |record| {
+                    record.insert("kind".into(), "other_binding".into());
+                },
+                "field `kind` must be `python_repair_driver_binding`",
+            ),
+            (
+                "spec",
+                |record| {
+                    record.insert("spec".into(), "RIPR-SPEC-0001".into());
+                },
+                "field `spec` must be `RIPR-SPEC-0176`",
+            ),
+            (
+                "phase",
+                |record| {
+                    record.insert("phase".into(), "apply".into());
+                },
+                "field `phase` must be `prepare` for the apply phase, got `apply`",
+            ),
+            (
+                "replayed apply block",
+                |record| {
+                    record.insert("apply".into(), serde_json::json!({}));
+                },
+                // The closed prepare-key allowlist refuses the block before the
+                // explicit replay guard is reached, so a replayed apply record
+                // still fails closed.
+                "unknown field `apply`",
+            ),
+            (
+                "seam",
+                |record| {
+                    record.insert("seam_id".into(), "other-seam".into());
+                },
+                "names seam `other-seam` but the selected attempt belongs to seam `seam-under-test`",
+            ),
+            (
+                "unknown top-level key",
+                |record| {
+                    record.insert("surprise".into(), "x".into());
+                },
+                "subject=`retained binding record`: unknown field `surprise`",
+            ),
+            (
+                "missing authorization",
+                |record| {
+                    record.remove("authorization");
+                },
+                "retained binding record is missing authorization",
+            ),
+            (
+                "authorization not an object",
+                |record| {
+                    record.insert("authorization".into(), serde_json::json!("granted"));
+                },
+                "subject=`retained authorization`: must be a JSON object",
+            ),
+            (
+                "unknown authorization key",
+                |record| edit_block(record, "authorization", "extra", "x".into()),
+                "subject=`retained authorization`: unknown field `extra`",
+            ),
+            (
+                "authorization status",
+                |record| edit_block(record, "authorization", "status", "denied".into()),
+                "retained binding authorization status is `denied`",
+            ),
+            (
+                "different authority",
+                |record| edit_block(record, "authorization", "authority", "someone-else".into()),
+                "does not match the retained authorization authority",
+            ),
+            (
+                "authorization method",
+                |record| edit_block(record, "authorization", "method", "ambient-config".into()),
+                "`ambient-config` is not the explicit-operator-flags authority",
+            ),
+            (
+                "missing driver block",
+                |record| {
+                    record.remove("driver");
+                },
+                "retained binding record is missing driver",
+            ),
+            (
+                "unknown nested key",
+                |record| edit_block(record, "config", "extra", "x".into()),
+                "subject=`retained binding config`: unknown field `extra`",
+            ),
+            (
+                "before snapshot digest",
+                |record| edit_block(record, "input", "before_snapshot_sha256", "XYZ".into()),
+                "field=`before_snapshot_sha256`: must be bare lowercase sha256 hex",
+            ),
+            (
+                "forbidden not an array",
+                |record| edit_block(record, "edit_surface", "forbidden", "target/".into()),
+                "field=`forbidden`: must be an array of paths",
+            ),
+            (
+                "allowed entry not a string",
+                |record| edit_block(record, "edit_surface", "allowed", serde_json::json!([1])),
+                "field=`allowed[0]`: path must be a string",
+            ),
+            (
+                "absolute allowed path",
+                |record| {
+                    edit_block(
+                        record,
+                        "edit_surface",
+                        "allowed",
+                        serde_json::json!(["/etc/test_x.py"]),
+                    );
+                },
+                "must be repo-relative, not absolute",
+            ),
+            (
+                "missing non_claims",
+                |record| {
+                    record.remove("non_claims");
+                },
+                "must carry its non_claims",
+            ),
+            (
+                "dropped non-claim",
+                |record| {
+                    record.insert(
+                        "non_claims".into(),
+                        serde_json::json!([BINDING_NON_CLAIMS[0], BINDING_NON_CLAIMS[1]]),
+                    );
+                },
+                "exactly the standing non-claims",
+            ),
+            (
+                "smuggled non-claim",
+                |record| {
+                    record.insert(
+                        "non_claims".into(),
+                        serde_json::json!([
+                            BINDING_NON_CLAIMS[0],
+                            BINDING_NON_CLAIMS[1],
+                            BINDING_NON_CLAIMS[2],
+                            "verification passed"
+                        ]),
+                    );
+                },
+                "exactly the standing non-claims",
+            ),
+            (
+                "non-string non-claim",
+                |record| {
+                    record.insert("non_claims".into(), serde_json::json!([7]));
+                },
+                "non_claims[0]: non-claim must be a string",
+            ),
+            (
+                "missing trust",
+                |record| {
+                    record.remove("trust");
+                },
+                "retained binding record is missing trust",
+            ),
+            (
+                "unknown trust key",
+                |record| edit_block(record, "trust", "extra", "x".into()),
+                "subject=`retained binding trust`: unknown field `extra`",
+            ),
+            (
+                "missing manifest path",
+                |record| {
+                    record.remove(TELEMETRY_MANIFEST_PATH_FIELD);
+                },
+                "field=`selection_manifest_path`: required field is missing",
+            ),
+        ];
+        for (label, mutate, needle) in cases {
+            let error = reverify_error(&tampered_record(mutate)?)?;
+            if !error.contains(needle) {
+                return Err(format!("case `{label}` expected `{needle}`: {error}"));
+            }
+            if error.contains("selection manifest") && !needle.contains("manifest") {
+                return Err(format!(
+                    "case `{label}` leaked to the manifest stage: {error}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reverify_requires_a_fresh_matching_authorization() -> Result<(), String> {
+        let retained = tampered_record(|_| {})?;
+        let policy = policy_for("tests/test_pricing.py")?;
+        // Surrounding whitespace is trimmed before the authority comparison, so
+        // the same identity still reaches the manifest stage.
+        let padded = EditAuthorization {
+            authorized: true,
+            authority: Some(format!("  {AUTHORITY_IDENTITY}  ")),
+        };
+        match reverify_for_apply(
+            "seam-under-test",
+            &policy,
+            b"packet bytes",
+            &retained,
+            &padded,
+        ) {
+            Err(error) if error.contains("selection manifest") => {}
+            other => return Err(format!("the same trimmed authority was refused: {other:?}")),
+        }
+        let refusals = [
+            (
+                EditAuthorization {
+                    authorized: false,
+                    authority: Some(AUTHORITY_IDENTITY.to_string()),
+                },
+                "refuses to record the applied edit: explicit --edit-authorized",
+            ),
+            (
+                EditAuthorization {
+                    authorized: true,
+                    authority: Some("Test-Operator".to_string()),
+                },
+                "does not match the retained authorization authority",
+            ),
+        ];
+        for (authorization, needle) in refusals {
+            match reverify_for_apply(
+                "seam-under-test",
+                &policy,
+                b"packet bytes",
+                &retained,
+                &authorization,
+            ) {
+                Err(error) if error.contains(needle) => {}
+                other => return Err(format!("expected `{needle}`: {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    fn retained_for_manifest(
+        manifest_path: &Path,
+        manifest_sha256: &str,
+        attempt_id: &str,
+    ) -> Result<RetainedBinding, String> {
+        let mut record = retained_record_fixture();
+        let object = record
+            .as_object_mut()
+            .ok_or_else(|| "retained fixture is not an object".to_string())?;
+        object.insert(
+            TELEMETRY_MANIFEST_PATH_FIELD.to_string(),
+            Value::String(manifest_path.display().to_string()),
+        );
+        let trust = object
+            .get_mut("trust")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "retained fixture is missing trust".to_string())?;
+        trust.insert("attempt_id".into(), attempt_id.into());
+        trust.insert("selection_manifest_sha256".into(), manifest_sha256.into());
+        Ok(RetainedBinding {
+            artifact_sha256: String::new(),
+            value: record,
+        })
+    }
+
+    #[test]
+    fn reverify_binds_the_manifest_row_target_and_packet_digests() -> Result<(), String> {
+        let root = TempRoot::new("reverify-manifest")?;
+        let path = root.path().join("trust-manifest.json");
+        let text = manifest_text_of(vec![sample_row()?])?;
+        write_text(&path, &text)?;
+        let pinned = sha256_hex(text.as_bytes());
+        let policy = policy_for("tests/test_pricing.py")?;
+        let retained = retained_for_manifest(&path, &pinned, "att-test-1")?;
+        let reverify = |retained: &RetainedBinding, policy: &EditCagePolicy, packet: &[u8]| {
+            reverify_for_apply("seam-under-test", policy, packet, retained, &granted())
+        };
+
+        // Positive control: every anchor intact returns the verified row.
+        let verified = reverify(&retained, &policy, b"packet bytes")
+            .map_err(|error| format!("the intact retained binding was refused: {error}"))?;
+        if verified.attempt_id != "att-test-1"
+            || verified.selection_manifest_sha256 != pinned
+            || verified.selection_manifest_path != path.display().to_string()
+            || verified.target_path != "tests/test_pricing.py"
+        {
+            return Err(format!(
+                "control verification lost an identity: {verified:?}"
+            ));
+        }
+
+        // A changed packet is refused by digest.
+        match reverify(&retained, &policy, b"a different packet") {
+            Err(error) if error.contains("stale packet: the retained binding pins packet") => {}
+            other => return Err(format!("a changed packet was accepted: {other:?}")),
+        }
+
+        // A packet whose selected target moved is a wrong-target refusal.
+        match reverify(
+            &retained,
+            &policy_for("tests/test_other.py")?,
+            b"packet bytes",
+        ) {
+            Err(error)
+                if error.contains("stale packet rejected before recording the applied edit")
+                    && error.contains("wrong target") => {}
+            other => return Err(format!("a moved packet target was accepted: {other:?}")),
+        }
+
+        // A replaced manifest no longer digests to the pin.
+        let replaced_text = format!("{text}\n");
+        write_text(&path, &replaced_text)?;
+        match reverify(&retained, &policy, b"packet bytes") {
+            Err(error)
+                if error.contains("stale selection manifest")
+                    && error.contains(&sha256_hex(replaced_text.as_bytes())) => {}
+            other => return Err(format!("a replaced manifest was accepted: {other:?}")),
+        }
+
+        // A row removed from a re-pinned manifest cannot be replaced by name.
+        let emptied = manifest_text_of(Vec::new())?;
+        write_text(&path, &emptied)?;
+        let repinned = retained_for_manifest(&path, &sha256_hex(emptied.as_bytes()), "att-test-1")?;
+        match reverify(&repinned, &policy, b"packet bytes") {
+            Err(error) if error.contains("no longer exists in the accepted selection manifest") => {
+            }
+            other => return Err(format!("a deleted row was accepted: {other:?}")),
+        }
+
+        // A row edited under a re-pinned manifest fails its own digest anchor.
+        let mut edited = sample_row()?;
+        edited
+            .as_object_mut()
+            .ok_or_else(|| "sample row is not an object".to_string())?
+            .insert("oracle".into(), "assert nothing".into());
+        let edited_text = manifest_text_of(vec![edited])?;
+        write_text(&path, &edited_text)?;
+        let repinned =
+            retained_for_manifest(&path, &sha256_hex(edited_text.as_bytes()), "att-test-1")?;
+        match reverify(&repinned, &policy, b"packet bytes") {
+            Err(error)
+                if error.contains("stale packet rejected before recording the applied edit")
+                    && error.contains("digest mismatch") => {}
+            other => return Err(format!("an edited row was accepted: {other:?}")),
+        }
+
+        // A missing manifest is an unreadable-manifest refusal, not a pass.
+        std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+        match reverify(&retained, &policy, b"packet bytes") {
+            Err(error) if error.contains("is not readable") => {}
+            other => return Err(format!("a missing manifest was accepted: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_confirmation_separates_operational_failures_from_replacement() -> Result<(), String>
+    {
+        let root = TempRoot::new("confirm-operational")?;
+        let path = root.path().join("manifest.json");
+        let text = manifest_text_of(Vec::new())?;
+        write_text(&path, &text)?;
+        let pinned = sha256_hex(text.as_bytes());
+        let retained_with = |value: Value| RetainedBinding {
+            artifact_sha256: String::new(),
+            value,
+        };
+        let path_text = path.display().to_string();
+
+        // Positive control for the fixture shape used by the refusals below.
+        confirm_manifest_unchanged(&retained_with(serde_json::json!({
+            "trust": {"selection_manifest_sha256": pinned},
+            "selection_manifest_path": path_text,
+        })))
+        .map_err(|error| format!("the intact control was refused: {error}"))?;
+
+        let gone = root.path().join("gone.json").display().to_string();
+        let cases = [
+            (
+                "not an object",
+                serde_json::json!([]),
+                "subject=`retained binding record`: must be a JSON object",
+            ),
+            (
+                "missing trust",
+                serde_json::json!({"selection_manifest_path": path_text}),
+                "retained binding record is missing trust",
+            ),
+            (
+                "missing pin",
+                serde_json::json!({"trust": {}, "selection_manifest_path": path_text}),
+                "field=`selection_manifest_sha256`: required field is missing",
+            ),
+            (
+                "missing path",
+                serde_json::json!({"trust": {"selection_manifest_sha256": pinned}}),
+                "field=`selection_manifest_path`: required field is missing",
+            ),
+            (
+                "unreadable manifest",
+                serde_json::json!({
+                    "trust": {"selection_manifest_sha256": pinned},
+                    "selection_manifest_path": gone,
+                }),
+                "stale packet rejected before the durable finish",
+            ),
+        ];
+        for (label, value, needle) in cases {
+            match confirm_manifest_unchanged(&retained_with(value)) {
+                Err(ManifestConfirmationError::Operational(message))
+                    if message.contains(needle) => {}
+                Err(other) => {
+                    return Err(format!(
+                        "case `{label}` expected operational `{needle}`: {other}"
+                    ));
+                }
+                Ok(()) => return Err(format!("case `{label}` passed the confirmation")),
+            }
+        }
+
+        // The two variants render the same message through both conversions.
+        for error in [
+            ManifestConfirmationError::Replaced("replaced".to_string()),
+            ManifestConfirmationError::Operational("operational".to_string()),
+        ] {
+            let message = error.message().to_string();
+            if error.to_string() != message || String::from(error) != message {
+                return Err(format!("message conversions disagreed for `{message}`"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn config_profile_reports_a_present_ripr_toml() -> Result<(), String> {
+        let root = TempRoot::new("config-profile")?;
+        if detect_config_profile(root.path()) != "default" {
+            return Err("an absent ripr.toml must be the default profile".to_string());
+        }
+        write_text(&root.path().join("ripr.toml"), "")?;
+        if detect_config_profile(root.path()) != "subject-ripr-toml" {
+            return Err("a present ripr.toml must be the subject profile".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn render_record_carries_optional_identities_only_when_present() -> Result<(), String> {
+        let root = TempRoot::new("render-optional")?;
+        let policy = policy_for("tests/test_pricing.py")?;
+        let sample = sample_row()?;
+        let mut verified = verify_row_binding(as_object(&sample, "row")?, "att-test-1")?;
+        let digest = sha256_hex(b"x");
+        let render = |verified: &VerifiedSelection,
+                      durable: Option<&str>,
+                      artifact: Option<&str>,
+                      apply: Option<Value>| {
+            render_record(
+                root.path(),
+                RecordIdentity {
+                    seam_id: "seam-under-test",
+                    repository_head: &verified.head,
+                    phase: if apply.is_some() { "apply" } else { "prepare" },
+                    durable_attempt_id: durable,
+                    binding_artifact_sha256: artifact,
+                    verified,
+                    authority: AUTHORITY_IDENTITY,
+                    packet_sha256: &digest,
+                    before_snapshot_sha256: &digest,
+                    policy: &policy,
+                },
+                apply,
+            )
+        };
+
+        // Minimal prepare record: no optional trust fields, no apply members.
+        let bare = render(&verified, None, None, None)?;
+        for pointer in [
+            "/trust/tree",
+            "/trust/source_currentness",
+            "/trust/limitation",
+            "/durable_attempt_id",
+            "/binding_artifact_sha256",
+            "/apply",
+        ] {
+            if bare.pointer(pointer).is_some() {
+                return Err(format!("the bare record invented `{pointer}`"));
+            }
+        }
+        if bare.pointer("/config/profile").and_then(Value::as_str) != Some("default")
+            || bare
+                .pointer("/authorization/status")
+                .and_then(Value::as_str)
+                != Some("granted")
+            || bare
+                .pointer("/edit_surface/allowed/0")
+                .and_then(Value::as_str)
+                != Some("tests/test_pricing.py")
+        {
+            return Err(format!("the bare record lost a standing field: {bare}"));
+        }
+        // The rendered prepare record is accepted by the prepare-key allowlist.
+        let keys = bare
+            .as_object()
+            .ok_or_else(|| "record is not an object".to_string())?;
+        reject_unknown_keys(keys, &PREPARE_RECORD_KEYS, "rendered record")?;
+
+        verified.tree = Some(sha256_hex(b"tree"));
+        verified.source_currentness = Some("current".to_string());
+        verified.limitation = Some("static evidence only".to_string());
+        let full = render(
+            &verified,
+            Some("attempt-1"),
+            Some("artifactdigest"),
+            Some(serde_json::json!({"patch_sha256": "p"})),
+        )?;
+        for (pointer, expected) in [
+            ("/trust/tree", sha256_hex(b"tree")),
+            ("/trust/source_currentness", "current".to_string()),
+            ("/trust/limitation", "static evidence only".to_string()),
+            ("/durable_attempt_id", "attempt-1".to_string()),
+            ("/binding_artifact_sha256", "artifactdigest".to_string()),
+            ("/apply/patch_sha256", "p".to_string()),
+            ("/phase", "apply".to_string()),
+        ] {
+            if full.pointer(pointer).and_then(Value::as_str) != Some(expected.as_str()) {
+                return Err(format!("the full record lost `{pointer}`: {full}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn write_record_file_publishes_pretty_json_and_reports_failure() -> Result<(), String> {
+        let root = TempRoot::new("write-record")?;
+        let record = serde_json::json!({"kind": BINDING_KIND, "phase": "prepare"});
+        let path = root.path().join("record.json");
+        write_record_file(&path, &record)?;
+        let written = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        if !written.ends_with("}\n") || !written.contains("\n  \"kind\"") {
+            return Err(format!(
+                "record was not pretty JSON with a newline: {written:?}"
+            ));
+        }
+        if parse_strict_json(&written)? != record {
+            return Err("the written record did not round trip".to_string());
+        }
+        // A missing parent directory is a reported failure, with no residue.
+        let orphan = root.path().join("absent-dir/record.json");
+        if write_record_file(&orphan, &record).is_ok() {
+            return Err("a write into a missing directory reported success".to_string());
+        }
+        if orphan.exists() {
+            return Err("a failed write left a record behind".to_string());
+        }
+        Ok(())
+    }
+
+    /// A one-commit repository holding the selected test file, plus the
+    /// accepted manifest and a before snapshot, ready for `prepare_binding`.
+    struct PrepareFixture {
+        root: TempRoot,
+        head: String,
+        row: Value,
+    }
+
+    fn prepare_fixture(tag: &str) -> Result<PrepareFixture, String> {
+        let root = TempRoot::new(tag)?;
+        run_git(root.path(), &["init", "-q"])?;
+        write_text(
+            &root.path().join("tests/test_pricing.py"),
+            "def test_x(): pass\n",
+        )?;
+        run_git(root.path(), &["add", "."])?;
+        run_git(root.path(), &["config", "user.email", "test@example.com"])?;
+        run_git(root.path(), &["config", "user.name", "Test"])?;
+        run_git(root.path(), &["commit", "-q", "-m", "base"])?;
+        let head = crate::agent::artifact::current_git_head(root.path())?;
+        let pinned = head.clone();
+        let row = redigested_row(|row| {
+            row.insert("head".into(), pinned.into());
+        })?;
+        write_text(
+            &root.path().join("trust-manifest.json"),
+            &manifest_text_of(vec![row.clone()])?,
+        )?;
+        write_text(&root.path().join("before.json"), "{\"before\":true}\n")?;
+        Ok(PrepareFixture { root, head, row })
+    }
+
+    fn prepare_with(
+        fixture: &PrepareFixture,
+        manifest: &str,
+        attempt: &str,
+        authorization: &EditAuthorization,
+        policy: &EditCagePolicy,
+        before: &str,
+    ) -> Result<PreparedBinding, String> {
+        prepare_binding(
+            fixture.root.path(),
+            "seam-under-test",
+            policy,
+            &fixture.root.path().join(before),
+            b"packet bytes",
+            &PythonRepairTrustSelection {
+                manifest_path: PathBuf::from(manifest),
+                attempt_id: attempt.to_string(),
+            },
+            authorization,
+        )
+    }
+
+    #[test]
+    fn prepare_binding_refuses_before_writing_any_record_and_then_round_trips() -> Result<(), String>
+    {
+        let fixture = prepare_fixture("prepare-e2e")?;
+        let root = fixture.root.path();
+        let policy = policy_for("tests/test_pricing.py")?;
+        let stale_policy = policy_for("tests/test_other.py")?;
+        let record_path = root.join(PREPARE_RECORD_COMPAT_PATH);
+        let unauthorized = EditAuthorization {
+            authorized: false,
+            authority: Some(AUTHORITY_IDENTITY.to_string()),
+        };
+        let ok = "trust-manifest.json";
+
+        // A manifest outside the repository cannot govern it.
+        let outside = TempRoot::new("prepare-outside")?;
+        let outside_manifest = outside.path().join("trust-manifest.json");
+        write_text(
+            &outside_manifest,
+            &manifest_text_of(vec![fixture.row.clone()])?,
+        )?;
+        let outside_text = outside_manifest.display().to_string();
+
+        let cases: Vec<(&str, Result<PreparedBinding, String>, &str)> = vec![
+            (
+                "unauthorized",
+                prepare_with(
+                    &fixture,
+                    ok,
+                    "att-test-1",
+                    &unauthorized,
+                    &policy,
+                    "before.json",
+                ),
+                "refuses to prepare the edit transaction",
+            ),
+            (
+                "manifest absent",
+                prepare_with(
+                    &fixture,
+                    "absent.json",
+                    "att-test-1",
+                    &granted(),
+                    &policy,
+                    "before.json",
+                ),
+                "is not readable",
+            ),
+            (
+                "manifest outside root",
+                prepare_with(
+                    &fixture,
+                    &outside_text,
+                    "att-test-1",
+                    &granted(),
+                    &policy,
+                    "before.json",
+                ),
+                "is outside the repository root",
+            ),
+            (
+                "attempt outside denominator",
+                prepare_with(
+                    &fixture,
+                    ok,
+                    "att-ghost",
+                    &granted(),
+                    &policy,
+                    "before.json",
+                ),
+                "outside the accepted selection denominator (1 rows present)",
+            ),
+            (
+                "packet target moved",
+                prepare_with(
+                    &fixture,
+                    ok,
+                    "att-test-1",
+                    &granted(),
+                    &stale_policy,
+                    "before.json",
+                ),
+                "wrong target",
+            ),
+            (
+                "before snapshot absent",
+                prepare_with(
+                    &fixture,
+                    ok,
+                    "att-test-1",
+                    &granted(),
+                    &policy,
+                    "no-before.json",
+                ),
+                "requires the before snapshot",
+            ),
+        ];
+        for (label, result, needle) in cases {
+            match result {
+                Err(error) if error.contains(needle) => {}
+                other => return Err(format!("case `{label}` expected `{needle}`: {other:?}")),
+            }
+            if record_path.exists() {
+                return Err(format!("case `{label}` wrote a record despite refusing"));
+            }
+        }
+
+        // A manifest whose row pins another commit is stale before editing.
+        let moved_row = redigested_row(|row| {
+            row.insert("head".into(), "e".repeat(40).into());
+        })?;
+        write_text(&root.join(ok), &manifest_text_of(vec![moved_row])?)?;
+        match prepare_with(
+            &fixture,
+            ok,
+            "att-test-1",
+            &granted(),
+            &policy,
+            "before.json",
+        ) {
+            Err(error) if error.contains("stale selection") => {}
+            other => return Err(format!("a stale head was prepared: {other:?}")),
+        }
+        if record_path.exists() {
+            return Err("a stale selection wrote a record".to_string());
+        }
+
+        // Positive control: the accepted manifest prepares, root-relative.
+        let manifest_text = manifest_text_of(vec![fixture.row.clone()])?;
+        write_text(&root.join(ok), &manifest_text)?;
+        std::fs::create_dir_all(root.join("target/ripr/workflow"))
+            .map_err(|error| error.to_string())?;
+        let prepared = prepare_with(
+            &fixture,
+            ok,
+            "att-test-1",
+            &granted(),
+            &policy,
+            "before.json",
+        )
+        .map_err(|error| format!("the accepted selection was refused: {error}"))?;
+        if prepared.record_path != record_path || !record_path.exists() {
+            return Err("the prepare record was not published at its compat path".to_string());
+        }
+        let manifest_sha = sha256_hex(manifest_text.as_bytes());
+        let packet_sha = sha256_hex(b"packet bytes");
+        let before_sha = sha256_hex(b"{\"before\":true}\n");
+        let pointer = |path: &str| prepared.record.pointer(path).and_then(Value::as_str);
+        if prepared.verified.selection_manifest_sha256 != manifest_sha
+            || pointer("/trust/selection_manifest_sha256") != Some(manifest_sha.as_str())
+            || pointer("/repository_head") != Some(fixture.head.as_str())
+            || pointer("/input/packet_sha256") != Some(packet_sha.as_str())
+            || pointer("/input/before_snapshot_sha256") != Some(before_sha.as_str())
+            || pointer("/phase") != Some("prepare")
+        {
+            return Err(format!(
+                "the prepare record lost a bound identity: {}",
+                prepared.record
+            ));
+        }
+        let on_disk = std::fs::read_to_string(&record_path).map_err(|error| error.to_string())?;
+        if parse_strict_json(&on_disk)? != prepared.record {
+            return Err("the published record differs from the returned record".to_string());
+        }
+
+        // The producer's own record is what the apply phase accepts, and the
+        // apply phase then refuses a changed packet or a replaced manifest.
+        let retained = RetainedBinding {
+            artifact_sha256: String::new(),
+            value: prepared.record.clone(),
+        };
+        let verified = reverify_for_apply(
+            "seam-under-test",
+            &policy,
+            b"packet bytes",
+            &retained,
+            &granted(),
+        )
+        .map_err(|error| format!("the prepared record failed re-verification: {error}"))?;
+        if verified.selection_digest != prepared.verified.selection_digest {
+            return Err("re-verification rebound a different row digest".to_string());
+        }
+        match reverify_for_apply(
+            "seam-under-test",
+            &policy,
+            b"other packet",
+            &retained,
+            &granted(),
+        ) {
+            Err(error) if error.contains("stale packet") => {}
+            other => return Err(format!("a changed packet re-verified: {other:?}")),
+        }
+        confirm_manifest_unchanged(&retained)
+            .map_err(|error| format!("the untouched manifest failed confirmation: {error}"))?;
+        write_text(&root.join(ok), &format!("{manifest_text}\n"))?;
+        match confirm_manifest_unchanged(&retained) {
+            Err(ManifestConfirmationError::Replaced(_)) => {}
+            Err(ManifestConfirmationError::Operational(message)) => {
+                return Err(format!("replacement read as operational: {message}"));
+            }
+            Ok(()) => return Err("a replaced manifest was confirmed".to_string()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_binding_load_refuses_an_unknown_attempt() -> Result<(), String> {
+        let root = TempRoot::new("retained-load")?;
+        let attempt = crate::app::repair_attempt::RepairAttemptId::parse(format!(
+            "repair-attempt-{}",
+            "0".repeat(24)
+        ))?;
+        match load_retained_binding_from(root.path(), None, &attempt) {
+            Err(_) => Ok(()),
+            Ok(found) => Err(format!("an unknown attempt produced a binding: {found:?}")),
+        }
+    }
 }
