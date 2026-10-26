@@ -1320,3 +1320,107 @@ fn loose_equality_reads_a_test_local_literal_const() {
         }
     }
 }
+
+/// Export names do not replace local lexical binding identity (SPEC-0243 rule 3).
+#[test]
+fn exported_local_expect_declarations_refuse_runner_authority() {
+    for declaration in [
+        "export const expect = (_: unknown) => ({ toBe(_: unknown) {} });",
+        "export let expect = (_: unknown) => ({ toBe(_: unknown) {} });",
+        "export var expect = (_: unknown) => ({ toBe(_: unknown) {} });",
+        "export function expect(_: unknown) { return { toBe(_: unknown) {} }; }",
+        "export default function expect(_: unknown) { return { toBe(_: unknown) {} }; }",
+        "export class expect {}",
+        "export default class expect {}",
+        "export const { matcher: expect } = { matcher: (_: unknown) => ({ toBe(_: unknown) {} }) };",
+        "export const [expect] = [(_: unknown) => ({ toBe(_: unknown) {} })];",
+        "export const { nested: { expect } } = { nested: { expect: (_: unknown) => ({ toBe(_: unknown) {} }) } };",
+        "export const { ...expect } = {};",
+        "const expect = (_: unknown) => ({ toBe(_: unknown) {} }); export { expect as matcher };",
+    ] {
+        for declaration_first in [true, false] {
+            let test = "test('price', () => { expect(price(150)).toBe(130); });";
+            let body = if declaration_first {
+                format!("{declaration}\n{test}")
+            } else {
+                format!("{test}\n{declaration}")
+            };
+            let source = format!("import {{ price }} from '../src/lib';\n{body}\n");
+            let assertions = only_assertions("test/lib.test.ts", &source);
+            assert!(assertions.is_empty(), "{source}: {assertions:?}");
+        }
+    }
+}
+
+#[test]
+fn export_aliases_and_default_expressions_do_not_bind_local_expect() {
+    for export in [
+        "const matcher = 1; export { matcher as expect };",
+        "export { expect } from './lookalike';",
+        "export { matcher as expect } from './lookalike';",
+        "export * as expect from './lookalike';",
+        "export default function () {}",
+        "export default class {}",
+        "export default function unrelated() {}",
+        "export default (function expect() {});",
+        "export default (class expect {});",
+        "export const { expect: matcher } = { expect: 1 };",
+    ] {
+        let source = format!(
+            "import {{ price }} from '../src/lib';\n{export}\ntest('price', () => {{ expect(price(150)).toBe(130); }});\n"
+        );
+        let assertions = only_assertions("test/lib.test.ts", &source);
+        assert_eq!(assertions.len(), 1, "{source}: {assertions:?}");
+        assert_eq!(
+            assertions[0].observed_expression.as_deref(),
+            Some("price(150)"),
+            "{source}"
+        );
+        assert_eq!(
+            assertions[0].expected_value_or_variant.as_deref(),
+            Some("130"),
+            "{source}"
+        );
+        assert_eq!(
+            assertions[0].oracle_kind,
+            OracleKind::ExactValue,
+            "{source}"
+        );
+        assert_eq!(
+            assertions[0].oracle_strength,
+            OracleStrength::Strong,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn exported_bindings_preserve_genuine_imported_runner_expect() {
+    for module in ["vitest", "@jest/globals", "@playwright/test", "bun:test"] {
+        let source = format!(
+            "import {{ expect, test }} from '{module}';\nimport {{ price }} from '../src/lib';\nexport {{ expect as matcher }};\nexport const {{ expect: unrelated }} = {{ expect: 1 }};\ntest('price', () => {{ expect(price(150)).toBe(130); }});\n"
+        );
+        let assertions = only_assertions("test/lib.test.ts", &source);
+        assert_eq!(assertions.len(), 1, "{source}: {assertions:?}");
+        assert_eq!(
+            assertions[0].observed_expression.as_deref(),
+            Some("price(150)"),
+            "{source}"
+        );
+        assert_eq!(
+            assertions[0].expected_value_or_variant.as_deref(),
+            Some("130"),
+            "{source}"
+        );
+        assert_eq!(
+            assertions[0].oracle_kind,
+            OracleKind::ExactValue,
+            "{source}"
+        );
+        assert_eq!(
+            assertions[0].oracle_strength,
+            OracleStrength::Strong,
+            "{source}"
+        );
+    }
+}
