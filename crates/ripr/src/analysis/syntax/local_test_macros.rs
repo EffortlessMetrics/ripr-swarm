@@ -669,17 +669,58 @@ fn fat_arrow_at(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usi
     ) else {
         return false;
     };
-    let joint_before = position
-        .checked_sub(1)
-        .and_then(|before| elements.get(before))
-        .and_then(|element| element.as_token())
-        .is_some_and(|token| {
-            token.kind().is_punct() && token.text_range().end() == equals.text_range().start()
-        });
+    let adjacent_before = |at: usize| {
+        let token = at
+            .checked_sub(1)
+            .and_then(|before| elements.get(before))
+            .and_then(|element| element.as_token())?;
+        let start = elements.get(at)?.as_token()?.text_range().start();
+        (token.text_range().end() == start).then(|| token.kind())
+    };
+    // Only the puncts that lex with a following `=` into one token (`==`,
+    // `!=`, `<=`, `>=`, `+=`, `..=` and the rest) swallow the arrow's `=`;
+    // `?`, `;`, `,` and `:` leave a standalone `=>`.
+    let joint_before = match adjacent_before(position) {
+        Some(SyntaxKind::DOT) => adjacent_before(position - 1) == Some(SyntaxKind::DOT),
+        Some(kind) => matches!(
+            kind,
+            SyntaxKind::EQ
+                | SyntaxKind::BANG
+                | SyntaxKind::L_ANGLE
+                | SyntaxKind::R_ANGLE
+                | SyntaxKind::PLUS
+                | SyntaxKind::MINUS
+                | SyntaxKind::STAR
+                | SyntaxKind::SLASH
+                | SyntaxKind::PERCENT
+                | SyntaxKind::CARET
+                | SyntaxKind::AMP
+                | SyntaxKind::PIPE
+        ),
+        None => false,
+    };
     equals.kind() == SyntaxKind::EQ
         && greater.kind() == SyntaxKind::R_ANGLE
         && equals.text_range().end() == greater.text_range().start()
         && !joint_before
+}
+
+/// Whether `elements[position]` is a punct with another punct directly after
+/// it, so rustc may lex the two as one multi-character token.
+fn punct_fused_to_next(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize) -> bool {
+    let (Some(first), Some(second)) = (
+        elements
+            .get(position)
+            .and_then(|element| element.as_token()),
+        elements
+            .get(position + 1)
+            .and_then(|element| element.as_token()),
+    ) else {
+        return false;
+    };
+    first.kind().is_punct()
+        && second.kind().is_punct()
+        && first.text_range().end() == second.text_range().start()
 }
 
 /// `$( row ) sep? *` or `+` as a whole matcher, the shape of a test table.
@@ -816,7 +857,16 @@ fn match_rows(
                 }
                 RowItem::Variable { name, fragment } => {
                     let width = match fragment.as_str() {
-                        "ident" | "tt" | "block" => 1,
+                        "ident" | "block" => 1,
+                        // A token tree keeps `::`, `->` and `..=` as single
+                        // puncts, but rustc binds each as one `tt`; a punct
+                        // fused to the next cannot be bound as one element.
+                        "tt" => {
+                            if punct_fused_to_next(&elements, position) {
+                                return None;
+                            }
+                            1
+                        }
                         "literal" => {
                             if elements.get(position)?.kind() == SyntaxKind::MINUS {
                                 2
@@ -1232,9 +1282,23 @@ mod tests {
         assert_eq!(expanded.len(), 1, "{expanded:?}");
         let text = &expanded[0].text;
         assert_eq!(text.matches("#[test]").count(), 2, "{text}");
-        assert!(
-            text.contains("fn b() { assert_eq!(gate(3), 4); }"),
-            "{text}"
+        for row in [
+            "fn a() { assert_eq!(gate(1), 2); }",
+            "fn b() { assert_eq!(gate(3), 4); }",
+        ] {
+            assert!(text.contains(row), "{row}\n{text}");
+        }
+        let names = summarize_file_with_parser(Path::new("tests/t.rs"), text).map(|facts| {
+            facts
+                .tests
+                .into_iter()
+                .map(|test| test.name)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            names,
+            Ok(vec!["a".to_string(), "b".to_string()]),
+            "premise: the expansion parses as the two named row tests"
         );
 
         // An `expr` ends at `=>` exactly as rustc's follow set allows.
@@ -1250,6 +1314,64 @@ mod tests {
         assert!(
             text.contains("gate(f(1, 2))") || text.contains("gate((f(1, 2)))"),
             "{text}"
+        );
+
+        // A punct that cannot combine with `=` leaves a standalone arrow:
+        // rustc has no `?=`, `;=`, `,=` or `:=` token.
+        for (label, matcher, invocation, call) in [
+            (
+                "a question mark before the arrow",
+                expr,
+                "a : f()?=> 2 ;",
+                "gate((f()?))",
+            ),
+            (
+                "a semicolon before the arrow",
+                "$($name:ident ;=> ($v:expr, $w:expr))*",
+                "a ;=> (1, 2)",
+                "gate(1)",
+            ),
+            (
+                "a comma before the arrow",
+                "$($name:ident ,=> ($v:expr, $w:expr))*",
+                "a ,=> (1, 2)",
+                "gate(1)",
+            ),
+            (
+                "a colon before the arrow",
+                "$($name:ident :=> ($v:expr, $w:expr))*",
+                "a :=> (1, 2)",
+                "gate(1)",
+            ),
+        ] {
+            let expanded = expand_local_test_macros(&table(matcher, invocation));
+            assert_eq!(expanded.len(), 1, "{label}: {expanded:?}");
+            assert!(
+                expanded[0].text.contains(call),
+                "{label}: {}",
+                expanded[0].text
+            );
+        }
+
+        // A `tt` binds one rustc token: a fused `::` is one `tt`, so the
+        // following `:` the matcher requires is absent and rustc emits
+        // nothing; `: :` is two tokens and does expand.
+        let tt = "$($name:ident $t:tt : => ($v:expr, $w:expr))*";
+        for (label, invocation) in [
+            ("a fused `::` bound as one tt", "a :: => (1, 2)"),
+            ("a fused `->` bound as one tt", "a -> : => (1, 2)"),
+            ("a fused `..=` bound as one tt", "a ..= : => (1, 2)"),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(tt, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+        let spaced = expand_local_test_macros(&table(tt, "a : : => (1, 2)"));
+        assert_eq!(
+            spaced.len(),
+            1,
+            "two separate puncts bind one tt each: {spaced:?}"
         );
 
         // `=>` is the whole token or nothing: every near miss registers no

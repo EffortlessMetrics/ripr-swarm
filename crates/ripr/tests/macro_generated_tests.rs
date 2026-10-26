@@ -171,15 +171,49 @@ fn a_table_the_expander_cannot_split_exactly_adds_no_test() -> Result<(), String
 }
 
 #[test]
-fn refused_shapes_and_uninvoked_generators_add_no_test() -> Result<(), String> {
-    // `=>` between row elements is outside the table form.
-    let repetition = TempRepo::create(
+fn an_arrow_between_row_elements_reads_like_the_hand_written_test() -> Result<(), String> {
+    let generated = TempRepo::create(
         "    macro_rules! gate_cases {\n        ($($name:ident: $input:expr => $want:expr),*) => {\n            $( #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases!(nine_is_closed: 9 => false, ten_is_open: 10 => true);\n",
     )?
     .predicate()?;
-    assert!(repetition.related_tests.is_empty(), "{repetition:?}");
-    assert_ne!(state(&repetition.ripr.reach.state), "Yes", "{repetition:?}");
+    assert_eq!(state(&generated.ripr.reach.state), "Yes", "{generated:?}");
+    assert_eq!(generated.class, ExposureClass::Exposed, "{generated:?}");
+    let mut names: Vec<_> = generated
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["nine_is_closed", "ten_is_open"],
+        "{generated:?}"
+    );
+    Ok(())
+}
 
+#[test]
+fn a_fused_punct_token_is_one_tt_so_the_arrow_row_adds_no_test() -> Result<(), String> {
+    // rustc binds `::` as one `$t:tt`, so the required `:` is absent and the
+    // fallback arm emits nothing: no test exists to be credited.
+    let table = |separator: &str| {
+        format!(
+            "    macro_rules! gate_cases {{\n        ($($name:ident $t:tt : => ($input:expr, $want:expr))*) => {{\n            $( #[test] fn $name() {{ assert_eq!(gate($input), $want); }} )*\n        }};\n        ($($tail:tt)*) => {{}};\n    }}\n\n    gate_cases! {{ nine_is_closed {separator} => (9, false) ten_is_open {separator} => (10, true) }}\n"
+        )
+    };
+    let fused = TempRepo::create(&table("::"))?.predicate()?;
+    assert!(fused.related_tests.is_empty(), "{fused:?}");
+    assert_ne!(state(&fused.ripr.reach.state), "Yes", "{fused:?}");
+
+    // Separate `: :` puncts are two tokens: the same table does generate.
+    let spaced = TempRepo::create(&table(": :"))?.predicate()?;
+    assert_eq!(state(&spaced.ripr.reach.state), "Yes", "{spaced:?}");
+    assert_eq!(spaced.related_tests.len(), 2, "{spaced:?}");
+    Ok(())
+}
+
+#[test]
+fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
     let uninvoked = TempRepo::create(GENERATOR)?.predicate()?;
     assert!(uninvoked.related_tests.is_empty(), "{uninvoked:?}");
     assert_ne!(state(&uninvoked.ripr.reach.state), "Yes", "{uninvoked:?}");
