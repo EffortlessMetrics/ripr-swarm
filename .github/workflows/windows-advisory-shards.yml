@@ -120,9 +120,15 @@ jobs:
       - name: Run the real-ACL tests outside bash (shard 1 only)
         if: ${{ !cancelled() && matrix.shard == 1 }}
         shell: pwsh
+        # A step timeout fails only this step, so the Summarize and Upload steps
+        # still run; a stall under the 80-minute job cap would cancel them and
+        # lose acl.log.
+        timeout-minutes: 20
         run: |
           cargo nextest run --profile windows-advisory --workspace --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
           $code = $LASTEXITCODE
+          # A failed spawn leaves $LASTEXITCODE null, which would exit 0.
+          if ($null -eq $code) { $code = 1 }
           Set-Content target/acl.status $code
           Get-Content target/acl.log
           exit $code
