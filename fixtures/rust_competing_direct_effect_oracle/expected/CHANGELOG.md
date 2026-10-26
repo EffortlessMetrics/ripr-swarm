@@ -130,3 +130,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_competing_direct_effect_oracle (11)
+
+Reason:
+RIPR-SPEC-0240: a for loop over an owned Counter now relates implicit_observer to Iterator::next (#10553); the summary lists it, the class is unchanged.
+
+Command:
+`cargo xtask goldens bless rust_competing_direct_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The forEach callback runs expect(priceEx10(150)).toBe(140) at runtime, so the edit's 130 fails the test. ripr reports weakly_exposed with oracle unknown because nested callbacks are not collected, a gap verdict on a discriminated case (under-credit by design of the spec's non-goal). (spec says today weakly_exposed, oracle unknown; ripr matches it) Spec cells: RIPR-SPEC-0243 example 10",
+  "reasoning": "The forEach callback runs expect(priceEx10(150)).toBe(140) at runtime, so the edit's 130 fails the test. ripr now reports exposed with an exact_value oracle (expected 140, evidence test/priceEx10.test.ts:4), so the callback assertion is collected and credited and the case is no longer an under-credit. The labeling-time reading was weakly_exposed with oracle unknown. Spec cells: RIPR-SPEC-0243 example 10",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

@@ -203,6 +203,13 @@ Test discovery:
   config that declares an alias or module directory, a Rust change related
   through the Bun bridge, and a closure over 400 files. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
+- a symlink or junction the walk does not follow is counted for
+  `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
+  (#10614) unless it is a link to an existing regular file whose own name the
+  adapter would not index (a docs `index.md -> README.md`): the walk indexes by
+  the entry's own path, so such a link hides no test or source. A directory
+  link, a source-named link, a dangling link and a link whose target cannot be
+  read stay counted.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the

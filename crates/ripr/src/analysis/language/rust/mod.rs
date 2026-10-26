@@ -1368,6 +1368,9 @@ fn apply_probe_and_oracle_limits(
     // iterator's `next`, checked by a test that collects the iterator, is a
     // selector domain ripr reads but does not run.
     classify::withhold_caller_loop_selector_gap(finding, index);
+    // RIPR-SPEC-0240 / #5431: a refused owner-calling `assert_eq!` beside an
+    // admitted weaker oracle.
+    classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

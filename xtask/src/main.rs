@@ -295,10 +295,10 @@ use policy::{
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
-use repo_readiness::{PrReadyStep, pr_ready_next_action, pr_ready_status_from_report_status};
+use repo_readiness::{PrReadyStep, pr_ready_next_action};
 use repo_readiness::{
-    cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown, pr_ready_status,
-    run_readiness_step,
+    ReadinessOutcome, cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown,
+    pr_ready_status, run_readiness_step,
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
@@ -2526,56 +2526,57 @@ fn pr_ready() -> Result<(), String> {
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
-            worktree_doctor,
+            worktree_doctor_readiness,
         ),
         run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
-            commands_report,
+            || commands_report().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "pr_summary",
             "cargo xtask pr-summary",
             "target/ripr/reports/pr-summary.md",
             false,
-            pr_summary,
+            // A summary is completion evidence, not a report-status assertion.
+            || pr_summary().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "critic",
             "cargo xtask critic",
             "target/ripr/reports/critic.md",
             false,
-            critic_impl,
+            critic_readiness,
         ),
         run_readiness_step(
             "receipts_check",
             "cargo xtask receipts check",
             "target/ripr/reports/receipts.md",
             false,
-            receipts_check,
+            || receipts_check().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "suggested_fixes",
             "cargo xtask suggested-fixes",
             "target/ripr/reports/suggested-fixes.md",
             false,
-            suggested_fixes,
+            || suggested_fixes().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
-            check_generated_clean,
+            || check_generated_clean().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
             true,
-            check_badge_diff_policy,
+            || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
     let status = pr_ready_status(&steps);
@@ -2601,49 +2602,49 @@ fn cockpit() -> Result<(), String> {
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
-            worktree_doctor,
+            worktree_doctor_readiness,
         ),
         run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
-            commands_report,
+            || commands_report().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "command_catalog_check",
             "cargo xtask check-command-catalog",
             "target/ripr/reports/command-catalog.md",
             true,
-            check_command_catalog,
+            || check_command_catalog().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "spec_numbering",
             "cargo xtask check-spec-numbering",
             "target/ripr/reports/spec-numbering.md",
             true,
-            check_spec_numbering,
+            || check_spec_numbering().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "pr_triage",
             "cargo xtask pr-triage-report",
             "target/ripr/reports/pr-triage.md",
             false,
-            reports::pr_triage_report,
+            pr_triage_readiness,
         ),
         run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
-            check_generated_clean,
+            || check_generated_clean().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
             true,
-            check_badge_diff_policy,
+            || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
 
@@ -3789,15 +3790,33 @@ fn pr_body_from_input_text(text: &str) -> Result<String, String> {
 }
 
 pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
+    pr_triage_readiness().map(|_| ())
+}
+
+fn pr_triage_readiness() -> Result<ReadinessOutcome, String> {
     let prs = collect_open_prs_for_triage()?;
     let today = current_epoch_day()?;
     let generated_at = generated_at_unix_ms()?;
     let findings = pr_triage_findings(&prs, today);
-    write_report("pr-triage.md", &pr_triage_markdown(&prs, &findings, today))?;
+    finish_pr_triage_report(&prs, &findings, today, &generated_at)
+}
+
+fn finish_pr_triage_report(
+    prs: &[PrTriagePullRequest],
+    findings: &[PrTriageFinding],
+    today: i64,
+    generated_at: &str,
+) -> Result<ReadinessOutcome, String> {
+    write_report("pr-triage.md", &pr_triage_markdown(prs, findings, today))?;
     write_report(
         "pr-triage.json",
-        &pr_triage_json(&prs, &findings, today, &generated_at),
-    )
+        &pr_triage_json(prs, findings, today, generated_at),
+    )?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
@@ -5217,16 +5236,30 @@ fn markdown_escape_table(value: &str) -> String {
 }
 
 pub(crate) fn critic_impl() -> Result<(), String> {
+    critic_readiness().map(|_| ())
+}
+
+fn critic_readiness() -> Result<ReadinessOutcome, String> {
     ensure_reports_dir()?;
     let changes = collect_pr_changes()?;
     let reports = report_index_entries()?;
     let receipts = receipt_index_entries()?;
     let findings = critic_findings(&changes, &reports, &receipts);
-    write_report(
-        "critic.md",
-        &critic_markdown(&findings, &reports, &receipts),
-    )?;
-    write_report("critic.json", &critic_json(&findings, &reports, &receipts))
+    finish_critic_report(&findings, &reports, &receipts)
+}
+
+fn finish_critic_report(
+    findings: &[CriticFinding],
+    reports: &[ReportIndexEntry],
+    receipts: &[ReportIndexEntry],
+) -> Result<ReadinessOutcome, String> {
+    write_report("critic.md", &critic_markdown(findings, reports, receipts))?;
+    write_report("critic.json", &critic_json(findings, reports, receipts))?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 pub(crate) fn reports_impl(args: &[String]) -> Result<(), String> {
@@ -16999,6 +17032,10 @@ fn worktree(args: &[String]) -> Result<(), String> {
 }
 
 fn worktree_doctor() -> Result<(), String> {
+    worktree_doctor_readiness().map(|_| ())
+}
+
+fn worktree_doctor_readiness() -> Result<ReadinessOutcome, String> {
     let branch = git_value(&["rev-parse", "--abbrev-ref", "HEAD"]);
     let status_changes = collect_worktree_status_changes()?;
     let behind_origin_main = branch_behind_origin_main()?;
@@ -17013,7 +17050,12 @@ fn worktree_doctor() -> Result<(), String> {
         sample_target_exists,
         badge_refresh_context,
     );
-    finish_worktree_doctor_report(&findings)
+    finish_worktree_doctor_report(&findings)?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 fn branch_behind_origin_main() -> Result<usize, String> {

@@ -342,3 +342,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_reuse (26)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_reuse --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -2436,7 +2436,26 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .map(|expression| expression.syntax().text_range().start())
             .chain(root_divergence_start(&function, &process_names))
             .min();
-        let assertions = admitted_assertions(candidates, &function, first_return);
+        let mut assertions = admitted_assertions(candidates, &function, first_return);
+        // RIPR-SPEC-0231 harness-compared return: a clean `#[test_case(..
+        // => literal)]` function has no assertion macro, so the oracle the
+        // harness runs is admitted here, on the same synthesis the fact
+        // producer uses. A refused function never reaches this point.
+        if is_test_case_function(&function) {
+            let attrs = function
+                .attrs()
+                .map(|attr| attr.syntax().text().to_string())
+                .collect::<Vec<_>>();
+            for oracle in crate::analysis::extract::arrow_row_oracles_for_fn(
+                &attrs,
+                &function,
+                lines.line(token.text_range().start()),
+            ) {
+                assertions
+                    .entry((oracle.line, oracle.text))
+                    .or_insert(Ok(()));
+            }
+        }
         let helper_assertions = if is_test_function(&function) {
             local_helper_assertions(
                 &function,
@@ -3603,9 +3622,10 @@ fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
 /// row that calls the function with the row's values. Admitted only when
 /// `test_case` is the crate in the test's module, every parameter is a plain
 /// immutable binding, and every row holds exactly one scalar literal per
-/// parameter. The `=> expected` form (which wraps the body in a generated
-/// comparison), `matches`/`with` forms, `;` descriptions, string or computed
-/// values (which could call the owner) all refuse.
+/// parameter. The `=> literal` form (RIPR-SPEC-0231 rule 9, a generated
+/// comparison the fact producer reads as `assert_eq!`) is admitted when the
+/// body is one returned expression; `matches`/`with` forms, other `=>`
+/// shapes, string or computed values (which could call the owner) all refuse.
 fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
@@ -3613,9 +3633,19 @@ fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode)
     let Some(function) = ast::Fn::cast(test.clone()) else {
         return false;
     };
+    // RIPR-SPEC-0231 harness-compared return: the one `=> literal` row whose
+    // generated comparison the fact producer reads as `assert_eq!`.
+    let arrow = crate::analysis::extract::arrow_row_is_read(
+        &function
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>(),
+        &attr.syntax().text().to_string(),
+        &function,
+    );
     extern_crate_path_holds(module, "test_case")
         && test_case_parameters(&function)
-            .is_some_and(|parameters| case_row_literals(attr) == Some(parameters))
+            .is_some_and(|parameters| case_row_literals(attr, arrow) == Some(parameters))
 }
 
 /// The number of parameters of a `#[test_case]` function when every one is a
@@ -3718,7 +3748,7 @@ fn rstest_runs_body(
         }
         RstestAttribute::Case => {
             attr.syntax().text_range().start() > *rstest_at
-                && case_row_literals(attr) == Some(parameters)
+                && case_row_literals(attr, false) == Some(parameters)
         }
     }
 }
@@ -3777,7 +3807,7 @@ fn case_parameters(function: &ast::Fn) -> Option<usize> {
 
 /// The number of values in a case row when each is a non-string literal,
 /// `-literal`, `true` or `false`; `None` for anything else.
-fn case_row_literals(attr: &ast::Attr) -> Option<usize> {
+fn case_row_literals(attr: &ast::Attr, arrow: bool) -> Option<usize> {
     let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
         return None;
     };
@@ -3793,6 +3823,18 @@ fn case_row_literals(attr: &ast::Attr) -> Option<usize> {
     if first.text() != "(" || last.text() != ")" {
         return None;
     }
+    // An admitted `=> literal` row (validated by `arrow_row_is_read`) is read
+    // up to its arrow; any other arrow form stays unread.
+    // The token tree may spell the arrow as one token or as `=` `>`.
+    let arrow_at = inner.iter().enumerate().position(|(at, token)| {
+        token.text() == "=>"
+            || (token.text() == "=" && inner.get(at + 1).is_some_and(|next| next.text() == ">"))
+    });
+    let inner = match arrow_at {
+        Some(at) if arrow => &inner[..at],
+        Some(_) => return None,
+        None => inner,
+    };
     let mut count = 0;
     for value in inner.split(|token| token.text() == ",") {
         // A string literal reaches the parameter through `FromStr`, which
@@ -4050,23 +4092,36 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
         return trusted.contains(&"test_case");
     }
     if path == "derive" {
-        let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
-            return false;
-        };
-        return meta.token_tree().is_some_and(|tree| {
-            let text = tree.syntax().text().to_string();
-            text.trim_start_matches('(')
-                .trim_end_matches(')')
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .all(|name| STD_DERIVES.contains(&name))
-        });
+        return standard_derive_names(attr).is_some();
     }
     BUILTIN.contains(&path.as_str())
         || (trusted.contains(&"serial_test")
             && !path.contains("::")
             && bare_lock_bound_in_module(&path, module))
+}
+
+/// Names accepted by the existing standard-derive grammar. This recognizes
+/// syntax only: callers must separately establish the macro bindings and
+/// close any opaque item expansion before trusting these derives.
+pub(crate) fn standard_derive_names(attr: &ast::Attr) -> Option<Vec<String>> {
+    if attr.path()?.syntax().text().to_string().replace(' ', "") != "derive" {
+        return None;
+    }
+    let ast::Meta::TokenTreeMeta(meta) = attr.meta()? else {
+        return None;
+    };
+    let text = meta.token_tree()?.syntax().text().to_string();
+    let names = text
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    names
+        .iter()
+        .all(|name| STD_DERIVES.contains(name))
+        .then(|| names.into_iter().map(str::to_string).collect())
 }
 
 const STD_DERIVES: &[&str] = &[

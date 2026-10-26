@@ -18,4 +18,4 @@ The finding stays `exposed`: key 3 is absent, so the assertion reads the changed
 
 Withhold credit from a table edit that the test provably reads. This control keeps the bool-key refusal from becoming a blanket refusal.
 
-These are static analyzer stimuli, not executed pytest fixtures; the verdict corpus (`authored-py-table-traps`) carries the runtime truth. RIPR-SPEC-0108 pins the finding independently of golden blessing.
+These are static analyzer stimuli, not executed pytest fixtures. RIPR-SPEC-0108 pins the finding independently of golden blessing. Native pytest on the unchanged test passes on the original module and fails on the edited one, so the credit is a genuine kill.

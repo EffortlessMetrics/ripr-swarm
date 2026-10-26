@@ -67,9 +67,13 @@ pub(super) struct ForeignWrites {
     table_unsafe: Vec<String>,
     /// Every word of the files that can reach a module's objects reflectively.
     reflective_words: Vec<String>,
-    /// Some other file is reflective and imports modules, so it may reach a
-    /// table through an alias or re-export no word of it names.
-    reflective_imports: bool,
+    /// Module names (file stems and package directories) in the import
+    /// component of some other reflective file: it may reach those modules
+    /// through an alias or re-export no word of it names.
+    reflective_reach: Vec<String>,
+    /// Some other reflective file also loads modules dynamically, so the
+    /// modules it reaches are unknown.
+    reflective_opaque: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -99,7 +103,8 @@ const DYNAMIC_LOADERS: [&str; 13] = [
 ];
 
 /// Spellings that reach a module's objects without writing their names.
-const REFLECTIVE_SPELLINGS: [&str; 15] = [
+const REFLECTIVE_SPELLINGS: [&str; 16] = [
+    "exec",
     "getattr",
     "dir",
     "getmembers",
@@ -119,6 +124,10 @@ const REFLECTIVE_SPELLINGS: [&str; 15] = [
     "__closure__",
 ];
 
+/// Function attributes whose assignment replaces what a reader returns without
+/// rebinding its name (`price.__code__ = other.__code__`).
+const CODE_SLOTS: [&str; 4] = ["__code__", "__defaults__", "__kwdefaults__", "__closure__"];
+
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
 /// tokenized once so a diff that changes many Python files does not repeat
 /// the whole-workspace work per file (#10125).
@@ -128,6 +137,8 @@ pub(super) struct ForeignIndex<'a> {
     /// malformed file's own function/name is not an import.
     references: std::collections::BTreeMap<&'a str, Option<&'a Path>>,
     hidden_import: bool,
+    /// For each reflective file, the module names in its import component.
+    reflective_reach: Vec<(&'a Path, std::collections::BTreeSet<String>)>,
     /// The reference index passed its bound or a file went unread.
     unknown: bool,
 }
@@ -152,9 +163,10 @@ struct IndexedSource<'a> {
     table_unsafe: Vec<String>,
     /// Holds a reflective spelling: every word is a possible table access.
     reflective_words: Option<Vec<&'a str>>,
-    /// The reflective file also imports, so the module it reflects over may
-    /// be another file's re-export.
-    reflective_imports: bool,
+    /// Words of the lines that import, to link modules into components.
+    import_words: Vec<&'a str>,
+    /// The reflective file also loads modules by name at runtime.
+    reflective_opaque: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -170,27 +182,32 @@ impl<'a> ForeignIndex<'a> {
         // order: word ownership and the word cap behave as before, and a
         // tripped word cap stops parsing within one batch (#10441).
         let sources: Vec<(&'a Path, &'a str)> = sources.collect();
-        let tables: std::collections::BTreeSet<String> = sources
-            .iter()
-            .flat_map(|(_, source)| dict_literal_names(source))
-            .collect();
         let token = crate::analysis::cancellation::current_token();
+        // Every per-file scan below lexes or parses the whole source, so all
+        // of them run inside the parallel stage; only word ownership and the
+        // word cap stay in the sequential fold (#10441, #10735).
+        let tables: std::collections::BTreeSet<String> = sources
+            .par_iter()
+            .map(|(_, source)| {
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                    dict_literal_names(source)
+                })
+            })
+            .reduce(std::collections::BTreeSet::new, |mut all, names| {
+                all.extend(names);
+                all
+            });
         for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
-            let parsed: Vec<Option<Vec<String>>> = batch
+            let scanned: Vec<(bool, IndexedSource<'a>)> = batch
                 .par_iter()
-                .map(|(_, source)| {
+                .map(|&(file, source)| {
                     crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                        assigned_attributes(source)
+                        scan_source(file, source, &tables)
                     })
                 })
                 .collect();
-            for (&(file, source), assigned) in batch.iter().zip(parsed) {
-                hidden_import |= DYNAMIC_LOADERS
-                    .iter()
-                    .any(|loader| mentions_identifier(source, loader))
-                    || source.contains("sys.modules")
-                    || (file.file_name().is_some_and(|name| name == "__init__.py")
-                        && mentions_identifier(source, "__all__"));
+            for (&(file, source), (hides_import, indexed)) in batch.iter().zip(scanned) {
+                hidden_import |= hides_import;
                 for word in source_words(source) {
                     let first = references.entry(word).or_insert(Some(file));
                     if first.is_some_and(|first| first != file) {
@@ -202,48 +219,22 @@ impl<'a> ForeignIndex<'a> {
                             references: std::collections::BTreeMap::new(),
                             hidden_import,
                             unknown: true,
+                            reflective_reach: Vec::new(),
                         };
                     }
                 }
                 #[cfg(test)]
                 FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-                let dynamic = assigned.is_none()
-                    || DYNAMIC_WRITERS
-                        .iter()
-                        .any(|writer| mentions_identifier(source, writer))
-                    || source.contains("sys.modules");
-                let table_unsafe = if tables.is_empty()
-                    || !source_words(source).any(|word| tables.contains(word))
-                {
-                    Vec::new()
-                } else {
-                    unsafe_table_uses(source, &|word| tables.contains(word), None)
-                        .into_iter()
-                        .collect()
-                };
-                // Reflection reaches a module's dict without naming it, or
-                // with a name built at runtime (`getattr(module, n)`,
-                // `dir(module)`, `inspect.getmembers`, `locals()`,
-                // `fn.__globals__`).
-                let reflective = !tables.is_empty()
-                    && REFLECTIVE_SPELLINGS
-                        .iter()
-                        .any(|spelling| mentions_identifier(source, spelling));
-                files.push(IndexedSource {
-                    file,
-                    assigned,
-                    dynamic_words: dynamic.then(|| source_words(source).collect()),
-                    table_unsafe,
-                    reflective_words: reflective.then(|| source_words(source).collect()),
-                    reflective_imports: reflective && mentions_identifier(source, "import"),
-                });
+                files.push(indexed);
             }
         }
+        let reflective_reach = reflective_reaches(&files);
         Self {
             files,
             references,
             hidden_import,
             unknown: unread_files,
+            reflective_reach,
         }
     }
 
@@ -260,11 +251,11 @@ impl<'a> ForeignIndex<'a> {
         let mut words = std::collections::BTreeSet::new();
         let mut table_unsafe = std::collections::BTreeSet::new();
         let mut reflective_words = std::collections::BTreeSet::new();
-        let mut reflective_imports = false;
+        let mut reflective_opaque = false;
         let mut unparsed = Vec::new();
         for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
             table_unsafe.extend(indexed.table_unsafe.iter().cloned());
-            reflective_imports |= indexed.reflective_imports;
+            reflective_opaque |= indexed.reflective_opaque;
             if let Some(reflective) = &indexed.reflective_words {
                 reflective_words.extend(reflective.iter().map(|word| word.to_string()));
             }
@@ -300,7 +291,15 @@ impl<'a> ForeignIndex<'a> {
             dynamic_words: words.into_iter().collect(),
             table_unsafe: table_unsafe.into_iter().collect(),
             reflective_words: reflective_words.into_iter().collect(),
-            reflective_imports,
+            reflective_reach: self
+                .reflective_reach
+                .iter()
+                .filter(|(file, _)| *file != own)
+                .flat_map(|(_, reach)| reach.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            reflective_opaque,
             unknown,
         }
     }
@@ -339,6 +338,15 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
+    /// Whether some workspace file assigns a function's code slots, which can
+    /// replace any reader without rebinding its name (#10626). Checked where a
+    /// reader is evaluated, not for plain names such as `version_info`.
+    pub(super) fn may_replace_reader_code(&self) -> bool {
+        self.attributes
+            .iter()
+            .any(|attribute| CODE_SLOTS.contains(&attribute.as_str()))
+    }
+
     /// Whether another file may change the contents of the dict-literal
     /// constant `name` of the module at `module_file` in place, or alias it.
     pub(super) fn may_mutate_table(&self, name: &str, module_file: &Path) -> bool {
@@ -347,7 +355,8 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.may_rebind(name, module_file)
-            || self.reflective_imports
+            || self.reflective_opaque
+            || (!stem.is_empty() && self.reflective_reach.iter().any(|word| word == stem))
             || self
                 .table_unsafe
                 .iter()
@@ -357,6 +366,199 @@ impl ForeignWrites {
                 .iter()
                 .any(|word| word == name || (!stem.is_empty() && word == stem))
     }
+}
+
+/// Spellings that load a module chosen at runtime.
+const MODULE_LOADERS: [&str; 11] = [
+    // Evaluated code can import any module and mutate its tables.
+    "eval",
+    "exec",
+    "compile",
+    "importlib",
+    "__import__",
+    "import_module",
+    "load_module",
+    "exec_module",
+    "runpy",
+    "builtins",
+    "__builtins__",
+];
+
+/// Every name of the logical statements that hold an `import` keyword. The
+/// lexer ends a statement, so a parenthesis or backslash continuation reads
+/// whole (`from . import (\n    settings as hub,\n)`) while a bracket inside
+/// a comment or string does not. A lexing error reads every word.
+/// One file's foreign-index facts, plus whether it hides an import from the
+/// static graph. A pure function of the file and the workspace's dict-literal
+/// names, so [`ForeignIndex::build`] runs it in parallel.
+fn scan_source<'a>(
+    file: &'a Path,
+    source: &'a str,
+    tables: &std::collections::BTreeSet<String>,
+) -> (bool, IndexedSource<'a>) {
+    let hides_import = DYNAMIC_LOADERS
+        .iter()
+        .any(|loader| mentions_identifier(source, loader))
+        || source.contains("sys.modules")
+        || (file.file_name().is_some_and(|name| name == "__init__.py")
+            && mentions_identifier(source, "__all__"));
+    let assigned = assigned_attributes(source);
+    let dynamic = assigned.is_none()
+        || DYNAMIC_WRITERS
+            .iter()
+            .any(|writer| mentions_identifier(source, writer))
+        || source.contains("sys.modules");
+    let table_unsafe =
+        if tables.is_empty() || !source_words(source).any(|word| tables.contains(word)) {
+            Vec::new()
+        } else {
+            unsafe_table_uses(source, &|word| tables.contains(word), None)
+                .into_iter()
+                .collect()
+        };
+    // Reflection reaches a module's dict without naming it, or with a name
+    // built at runtime (`getattr(module, n)`, `dir(module)`,
+    // `inspect.getmembers`, `locals()`, `fn.__globals__`).
+    let reflective = !tables.is_empty()
+        && REFLECTIVE_SPELLINGS
+            .iter()
+            .any(|spelling| mentions_identifier(source, spelling));
+    let indexed = IndexedSource {
+        file,
+        assigned,
+        dynamic_words: dynamic.then(|| source_words(source).collect()),
+        table_unsafe,
+        reflective_words: reflective.then(|| source_words(source).collect()),
+        import_words: if tables.is_empty() {
+            Vec::new()
+        } else {
+            import_words(source)
+        },
+        reflective_opaque: reflective
+            && (source.contains("sys.modules")
+                || MODULE_LOADERS
+                    .iter()
+                    .any(|loader| mentions_identifier(source, loader))),
+    };
+    (hides_import, indexed)
+}
+
+fn import_words(source: &str) -> Vec<&str> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let mut words = Vec::new();
+    let mut statement: Vec<&str> = Vec::new();
+    let mut imports = false;
+    for token in lex(source, Mode::Module) {
+        let Ok((tok, range)) = token else {
+            return source_words(source).collect();
+        };
+        match tok {
+            Tok::Newline | Tok::Semi => {
+                if imports {
+                    words.append(&mut statement);
+                }
+                statement.clear();
+                imports = false;
+            }
+            Tok::Import => imports = true,
+            Tok::Name { .. } => {
+                if let Some(text) = source.get(usize::from(range.start())..usize::from(range.end()))
+                {
+                    statement.push(text);
+                }
+            }
+            _ => {}
+        }
+    }
+    if imports {
+        words.append(&mut statement);
+    }
+    words
+}
+
+/// For each reflective file, the names of the modules in its import
+/// component: files linked by an import word naming another file's stem or
+/// package `__init__.py`, in either direction, plus every `conftest.py`
+/// component (a fixture hands a module to any test). A reflective file can
+/// only reach a module that is connected to it, even through a helper that
+/// receives the module as an argument.
+fn reflective_reaches<'a>(
+    files: &[IndexedSource<'a>],
+) -> Vec<(&'a Path, std::collections::BTreeSet<String>)> {
+    if files
+        .iter()
+        .all(|indexed| indexed.reflective_words.is_none())
+    {
+        return Vec::new();
+    }
+    // A package name stands for its `__init__.py` alone: importing `pkg`
+    // runs that file, not its sibling modules.
+    let names = |file: &Path| -> Vec<String> {
+        let stem = file.file_stem().and_then(|stem| stem.to_str());
+        let package = file
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|_| stem == Some("__init__"));
+        stem.into_iter()
+            .chain(package)
+            .map(str::to_string)
+            .collect()
+    };
+    let mut named: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (index, indexed) in files.iter().enumerate() {
+        for name in names(indexed.file) {
+            named.entry(name).or_default().push(index);
+        }
+    }
+    let mut parent: Vec<usize> = (0..files.len()).collect();
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        while parent[index] != index {
+            parent[index] = parent[parent[index]];
+            index = parent[index];
+        }
+        index
+    }
+    for (index, indexed) in files.iter().enumerate() {
+        for word in &indexed.import_words {
+            for &other in named.get(*word).into_iter().flatten() {
+                let (a, b) = (find(&mut parent, index), find(&mut parent, other));
+                parent[a] = b;
+            }
+        }
+    }
+    let mut members: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut conftest_roots = std::collections::BTreeSet::new();
+    for (index, indexed) in files.iter().enumerate() {
+        let root = find(&mut parent, index);
+        members.entry(root).or_default().extend(names(indexed.file));
+        if indexed
+            .file
+            .file_name()
+            .is_some_and(|name| name == "conftest.py")
+        {
+            conftest_roots.insert(root);
+        }
+    }
+    let conftest: std::collections::BTreeSet<String> = conftest_roots
+        .iter()
+        .filter_map(|root| members.get(root))
+        .flatten()
+        .cloned()
+        .collect();
+    let mut reaches = Vec::new();
+    for (index, indexed) in files.iter().enumerate() {
+        if indexed.reflective_words.is_none() {
+            continue;
+        }
+        let root = find(&mut parent, index);
+        let mut reach = members.get(&root).cloned().unwrap_or_default();
+        reach.extend(conftest.iter().cloned());
+        reaches.push((indexed.file, reach));
+    }
+    reaches
 }
 
 fn source_words(source: &str) -> impl Iterator<Item = &str> {
@@ -606,6 +808,7 @@ fn credits<'a>(
         if !new_facts.bound_once(&owner.name)
             || !old_facts.bound_once(&owner.name)
             || module_owner.foreign_writes.may_rebind(&owner.name, file)
+            || module_owner.foreign_writes.may_replace_reader_code()
         {
             continue;
         }
@@ -1155,7 +1358,7 @@ pub(super) fn constant_spellings(
     keep_unshadowed(test, spellings)
 }
 
-fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+pub(super) fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     keep_unshadowed(test, owner_module_callees(test, owner))
 }
 

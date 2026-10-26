@@ -1,0 +1,12 @@
+diff --git a/src/c_derived.rs b/src/c_derived.rs
+--- a/src/c_derived.rs
++++ b/src/c_derived.rs
+@@ -20,7 +20,7 @@
+ 
+ impl DOrder {
+     pub fn add_d(&mut self, sku: &str, qty: u32) {
+-        self.lines.push(DLine { sku: sku.to_uppercase(), qty });
++        self.lines.push(DLine { sku: str::to_uppercase(sku), qty });
+     }
+ }
+ 

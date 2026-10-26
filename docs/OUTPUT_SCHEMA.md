@@ -2977,7 +2977,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_pinned_shape_unresolved` -- (RIPR-SPEC-0240, additive, #9440) A related, non-ignored test calls the owner directly and pins its whole result with an exact `assert_eq!`, but the changed code sits in a closure the call runs, a statement acting on the value the owner returns, the `else` exit of a `let ... else`, or the update of a zero-initialized loop accumulator the owner returns whose pin ripr cannot read as a non-empty literal input with a nonzero total (RIPR-SPEC-0360), none of which the owner-return pin reads. ripr does not resolve whether the pinned input runs the changed code, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
-- `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
+- `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A verified polling helper whose call and standard primitives resolve under RIPR-SPEC-0197 supplies an owner-return pin instead; unsupported or shadowed wrappers receive no polling-helper pin and remain subject to the existing unresolved-executor limitations. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 
 Reserved `flow_sink` values:
@@ -3623,7 +3623,6 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
       "oracle_strength": "weak",
       "oracle_location": { "file": "tests/pricing.rs", "line": 44 }
     },
-    "suggested_assertion": null,
     "explain_command": "ripr explain --root /work/repo --diff /work/repo/change.diff probe:src_lib.rs:predicate:bbaa2c25",
     "confidence": { "value": 0.75, "basis": "static_only" },
     "limitations": [
@@ -3663,10 +3662,17 @@ the selected bounded window. Identical eight-row windows with totals 12 and
 13 therefore remain distinguishable. `witness` is additive and is omitted
 when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
-producer cannot identify them, and `suggested_assertion` remains `null` until
-the producer supplies a symbol-resolved assertion template. `limitations[]`
-names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `probe.owner_signature` (#7796) carries the changed
+producer cannot identify them, and `suggested_assertion` is omitted until
+the producer supplies a symbol-resolved assertion template. The typed witness
+reader accepts absent or `null` optional facts as unavailable and preserves
+present values, including empty strings and zero confidence. `limitations[]`
+names unavailable evidence; an empty list is omitted and the reader restores
+it as an empty list. An explicit `null` or malformed limitations list is
+rejected. Unknown witness properties are accepted and ignored by the typed
+reader, so typed reserialization does not preserve those properties. Consumers
+that need to forward unknown properties must retain the complete JSON value.
+Renderers must not infer evidence from paths, lines, classes, or prose.
+`probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
 agent stub` reads — so an agent can write the call without opening the
 source. It is optional and absent whenever the shape cannot be honestly
@@ -18684,7 +18690,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.110",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.113",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19439,7 +19445,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.47",
+    "schema_version": "1.48",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19452,7 +19458,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.110",
+      "schema_version": "1.113",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

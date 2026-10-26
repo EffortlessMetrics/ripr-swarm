@@ -38,3 +38,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_closure_shadowed_callee (4)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless rust_wrapper_closure_shadowed_callee --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

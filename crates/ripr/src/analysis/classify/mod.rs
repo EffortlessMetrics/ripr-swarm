@@ -1,4 +1,5 @@
 mod activation;
+mod argument_fold;
 mod arm_selection;
 mod boundary_pairing;
 mod builder_override;
@@ -7,6 +8,7 @@ mod caller_loop_selector;
 mod changed_span;
 mod const_readers;
 mod context;
+mod custom_eq;
 mod decision;
 mod diff_touched;
 mod effect_carrier;
@@ -30,6 +32,7 @@ mod out_parameter;
 mod owner_pin;
 mod owner_shape;
 mod pinned_shape;
+mod poll_helper;
 mod propagation_witness;
 mod reach;
 mod related_tests;
@@ -66,7 +69,7 @@ pub(in crate::analysis) use const_readers::same_file_const_readers;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
-    missing_evidence, recommended_next_step, stop_reasons,
+    missing_evidence, recommended_next_step, recommended_next_step_with_boundary, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
@@ -78,8 +81,9 @@ pub(in crate::analysis) use facade_reach::{
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
-    CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, REFUSALS_ARE_ANALYZER_LIMITS, is_ignored,
-    withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
+    CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
+    REFUSALS_ARE_ANALYZER_LIMITS, is_ignored, withhold_call_budget_gap,
+    withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
     withhold_should_panic_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
@@ -101,9 +105,10 @@ pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names
 pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
-    expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,
-    pin_scope_needs, returned_closure_pin_required, targeted_free_call_reaches_owner,
-    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    equality_condition_operands, expected_operand_value, helper_pins_owner_call,
+    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
+    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
+    trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 #[cfg(test)]

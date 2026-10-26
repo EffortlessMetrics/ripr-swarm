@@ -21,6 +21,11 @@ jobs:
     name: windows-shard-${{ matrix.shard }}
     runs-on: windows-latest
     timeout-minutes: 80
+    env:
+      # Tests that need a real NTFS deny ACL (#9688). Git for Windows bash enables
+      # SeBackupPrivilege and SeRestorePrivilege and every child inherits them,
+      # which bypass an icacls (AD) deny, so they run in the pwsh step below.
+      ACL_TESTS: test(/denies_creation|denying_subdirectories|real_unreadable_subtree/)
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +43,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Install CI tools
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest
 
@@ -82,7 +87,7 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
@@ -109,6 +114,25 @@ jobs:
           cat target/shard-$shard.log
           exit "$status"
 
+      # pwsh starts with both privileges disabled and its children inherit that,
+      # so the deny is enforced and the tests establish their precondition. A
+      # filter that matches nothing makes nextest exit nonzero.
+      - name: Run the real-ACL tests outside bash (shard 1 only)
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        shell: pwsh
+        # A step timeout fails only this step, so the Summarize and Upload steps
+        # still run; a stall under the 80-minute job cap would cancel them and
+        # lose acl.log.
+        timeout-minutes: 20
+        run: |
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
+          $code = $LASTEXITCODE
+          # A failed spawn leaves $LASTEXITCODE null, which would exit 0.
+          if ($null -eq $code) { $code = 1 }
+          Set-Content target/acl.status $code
+          Get-Content target/acl.log
+          exit $code
+
       # nextest colors its status rows; strip the escapes for the filter only, the
       # uploaded log stays raw.
       - name: Summarize failures
@@ -116,6 +140,8 @@ jobs:
         shell: bash
         run: |
           { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # The real-ACL step (shard 1 only) is reported on its own so an ACL-only failure still names its rows.
+          [ ! -f target/acl.status ] || { echo "### Real-ACL tests (pwsh, shard 1)"; echo "cargo nextest exit status: $(cat target/acl.status)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/acl.log | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload shard logs
         if: ${{ !cancelled() }}
@@ -127,6 +153,8 @@ jobs:
             target/shard-${{ matrix.shard }}.status
             target/shard-${{ matrix.shard }}.watchdog
             target/shard-${{ matrix.shard }}.processes
+            target/acl.log
+            target/acl.status
           if-no-files-found: warn
           retention-days: 7
 

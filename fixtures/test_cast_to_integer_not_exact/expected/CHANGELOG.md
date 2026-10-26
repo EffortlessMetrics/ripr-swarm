@@ -143,3 +143,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — test_cast_to_integer_not_exact (12)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless test_cast_to_integer_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -347,3 +347,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_named_constant (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

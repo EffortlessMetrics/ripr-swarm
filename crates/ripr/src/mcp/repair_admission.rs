@@ -142,7 +142,10 @@ impl SeamAdmission {
                         detail: detail.clone(),
                     },
                     None => verdict_for(
-                        resolve_repair_subject_in(candidate_seams, policy, &finding.id),
+                        // The server's verdicts are consumed relative to its
+                        // own workspace root, so no `--root` is worded into an
+                        // emitted next command here.
+                        resolve_repair_subject_in(candidate_seams, policy, &finding.id, None),
                         candidate_seams,
                     ),
                 };

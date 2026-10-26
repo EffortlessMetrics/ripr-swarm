@@ -4,6 +4,7 @@ use super::approx_band::{PythonBandReading, parse_expression, python_band_readin
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::effect_alignment::ChangedEffect;
+use super::fixtures::literal_owner_instance_fixture;
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
@@ -920,12 +921,16 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.framework == PythonFramework::Pytest
-        && !test.parametrized
         && body_calls_owner(&test.body_text, owner)
         && test
             .fixtures
             .iter()
+            // A direct parametrize argname is a value pytest supplies, not a
+            // fixture; a parametrize mark does not resolve the test's other
+            // fixtures (#9619).
+            .filter(|fixture| !test.direct_parametrized.contains(fixture))
             .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+            .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
             .any(|fixture| body_uses_identifier(&test.body_text, fixture))
 }
 

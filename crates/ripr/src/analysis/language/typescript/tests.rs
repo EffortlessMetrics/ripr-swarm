@@ -9405,6 +9405,31 @@ const mod = require('../src/utils');
     assert!(mod_matches[0].namespace);
 }
 
+/// #10724: an ES import that binds the name `require` made the import scan
+/// re-derive its own `require` scope without end and overflow the stack.
+#[test]
+fn extract_imports_terminates_on_es_import_binding_require() {
+    let source = "import require from \"./b\";\n";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let imports = extract_imports_from_statements(&parse_result.program.body);
+
+    assert_eq!(
+        imports.len(),
+        1,
+        "the import is still recorded: {imports:?}"
+    );
+    assert_eq!(imports[0].local, "require");
+    assert_eq!(imports[0].source, "./b");
+    assert_eq!(imports[0].imported.as_deref(), Some("default"));
+
+    let control = "import r from \"./b\";\n";
+    let control_parse = Parser::new(&allocator, control, SourceType::ts()).parse();
+    let control_imports = extract_imports_from_statements(&control_parse.program.body);
+    assert_eq!(control_imports.len(), 1);
+    assert_eq!(control_imports[0].local, "r");
+}
+
 /// Re-export form: `export { x } from './y'` should be extracted as an import
 /// so that `import_source_matches_owner` can follow the re-export one hop.
 #[test]
@@ -15667,6 +15692,194 @@ fn branch_return_expressions_single_return_shapes_still_attributed() {
     );
 }
 
+/// #7433: a one-line `if` closes its own body, so the scan must not read the
+/// enclosing block's next `return` as the true branch. The real pair here is
+/// 1/2; the scan used to answer 2/3.
+#[test]
+fn branch_return_expressions_refuses_a_one_line_changed_if() {
+    let lines: Vec<&str> = [
+        "export function f(s: number, admin: boolean): number {",
+        "    if (!admin) {",
+        "        if (s === 404) { return 1; }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&lines, 2), None);
+}
+
+/// #7433: a changed `if` inside a nested arrow belongs to that arrow's
+/// returns, not the owner's.
+#[test]
+fn branch_return_expressions_refuses_a_changed_if_in_a_nested_function() {
+    for header in [
+        "    const pick = (n: number) => {",
+        "    const pick = function (n: number) {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (n === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    };",
+            "    return pick(s);",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(branch_return_expressions(&lines, 2), None, "{header}");
+    }
+}
+
+/// #7433 controls: a multi-line `if` nested in a plain block, an arrow owner,
+/// and braces or `=>` inside earlier strings and comments keep the scan.
+#[test]
+fn branch_return_expressions_keeps_plain_nesting_and_blanked_literals() {
+    let nested: Vec<&str> = [
+        "export function f(s: number, admin: boolean): number {",
+        "    if (!admin) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&nested, 2),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let arrow_owner: Vec<&str> = [
+        "export const f = (s: number): number => {",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "};",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&arrow_owner, 1),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let multiline_comment: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    /* a block comment",
+        "       over two lines { => */",
+        "    const t = `x",
+        "y`;",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&multiline_comment, 5),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let literals: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    const label = \"{ => function {\"; // {",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&literals, 2),
+        Some(("1".to_string(), "2".to_string()))
+    );
+}
+
+/// #7433 through the liveness decision: at the boundary input the real pair is
+/// 1/2, so pinning `3` is dead. The misread pair 2/3 called that expectation
+/// live, which let a dead pin witness the boundary.
+#[test]
+fn expected_side_is_live_gives_up_on_a_one_line_changed_if() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number, admin: boolean): number {\n",
+                "    if (!admin) {\n",
+                "        if (s === 404) { return 1; }\n",
+                "        return 2;\n",
+                "    }\n",
+                "    return 3;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string(), "admin".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "        if (s === 404) { return 1; }",
+            "s",
+            "404",
+            &["404".to_string()],
+            "3",
+        ),
+        None,
+        "a one-line changed if has no attributable branch pair"
+    );
+}
+
+/// #7433 review: an ordinary block that shares its opening line with an
+/// unrelated arrow expression is not a nested function. Its branch pair
+/// (1/2) still folds, so a pin of `3` stays dead (`Some(false)`) and a pin of
+/// `2` stays live; refusing the block as a function would hand the dead pin
+/// boundary credit.
+#[test]
+fn expected_side_is_live_keeps_a_block_that_shares_a_line_with_an_arrow() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number, admin: boolean): number {\n",
+                "    if (admin) { const next = (n: number) => n + 1;\n",
+                "        if (s === 404) {\n",
+                "            return 1;\n",
+                "        }\n",
+                "        return 2;\n",
+                "    }\n",
+                "    return 3;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string(), "admin".to_string()],
+        ..boundary_witness_owner()
+    };
+    let live = |expected: &str| {
+        expected_side_is_live(
+            &owner,
+            "        if (s === 404) {",
+            "s",
+            "404",
+            &["404".to_string()],
+            expected,
+        )
+    };
+    assert_eq!(live("3"), Some(false), "a dead pin stays withheld");
+    assert_eq!(live("2"), Some(true), "the pre-change value stays live");
+}
+
 /// #4117 review of the liveness lookup: a duplicated predicate line cannot be
 /// attributed through the declared offset (a multiline declarator can shift
 /// the offset onto the identical line of a different function), so the check
@@ -18467,6 +18680,7 @@ mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
 mod out_dir_specifier_tests;
+mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
@@ -19002,6 +19216,76 @@ fn non_literal_loop_nested_in_an_if_joins_both_guards() {
         tests[0].conditional_registration.as_deref(),
         Some("isLinux && for (... of load())")
     );
+}
+
+#[test]
+fn describe_skip_if_and_run_if_index_their_tests_under_the_factory_guard() {
+    let source = "describe.skipIf(!existsSync(dist))('built', () => {\n  describe.runIf(ci)('ci', () => {\n    it('a', () => { expect(f(1)).toBe(2); });\n  });\n  it('b', () => { expect(f(2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 2, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist)) && describe.runIf(ci)")
+    );
+    assert_eq!(
+        tests[1].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist))")
+    );
+    assert!(tests.iter().all(|test| test.assertions.is_empty()));
+    assert!(
+        tests
+            .iter()
+            .all(|test| { test.assertion_admission == TypeScriptAssertionAdmission::Unresolved })
+    );
+}
+
+#[test]
+fn describe_skip_if_accepts_an_options_argument_before_the_callback() {
+    let source = "describe.skipIf(c)('a', { timeout: 5 }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(c)")
+    );
+}
+
+#[test]
+fn describe_skip_if_on_a_local_or_unrelated_describe_is_not_a_runner_suite() {
+    let local = "const describe = { skipIf: () => (_n, cb) => cb() };\ndescribe.skipIf(true)('local', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), local);
+    assert!(tests.is_empty(), "{tests:?}");
+    let imported = "import { describe } from './harness';\ndescribe.skipIf(true)('local', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), imported);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn describe_skip_if_on_another_root_is_not_descended_and_a_dynamic_title_still_is() {
+    let source = "runner.skipIf(c)('a', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\ndescribe.skipIf(c)(title, () => {\n  it('y', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(c)")
+    );
+}
+
+#[test]
+fn describe_skip_if_with_an_inactive_options_object_is_not_descended() {
+    let source = "describe.skipIf(c)('a', { skip: true }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\ndescribe.runIf(c)('b', { skip: false }, () => {\n  it('y', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+}
+
+#[test]
+fn describe_skip_if_reads_use_strict_from_the_callback_not_the_title() {
+    let source = "describe.skipIf(c)('s', () => {\n  'use strict';\n  { function describe() {} }\n  describe('inner', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
 }
 
 #[test]
