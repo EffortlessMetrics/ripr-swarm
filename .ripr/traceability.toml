@@ -18329,6 +18329,8 @@ tests = [
   "fixtures/python_effect_order_guarded_before_call",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/effect_alignment.rs",
+  "crates/ripr/src/analysis/language/python/sink_alignment.rs",
   "crates/ripr/src/analysis/language/python/guard_credit.rs",
   "crates/ripr/src/analysis/language/python/arm_activation.rs",
   "crates/ripr/src/analysis/language/python/guard_activation.rs",

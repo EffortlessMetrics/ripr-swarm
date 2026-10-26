@@ -143,7 +143,7 @@ observation interval. Different-field writes and read-only uses preserve
 credit. A later write on an unresolved receiver can conservatively withhold
 credit even when that receiver is a fresh object.
 Arbitrary helper effects and general object-flow inference remain outside
-this bounded reader. Direct-write behavior and exclusion-side decisions are
+this bounded reader. Direct-write retention and exclusion-side decisions are
 unchanged.
 
 An observation also follows the completed owner call in source statement order.
