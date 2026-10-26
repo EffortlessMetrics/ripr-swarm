@@ -175,8 +175,9 @@ For retained UTF-8 finding paths (`--format sarif`), separators follow the
 native host: Windows backslashes become `/`, while a literal backslash in a
 Unix filename remains part of that filename. In particular, `src/a\b.rs`
 on Unix must emit `src/a%5Cb.rs`, distinct from `src/a/b.rs`; its fingerprint
-retains the literal backslash too. Existing fingerprints for ordinary
-slash-separated paths remain unchanged. Repo-scoped seam construction still
+retains the literal backslash too. Path conversion leaves ordinary
+slash-separated file components unchanged; finding fingerprint migration is
+described above. Repo-scoped seam construction still
 normalizes backslashes before rendering; the renderer cannot restore native
 filename bytes already discarded by that producer.
 
@@ -348,6 +349,7 @@ Implemented policy tests:
 - `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_preserves_perl_changes_and_supported_line_shifts`
 - `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_keeps_native_suppression_exact_and_legacy_selector_stale`
 - `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_legacy_finding_baselines_require_explicit_transition`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_native_paths_survive_policy_baselines_and_line_moves`
 
 ## Implementation Mapping
 

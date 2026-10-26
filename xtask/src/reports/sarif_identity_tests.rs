@@ -274,13 +274,16 @@ fn sarif_identity_native_paths_survive_policy_baselines_and_line_moves() -> Resu
     let fixture = Fixture::new("baseline_one")?;
     let (mut output, _) = fixture.check(None)?;
     assert_eq!(output.findings.len(), 1);
+    // Different ASCII prefixes keep the Unicode file controls distinct on
+    // filesystems that treat canonical Unicode spellings as one filename.
+    // The renderer integration controls separately pin both exact spellings.
     let cases = [
         (r"src/a\b.pm", "src/a%5Cb.pm"),
         ("src/a/b.pm", "src/a/b.pm"),
         ("src/a%.pm", "src/a%25.pm"),
         ("src/a%25.pm", "src/a%2525.pm"),
-        ("src/dé.pm", "src/d%C3%A9.pm"),
-        ("src/de\u{301}.pm", "src/de%CC%81.pm"),
+        ("src/composed_dé.pm", "src/composed_d%C3%A9.pm"),
+        ("src/decomposed_de\u{301}.pm", "src/decomposed_de%CC%81.pm"),
         ("src/é.pm", "src/%C3%A9.pm"),
         ("src/%C3%A9.pm", "src/%25C3%25A9.pm"),
         ("src/quote\"line\n.pm", "src/quote%22line%0A.pm"),
