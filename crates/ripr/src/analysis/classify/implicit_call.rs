@@ -136,7 +136,7 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     // is a real gap and keeps its class.
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
-            && observation_unconfirmed(finding)
+            && only_discrimination_unconfirmed(finding)
             && reached_only_through_syntax(finding, owner, index))
     {
         return false;
@@ -178,12 +178,17 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     true
 }
 
-/// Whether the finding is weak because no assertion confirmed it observes the
-/// changed expression, not because of an earlier stage. The discriminate
-/// summary carries the token the oracle step writes for that case.
-fn observation_unconfirmed(finding: &Finding) -> bool {
-    let summary = &finding.ripr.reveal.discriminate.summary;
-    summary.contains("(observation_unverified)") || summary.contains("(oracle_confirmation_mixed)")
+/// Whether the earlier stages are established and only the discriminator is
+/// unconfirmed, the way `pinned_shape` reads it: reach is already decided by
+/// the caller, infection is read, and propagation is read or weak. A finding
+/// whose infection or propagation is not read has a different missing leg and
+/// keeps its own gap. Stage states, not summary text, carry this: the summary
+/// differs between "an assertion matched but cannot confirm" and "no assertion
+/// matched", and both leave the credit unconfirmed.
+fn only_discrimination_unconfirmed(finding: &Finding) -> bool {
+    let ripr = &finding.ripr;
+    ripr.infect.state == StageState::Yes
+        && matches!(ripr.propagate.state, StageState::Yes | StageState::Weak)
 }
 
 /// Whether every test related to the owner by a direct call reaches it only

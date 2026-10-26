@@ -757,14 +757,10 @@ mod named {
 ",
         ..ADD
     };
-    let got = classes(&one_named_call)?;
-    assert!(
-        !got.contains(&ExposureClass::StaticUnknown),
-        "a named call is not syntax-only reach: {got:?}"
-    );
+    assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
 
-    // A weakness with another cause is a real gap: the test pins the sum but
-    // never drives the branch the changed line sits in.
+    // A finding whose infection is not read has a different missing leg: the
+    // changed line sits behind a branch the test's operands never take.
     let branch_not_driven = Case {
         label: "branch_not_driven",
         signature: "type Output = Money;\n    fn add(self, other: Money) -> Money",
@@ -773,11 +769,7 @@ mod named {
         test_body: "assert_eq!(Money(2) + Money(3), Money(0));",
         ..ADD
     };
-    let got = classes(&branch_not_driven)?;
-    assert!(
-        !got.contains(&ExposureClass::StaticUnknown),
-        "an undriven branch is a gap, not an unconfirmed credit: {got:?}"
-    );
+    assert_eq!(classes(&branch_not_driven)?, [ExposureClass::WeaklyExposed]);
 
     // The same impl is a gap when the test never exercises the operator.
     let unexercised = Case {

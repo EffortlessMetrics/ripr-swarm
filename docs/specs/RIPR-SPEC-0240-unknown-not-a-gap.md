@@ -651,11 +651,15 @@ a test" signal for code the test pins. `withhold_implicit_call_gap` therefore
 also applies to a finding whose reach is established, when every test related
 by a direct call reaches the owner only through syntax (none calls the
 method as `.name(`, matched to the related test by name, file and line) and the
-finding is `weakly_exposed` or `reachable_unrevealed` because its observation
-is unconfirmed (the discriminate summary carries `observation_unverified` or
-`oracle_confirmation_mixed`): it stays `static_unknown` under
-`rust_implicit_call_unresolved`. A weakness with another cause, such as a test
-that never drives the changed branch, keeps its class. A confirmed
+finding is `weakly_exposed` or `reachable_unrevealed` with infection read
+and propagation read or weak, so only the discriminator is unconfirmed (stage
+states decide this, as in `withhold_pinned_shape_gap`; the discriminate summary
+differs between "an assertion matched but cannot confirm" and "no assertion
+matched", and both leave the credit unconfirmed): it stays `static_unknown`
+under `rust_implicit_call_unresolved`. A finding whose infection or propagation
+is not read, such as a changed line behind a branch the test never takes,
+keeps its class. A path-form call (`Money::add(a, b)`) is not `.name(` and
+reads as syntax-only. A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
