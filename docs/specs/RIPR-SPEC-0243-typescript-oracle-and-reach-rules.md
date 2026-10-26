@@ -1722,7 +1722,7 @@ call-count oracle projection (#10174).
   corpus source and test without rewriting their spy. The target-method and
   removed-argument regressions pin throwing/absent/duplicate methods, imported
   and parameter receivers, valid explicit replacements, and earlier/later local
-  bindings. Three dedicated call-removal fixtures also pin `weakly_exposed` in
+  bindings. Four dedicated call-removal fixtures also pin `weakly_exposed` in
   the cross-language evidence-promotion-honesty corpus.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
