@@ -1100,7 +1100,7 @@ pub(super) fn parse_agent_verify_execute_options(
             "--cancel-after-ms" => {
                 i += 1;
                 let value = expect_value(args, i, "--cancel-after-ms")?;
-                let parsed = value.parse::<u64>().map_err(|_| {
+                let parsed = value.parse::<u64>().map_err(|_parse_err| {
                     "invalid --cancel-after-ms: expected a positive integer".to_string()
                 })?;
                 if parsed == 0 {
@@ -1348,7 +1348,7 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
 fn parse_max_seams(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| "invalid --max-seams: expected a positive integer".to_string())?;
+        .map_err(|_parse_err| "invalid --max-seams: expected a positive integer".to_string())?;
     if parsed == 0 {
         return Err("invalid --max-seams: expected a positive integer".to_string());
     }
