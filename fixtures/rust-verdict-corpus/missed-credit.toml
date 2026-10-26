@@ -69,10 +69,6 @@ case = "grid-bits-length-pinned"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "grid-bool-table"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "grid-delete-helper"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -353,10 +349,6 @@ case = "shape-async-fn-block-on"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "shape-closure-returned-adder"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "shape-drop-impl-side-effect"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -367,6 +359,14 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "shape-generic-largest-compare"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "shape-hostile-macro-defined-owner"
+reason = "Tests discriminate the change but ripr withholds the gap under `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240, #9442, #9443); fail-closed by design until the owner can be paired with its assertion (#9478)."
+
+[[entry]]
+case = "shape-hostile-owner-as-path-value"
+reason = "Tests discriminate the change but ripr withholds the gap under `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240, #9442, #9443); fail-closed by design until the owner can be paired with its assertion (#9478)."
 
 [[entry]]
 case = "shape-impl-trait-return-filter"
@@ -387,6 +387,42 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "shop-discount-path-dependent-test"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "spec-b-0150-comment-only-family"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-destructured-binding"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-len-utf8-map-or"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-map-or-else"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-member-lookalike"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-missing-owner"
+reason = "The LazyLock test discriminates both the default and mapped index, but the changed binding has no owning function; ripr correctly keeps the generic static-unknown limitation without a value-propagation kind or predicate relation (#10503). Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-rfind-map-or-equality"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-shadowed-binding"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0150-string-only-family"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0153-bench-common-helper"
@@ -415,6 +451,34 @@ reason = "Runtime truth is discriminated, but this edit is a test-only helper in
 [[entry]]
 case = "spec-b-0153-registered-harness-subject"
 reason = "The registered Trial callback is indexed for reach but its assertion is not credited, so this configured adapter control records static_unknown/limited rather than ideal credit. Removing only the valid registration loses the adapted relation and changes the exact row to no_static_path; this entry does not accept that drift (#10495)."
+
+[[entry]]
+case = "spec-b-0157-closure-capture"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0157-comment-and-string-mention"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0157-macro-invocation"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0157-reassigned-binding"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0157-shadowed-binding"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0157-sibling-function"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
+
+[[entry]]
+case = "spec-b-0157-two-direct-uses"
+reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec-b-0158-dynamic-default"

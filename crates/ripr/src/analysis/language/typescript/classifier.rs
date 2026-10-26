@@ -4332,10 +4332,57 @@ pub(crate) fn owner_call_arguments(
             continue;
         };
         if let Some(arguments) = balanced_call_arguments(inner) {
-            calls.push(arguments);
+            calls.push(positional_prefix(arguments));
         }
     }
     calls
+}
+
+/// Parameter positions a spread call keeps marked unreadable.
+const SPREAD_UNREADABLE_POSITIONS: usize = 16;
+
+/// The call arguments with every position at or after the first spread
+/// (`f(...xs, 5)`) replaced by the spread marker. A spread can supply any
+/// number of values, so a later argument sits at an unknown position and a
+/// parameter there is unreadable rather than absent: a reader that binds
+/// arguments by index neither mistakes `5` for the next parameter nor reads
+/// the missing value as `undefined` (#9645).
+pub(crate) fn positional_prefix(mut arguments: Vec<String>) -> Vec<String> {
+    let Some(at) = arguments
+        .iter()
+        .position(|argument| starts_with_spread(argument))
+    else {
+        return arguments;
+    };
+    arguments.truncate(at);
+    // Each marker is distinct, so two unreadable positions never compare as
+    // equal values (a boundary witness, #10476 review).
+    // At least the spread's own position, so a spread past the fixed count
+    // still reads as unreadable rather than absent.
+    let end = SPREAD_UNREADABLE_POSITIONS.max(at + 1);
+    arguments.extend((at..end).map(|position| format!("...#{position}")));
+    arguments
+}
+
+/// `true` when the argument is a spread (`...xs`), also behind leading
+/// comments: `f(/* items */ ...xs)` is still a spread.
+fn starts_with_spread(argument: &str) -> bool {
+    let mut rest = argument.trim_start();
+    loop {
+        if let Some(after) = rest.strip_prefix("/*") {
+            let Some(end) = after.find("*/") else {
+                return false;
+            };
+            rest = after[end + 2..].trim_start();
+        } else if let Some(after) = rest.strip_prefix("//") {
+            let Some(end) = after.find('\n') else {
+                return false;
+            };
+            rest = after[end + 1..].trim_start();
+        } else {
+            return rest.starts_with("...");
+        }
+    }
 }
 
 /// Split the text after a call's opening parenthesis into its top-level
@@ -4400,7 +4447,7 @@ fn argument_position_is_live(position: usize, params: &[String]) -> bool {
 /// (`isAllowed(5, 5)` witnesses `count <= limit`). Arguments in dead
 /// positions (past the owner's declared arity) are ignored — a duplicated
 /// literal parked in an unread argument cannot witness (#4102 shape 1).
-fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
+pub(crate) fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
     let live: Vec<&String> = arguments
         .iter()
         .enumerate()
@@ -5053,6 +5100,17 @@ impl Folder<'_> {
 }
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
+
+/// True when every oracle-eligible related test is registered under an
+/// unevaluable `if` condition (#10438).
+fn only_conditionally_registered_tests(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+    let mut eligible = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .peekable();
+    eligible.peek().is_some()
+        && eligible.all(|candidate| candidate.test.conditional_registration.is_some())
+}
 
 /// True when every oracle-eligible related test holds assertion-like code the
 /// extractor could not resolve, so the absence of a discriminator is unproven.
@@ -6430,6 +6488,22 @@ pub(crate) fn classify_resolved_owner(
             StageState::Weak,
             vec![format!(
                 "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
+                owner.name
+            )],
+        )
+    } else if only_conditionally_registered_tests(related_candidates) {
+        // #10438: every oracle-eligible related test is registered under a
+        // condition static analysis cannot evaluate, so whether any of them
+        // runs, and whether its oracle discriminates, is not established.
+        // Unknown, not an actionable gap: a guarded test that does run may
+        // pin the change (the `ts-trap-platform-matched` control).
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Yes,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "Related tests reach `{}` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they assert, is not established either way.",
                 owner.name
             )],
         )
@@ -8193,6 +8267,7 @@ fn ts_whole_owner_call_arguments(
         .map(str::trim_start)
         .find(|rest| ts_is_one_argument_list(rest))
         .and_then(|rest| balanced_call_arguments(&rest[1..]))
+        .map(positional_prefix)
 }
 
 /// RIPR-SPEC-0246 rule 3: the arguments of the owner call (named as
@@ -8216,7 +8291,11 @@ fn ts_owner_call_member_arguments(
         .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
     let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
     for rest in bare.chain(qualified).map(str::trim_start) {
-        let Some(arguments) = rest.strip_prefix('(').and_then(balanced_call_arguments) else {
+        let Some(arguments) = rest
+            .strip_prefix('(')
+            .and_then(balanced_call_arguments)
+            .map(positional_prefix)
+        else {
             continue;
         };
         let Some(end) = call_list_end(rest) else {

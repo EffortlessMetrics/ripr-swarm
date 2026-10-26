@@ -1,0 +1,27 @@
+//! A sibling function binds its own end; the changed one only returns it.
+
+pub fn end_of(text: &str) -> usize {
+    let end = text.len();
+    end
+}
+
+pub fn is_wide(text: &str, width: usize) -> bool {
+    let end = text.chars().count();
+    end > width
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_end_is_the_length_b_sibling() {
+        assert_eq!(end_of("abc"), 3);
+    }
+
+    #[test]
+    fn wide_is_exclusive_b_sibling() {
+        assert!(!is_wide("abc", 3));
+        assert!(is_wide("abcd", 3));
+    }
+}

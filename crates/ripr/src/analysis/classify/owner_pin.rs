@@ -45,6 +45,7 @@ pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod helper_arguments;
+pub(super) mod returned_closure;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -211,10 +212,28 @@ fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
                 if whole_word_offsets(tree, name).is_empty() {
                     continue;
                 }
-                let clean = !gated
-                    && tree.trim_start().starts_with(&format!("{krate}::"))
-                    && !tree.contains('*')
-                    && !tree.contains(" as ");
+                // The name must be a direct item of the crate's path: `krate::name`
+                // or one entry of `krate::{.., name, ..}`.
+                let direct = tree
+                    .trim()
+                    .strip_prefix(&format!("{krate}::"))
+                    .is_some_and(|rest| {
+                        let rest = rest.trim();
+                        // A nested group (`{inner::{x, name}}`) is not a direct
+                        // item list, so it is refused rather than split.
+                        rest.strip_prefix('{')
+                            .and_then(|group| group.strip_suffix('}'))
+                            .map_or(vec![rest], |group| {
+                                if group.contains(['{', '}']) {
+                                    Vec::new()
+                                } else {
+                                    group.split(',').collect()
+                                }
+                            })
+                            .iter()
+                            .any(|item| item.trim() == *name)
+                    });
+                let clean = !gated && direct && !tree.contains('*') && !tree.contains(" as ");
                 if !clean {
                     return false;
                 }
@@ -2821,6 +2840,15 @@ enum ReturnPathGate {
     /// pinned value to be an `Ok(..)` that every element reached
     /// (`requires_ok`, #9490).
     Adaptor { position: usize, requires_ok: bool },
+    /// RIPR-SPEC-0265 rule 5: the changed tail is the owner's whole body and
+    /// one closure over its own parameters. The pinned operand must apply
+    /// the returned closure to `arity` distinct nonzero numeric literals, so
+    /// the closure runs once and the bounded typed body discriminates the
+    /// supported arithmetic replacements, including through literal captures.
+    ReturnedClosure {
+        arity: usize,
+        arithmetic: returned_closure::ArithmeticPin,
+    },
     /// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) a
     /// zero-initialized local that the owner returns, once per element of the
     /// slice-like parameter at `position`. The pinned call must pass that
@@ -3089,6 +3117,17 @@ fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExp
     }
 }
 
+/// A changed whole returned closure can confirm observation only through
+/// its admitted application pin, even when the arithmetic model is unknown.
+pub(in crate::analysis) fn returned_closure_pin_required(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && returned_closure::owner_returned_closure_tail(owner)
+            .is_some_and(|tail| tail.tail_is(&probe.expression))
+}
+
 impl OwnerReturnPin {
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
@@ -3166,6 +3205,20 @@ impl OwnerReturnPin {
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
                         requires_ok: tail.collects_result(),
+                    })
+                    // RIPR-SPEC-0265 rule 5: a returned closure applied in the
+                    // pinned expression.
+                    .or_else(|| {
+                        returned_closure::owner_returned_closure_tail(owner)
+                            .filter(|tail| tail.tail_is(&probe.expression))
+                            .and_then(|tail| {
+                                Some(ReturnPathGate::ReturnedClosure {
+                                    arity: tail.arity,
+                                    arithmetic: returned_closure::ArithmeticPin::establish(
+                                        owner, index,
+                                    )?,
+                                })
+                            })
                     })?
             }
             None => return None,
@@ -3650,6 +3703,14 @@ impl OwnerReturnPin {
     /// not hold, so that stays refused.
     fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         let operand = operand.trim();
+        // RIPR-SPEC-0265 rule 5: the pinned value is the returned closure
+        // applied to its arguments; the call shape is the owner call inside.
+        let operand = match &self.path {
+            ReturnPathGate::ReturnedClosure { arity, .. } => {
+                returned_closure::strip_applied(operand, *arity)?
+            }
+            _ => operand,
+        };
         // An async owner's bare call is its future, not its return value.
         match (self.awaited, operand.strip_suffix(".await")) {
             (true, Some(call)) => owner_call_shape(call.trim_end(), name),
@@ -4202,6 +4263,25 @@ impl OwnerReturnPin {
         {
             return false;
         }
+        // #7714: a test-file helper that computes its value from the owner
+        // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
+        // expected operand the owner's own value, however it is bound.
+        if test_file_helpers_reaching_owner(index, test, expected, &self.name)
+            .iter()
+            .any(|helper| {
+                expected_reaches_owner(test, &assertion.text, expected, helper)
+                    || expected_constant_reaches_owner(
+                        index,
+                        test,
+                        expected,
+                        helper,
+                        &PinCall::Bare,
+                        &self.owner_file,
+                    )
+            })
+        {
+            return false;
+        }
         match (&self.path, call) {
             // #6692: the clone must be compared with its own receiver, and
             // the test's file must not import some other `Clone`.
@@ -4242,6 +4322,16 @@ impl OwnerReturnPin {
                             &self.name,
                             *position,
                         )
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0265 rule 5: the application must tell the
+                // closure's operators apart.
+                if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
+                    && !call_text.is_some_and(|text| {
+                        returned_closure::applied_inputs_are_distinct_literals(text, *arity)
+                            && arithmetic.discriminates(text)
                     })
                 {
                     return false;
@@ -5247,7 +5337,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::ShortCircuit(_) => true,
+            Self::Any | Self::ReturnedClosure { .. } | Self::ShortCircuit(_) => true,
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
@@ -5934,7 +6024,20 @@ fn return_path_gate_from(
     // with the changed text (`Ok("a")` is not `Ok("b")`).
     let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        let tail = collapse_whitespace(&inner_text[start..]);
+        // A comment after the tail (`1 + x // assert_eq!(..)`) is masked to
+        // blanks, so the code ends where the masked tail does; reading the
+        // unmasked rest would compare the comment with the changed text.
+        // Masking also blanks string and char literals, so the code ends at
+        // the masked end only when a real comment starts there.
+        let masked_end = start + inner[start..].trim_end().len();
+        let rest = inner_text[masked_end..].trim_start();
+        let comment_follows = rest.starts_with("//") || rest.starts_with("/*");
+        let code_end = if comment_follows {
+            masked_end
+        } else {
+            inner_text.len()
+        };
+        let tail = collapse_whitespace(&inner_text[start..code_end]);
         (tail == changed
             || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())
@@ -11030,8 +11133,8 @@ fn constant_scope(
 /// one, `.name(..)` or `T::name(..)` for a method), so a constant built
 /// with some other type's `new` or `len` keeps the pin. A test-file `use ..
 /// as` rename of a constant and a constant file's rename of the owner are
-/// followed. A constant computed through a helper that calls the owner is
-/// not.
+/// followed. A constant computed through a test-file helper that calls the
+/// owner is refused by the caller (#7714).
 fn expected_constant_reaches_owner(
     index: &RustIndex,
     test: &TestSummary,
@@ -11097,6 +11200,61 @@ fn expected_constant_reaches_owner(
         }
     }
     false
+}
+
+/// #7714: names of the functions in the test's own file, other than the
+/// test, whose body names the owner `name` or, transitively, another such
+/// function. An expected value such a helper returns is computed from the
+/// owner, so comparing the owner with it compares the owner with itself.
+/// Matching a same-named item in another module only withholds the pin.
+fn test_file_helpers_reaching_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    expected: &str,
+    name: &str,
+) -> Vec<String> {
+    // A literal or an operand with no name in it cannot reach a helper.
+    let masked_expected = mask_comments_and_strings(expected);
+    if !masked_expected
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|word| is_plain_identifier(word) && word != name)
+    {
+        return Vec::new();
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return Vec::new();
+    };
+    // Free non-test functions only: a method or a sibling test sharing a
+    // common name (`new`, `len`) would otherwise withhold unrelated pins.
+    let candidates: Vec<(&str, String)> = facts
+        .functions
+        .iter()
+        .filter(|function| {
+            function.start_line != test.start_line
+                && function.name != name
+                && matches!(
+                    function.impl_context,
+                    crate::analysis::facts::FunctionImplContext::Free
+                )
+                && !function
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.contains("test") || attr.contains("rstest"))
+        })
+        .map(|function| (function.name.as_str(), function.body.as_str()))
+        .map(|(helper, body)| (helper, mask_comments_and_strings(body)))
+        .collect();
+    let mut reaching: BTreeSet<String> = BTreeSet::new();
+    let mut frontier = vec![name.to_string()];
+    while let Some(target) = frontier.pop() {
+        for (helper, body) in &candidates {
+            if !reaching.contains(*helper) && contains_as_whole_word(body, &target) {
+                reaching.insert((*helper).to_string());
+                frontier.push((*helper).to_string());
+            }
+        }
+    }
+    reaching.into_iter().collect()
 }
 
 /// Names `file` imports the owner `name` under (`use crate::quota as q;`).
