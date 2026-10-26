@@ -31,20 +31,6 @@ fn analyze_with_reader(
     asynchronous: bool,
     ambiguous: bool,
 ) -> Result<Value, String> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "ripr-result-map-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
-    let subject = Subject::claim(root)?;
-    std::fs::create_dir(subject.0.join("src")).map_err(|e| e.to_string())?;
-    std::fs::write(
-        subject.0.join("Cargo.toml"),
-        "[package]\nname='result_map_callback'\nversion='0.1.0'\nedition='2021'\n",
-    )
-    .map_err(|e| e.to_string())?;
     let production = SOURCE
         .split("#[cfg(test)]")
         .next()
@@ -65,19 +51,42 @@ fn analyze_with_reader(
     } else {
         production
     };
-    assert_eq!(production.matches(ORIGINAL).count(), 1);
+    analyze_source(&production, ORIGINAL, tail, tests, extra)
+}
+fn analyze_source(
+    production: &str,
+    original: &str,
+    tail: &str,
+    tests: &str,
+    extra: &str,
+) -> Result<Value, String> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-result-map-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    let subject = Subject::claim(root)?;
+    std::fs::create_dir(subject.0.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        subject.0.join("Cargo.toml"),
+        "[package]\nname='result_map_callback'\nversion='0.1.0'\nedition='2021'\n",
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(production.matches(original).count(), 1);
     let source = format!(
         "{}\n{extra}\n#[cfg(test)] mod tests {{ use super::*; {tests} }}",
-        production.replace(ORIGINAL, tail)
+        production.replace(original, tail)
     );
     std::fs::write(subject.0.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
     let line = production
         .lines()
-        .position(|line| line.contains(ORIGINAL))
+        .position(|line| line.contains(original))
         .ok_or("changed tail")?
         + 1;
     let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        {ORIGINAL}\n+        {tail}\n"
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        {original}\n+        {tail}\n"
     );
     let patch = subject.0.join("change.diff");
     std::fs::write(&patch, diff).map_err(|e| e.to_string())?;
@@ -106,6 +115,9 @@ fn analyze_with_reader(
 }
 const GOOD: &str = "#[test] fn exact_ok() { let mut a = &[0xff, 0xff, 0xff][..]; assert_eq!(a.try_get_int(3), Ok(-1)); }";
 const ERROR_ONLY: &str = "#[test] fn error_only() { let mut a = &[][..]; assert_eq!(a.try_get_int(3), Err(TryGetError)); }";
+const INHERENT_SOURCE: &str = "#[derive(Debug, PartialEq)] struct E;\nstruct Reader { fail: bool }\nimpl Reader {\n    fn read(&self) -> Result<u64, E> { if self.fail { Err(E) } else { Ok(7) } }\n    fn mapped(&self) -> Result<u64, E> {\n        Ok(self.read()? + 1)\n    }\n}\n";
+const INHERENT_ORIGINAL: &str = "Ok(self.read()? + 1)";
+const INHERENT_FORWARDED: &str = "self.read().map(|v| v + 1)";
 #[test]
 fn result_map_forwards_the_exact_callback_payload() -> Result<(), String> {
     for tail in [
@@ -212,6 +224,61 @@ fn result_map_does_not_borrow_an_error_only_wrapper_pin() -> Result<(), String> 
     )?;
     assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_does_not_borrow_an_error_only_inherent_entry_pin() -> Result<(), String> {
+    // Constructed receivers reach the existing method-entry pin. A typed
+    // parameter receiver only reaches the helper: the older pin/forwarding
+    // checks decline it. Hide Err's spelling to exercise ExactValue admission.
+    let entry = "fn entry() -> Result<u64, E> { Reader { fail: true }.mapped() } fn expected_error() -> Result<u64, E> { Err(E) }";
+    let error_test = "#[test] fn error_entry() { assert_eq!(entry(), expected_error()); }";
+    let finding = analyze_source(
+        INHERENT_SOURCE,
+        INHERENT_ORIGINAL,
+        INHERENT_FORWARDED,
+        error_test,
+        entry,
+    )?;
+    assert_eq!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+    assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    let related = finding["related_tests"].as_array().ok_or("related tests")?;
+    assert_eq!(related.len(), 1, "{finding}");
+    assert_eq!(
+        related[0]["relation_reason"], "helper_owner_call",
+        "{finding}"
+    );
+    assert_eq!(related[0]["oracle_kind"], "exact_value", "{finding}");
+    assert_eq!(related[0]["miss"], "observation_unconfirmed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_preserves_direct_ok_and_non_map_entry_pins() -> Result<(), String> {
+    let direct =
+        "#[test] fn direct_ok() { let r = Reader { fail: false }; assert_eq!(r.mapped(), Ok(8)); }";
+    let finding = analyze_source(
+        INHERENT_SOURCE,
+        INHERENT_ORIGINAL,
+        INHERENT_FORWARDED,
+        direct,
+        "",
+    )?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+
+    // The ordinary method-entry path remains available to non-map changes.
+    let ok_entry = "fn entry() -> Result<u64, E> { Reader { fail: false }.mapped() }";
+    let ok_test = "#[test] fn ok_entry() { assert_eq!(entry(), Ok(9)); }";
+    let finding = analyze_source(
+        INHERENT_SOURCE,
+        INHERENT_ORIGINAL,
+        "Ok(self.read()? + 2)",
+        ok_test,
+        ok_entry,
+    )?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
 

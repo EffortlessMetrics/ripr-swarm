@@ -2465,7 +2465,12 @@ assertions. This repair shares the existing callback without that larger migrati
 - `crates/ripr/tests/result_map_callback.rs`: exact and block-tail forwarding;
   discard/recompute/constant and changed-payload refusals; receiver, binding,
   conditional, chained-adaptor and alias boundaries; per-test Ok/Err, reach-only
-  and deferred-observer provenance (#9870).
+  and deferred-observer provenance (#9870). The inherent-entry control pairs an
+  Err-only constructed-receiver entry with a direct Ok observer and an ordinary
+  non-map method-entry positive. The typed-parameter entry establishes reach but
+  is outside the existing helper forwarding/pin shapes; it cannot validate this
+  map-only exclusion. Removing the direct-only map guard must reject the
+  inherent-entry control without changing helper admission.
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic
