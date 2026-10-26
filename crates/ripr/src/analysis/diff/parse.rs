@@ -228,6 +228,11 @@ mod parser_state {
         /// so the section's path is not registered and its hunk lines are
         /// consumed without being recorded (#4577).
         symlink_section: bool,
+        /// Set once a header names a regular-file mode (`100644`/`100755`), so
+        /// quoted `Subproject commit` text in a document is never a gitlink.
+        regular_file_section: bool,
+        /// The last hunk line was a `-Subproject commit <sha>` removal.
+        gitlink_removal_pending: bool,
         rename_section: bool,
         pure_rename_section: bool,
         rename_from_path: Option<PathBuf>,
@@ -521,6 +526,17 @@ mod parser_state {
             if is_symlink {
                 self.symlink_section = true;
             }
+            let mut fields = raw.split_whitespace();
+            let is_regular = raw
+                .strip_prefix("new file mode ")
+                .or_else(|| raw.strip_prefix("deleted file mode "))
+                .is_some_and(|mode| matches!(mode, "100644" | "100755"))
+                || (fields.next() == Some("index")
+                    && fields.next().is_some_and(|range| range.contains(".."))
+                    && matches!(fields.next(), Some("100644" | "100755")));
+            if is_regular {
+                self.regular_file_section = true;
+            }
         }
 
         /// A submodule whose working tree is dirty diffs as `Subproject commit
@@ -529,14 +545,21 @@ mod parser_state {
         /// count it once so the section is disclosed as a skipped submodule
         /// instead of being reported as a non-source file.
         fn note_unheadered_gitlink(&mut self, raw: &str) {
-            let is_gitlink_line = raw
-                .strip_prefix(['-', '+'])
-                .and_then(|body| body.strip_prefix("Subproject commit "))
-                .is_some_and(|sha| {
-                    let sha = sha.strip_suffix("-dirty").unwrap_or(sha);
-                    sha.len() >= 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
-                });
-            if is_gitlink_line && !self.submodule_section {
+            let gitlink_body = |prefix: char| {
+                raw.strip_prefix(prefix)
+                    .and_then(|body| body.strip_prefix("Subproject commit "))
+                    .is_some_and(|sha| {
+                        let sha = sha.strip_suffix("-dirty").unwrap_or(sha);
+                        sha.len() >= 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+            };
+            // Only an immediate `-`/`+` pair of gitlink lines in a section no
+            // header called a regular file: a document that quotes one commit
+            // line, or one that appears in a regular-file diff, is prose.
+            let removal = gitlink_body('-');
+            let replaced = self.gitlink_removal_pending && gitlink_body('+');
+            self.gitlink_removal_pending = removal;
+            if replaced && !self.submodule_section && !self.regular_file_section {
                 self.submodule_section = true;
                 self.current_section_awaits_body = false;
                 if !self.submodule_counted {
@@ -752,6 +775,8 @@ mod parser_state {
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
+            self.regular_file_section = false;
+            self.gitlink_removal_pending = false;
             self.submodule_counted = false;
             self.submodule_new_file = false;
             self.symlink_section = false;
@@ -1366,6 +1391,17 @@ deleted file mode 100644
         );
         let parsed = parse_unified_diff_with_metadata(&dirty);
         assert_eq!(parsed.submodule_file_count, 1);
+
+        // A regular file that quotes a full commit line is not a gitlink,
+        // with or without a mode header.
+        let quoted = format!(
+            "diff --git a/docs/e.md b/docs/e.md\nindex 1111111..2222222 100644\n--- a/docs/e.md\n+++ b/docs/e.md\n@@ -1 +1 @@\n-Subproject commit {sha}\n+Subproject commit {sha}-dirty\n"
+        );
+        assert_eq!(parse_unified_diff_with_metadata(&quoted).submodule_file_count, 0);
+        let lone = format!(
+            "diff --git a/docs/e.md b/docs/e.md\n--- a/docs/e.md\n+++ b/docs/e.md\n@@ -1 +1 @@\n-old\n+Subproject commit {sha}\n"
+        );
+        assert_eq!(parse_unified_diff_with_metadata(&lone).submodule_file_count, 0);
 
         // Prose that merely starts the same way is not a gitlink.
         let prose = "diff --git a/notes.md b/notes.md\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-Subproject commit soon\n+Subproject commit later\n";
