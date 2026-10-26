@@ -86,7 +86,19 @@ fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
     let bytes = source.as_bytes();
     let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
     names.iter().any(|name| {
-        source.match_indices(name.as_str()).any(|(start, _)| {
+        // Raw names can overlap in a token tree: `r#ar#r#r!` contains
+        // a rejected spelling inside `r#ar` and then the token `r#r`.
+        // The `r#` prefix cannot overlap itself, so scan each prefix and
+        // check the full name without losing the later token.
+        let needle = if name.starts_with("r#") {
+            "r#"
+        } else {
+            name.as_str()
+        };
+        source.match_indices(needle).any(|(start, _)| {
+            if !source[start..].starts_with(name) {
+                return false;
+            }
             if start > 0 && is_ident(bytes[start - 1]) {
                 return false;
             }
@@ -125,6 +137,14 @@ impl MacroVisibility {
 
     /// The `macro_rules!` items `file` sees from other files, or nothing.
     pub(crate) fn imported_macros(&self, file: &Path) -> ImportedMacros {
+        self.imported_macros_with_parser(file, first_macro_call)
+    }
+
+    fn imported_macros_with_parser(
+        &self,
+        file: &Path,
+        find_first_call: impl FnOnce(&str, &BTreeSet<String>) -> Option<usize>,
+    ) -> ImportedMacros {
         let Some(source) = self.sources.get(file) else {
             return ImportedMacros::default();
         };
@@ -135,9 +155,18 @@ impl MacroVisibility {
         }
         // A `#[macro_use]` module declared after the first call is not in
         // scope at it.
-        let Some(first_call) = first_macro_call(source, &self.generators) else {
+        let Some(first_call) = find_first_call(source, &self.generators) else {
             return ImportedMacros::default();
         };
+        self.resolve_imported_macros(file, source, first_call)
+    }
+
+    fn resolve_imported_macros(
+        &self,
+        file: &Path,
+        source: &str,
+        first_call: usize,
+    ) -> ImportedMacros {
         let mut walk = Walk::default();
         let Some(own) = self.scope(file).filter(|scope| !scope.opaque) else {
             return ImportedMacros::default();

@@ -303,6 +303,14 @@ definition mentions `test` is resolved at all. `build.rs`, `main.rs` and
 `lib.rs` are crate roots. Parents are followed up to four modules, and
 `#[macro_use]` modules down to about four.
 
+A text precheck may avoid the generator-call parse only when it cannot hide
+a call established by the parser. Identifier boundaries, Unicode whitespace,
+comments between the name and `!`, raw names (including overlapping text in
+token trees), and qualified paths must retain the parser route. Inert spellings
+may still cause a parse; the parser and existing resolver decide whether any
+definition is imported. This optimization preserves the complete imported
+definitions, import names and blanked path ranges, including grouped imports.
+
 A module resolves only to one file: `name.rs` or `name/mod.rs` under the
 declaring file's anchor (a crate root, `mod.rs`, or a file directly in
 `tests`, `benches` or `examples` has its children beside it; any other file
