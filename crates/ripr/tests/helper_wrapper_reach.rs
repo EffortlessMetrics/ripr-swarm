@@ -1609,10 +1609,7 @@ fn forwarder_finding(extra_items: &str, forwarder: &str, tests: &str) -> Result<
         &forwarder_source(extra_items, forwarder, tests),
         FORWARDER_DIFF,
     )?;
-    assert_eq!(
-        finding["probe"]["expression"], "wanted >= 4",
-        "{finding}"
-    );
+    assert_eq!(finding["probe"]["expression"], "wanted >= 4", "{finding}");
     Ok(finding)
 }
 
