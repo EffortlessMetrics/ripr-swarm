@@ -69,6 +69,8 @@ where
     });
     let worker_token = token.clone();
     let (tx, rx) = mpsc::channel();
+    #[cfg(test)]
+    let rx = ObservedReceiver(rx);
     // The worker replaces the main thread's analysis stack, so it gets at
     // least the main thread's usual 8 MiB; the 2 MiB default would let a
     // deeply nested source abort the process instead of refusing.
@@ -84,11 +86,11 @@ where
             "start check analysis thread failed: {error}"
         )));
     }
-    match receive_with_timeout(&rx, budget) {
+    match rx.recv_timeout(budget) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             token.cancel(AnalysisAbortKind::DeadlineExceeded);
-            let finished = receive_with_timeout(&rx, CANCEL_GRACE).is_ok();
+            let finished = rx.recv_timeout(CANCEL_GRACE).is_ok();
             if !finished {
                 on_timeout();
             }
@@ -100,19 +102,31 @@ where
     }
 }
 
-// Keep the observed argument beside the real channel wait. Test tracing is
-// scoped to the calling test thread and absent from production builds.
-fn receive_with_timeout<T>(
-    receiver: &mpsc::Receiver<T>,
-    timeout: Duration,
-) -> Result<T, mpsc::RecvTimeoutError> {
-    #[cfg(test)]
-    WAIT_TRACE.with(|trace| {
-        if let Some(waits) = trace.borrow_mut().as_mut() {
-            waits.push(timeout);
-        }
-    });
-    receiver.recv_timeout(timeout)
+// Production calls the standard receiver directly. This test-only observer
+// captures the argument at that method boundary, so there is no production
+// forwarding adapter below the trace whose argument could diverge from it.
+#[cfg(test)]
+struct ObservedReceiver<T>(mpsc::Receiver<T>);
+
+#[cfg(test)]
+impl<T> ObservedReceiver<T> {
+    fn recv_timeout(&self, timeout: Duration) -> Result<T, mpsc::RecvTimeoutError> {
+        WAIT_TRACE.with(|trace| {
+            if let Some(waits) = trace.borrow_mut().as_mut() {
+                waits.push(timeout);
+            }
+        });
+        self.0.recv_timeout(timeout)
+    }
+}
+
+#[cfg(test)]
+impl<T> std::ops::Deref for ObservedReceiver<T> {
+    type Target = mpsc::Receiver<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[cfg(test)]
@@ -252,7 +266,9 @@ mod tests {
         let waits = WAIT_TRACE.with(|trace| trace.borrow_mut().take().unwrap_or_default());
         let _ = done.send(());
         let _ = release.send(());
-        assert!(watchdog.join().is_ok());
+        watchdog
+            .join()
+            .map_err(|_| "watchdog panicked".to_string())?;
         assert_eq!(worker_done_rx.recv_timeout(CONTAINMENT), Ok(()));
         assert_eq!(
             waits,
