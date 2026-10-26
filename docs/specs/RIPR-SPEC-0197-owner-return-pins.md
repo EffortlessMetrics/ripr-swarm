@@ -931,13 +931,62 @@ wrong credits.
    cannot notice the field replaced by one of its operands when, for the
    pinned input, the field equals that operand. The changed initializer is
    `f: a <op> b` with two distinct plain identifier operands and one binary
-   operator, and both operands are established primitive, so the dropped
+   operator. Whitespace around that operator does not change the rule:
+   `a + b`, `a+b`, `a+ b`, and `a +b` have the same operand discriminator.
+   This does not admit compound operators, comments, calls, paths, unary
+   operands or parentheses. Both operands are established primitive, so the dropped
    operator is a built-in one: a parameter of a primitive type, a `let`
    annotated with one, a numeric or bool literal, an arithmetic
    combination of established names and literals with the accepted operators
    and `as` casts to primitives, or a call whose every same-named
    function in the index is a free function without a self parameter and
    declares one bare primitive return (optionally behind one reference).
+   Primitive spelling alone is insufficient: the declaration's actual source
+   scope must not bind that type name through a generic parameter, nominal
+   type, alias or unresolved import. Value parameters, locals, functions,
+   constants and statics of the same name do not rebind the type namespace.
+   Nested function/module declarations do not contaminate the owner's scope.
+   Local value-binding evidence comes only from plain direct owner-body lets
+   completed before the actual field. The currently initialized pattern and
+   later lets cannot lend their types to that initializer. A let dependency
+   requires a completed earlier binding or an established primitive parameter;
+   the existing requirement that every relevant rebind prove primitive remains.
+   Hoisted direct functions, constants, statics, unit/tuple constructors and
+   unresolved matching imports or globs unsettle parameter-value evidence,
+   including evidence borrowed through another let. Type-only aliases, traits,
+   modules, enums and record structs do not rebind values. Established supported
+   standard primitive imports retain their type-only identity. Unmodeled
+   extern blocks and opaque item expansion refuse this proof. Thus
+   nested functions, disjoint blocks and unused closures cannot establish or
+   veto an outer value. Unread direct patterns, declaration-only bindings,
+   let-else and attributed lets refuse this proof instead of silently keeping
+   a parameter's earlier type.
+   The constructed field must have the owner's direct statement-list context.
+   A nested block, closure, match arm or binding-control expression can
+   replace a value at that sink. This includes condition-side `if`/`while`
+   let chains, before entering their body. Those contexts refuse this operand
+   proof, including genuinely primitive nested constructions, rather than
+   borrowing outer primitive evidence.
+   Direct-body return, let and call wrappers introduce no additional binding
+   scope and remain eligible. This is not general lexical value resolution.
+   An annotation or cast uses only the lexical scopes enclosing its parsed
+   type occurrence. A binding inside a disjoint block or unused closure cannot
+   rebind that type; direct items in an applicable scope remain hoisted even
+   when declared after the use. Callee returns use the callee's declaring
+   signature scope. Opaque macros and attributes refuse this proof. A bare
+   standard derive recognized by the shared attribute authority preserves it
+   only with established same-file target-root and standard-root identity, no
+   scoped rebinding of `derive` or its derive names, and no unresolved macro
+   prelude or glob in the attribute's enclosing scopes. Custom, qualified or
+   shadowed derives remain opaque; this does not evaluate macro expansion.
+   A standard primitive import requires the
+   existing closed manifest proof for its standard root, established target-root
+   context in the declaring file, and source-scope refusal of root rebinding.
+   Out-of-line files cannot establish the crate-root bindings of Rust 2015
+   import paths and refuse this import proof. Arbitrary aliases (including genuine primitive
+   alias chains), re-exports, opaque absolute imports and qualified type
+   annotations remain unestablished; no alias-terminal or general type
+   resolution is claimed.
    An unqualified call must be a direct function-body let initializer.
    Parameters, preceding destructured/raw/declaration-only lets, hoisted
    local items and imports of its name (or globs) refuse primitive proof.
@@ -2547,6 +2596,16 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- `operand_whitespace.rs`: `established_standard_derives_keep_the_missing_discriminator`
+  retains genuine primitive pins beside established standard derives;
+  `pricing_corpus_keeps_its_accepted_missing_discriminator` checks the unchanged
+  accepted pricing corpus subject and class.
+  `derive_and_attribute_expansion_cannot_hide_operator_effects` retains the
+  shadowed/custom derive, opaque attribute, item-macro and out-of-line macro
+  prelude refusals. Inputs in `tests/fixtures/operand_attributes/` also retain
+  the native Add-effect counter controls. The standard-derived primitive input
+  is compiled directly by the integration suite; native proc-macro removal
+  controls are separate engineering evidence, not claimed by the API assertions.
 - Unwrapped `Ok`/`Some` pins (#9619):
   `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived

@@ -550,7 +550,8 @@ comments and strings masked, matches:
   after a unary `-` or `!`. A `-` that is `->` or `-=`, a doubled `&&`/`||`,
   a closure parameter list and a macro bang are not operators. `PartialOrd`
   is also reached through `partial_cmp`, `max`, `min`, `sort` and `clamp`.
-  `Drop` needs `drop(` or an inner block; the iterator traits need an
+  For the withholding gate (not the relation rule below), `Drop` needs `drop(`
+  or an inner block; the iterator traits need an
   iterating `for`, any method call (a terminal adapter such as `any`, `len` or
   `next_back` consumes the value) or a path call into an iterator trait; `Deref` has no
   syntax to inspect. A workspace declaration of a trait with an operator
@@ -754,11 +755,26 @@ the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
 as for operators. An unconfirmed credit stays withheld; an assertion-free test
 stays a real `weakly_exposed` gap.
 
-`Drop` and the iterator traits keep the abstention until their own
-readings are added. `Drop` and `Iterator::next` need more than a relation: the
-observed value (a counter behind a shared cell, a `collect`ed vector) shares no
-token with the changed line, so a relation without observation confirmation
-would read `weakly_exposed` on a test that pins the effect (#9567).
+`Iterator::next` is related the same narrow way (#10553); the relation alone
+credits nothing. A test relates to `next` only when a `for` loop or a consuming
+adaptor (`collect`, `sum`, `product`, `count`, `last`, `fold`, `reduce`,
+`for_each`, `any`, `all`, `find`, `position`, `nth`) drives an owned value of
+the impl's type. A lazy adaptor, an inherent method of the same name, an
+adaptor the iterator impl itself overrides (`fn count(self)` inside
+`impl Iterator`), a redeclared type, or a macro that may add an impl relates
+nothing, and so does a site that may never run: one not at the test body's top
+level (a closure, a nested `fn`, a branch or a loop body), a brace-less
+closure, or a statement disabled by an attribute such as `#[cfg(any())]`. An
+earlier `return`, `?` or `panic!` is not tracked, as for operators. A related
+test with an exact assertion leaves the finding `static_unknown` unless the
+sibling-effect oracle confirms that the assertion reads a cell the iterator
+writes (`Counter { sink: state.clone() }` then `assert_eq!(state.get(), 1)`),
+which credits it. A collected or returned value has no such carrier yet.
+
+`Drop::drop` is not related yet. The observed value (a counter behind a shared
+cell) shares no token with the changed line, and relating a scope end lifts
+reach so that the ordinary oracle credits a guard whose counter the assertion
+does not read (#9567). Drop waits for the carrier check of #10553 part 2.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.

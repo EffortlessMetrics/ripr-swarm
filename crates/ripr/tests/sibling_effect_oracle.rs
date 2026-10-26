@@ -320,7 +320,8 @@ fn free_and_inherent_trait_method_names_do_not_admit_decoys() -> Result<(), Stri
 }
 
 #[test]
-fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String> {
+fn a_loop_over_the_iterator_reaches_next_and_the_shared_sink_assertion_credits_it()
+-> Result<(), String> {
     let source = ITERATOR_OBSERVER.replace_checked("#[test]\nfn direct_smoke() {\n    let mut counter = Counter { sink: Rc::new(Cell::new(0)), finished: false };\n    let _ = counter.next();\n}\n", "");
     assert!(!source.contains("fn direct_smoke"));
     let finding = finding(
@@ -329,10 +330,12 @@ fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String>
         "self.sink.set(1)",
         "call_deletion",
     )?;
-    // Main's implicit-call gap (#9466) withholds `weakly_exposed` when a
-    // trait-impl method is only implicitly called; discrimination stays `yes`.
-    assert_eq!(finding["classification"], "static_unknown", "{finding}");
-    assert_eq!(finding["ripr"]["reach"]["state"], "weak", "{finding}");
+    // The `for` loop over an owned `Counter` reaches `Iterator::next` (#10553)
+    // and the assertion reads the cell the counter writes, which the sibling
+    // effect oracle confirms, so the finding is credited. Before the relation
+    // the loop was only file proximity: weak reach, withheld (#9466).
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(finding["ripr"]["reach"]["state"], "yes", "{finding}");
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     Ok(())
 }

@@ -120,11 +120,22 @@ language = "python"
 note = "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test"
 heavy = true
 
-# TypeScript diffs. `defu` and `ky` complete under `--mode draft` for their
+# A large Python workspace under the file cap (#10750). Before #10735 and
+# #10750 this two-file edit took about 290 s on 4 cores, because every changed
+# line re-scanned all ~23k tests; it now completes in about 15 s.
+[[corpus]]
+id = "pandas-python"
+url = "https://github.com/pandas-dev/pandas"
+sha = "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc"
+language = "python"
+note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
+heavy = true
+
+# TypeScript diffs. `defu`, `ky` and `h3` complete under `--mode draft` for their
 # pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
 # file is provably unrelated to the diff; uncertain reachability and other typed
 # limitations (read bounds, truncated discovery, skipped links) can still make an
-# analysis partial. zod, h3 and execa were partial on the commits tried, and a
+# analysis partial. zod and execa were partial on the commits tried, and a
 # repository that stops short fails the completion gate even when new, so they
 # are not pinned.
 [[corpus]]
@@ -140,6 +151,13 @@ url = "https://github.com/sindresorhus/ky"
 sha = "33462fcbf8f9001fc3d7a08576992098e571c5ff"
 language = "typescript"
 note = "mid-size TypeScript library (~100 files); commit edits source/utils/merge.ts, source/types/options.ts and test/hooks.ts"
+
+[[corpus]]
+id = "h3-typescript"
+url = "https://github.com/h3js/h3"
+sha = "3444ff78970e95c65e481ed2ff9a7d43c880ab1c"
+language = "typescript"
+note = "HTTP server framework with Vitest suites; commit edits src/tracing.ts and test/tracing.test.ts"
 
 # ---------------------------------------------------------------- speed ----
 

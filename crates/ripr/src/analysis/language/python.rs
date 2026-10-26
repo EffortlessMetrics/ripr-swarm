@@ -1165,6 +1165,7 @@ impl PythonAdapter {
 
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
+        let mut related_memo = related_tests::RelatedCandidateMemo::default();
         let mut changed_count: usize = 0;
         for changed in python_changed_files {
             if absent_changed_paths.contains(&normalized_path(&changed.path)) {
@@ -1318,6 +1319,7 @@ impl PythonAdapter {
                         .get(&changed.path)
                         .map(String::as_str),
                     &mut value_origins,
+                    Some(&mut related_memo),
                 ) {
                     findings.push(finding);
                 }
@@ -1342,6 +1344,7 @@ impl PythonAdapter {
                 &all_tests,
                 &findings,
                 &mut value_origins,
+                &mut related_memo,
             );
             findings.extend(deleted);
         }
