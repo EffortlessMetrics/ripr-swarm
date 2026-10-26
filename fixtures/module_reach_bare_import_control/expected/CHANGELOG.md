@@ -94,3 +94,8 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## 2026-10-26 — RIPR-SPEC-0118 / #10192 receiving composition
+
+- `human.txt`: correct the hidden kind from predicate to return_value. The selected predicate and omitted return-value identities are unchanged; the reason and all JSON values are retained.
+- Proof: this fixture passes on exact main `aeeeddacd1e24f3b04e713572717e7b172966431`; native receiving producer `a3946a7f1002ae6f069cd18fb4ed45454667b326` emitted the intended presentation before the expectation repair. No verdict or supported-repair claim is added.
