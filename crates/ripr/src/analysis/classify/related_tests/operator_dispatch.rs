@@ -256,20 +256,30 @@ pub(super) fn test_applies_operator_to_owner(
     if !reaching || !type_scope_is_clear(test, owner, source, impl_type, index) {
         return false;
     }
-    *operator.file_level_clear.get_or_init(|| {
-        let masked = mask_comments_and_strings(source);
-        // A `macro_rules!` may expand to a second impl of the operator trait
-        // that the index never sees, so the unique-impl count proves nothing.
-        !masked.contains("macro_rules!")
-            && !imports_other_type(&masked, impl_type, &owner.file)
-            && !workspace_macro_may_generate_impls(index)
-    })
+    *operator
+        .file_level_clear
+        .get_or_init(|| file_is_clear(source, owner, impl_type, index))
+}
+
+/// File-level refusals shared by every implicit-call reading: a `macro_rules!`
+/// may expand to a second impl of the trait that the index never sees, so the
+/// unique-impl count proves nothing, and an import may rename the type.
+pub(super) fn file_is_clear(
+    source: &str,
+    owner: &FunctionSummary,
+    impl_type: &str,
+    index: &RustIndex,
+) -> bool {
+    let masked = mask_comments_and_strings(source);
+    !masked.contains("macro_rules!")
+        && !imports_other_type(&masked, impl_type, &owner.file)
+        && !workspace_macro_may_generate_impls(index)
 }
 
 /// Whether any workspace file defines a `macro_rules!` that expands to an
 /// `impl`. Invoked in the owner's file (through `#[macro_use]` or a path
 /// import), it can generate a second operator impl the index never sees.
-fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
+pub(super) fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
     index.files().values().any(|facts| {
         let source = facts.data().source.as_ref();
         source.contains("macro_rules!") && {
@@ -284,7 +294,7 @@ fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
 /// `&` because equality and formatting compare through references, but an
 /// operator picks the impl by the operand's exact type: `&a + &b` runs
 /// `impl Add<&T> for &T`, never the owned impl this relation credits.
-fn is_reference_operand(operand: &str, before: &str) -> bool {
+pub(super) fn is_reference_operand(operand: &str, before: &str) -> bool {
     let operand = operand.trim();
     if operand.starts_with('&') {
         return true;
@@ -380,7 +390,7 @@ pub(in crate::analysis::classify) fn stringified_ranges(
 /// Whether the bare identifier `operand` is also bound as a parameter, closure
 /// parameter, `for` or enum-payload pattern somewhere in the body, so the
 /// single `let` that types it may not be the value at the site.
-fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
+pub(super) fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
     if operand.is_empty() || !operand.bytes().all(is_ident_byte) {
         return false;
     }
@@ -449,7 +459,7 @@ fn starts_like_ident(text: &str) -> bool {
 /// body, or after `(`, `,`, `{`, `;` or a plain `=`). `a * b + c` gives no
 /// operand for `+`, `&m + n` and `x.y + n` give none either. Returns the
 /// operand's start offset and text.
-fn operand_before(masked: &str, op_at: usize) -> Option<(usize, &str)> {
+pub(super) fn operand_before(masked: &str, op_at: usize) -> Option<(usize, &str)> {
     let (start, end) = operand_span(masked, op_at)?;
     stands_alone(&masked[..start]).then_some((start, &masked[start..end]))
 }

@@ -753,11 +753,21 @@ the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
 as for operators. An unconfirmed credit stays withheld; an assertion-free test
 stays a real `weakly_exposed` gap.
 
-`Drop` and the iterator traits keep the abstention until their own
-readings are added. `Drop` and `Iterator::next` need more than a relation: the
-observed value (a counter behind a shared cell, a `collect`ed vector) shares no
-token with the changed line, so a relation without observation confirmation
-would read `weakly_exposed` on a test that pins the effect (#9567).
+`Drop` and `Iterator::next` are related the same narrow way (#10553) but never
+credited. The observed value (a counter behind a shared cell, a `collected`
+vector) shares no token with the changed line, so crediting the relation would
+read `weakly_exposed` on a test that pins the effect (#9567). A test relates to
+a `drop` only when it drops an owned value of the impl's type before an
+assertion (`drop(x)`, `mem::drop(x)`, or a statement-position block that binds
+one in a `let` and uses it only as a receiver) and no workspace file naming the
+type spells `forget`, `ManuallyDrop` or `leak`. A test relates to `next` only
+when a `for` loop or a consuming adaptor (`collect`, `sum`, `product`, `count`,
+`last`, `fold`, `reduce`, `for_each`, `any`, `all`, `find`, `position`, `nth`)
+drives an owned value of the impl's type; a lazy adaptor, an inherent method of
+the same name, a redeclared type, or a macro that may add an impl relates
+nothing. A related test with an exact assertion leaves the finding
+`static_unknown`; confirming that an assertion reads the carrier of the effect
+(and so crediting) is the remaining work of #10553.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
