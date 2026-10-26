@@ -24,12 +24,15 @@ The Rust files under `controls/` are complete native test subjects. Original
 subjects compile and pass. The local-helper, standard-assertion and sibling-macro
 positives reject the private Object-arm mutant; foreign entries, foreign last
 hops and a module-shadowed owner type accept it. The wrapper fixture's own test
-rejects that mutant. `inherent_receiver_review_last_hop_and_wrapper_controls`
-compares full and compact evidence for these subjects.
+rejects that mutant. `inherent_receiver_review_last_hop_and_wrapper_controls`,
+stacked on this fixture in the tests slice, is intended to compare full and compact evidence for
+these subjects; this fixture slice does not carry that test.
 
-The honesty corpus also pins a repository report for this input. Regenerate with
+The honesty-corpus slice stacked on this fixture is intended to pin a repository
+report for this input; this fixture slice does not carry that report. The
+intended command is
 `ripr check --root fixtures/inherent_receiver_macro_discard/input --mode ready --format repo-exposure-json`.
-The checked report retains the complete consumer fields and source digests with
+The intended report retains the complete consumer fields and source digests with
 the volatile artifact envelope removed; unmodified raw reports belong to the
 PR's immutable evidence packet. These observations do not change runtime truth
 or the five existing false-actionable corpus labels.

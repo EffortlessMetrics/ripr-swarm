@@ -31,6 +31,6 @@ with multiline tail calls also retains helper/high credit. This is the existing
 
 Infer polling, general type/value flow or macro expansion. The explicitly polled
 native-positive control remains statically unsupported by this bounded traversal.
-Native execution and static admission are independent axes. Preserve all original
-34 executable identity controls and their truth labels; diff helper evidence
+Native execution and static admission are independent axes. Preserve every existing
+matrix entry and its truth label; diff helper evidence
 remains conservative. This fixture makes no performance claim for #8005.
