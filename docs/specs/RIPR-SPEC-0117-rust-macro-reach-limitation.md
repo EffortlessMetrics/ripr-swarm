@@ -264,9 +264,8 @@ puncts, so it matches only an `=` immediately followed by `>` and not the tail
 of a longer punct (`==>`, `..=>`), while a punct directly followed by another
 is never bound as one `tt` row element, and a literal `:` is never matched against half of a `::`, in the matcher or in
 the invocation (`::` is one token to rustc, so `:` and `: :` do not match it,
-and a matcher `::` is refused whole). A transcriber for an arrow-row table that
-declares a `mod`, `use`, `let`, `static`, `const`, item keyword, `for`, `match`, a closure `|`, a macro invocation other than `assert!`, `assert_eq!`, `assert_ne!` and their `debug_` forms (macro name resolution is not modeled, so a crate that redefines those names is out of scope), or a second `fn` is refused, whether written in the transcriber or supplied by a bound `tt` (each substituted row is read), because the registered test keeps
-no lexical scope and could call a different function of the same name (#9967). Any other
+and a matcher `::` is refused whole). An arrow-row table is indexed only when each substituted row (written in the transcriber or supplied by a bound `tt`) parses as exactly one top-level `#[test] fn`: no other attribute, generics, `where` clause, return type or parameters, and no sibling item such as a macro invocation beside it, and a body whose statements are all unqualified `assert!`, `assert_eq!`, `assert_ne!` or their `debug_` forms, with no macro call nested in an argument. A row that declares a `mod`, `use`, `let`, `static`, `const`, item keyword, `for`, `match`, a closure `|` or a second `fn` is refused too, because the registered test keeps
+no lexical scope and could call a different function of the same name (#9967). Macro name resolution is not modeled, so a crate that redefines an admitted assertion name is not detected, as for a hand-written test. Any other
 row layout (`=>` as the repetition separator, nested repetition, a trailing
 separator, a leftover token, a group of the wrong arity) indexes nothing. A
 matcher that ends in a literal `,`, or an invocation that ends in one the

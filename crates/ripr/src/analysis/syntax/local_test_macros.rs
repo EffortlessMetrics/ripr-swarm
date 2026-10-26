@@ -1074,6 +1074,42 @@ fn is_assertion_only_test(row: &str) -> bool {
             }),
         _ => false,
     };
+    // A macro call nested in an assertion's arguments stays an opaque token
+    // tree, so it is found by token: an identifier, `!`, then a delimiter.
+    let tokens: Vec<SyntaxToken> = statements
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .filter(|token| !matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT))
+        .collect();
+    let nested_macro = tokens.windows(3).any(|window| {
+        window[0].kind() == SyntaxKind::IDENT
+            && window[1].kind() == SyntaxKind::BANG
+            && matches!(
+                window[2].kind(),
+                SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY
+            )
+    });
+    if nested_macro {
+        // Only the statement-level assertion macros themselves are allowed;
+        // they are counted below by their statement.
+        let statement_macros =
+            statements.statements().count() + usize::from(statements.tail_expr().is_some());
+        let macro_calls = tokens
+            .windows(3)
+            .filter(|window| {
+                window[0].kind() == SyntaxKind::IDENT
+                    && window[1].kind() == SyntaxKind::BANG
+                    && matches!(
+                        window[2].kind(),
+                        SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY
+                    )
+            })
+            .count();
+        if macro_calls != statement_macros {
+            return false;
+        }
+    }
     statements.statements().all(|statement| match statement {
         ast::Stmt::ExprStmt(statement) => is_assertion(statement.expr()),
         _ => false,
@@ -1607,6 +1643,18 @@ mod tests {
             (
                 "a non-ASCII macro name ending in an allowed name",
                 "crate::αassert_eq!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a path-qualified macro nested in an assertion argument",
+                "#[test] fn $name() { assert!(crate::debug_assert!(gate($v) == $w)); }",
+            ),
+            (
+                "a nested-comment macro nested in an assertion argument",
+                "#[test] fn $name() { assert!(crate::shadow /* a /* b */ c */ !(gate($v) == $w)); }",
+            ),
+            (
+                "a non-ASCII macro nested in an assertion argument",
+                "#[test] fn $name() { assert!(crate::αassert!(gate($v) == $w)); }",
             ),
             (
                 "a non-assertion statement in the test",

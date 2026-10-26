@@ -4,3 +4,4 @@
 - The same corpus also pins an arrow-table test that binds the callee in a `for` pattern and one that invokes a macro defined in another module, both as `no_static_path` (#10298).
 - The same corpus pins an arrow-table test with an exported assertion-named macro invoked beside it as `no_static_path` (#10298).
 - The same corpus pins a nested block comment before a foreign macro bang and a non-ASCII macro name ending in an allowed name, both as `no_static_path` (#10298).
+- The same corpus pins sibling-item injectors beside an arrow-table test (an assertion-named exported macro, a nested block comment before the bang, and a non-ASCII macro name), each defined in a plain out-of-line module, as `no_static_path` (#10298).
