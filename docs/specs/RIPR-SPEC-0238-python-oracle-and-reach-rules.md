@@ -928,6 +928,32 @@ mutant calibrates the rule; ripr reports only the static shape.
     loop identity scored as gaps, and a chain, a literal expected value and
     a name bound outside the loop credited).
 
+26. **A doctest example is a test only when pytest collects it and running it
+    notices the edit.** With `--doctest-modules` in the `addopts` of the
+    pytest configuration (`pyproject.toml`, `pytest.ini`, `tox.ini` or
+    `setup.cfg`, first configuration wins), a `>>>` example in a changed
+    module's function docstring is read as the assertion it states.
+    Collection is refused when the configuration holds any flag that
+    reshapes it (`--ignore*`, `--deselect`, `-k`, `-m`, `--doctest-glob`,
+    `--import-mode` and similar), when `testpaths` or `norecursedirs` leave
+    the module out, or when a `conftest.py` on its path sets
+    `collect_ignore*` or defines hooks. A bare `pytest` invocation is
+    assumed; the command line CI uses is unknown. A docstring is read only
+    when it belongs to an undecorated top-level `def` defined once, every
+    example is one `>>>` call of a bare name with literal arguments, the
+    expected line is one `repr` of a string, integer or boolean, and no
+    `# doctest:` directive, backslash, `...` or `<BLANKLINE>` appears; a
+    module-level `__test__` disables the read. The example must exist
+    unchanged in the old source, so a diff does not write its own oracle.
+    An exact-value oracle alone does not say the edit is noticed
+    (`truncate("abc", 5)` is `'abc'` before and after an off-by-one cut),
+    so a closed evaluator runs the example on the old and the new function
+    and keeps it only when the old result equals the expected value and the
+    new one differs; a function it cannot run (anything beyond a single
+    `return` over integer, boolean and printable-ASCII string operations)
+    drops the example (`py-idioms-doctest-separator` credited,
+    `py-idioms-doctest-short-input` stays a gap, #9619).
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1345,6 +1371,16 @@ and the test is `tests/test_subject.py`, which imports each owner from
 
 ## Test Mapping
 
+- Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`
+  `an_example_the_edit_breaks_is_a_test`,
+  `an_example_both_functions_satisfy_is_not_a_test`,
+  `doctests_not_collected_yield_nothing`,
+  `an_example_added_by_the_diff_is_not_its_own_oracle`,
+  `a_doctest_directive_or_continuation_drops_the_docstring`,
+  `a_function_the_evaluator_cannot_run_is_not_read`,
+  `a_decorated_function_is_not_read`, `a_rebound_name_is_not_read`,
+  `a_test_dictionary_replaces_the_docstring_examples`,
+  `a_conftest_that_ignores_collection_stops_the_read`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
@@ -1451,6 +1487,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
+  `doctest_eval.rs`: rule 26, collection detection, example reading and the
+  evaluator gate.
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
   rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
   and 13).
