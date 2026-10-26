@@ -213,6 +213,49 @@ fn a_fused_punct_token_is_one_tt_so_the_arrow_row_adds_no_test() -> Result<(), S
 }
 
 #[test]
+fn a_literal_colon_and_a_fused_double_colon_are_different_tokens() -> Result<(), String> {
+    // rustc cannot match a literal `:` against the `::` token, nor a matcher
+    // `::` against `: :`, so the fallback arm emits nothing in both.
+    let table = |matcher: &str, rows: &str| {
+        format!(
+            "    macro_rules! gate_cases {{\n        ($({matcher} => ($input:expr, $want:expr))*) => {{\n            $( #[test] fn $name() {{ assert_eq!(gate($input), $want); }} )*\n        }};\n        ($($tail:tt)*) => {{}};\n    }}\n\n    gate_cases! {{ {rows} }}\n"
+        )
+    };
+    for (matcher, rows) in [
+        (
+            "$name:ident : $t:tt",
+            "nine_is_closed :: => (9, false) ten_is_open :: => (10, true)",
+        ),
+        (
+            "$name:ident ::",
+            "nine_is_closed : : => (9, false) ten_is_open : : => (10, true)",
+        ),
+    ] {
+        let refused = TempRepo::create(&table(matcher, rows))?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{matcher}: {refused:?}");
+        assert_ne!(
+            state(&refused.ripr.reach.state),
+            "Yes",
+            "{matcher}: {refused:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_arrow_transcriber_with_its_own_scope_adds_no_test() -> Result<(), String> {
+    // The generated test calls `decoy::gate`, never the changed `gate`, so
+    // crediting it would credit a different function.
+    let decoy = TempRepo::create(
+        "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( mod decoy { pub fn gate(_: u32) -> bool { true } } #[test] fn $name() { assert_eq!(decoy::gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
+    )?
+    .predicate()?;
+    assert!(decoy.related_tests.is_empty(), "{decoy:?}");
+    assert_ne!(state(&decoy.ripr.reach.state), "Yes", "{decoy:?}");
+    Ok(())
+}
+
+#[test]
 fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
     let uninvoked = TempRepo::create(GENERATOR)?.predicate()?;
     assert!(uninvoked.related_tests.is_empty(), "{uninvoked:?}");

@@ -457,7 +457,11 @@ fn expand(
             // row that does not could mean a later arm, which this
             // expander does not guess.
             let rows = match_rows(&repetition, invocation)?;
-            return expand_rows(&transcriber, &rows, local_macros);
+            let arrow_rows = repetition
+                .row
+                .iter()
+                .any(|item| matches!(item, RowItem::Separator(RowSeparator::FatArrow)));
+            return expand_rows(&transcriber, &rows, local_macros, arrow_rows);
         }
         let variables = simple_matcher(&matcher)?;
         // `top_level_arguments` drops a trailing comma, which a matcher
@@ -812,6 +816,10 @@ fn row_items(row: &SyntaxNode) -> Option<Vec<RowItem>> {
                 index += 1;
             }
             kind @ (SyntaxKind::COMMA | SyntaxKind::SEMICOLON | SyntaxKind::COLON) => {
+                // A matcher `::` is one token that `: :` does not match.
+                if kind == SyntaxKind::COLON && colon_joined_to_next(&elements, index) {
+                    return None;
+                }
                 items.push(RowItem::Separator(RowSeparator::Token(kind)));
                 index += 1;
             }
@@ -952,12 +960,30 @@ fn match_rows(
     (!rows.is_empty()).then_some(rows)
 }
 
+/// Whether a transcriber body declares a module or more than one `fn`.
+fn defines_nested_scope(body: &ast::TokenTree) -> bool {
+    let mut functions = 0;
+    for token in body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        match token.kind() {
+            SyntaxKind::MOD_KW => return true,
+            SyntaxKind::FN_KW => functions += 1,
+            _ => {}
+        }
+    }
+    functions > 1
+}
+
 /// A transcriber that is exactly one separator-free repetition
 /// `$( body )*` over the matcher's variables, emitted once per row.
 fn expand_rows(
     transcriber: &SyntaxNode,
     rows: &[RowBindings],
     local_macros: &BTreeSet<String>,
+    arrow_rows: bool,
 ) -> Option<String> {
     let elements = inner_elements(transcriber);
     let [dollar, body, repeat] = elements.as_slice() else {
@@ -972,6 +998,12 @@ fn expand_rows(
     }
     let body = ast::TokenTree::cast(body.as_node()?.clone())?;
     if !has_test_attribute(&body) || invokes_local_macro(&body, local_macros) {
+        return None;
+    }
+    // The registered test keeps no generated lexical scope, so a module or a
+    // second `fn` in the body could define the callee the test names. Arrow
+    // rows are refused whole until that scope is carried (#9967).
+    if arrow_rows && defines_nested_scope(&body) {
         return None;
     }
     let mut text = String::new();
@@ -1374,6 +1406,35 @@ mod tests {
             );
         }
 
+        // The transcriber may not declare a scope that could define the callee
+        // the registered test names.
+        let scoped = |body: &str| {
+            format!(
+                "macro_rules! t {{\n    ($($name:ident => ($v:expr, $w:expr))*) => {{ $( {body} )* }};\n}}\nt! {{ a => (1, 2) }}\n"
+            )
+        };
+        for (label, body) in [
+            (
+                "a module in the body",
+                "mod decoy { pub fn gate(_: u32) -> bool { true } } #[test] fn $name() { assert_eq!(decoy::gate($v), $w); }",
+            ),
+            (
+                "a second fn in the body",
+                "fn gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&scoped(body)).is_empty(),
+                "{label}"
+            );
+        }
+        assert_eq!(
+            expand_local_test_macros(&scoped("#[test] fn $name() { assert_eq!(gate($v), $w); }"))
+                .len(),
+            1,
+            "premise: the plain arrow body expands"
+        );
+
         // A `tt` binds one rustc token: a fused `::` is one `tt`, so the
         // following `:` the matcher requires is absent and rustc emits
         // nothing; `: :` is two tokens and does expand.
@@ -1412,6 +1473,23 @@ mod tests {
                 "an expr followed by a colon",
                 "$($name:ident : $v:expr : $w:expr);*",
                 "a : 9 : false",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+        for (label, matcher, invocation) in [
+            (
+                "a matcher `::` against spaced colons",
+                "$($name:ident :: => ($v:expr, $w:expr))*",
+                "a : : => (1, 2)",
+            ),
+            (
+                "a matcher `::` against the same token",
+                "$($name:ident :: => ($v:expr, $w:expr))*",
+                "a :: => (1, 2)",
             ),
         ] {
             assert!(
