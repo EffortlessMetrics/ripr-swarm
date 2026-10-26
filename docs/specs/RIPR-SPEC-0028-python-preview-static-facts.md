@@ -462,7 +462,16 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A value no
+nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
+the parameters are unchanged positional ones without defaults, `*args` or
+keywords, `NAME` is bound once in the old and new module, no file writes or
+patches it, and the bound expression over the parameters and literals is inside
+the same evaluator; a test that calls `NAME` with literal arguments in a
+straight-line `assert` that holds with the old body and fails with the new one
+is the oracle, and only then is the lambda-syntax limit lifted. A changed
+parameter list, a default, a body outside the evaluator, a second binding or a
+test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
 assertion distinguishes is never graded as a gap. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain

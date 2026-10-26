@@ -1,0 +1,20 @@
+//! Changed-binding cells for RIPR-SPEC-0150 (value-propagation limitation)
+//! and RIPR-SPEC-0157 (binding-to-predicate relation): a local computed on
+//! one line reaches a comparison on a later line.
+
+pub mod b_accept;
+pub mod b_closure;
+pub mod b_comment;
+pub mod b_else;
+pub mod b_lookalike;
+pub mod b_macro;
+pub mod b_shadow;
+pub mod b_shape;
+pub mod b_sibling;
+pub mod b_string;
+pub mod b_reassigned;
+pub mod b_rebound;
+pub mod b_text;
+pub mod b_two_uses;
+pub mod b_unreached;
+pub mod b_utf8;
