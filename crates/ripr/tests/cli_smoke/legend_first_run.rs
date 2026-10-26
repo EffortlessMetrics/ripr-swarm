@@ -1,5 +1,5 @@
 //! The Evidence legend is a first-run aid: later runs keep one pointer line.
-use super::{run_command, unique_external_workspace};
+use super::{run_command, run_command_with_env, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -126,6 +126,36 @@ fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestRes
 
 // A newline and a colon are not valid in a Windows directory name, so the
 // fixture can only be created on Unix.
+// A regular file where the `target/ripr` directory belongs makes the marker
+// write fail on every host and for every user (a read-only mode would not stop
+// root). The facts cache is redirected so the analysis itself still completes.
+#[test]
+fn an_unwritable_output_tree_shows_the_full_legend_every_run() -> TestResult {
+    let project = workspace("legend-unwritable")?;
+    fs::create_dir_all(project.join("target"))?;
+    fs::write(project.join("target/ripr"), b"not a directory")?;
+    let cache = project.join("external-cache");
+    let cache_arg = cache.to_string_lossy().into_owned();
+    for _ in 0..2 {
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &project,
+            &["check", "--diff", "change.diff"],
+            &[("RIPR_CACHE_DIR", cache_arg.as_str())],
+        )?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let out = String::from_utf8(output.stdout)?;
+        assert!(out.contains(LEGEND), "{out}");
+        assert!(!out.contains(POINTER), "{out}");
+    }
+    assert!(project.join("target/ripr").is_file());
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend() -> TestResult {
