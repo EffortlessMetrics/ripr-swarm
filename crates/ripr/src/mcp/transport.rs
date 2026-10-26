@@ -6,7 +6,10 @@ use super::{
 use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use rmcp::{
     RoleServer, ServiceExt,
-    model::{ClientJsonRpcMessage, RequestId, ServerJsonRpcMessage},
+    model::{
+        ClientJsonRpcMessage, ClientRequest, CustomRequest, GetExtensions, RequestId,
+        ServerJsonRpcMessage,
+    },
     transport::{Transport, async_rw::JsonRpcMessageCodec},
 };
 use serde_json::json;
@@ -339,7 +342,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         }
                     }
                 }
-                Ok(Some(message)) => {
+                Ok(Some(mut message)) => {
                     if let ClientJsonRpcMessage::Request(request) = &message
                         && serde_json::to_vec(&request.id)
                             .map(|id| id.len() > super::MAX_REQUEST_ID_BYTES)
@@ -360,6 +363,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         }
                         continue;
                     }
+                    preserve_malformed_request_params(&mut message, &frame);
                     if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {
@@ -396,6 +400,48 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
         result
     }
 }
+
+/// The SDK can erase a wrongly typed catalog cursor or treat a null tool
+/// argument object as omission. Keep that raw input available to the existing
+/// custom request handler, after ID validation and before normal SDK dispatch.
+/// Moving decoded extensions preserves protocol/metadata validation precedence.
+fn preserve_malformed_request_params(message: &mut ClientJsonRpcMessage, frame: &[u8]) {
+    let ClientJsonRpcMessage::Request(request) = message else {
+        return;
+    };
+    if !matches!(
+        &request.request,
+        ClientRequest::CallToolRequest(_)
+            | ClientRequest::ListToolsRequest(_)
+            | ClientRequest::ListPromptsRequest(_)
+            | ClientRequest::ListResourcesRequest(_)
+            | ClientRequest::ListResourceTemplatesRequest(_)
+    ) {
+        return;
+    }
+    let Ok(raw) = serde_json::from_slice::<serde_json::Value>(frame) else {
+        return;
+    };
+    let Some(params) = raw.get("params") else {
+        return;
+    };
+    let malformed = if matches!(&request.request, ClientRequest::CallToolRequest(_)) {
+        params
+            .get("arguments")
+            .is_some_and(|arguments| !arguments.is_object())
+    } else {
+        params
+            .get("cursor")
+            .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+    };
+    if !malformed {
+        return;
+    }
+    let mut custom = CustomRequest::new(request.request.method(), Some(params.clone()));
+    custom.extensions = std::mem::take(request.request.extensions_mut());
+    request.request = ClientRequest::CustomRequest(custom);
+}
+
 pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), String> {
     let (status, analysis_root) = WorkspaceStatus::resolve_with_root(explicit_root);
     if let Some(warning) = startup_warning(&status) {

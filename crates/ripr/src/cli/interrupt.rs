@@ -13,14 +13,56 @@ pub(crate) type InterruptFlags = (
     std::sync::Arc<std::sync::atomic::AtomicBool>,
 );
 
-/// Process-wide cooperative interrupt flags for a long-running server entry
-/// (`ripr mcp --stdio`, #9895). Unlike the one-shot [`check`] registration,
-/// a stdio server serves until its transport ends, so its registration and
-/// flags live for the rest of the process and every dispatched analysis
-/// observes the same pair. Unix-only: non-Unix installs are no-ops and no
-/// consumer exists outside the Unix cancellation path.
+/// One retained registration owns the server's process-lifetime handlers.
+/// Installation is serialized so a concurrent entry cannot leave a second,
+/// untracked registration armed after the published flag was consumed.
 #[cfg(unix)]
-static SERVER_FLAGS: std::sync::OnceLock<InterruptFlags> = std::sync::OnceLock::new();
+static SERVER_INTERRUPTS: std::sync::Mutex<Option<ServerInterrupts>> = std::sync::Mutex::new(None);
+
+#[cfg(unix)]
+struct ServerInterrupts {
+    interrupted: Arc<std::sync::atomic::AtomicBool>,
+    registrations: Vec<signal_hook::SigId>,
+}
+
+#[cfg(unix)]
+impl ServerInterrupts {
+    fn install() -> Result<Self, String> {
+        let interrupted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut registration = Self {
+            interrupted,
+            registrations: Vec::new(),
+        };
+        for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+            // Unlike standalone CLI publication, the server has one state:
+            // a pending signal both requests cancellation and arms the next
+            // signal's native escape. Observe it BEFORE setting it, so the
+            // first signal cooperates and a sequential repeat terminates.
+            let native = signal_hook::flag::register_conditional_default(
+                signal,
+                Arc::clone(&registration.interrupted),
+            )
+            .map_err(|error| format!("cannot preserve native signal {signal}: {error}"))?;
+            registration.registrations.push(native);
+            let cancellation =
+                signal_hook::flag::register(signal, Arc::clone(&registration.interrupted))
+                    .map_err(|error| format!("cannot observe signal {signal}: {error}"))?;
+            registration.registrations.push(cancellation);
+        }
+        Ok(registration)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ServerInterrupts {
+    fn drop(&mut self) {
+        // Also rolls back every already-installed handler if construction
+        // fails. A successful registration stays in the static owner.
+        for id in self.registrations.drain(..) {
+            signal_hook::low_level::unregister(id);
+        }
+    }
+}
 
 /// Install process-lifetime SIGINT+SIGTERM cooperative interrupts for a
 /// server entry (Unix). Idempotent: a repeated install is a no-op so nested
@@ -36,22 +78,12 @@ static SERVER_FLAGS: std::sync::OnceLock<InterruptFlags> = std::sync::OnceLock::
 pub(crate) fn install_server_interrupts() -> Result<(), String> {
     #[cfg(unix)]
     {
-        if SERVER_FLAGS.get().is_some() {
-            return Ok(());
+        let mut registration = SERVER_INTERRUPTS
+            .lock()
+            .map_err(|_| "server interrupt installation lock was poisoned".to_string())?;
+        if registration.is_none() {
+            *registration = Some(ServerInterrupts::install()?);
         }
-        let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let native = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let registration = SignalRegistration::create_for(
-            &[signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM],
-            (
-                std::sync::Arc::clone(&interrupted),
-                std::sync::Arc::clone(&native),
-            ),
-        )?;
-        // The guard unregisters on drop; a stdio server runs until process
-        // exit, so the registration is intentionally process-lifetime.
-        std::mem::forget(registration);
-        let _ = SERVER_FLAGS.set((interrupted, native));
         Ok(())
     }
     #[cfg(not(unix))]
@@ -60,31 +92,33 @@ pub(crate) fn install_server_interrupts() -> Result<(), String> {
     }
 }
 
-/// The installed server interrupt flags, when a server entry installed them.
+/// The installed server interrupt flag, when a server entry installed it.
 /// Analysis entries consult these to build their cancellation token; absent
 /// flags preserve the embedder-managed signal policy (plain `cli::run`).
-/// Unix-only alongside [`SERVER_FLAGS`].
 #[cfg(unix)]
-pub(crate) fn server_interrupt_flags() -> Option<InterruptFlags> {
-    SERVER_FLAGS.get().cloned()
+pub(crate) fn server_interrupt_flag() -> Option<Arc<std::sync::atomic::AtomicBool>> {
+    SERVER_INTERRUPTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .map(|registration| Arc::clone(&registration.interrupted))
 }
 
-/// Terminal reset of the shared server flags (#9979 review). The flags are
-/// process-lifetime: every dispatched analysis observes the same pair, so
-/// a SIGTERM consumed by one bounded attempt would cancel every later
-/// refresh at its first checkpoint. The refresh path clears both flags once
-/// its attempt settles; a signal that arrives mid-attempt still cancels
-/// that attempt through its token, and a signal that arrives after the
-/// reset is observed by the next attempt's token exactly like the first.
-/// A signal landing in the narrow window between settlement and the reset
-/// is not replayed — the in-flight analysis already completed, so there is
-/// nothing to cancel, and the repeated-signal native escape remains.
+/// Consume the signal at the terminal boundary, after owned work has settled.
+/// One atomic exchange both resets the repeated-signal escape and captures a
+/// late signal that arrived after the last analysis checkpoint. That signal
+/// refuses an otherwise successful result; an existing failure keeps its
+/// diagnostic. A signal stored after this exchange belongs to the next attempt.
 #[cfg(unix)]
-pub(crate) fn reset_server_interrupt_flags() {
-    use std::sync::atomic::Ordering;
-    if let Some((interrupted, native)) = SERVER_FLAGS.get() {
-        interrupted.store(false, Ordering::SeqCst);
-        native.store(false, Ordering::SeqCst);
+pub(crate) fn settle_server_attempt<T, E>(
+    interrupted: &std::sync::atomic::AtomicBool,
+    result: Result<T, E>,
+    cancelled: impl FnOnce() -> E,
+) -> Result<T, E> {
+    let pending = interrupted.swap(false, std::sync::atomic::Ordering::SeqCst);
+    match result {
+        Ok(_) if pending => Err(cancelled()),
+        other => other,
     }
 }
 
@@ -120,63 +154,38 @@ pub(super) fn check(args: &[String]) -> Result<(), CommandError> {
 
 #[cfg(unix)]
 pub(super) struct SignalRegistration {
-    cancellation: Vec<signal_hook::SigId>,
-    force: Vec<signal_hook::SigId>,
+    cancellation: signal_hook::SigId,
+    force: signal_hook::SigId,
     native: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(unix)]
 impl SignalRegistration {
-    pub(super) fn create(flags: InterruptFlags) -> Result<Self, String> {
-        Self::create_for(&[signal_hook::consts::SIGINT], flags)
-    }
-
-    /// Register the cooperative-cancel / conditional-native / forced-native
-    /// triple for every signal in `signals`, sharing one flag pair: the
-    /// first signal of any registered kind requests cooperative settlement,
-    /// and a repeat of any registered kind restores native termination as
-    /// the escape. `SIGINT` keeps its historical name so existing callers
-    /// and tests stay unchanged; server entries add `SIGTERM` (#9895).
-    fn create_for(signals: &[i32], (interrupted, native): InterruptFlags) -> Result<Self, String> {
-        let mut cancellation_ids = Vec::new();
-        let mut force_ids = Vec::new();
-        for &signal in signals {
-            // Order matters: publication's store/checkpoint handshake relies
-            // on cancellation being stored before the conditional
-            // native-action read.
-            let cancellation = signal_hook::flag::register(signal, Arc::clone(&interrupted))
-                .map_err(|error| format!("cannot observe signal {signal}: {error}"))?;
-            cancellation_ids.push(cancellation);
-            if let Err(error) =
-                signal_hook::flag::register_conditional_default(signal, Arc::clone(&native))
-            {
-                for id in cancellation_ids.drain(..) {
-                    signal_hook::low_level::unregister(id);
-                }
-                return Err(format!("cannot preserve native signal {signal}: {error}"));
-            }
-            // A second signal can escape blocked analysis I/O or stalled
-            // cleanup. The first still requests cooperative settlement before
-            // arming this.
-            match signal_hook::flag::register(signal, Arc::clone(&native)) {
-                Ok(force) => force_ids.push(force),
-                Err(error) => {
-                    native.store(true, std::sync::atomic::Ordering::SeqCst);
-                    for id in cancellation_ids.drain(..) {
-                        signal_hook::low_level::unregister(id);
-                    }
-                    for id in force_ids.drain(..) {
-                        signal_hook::low_level::unregister(id);
-                    }
-                    return Err(format!("cannot arm forced signal {signal}: {error}"));
-                }
+    pub(super) fn create((interrupted, native): InterruptFlags) -> Result<Self, String> {
+        let signal = signal_hook::consts::SIGINT;
+        // Order matters: publication's store/checkpoint handshake relies on
+        // cancellation being stored before the conditional native-action read.
+        let cancellation = signal_hook::flag::register(signal, interrupted)
+            .map_err(|error| format!("check: cannot observe SIGINT: {error}"))?;
+        if let Err(error) = signal_hook::flag::register_conditional_default(signal, native.clone())
+        {
+            signal_hook::low_level::unregister(cancellation);
+            return Err(format!("check: cannot preserve native SIGINT: {error}"));
+        }
+        // A second signal can escape blocked analysis I/O or stalled cleanup.
+        // The first still requests cooperative settlement before arming this.
+        match signal_hook::flag::register(signal, native.clone()) {
+            Ok(force) => Ok(Self {
+                cancellation,
+                force,
+                native,
+            }),
+            Err(error) => {
+                native.store(true, std::sync::atomic::Ordering::SeqCst);
+                signal_hook::low_level::unregister(cancellation);
+                Err(format!("check: cannot arm forced SIGINT: {error}"))
             }
         }
-        Ok(Self {
-            cancellation: cancellation_ids,
-            force: force_ids,
-            native,
-        })
     }
 }
 
@@ -184,12 +193,8 @@ impl SignalRegistration {
 impl Drop for SignalRegistration {
     fn drop(&mut self) {
         self.native.store(true, std::sync::atomic::Ordering::SeqCst);
-        for id in self.cancellation.drain(..) {
-            signal_hook::low_level::unregister(id);
-        }
-        for id in self.force.drain(..) {
-            signal_hook::low_level::unregister(id);
-        }
+        signal_hook::low_level::unregister(self.cancellation);
+        signal_hook::low_level::unregister(self.force);
         // Keep conditional native termination for final diagnostics and until
         // process exit. This explicit standalone entry is called once; ordinary
         // cli::run never installs process-lifetime signal actions.
@@ -200,20 +205,164 @@ impl Drop for SignalRegistration {
 mod tests {
     use super::{
         InterruptFlags, SignalRegistration, check, install_server_interrupts,
-        server_interrupt_flags,
+        server_interrupt_flag, settle_server_attempt,
     };
     use crate::cli::CommandError;
+    use std::io::{Read, Seek};
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{Child, ExitStatus, Stdio};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::time::{Duration, Instant};
 
-    // SIGINT handlers are process-wide: a signal raised by one test would also set the flags of
-    // any registration alive in a parallel test, so tests that register hold this guard.
-    static SIGNAL_TESTS: Mutex<()> = Mutex::new(());
+    const CHILD_CASE: &str = "RIPR_SIGINT_TEST_CHILD";
+    const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
+    const OUTPUT_LIMIT: u64 = 32 * 1024;
 
-    fn serialized() -> MutexGuard<'static, ()> {
-        SIGNAL_TESTS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    // Drop intentionally retains an armed process-wide handler. A mutex cannot
+    // protect a later signal from it: register/drop/raise only in fresh children.
+    fn in_child(case: &str) -> Result<bool, String> {
+        match std::env::var_os(CHILD_CASE) {
+            None => Ok(false),
+            Some(value) if value == case => Ok(true),
+            Some(value) => Err(format!(
+                "signal child identity mismatch: {value:?} != {case}"
+            )),
+        }
+    }
+
+    fn mark(case: &str, stage: &str) {
+        // Identity comes from the executing scenario, never the requested env.
+        println!("\n[interrupt-child] {case} {stage}");
+    }
+
+    struct ChildResult {
+        status: ExitStatus,
+        timed_out: bool,
+        output: String,
+    }
+
+    impl ChildResult {
+        fn require(&self, case: &str, stage: &str, signal: Option<i32>) -> Result<(), String> {
+            let marker = format!("[interrupt-child] {case} {stage}");
+            if self.timed_out
+                || !self.output.lines().any(|line| line == marker)
+                || self.status.signal() != signal
+                || (signal.is_none() && !self.status.success())
+            {
+                return Err(format!(
+                    "signal child {case}: status={}, timed_out={}, missing/wrong stage {stage}: {}",
+                    self.status, self.timed_out, self.output
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    fn poll_child(child: &mut Child, timeout: Duration) -> Result<Option<ExitStatus>, String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                return Ok(Some(status));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn stop_child(child: &mut Child) -> Result<ExitStatus, String> {
+        let kill_error = child.kill().err();
+        let status = poll_child(child, Duration::from_secs(5)).map_err(|error| {
+            format!(
+                "child {} reap poll failed: {error}; kill error: {kill_error:?}",
+                child.id()
+            )
+        })?;
+        let Some(status) = status else {
+            return Err(format!(
+                "child {} not reaped after bounded kill; kill error: {kill_error:?}",
+                child.id()
+            ));
+        };
+        if let Some(error) = kill_error {
+            // Exit may race kill. Record the error and actual reaping outcome.
+            eprintln!(
+                "child {} kill returned {error}; reaped {status}",
+                child.id()
+            );
+        }
+        Ok(status)
+    }
+
+    fn run_isolated(case: &str, filter: &str, timeout: Duration) -> Result<ChildResult, String> {
+        use std::sync::atomic::AtomicU64;
+        static NEXT_LOG: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir();
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let path = directory.join(format!(
+            "ripr-sigint-{}-{epoch}-{}.log",
+            std::process::id(),
+            NEXT_LOG.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut log = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        // Regular-file capture avoids pipe-drain waits, even after an adverse
+        // child exit. Reads below have a byte cap. Retain the log for diagnosis.
+        let stdout = log.try_clone().map_err(|error| error.to_string())?;
+        let stderr = log.try_clone().map_err(|error| error.to_string())?;
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        // libtest paths omit the crate-name segment of module_path!().
+        let module = module_path!();
+        let module = module.split_once("::").map_or(module, |(_, rest)| rest);
+        let mut child = std::process::Command::new(executable)
+            .arg(format!("{module}::{filter}"))
+            .args(["--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD_CASE, case)
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        // Once spawned, every return first establishes terminal/reaped state or
+        // reports the exact unsettled PID. Neither polling nor cleanup blocks.
+        let (status, timed_out) = match poll_child(&mut child, timeout) {
+            Ok(Some(status)) => (status, false),
+            Ok(None) => (stop_child(&mut child)?, true),
+            Err(error) => {
+                let cleanup = stop_child(&mut child);
+                return Err(format!(
+                    "child {} poll failed: {error}; cleanup: {cleanup:?}; log {}",
+                    child.id(),
+                    path.display()
+                ));
+            }
+        };
+        log.rewind().map_err(|error| error.to_string())?;
+        let mut bytes = Vec::new();
+        log.take(OUTPUT_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > OUTPUT_LIMIT {
+            return Err(format!(
+                "signal child output exceeds {OUTPUT_LIMIT} bytes: {}",
+                path.display()
+            ));
+        }
+        Ok(ChildResult {
+            status,
+            timed_out,
+            output: String::from_utf8_lossy(&bytes).into_owned(),
+        })
     }
 
     fn flags() -> (InterruptFlags, Arc<AtomicBool>, Arc<AtomicBool>) {
@@ -224,118 +373,6 @@ mod tests {
             interrupted,
             native,
         )
-    }
-
-    /// Signal handlers and raised signals are process-wide, and a dropped
-    /// registration intentionally leaves a conditional-default handler armed
-    /// — so any test that raises a termination signal runs its scenario in a
-    /// re-invoked copy of this test binary (one exact filter plus a child
-    /// marker env var) instead of the shared lib-test runner. A retained
-    /// handler can otherwise take the whole runner down with the next
-    /// signal, which hosted CI observed as the lib test executable dying
-    /// with SIGTERM right after these tests (#9895 review).
-    fn in_isolated_child() -> bool {
-        std::env::var_os("RIPR_INTERRUPT_ISOLATED_CHILD").is_some()
-    }
-
-    /// libtest reports test paths without the crate-name prefix that
-    /// `module_path!()` carries, so an exact filter built from
-    /// `module_path!()` verbatim would silently select zero tests and the
-    /// child would exit 0 without running anything. Drop the first segment.
-    fn exact_test_filter(test_name: &str) -> String {
-        let module = module_path!();
-        let module = module.split_once("::").map_or(module, |(_, rest)| rest);
-        format!("{module}::{test_name}")
-    }
-
-    /// Every isolated child prints this marker — carrying its own test name
-    /// — before touching anything signal-related, so the wrapper can prove
-    /// the exact filter actually selected a subject. A zero-test selection
-    /// can never print the marker, so it can never pass vacuously.
-    fn child_ack() {
-        let name = std::env::var("RIPR_INTERRUPT_ISOLATED_CHILD").unwrap_or_default();
-        eprintln!("[interrupt-isolated-child] ack {name}");
-    }
-
-    fn combined_output(output: &std::process::Output) -> String {
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        text
-    }
-
-    fn run_isolated(test_name: &str) -> Result<std::process::Output, String> {
-        use std::io::Read as _;
-        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        let mut child = std::process::Command::new(executable)
-            .arg(exact_test_filter(test_name))
-            .args(["--exact", "--nocapture"])
-            .env("RIPR_INTERRUPT_ISOLATED_CHILD", test_name)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        // Bounded wait: a wedged signal scenario must fail the wrapper, not
-        // hang the shared runner. The deadline sits far beyond the
-        // millisecond-scale scenarios; on expiry the child is terminated and
-        // reaped so no raw-owned process outlives the wrapper.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        let status = loop {
-            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-                break status;
-            }
-            if std::time::Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "isolated signal child {test_name} wedged past the wait deadline"
-                ));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        };
-        let mut stdout = Vec::new();
-        child
-            .stdout
-            .take()
-            .ok_or_else(|| "isolated child stdout missing".to_string())?
-            .read_to_end(&mut stdout)
-            .map_err(|error| error.to_string())?;
-        let mut stderr = Vec::new();
-        child
-            .stderr
-            .take()
-            .ok_or_else(|| "isolated child stderr missing".to_string())?
-            .read_to_end(&mut stderr)
-            .map_err(|error| error.to_string())?;
-        Ok(std::process::Output {
-            status,
-            stdout,
-            stderr,
-        })
-    }
-
-    /// Assert the isolated child acknowledged its selection, ran exactly
-    /// one test to completion, and exited successfully.
-    fn assert_child_success(test_name: &str) -> Result<(), String> {
-        let output = run_isolated(test_name)?;
-        let text = combined_output(&output);
-        let ack = format!("[interrupt-isolated-child] ack {test_name}");
-        if !text.contains(&ack) {
-            return Err(format!(
-                "isolated signal child {test_name} never acknowledged; the exact filter selected no test: {text}"
-            ));
-        }
-        if !text.contains("1 passed") {
-            return Err(format!(
-                "isolated signal child {test_name} must run exactly one test to completion: {text}"
-            ));
-        }
-        if output.status.success() {
-            return Ok(());
-        }
-        Err(format!(
-            "isolated signal child {test_name} failed: {}",
-            output.status
-        ))
     }
 
     #[test]
@@ -362,19 +399,10 @@ mod tests {
 
     #[test]
     fn registration_leaves_flags_clear_until_drop_arms_native_termination() -> Result<(), String> {
-        // Drop arms the conditional-default handler process-wide, so — like
-        // every handler-mutating scenario — the assertion runs in an isolated
-        // re-invoked child and the retained handler dies with it.
-        if in_isolated_child() {
-            return child_registration_leaves_flags_clear_until_drop_arms_native_termination();
+        const CASE: &str = "registration_leaves_flags_clear_until_drop_arms_native_termination";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(CASE, "drop-observed", None);
         }
-        assert_child_success("registration_leaves_flags_clear_until_drop_arms_native_termination")
-    }
-
-    fn child_registration_leaves_flags_clear_until_drop_arms_native_termination()
-    -> Result<(), String> {
-        child_ack();
-        let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
         assert!(!interrupted.load(Ordering::SeqCst));
@@ -388,21 +416,20 @@ mod tests {
             "dropping the registration must arm native termination"
         );
         assert!(!interrupted.load(Ordering::SeqCst));
+        mark(CASE, "drop-observed");
         Ok(())
     }
 
     #[test]
     fn first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String> {
-        if in_isolated_child() {
-            return child_first_sigint_requests_cancellation_then_arms_native_termination();
+        const CASE: &str = "first_sigint_requests_cancellation_then_arms_native_termination";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "first-signal-observed",
+                None,
+            );
         }
-        assert_child_success("first_sigint_requests_cancellation_then_arms_native_termination")
-    }
-
-    fn child_first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String>
-    {
-        child_ack();
-        let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
         // Construction: nothing is requested or armed before the signal.
@@ -418,172 +445,294 @@ mod tests {
             native.load(Ordering::SeqCst),
             "first SIGINT must arm native termination for a repeated signal"
         );
+        mark(CASE, "first-signal-observed");
         drop(registration);
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_sigint_after_arm_takes_native_death() -> Result<(), String> {
+        const CASE: &str = "repeated_sigint_after_arm_takes_native_death";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "first-signal-observed",
+                Some(signal_hook::consts::SIGINT),
+            );
+        }
+        let (pair, interrupted, native) = flags();
+        let _registration = SignalRegistration::create(pair)?;
+        assert!(!interrupted.load(Ordering::SeqCst));
+        assert!(!native.load(Ordering::SeqCst));
+        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            .map_err(|error| error.to_string())?;
+        assert!(interrupted.load(Ordering::SeqCst));
+        assert!(native.load(Ordering::SeqCst));
+        mark(CASE, "first-signal-observed");
+        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            .map_err(|error| error.to_string())?;
+        Err("repeated SIGINT unexpectedly returned".to_string())
+    }
+
+    #[test]
+    fn sigint_after_drop_takes_native_death() -> Result<(), String> {
+        const CASE: &str = "sigint_after_drop_takes_native_death";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "drop-observed",
+                Some(signal_hook::consts::SIGINT),
+            );
+        }
+        let (pair, interrupted, native) = flags();
+        let registration = SignalRegistration::create(pair)?;
+        assert!(!interrupted.load(Ordering::SeqCst));
+        assert!(!native.load(Ordering::SeqCst));
+        drop(registration);
+        assert!(!interrupted.load(Ordering::SeqCst));
+        assert!(native.load(Ordering::SeqCst));
+        mark(CASE, "drop-observed");
+        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            .map_err(|error| error.to_string())?;
+        Err("SIGINT after Drop unexpectedly returned".to_string())
+    }
+
+    #[test]
+    fn isolated_children_reject_wrong_or_empty_selection() -> Result<(), String> {
+        const CASE: &str = "first_sigint_requests_cancellation_then_arms_native_termination";
+        let empty = run_isolated(CASE, "no_such_signal_test", CHILD_TIMEOUT)?;
+        assert!(empty.status.success());
+        assert!(empty.require(CASE, "first-signal-observed", None).is_err());
+        let wrong = run_isolated(
+            CASE,
+            "registration_leaves_flags_clear_until_drop_arms_native_termination",
+            CHILD_TIMEOUT,
+        )?;
+        assert!(!wrong.status.success());
+        assert!(wrong.output.contains("signal child identity mismatch"));
+        assert!(wrong.require(CASE, "first-signal-observed", None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_child_failure_is_reported() -> Result<(), String> {
+        const CASE: &str = "isolated_child_failure_is_reported";
+        if in_child(CASE)? {
+            mark(CASE, "started");
+            return Err("controlled child failure".to_string());
+        }
+        let child = run_isolated(CASE, CASE, CHILD_TIMEOUT)?;
+        assert!(!child.status.success());
+        assert!(child.output.contains("controlled child failure"));
+        assert!(child.require(CASE, "started", None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_child_signal_before_checkpoint_is_rejected() -> Result<(), String> {
+        const CASE: &str = "isolated_child_signal_before_checkpoint_is_rejected";
+        if in_child(CASE)? {
+            mark(CASE, "started");
+            signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+                .map_err(|error| error.to_string())?;
+            return Err("unregistered SIGINT unexpectedly returned".to_string());
+        }
+        let child = run_isolated(CASE, CASE, CHILD_TIMEOUT)?;
+        assert_eq!(child.status.signal(), Some(signal_hook::consts::SIGINT));
+        child.require(CASE, "started", Some(signal_hook::consts::SIGINT))?;
+        assert!(
+            child
+                .require(
+                    CASE,
+                    "first-signal-observed",
+                    Some(signal_hook::consts::SIGINT)
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_child_timeout_is_killed_and_reaped() -> Result<(), String> {
+        const CASE: &str = "isolated_child_timeout_is_killed_and_reaped";
+        if in_child(CASE)? {
+            mark(CASE, "started");
+            loop {
+                std::thread::park();
+            }
+        }
+        let child = run_isolated(CASE, CASE, Duration::from_secs(2))?;
+        assert!(child.timed_out);
+        assert_eq!(child.status.signal(), Some(signal_hook::consts::SIGKILL));
+        assert!(
+            child
+                .output
+                .contains(&format!("[interrupt-child] {CASE} started"))
+        );
+        assert!(child.require(CASE, "started", None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_child_output_is_capped() -> Result<(), String> {
+        const CASE: &str = "isolated_child_output_is_capped";
+        if in_child(CASE)? {
+            println!("{}", "x".repeat(OUTPUT_LIMIT as usize + 1));
+            return Ok(());
+        }
+        let error = match run_isolated(CASE, CASE, CHILD_TIMEOUT) {
+            Ok(_) => return Err("oversized child output was accepted".to_string()),
+            Err(error) => error,
+        };
+        assert!(error.contains("signal child output exceeds"), "{error}");
         Ok(())
     }
 
     #[test]
     fn first_sigterm_requests_cancellation_then_arms_native_termination() -> Result<(), String> {
-        // #9895: SIGTERM gets the same cooperative-first contract as SIGINT,
-        // so an external termination request settles the in-flight attempt
-        // (bounded child waits terminate the owned tree) instead of orphaning
-        // it; only a repeated signal takes native death.
-        if in_isolated_child() {
-            return child_first_sigterm_requests_cancellation_then_arms_native_termination();
+        const CASE: &str = "first_sigterm_requests_cancellation_then_arms_native_termination";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "first-signal-observed",
+                None,
+            );
         }
-        assert_child_success("first_sigterm_requests_cancellation_then_arms_native_termination")
-    }
-
-    fn child_first_sigterm_requests_cancellation_then_arms_native_termination() -> Result<(), String>
-    {
-        child_ack();
-        let _serial = serialized();
-        let (pair, interrupted, native) = flags();
-        let registration = SignalRegistration::create_for(&[signal_hook::consts::SIGTERM], pair)?;
-        assert!(!interrupted.load(Ordering::SeqCst));
-        assert!(!native.load(Ordering::SeqCst));
+        install_server_interrupts()?;
+        let flag = server_interrupt_flag().ok_or_else(|| "server flag missing".to_string())?;
+        assert!(!flag.load(Ordering::SeqCst));
         signal_hook::low_level::raise(signal_hook::consts::SIGTERM)
             .map_err(|error| error.to_string())?;
-        assert!(
-            interrupted.load(Ordering::SeqCst),
-            "first SIGTERM must request cooperative cancellation"
-        );
-        assert!(
-            native.load(Ordering::SeqCst),
-            "first SIGTERM must arm native termination for a repeated signal"
-        );
-        drop(registration);
+        assert!(flag.load(Ordering::SeqCst));
+        mark(CASE, "first-signal-observed");
         Ok(())
     }
 
     #[test]
-    fn sigint_and_sigterm_share_one_flag_pair_in_server_registrations() -> Result<(), String> {
-        // #9895: the server registration covers both signals on one pair, so
-        // whichever arrives first requests settlement and a repeat of either
-        // arms native termination — the two signals cannot disagree about
-        // the attempt's state. The cross-signal repeat is the force escape
-        // and never returns: the expected outcome is the scenario process
-        // dying by SIGINT, so the outer wrapper inspects the exit signal
-        // exactly like repeated_sigint_after_arm_takes_native_death.
-        if in_isolated_child() {
-            return child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations();
+    fn sigint_and_sigterm_share_server_interrupt_state() -> Result<(), String> {
+        const CASE: &str = "sigint_and_sigterm_share_server_interrupt_state";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "first-signal-observed",
+                Some(signal_hook::consts::SIGINT),
+            );
         }
-        let output =
-            run_isolated("sigint_and_sigterm_share_one_flag_pair_in_server_registrations")?;
-        let text = combined_output(&output);
-        if !text.contains(
-            "[interrupt-isolated-child] ack sigint_and_sigterm_share_one_flag_pair_in_server_registrations",
-        ) {
-            return Err(format!(
-                "isolated signal child never acknowledged; the exact filter selected no test: {text}"
-            ));
-        }
-        use std::os::unix::process::ExitStatusExt as _;
-        match output.status.signal() {
-            Some(signal) if signal == signal_hook::consts::SIGINT => Ok(()),
-            other => Err(format!(
-                "the cross-signal repeat must take native death by SIGINT, got signal {other:?} ({})",
-                output.status
-            )),
-        }
-    }
-
-    fn child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations() -> Result<(), String>
-    {
-        child_ack();
-        let _serial = serialized();
-        let (pair, interrupted, native) = flags();
-        let registration = SignalRegistration::create_for(
-            &[signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM],
-            pair,
-        )?;
+        install_server_interrupts()?;
+        let flag = server_interrupt_flag().ok_or_else(|| "server flag missing".to_string())?;
+        assert!(!flag.load(Ordering::SeqCst));
         signal_hook::low_level::raise(signal_hook::consts::SIGTERM)
             .map_err(|error| error.to_string())?;
-        assert!(interrupted.load(Ordering::SeqCst));
-        assert!(native.load(Ordering::SeqCst));
-        // A repeat of the OTHER registered signal is the force escape too:
-        // the pair is shared, so the conditional default reads the same arm.
-        // If the contract holds this raise never returns: native termination
-        // is armed and the child dies by SIGINT before the next line.
+        assert!(flag.load(Ordering::SeqCst));
+        mark(CASE, "first-signal-observed");
         signal_hook::low_level::raise(signal_hook::consts::SIGINT)
             .map_err(|error| error.to_string())?;
-        drop(registration);
-        Err("the cross-signal repeat must not return once native termination is armed".to_string())
+        Err("mixed server signal repeat unexpectedly returned".to_string())
     }
 
-    /// The escape hatch is real: once the first signal armed native
-    /// termination, a repeated signal takes native death. The expected
-    /// outcome is the scenario process dying by SIGINT, so — like every
-    /// raising scenario — it runs in an isolated re-invoked child and the
-    /// outer test only inspects the exit signal.
     #[test]
-    fn repeated_sigint_after_arm_takes_native_death() -> Result<(), String> {
-        if in_isolated_child() {
-            return child_repeated_sigint_after_arm_takes_native_death();
+    fn repeated_server_sigterm_takes_native_death() -> Result<(), String> {
+        const CASE: &str = "repeated_server_sigterm_takes_native_death";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "first-signal-observed",
+                Some(signal_hook::consts::SIGTERM),
+            );
         }
-        let output = run_isolated("repeated_sigint_after_arm_takes_native_death")?;
-        let text = combined_output(&output);
-        if !text
-            .contains("[interrupt-isolated-child] ack repeated_sigint_after_arm_takes_native_death")
-        {
-            return Err(format!(
-                "isolated signal child never acknowledged; the exact filter selected no test: {text}"
-            ));
-        }
-        use std::os::unix::process::ExitStatusExt as _;
-        match output.status.signal() {
-            Some(signal) if signal == signal_hook::consts::SIGINT => Ok(()),
-            other => Err(format!(
-                "the repeated SIGINT must take native death by SIGINT, got signal {other:?} ({})",
-                output.status
-            )),
-        }
-    }
-
-    fn child_repeated_sigint_after_arm_takes_native_death() -> Result<(), String> {
-        child_ack();
-        let _serial = serialized();
-        let (pair, interrupted, _native) = flags();
-        let registration = SignalRegistration::create(pair)?;
-        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+        install_server_interrupts()?;
+        let flag = server_interrupt_flag().ok_or_else(|| "server flag missing".to_string())?;
+        assert!(!flag.load(Ordering::SeqCst));
+        signal_hook::low_level::raise(signal_hook::consts::SIGTERM)
             .map_err(|error| error.to_string())?;
-        assert!(
-            interrupted.load(Ordering::SeqCst),
-            "the first SIGINT must still request cooperative cancellation"
-        );
-        // If the contract holds this raise never returns: the registration
-        // is still alive, native is armed, and the repeated signal takes the
-        // default action.
-        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+        assert!(flag.load(Ordering::SeqCst));
+        mark(CASE, "first-signal-observed");
+        signal_hook::low_level::raise(signal_hook::consts::SIGTERM)
             .map_err(|error| error.to_string())?;
-        drop(registration);
-        Err("the repeated SIGINT must not return once native termination is armed".to_string())
+        Err("server SIGTERM repeat unexpectedly returned".to_string())
     }
 
     #[test]
     fn server_interrupt_install_is_idempotent_and_exposes_flags() -> Result<(), String> {
-        // #9895: installing twice must not stack handlers (signal-hook would
-        // otherwise hold duplicate registrations for the server process), and
-        // the installed pair is what run_check binds its cancellation token to.
-        // The install is process-lifetime (`mem::forget`), so the isolated
-        // child owns the armed handlers; the runner never keeps them.
-        if in_isolated_child() {
-            return child_server_interrupt_install_is_idempotent_and_exposes_flags();
+        const CASE: &str = "server_interrupt_install_is_idempotent_and_exposes_flags";
+        if !in_child(CASE)? {
+            return run_isolated(CASE, CASE, CHILD_TIMEOUT)?.require(
+                CASE,
+                "reset-cycles-observed",
+                None,
+            );
         }
-        assert_child_success("server_interrupt_install_is_idempotent_and_exposes_flags")
+        let barrier = std::sync::Barrier::new(8);
+        let installed = std::thread::scope(|scope| {
+            let workers = (0..8)
+                .map(|_| {
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        install_server_interrupts()?;
+                        server_interrupt_flag().ok_or_else(|| "server flag missing".to_string())
+                    })
+                })
+                .collect::<Vec<_>>();
+            workers
+                .into_iter()
+                .map(|worker| {
+                    worker
+                        .join()
+                        .map_err(|_| "server installer failed".to_string())?
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })?;
+        let flag = server_interrupt_flag().ok_or_else(|| "server flag missing".to_string())?;
+        assert!(
+            installed
+                .iter()
+                .all(|observed| Arc::ptr_eq(observed, &flag))
+        );
+        for signal in [
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGTERM,
+        ] {
+            assert!(!flag.load(Ordering::SeqCst));
+            signal_hook::low_level::raise(signal).map_err(|error| error.to_string())?;
+            assert!(flag.load(Ordering::SeqCst));
+            assert_eq!(
+                settle_server_attempt(&flag, Ok(7), || "cancelled"),
+                Err("cancelled")
+            );
+            assert!(!flag.load(Ordering::SeqCst));
+            assert_eq!(settle_server_attempt(&flag, Ok(7), || "cancelled"), Ok(7));
+        }
+        mark(CASE, "reset-cycles-observed");
+        Ok(())
     }
 
-    fn child_server_interrupt_install_is_idempotent_and_exposes_flags() -> Result<(), String> {
-        child_ack();
-        let _serial = serialized();
-        install_server_interrupts().map_err(|error| error.to_string())?;
-        install_server_interrupts().map_err(|error| error.to_string())?;
-        let (interrupted, _native) = server_interrupt_flags()
-            .ok_or_else(|| "install_server_interrupts must expose the flag pair".to_string())?;
-        assert!(
-            !interrupted.load(Ordering::SeqCst),
-            "installation alone must not request cancellation"
+    #[test]
+    fn terminal_signal_exchange_preserves_late_and_next_attempts() {
+        let flag = AtomicBool::new(false);
+        // The producer already returned success when a late signal arrives.
+        let result = Ok(7);
+        flag.store(true, Ordering::SeqCst);
+        let settled = settle_server_attempt(&flag, result, || {
+            // A signal after the exchange belongs to the next attempt. No
+            // second reset may erase it while this failure is constructed.
+            flag.store(true, Ordering::SeqCst);
+            "cancelled"
+        });
+        assert_eq!(settled, Err("cancelled"));
+        assert!(flag.load(Ordering::SeqCst));
+        assert_eq!(
+            settle_server_attempt(&flag, Ok(9), || "cancelled"),
+            Err("cancelled")
         );
-        Ok(())
+        assert!(!flag.load(Ordering::SeqCst));
+        assert_eq!(settle_server_attempt(&flag, Ok(11), || "cancelled"), Ok(11));
+        flag.store(true, Ordering::SeqCst);
+        assert_eq!(
+            settle_server_attempt::<(), _>(&flag, Err("config_invalid"), || "cancelled"),
+            Err("config_invalid")
+        );
+        assert!(!flag.load(Ordering::SeqCst));
     }
 }

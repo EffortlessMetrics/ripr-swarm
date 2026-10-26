@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..5a740f3 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -60,7 +60,7 @@ sub café_price {
+ # line 500 "elsewhere.pm"
+ sub pad {
+     my ($s) = @_;
+-    return sprintf('%-6s|', $s);
++    return sprintf("%-6s|", $s);
+ }
+ 
+ 1;

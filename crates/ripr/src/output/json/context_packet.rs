@@ -124,9 +124,13 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
         packet.related_tests_total,
         true,
     );
+    // An unrecognized token falls back to `static_unknown`, whose rows keep
+    // generic miss wording.
+    let packet_family = &crate::domain::ProbeFamily::from_wire(&packet.probe.family)
+        .unwrap_or(crate::domain::ProbeFamily::StaticUnknown);
     out.push_str("  \"related_tests\": [\n");
     for (idx, test) in packet.related_tests.iter().enumerate() {
-        related_test_json(&mut out, test, &packet.missing_discriminators, 2);
+        related_test_json(&mut out, test, packet_family, 2);
         if idx + 1 != related_test_count {
             out.push(',');
         }
@@ -145,10 +149,22 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
     match &packet.witness {
         Some(witness) => {
             out.push_str("  \"witness\": ");
-            if let Ok(serialized) = serde_json::to_string(witness) {
-                out.push_str(&serialized);
-            } else {
-                out.push_str("null");
+            // Pretty-print the serde-owned DTO and re-indent it to the
+            // packet's two-space base so the field nests like the
+            // hand-rendered fields around it; the compact form used to
+            // land as one long line in an otherwise expanded packet.
+            match serde_json::to_string_pretty(witness) {
+                Ok(pretty) => {
+                    let mut lines = pretty.lines();
+                    if let Some(first) = lines.next() {
+                        out.push_str(first);
+                        for line in lines {
+                            out.push_str("\n  ");
+                            out.push_str(line);
+                        }
+                    }
+                }
+                Err(_) => out.push_str("null"),
             }
             out.push_str(",\n");
         }
@@ -205,12 +221,13 @@ fn discriminator_array(
 
 #[cfg(test)]
 mod tests {
-    use super::render_context_packet;
+    use super::{render_context_packet, render_context_packet_dto};
+    use crate::domain::context_packet::ContextPacket;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
-        RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
-        SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiagnosticConfidence, DiagnosticWitness,
+        ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -260,7 +277,6 @@ mod tests {
     fn context_packet_escapes_observed_values_and_discriminator_reasons() {
         let mut finding = sample_finding();
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 11,
             text: "assert!(x)".to_string(),
             value: "line \"a\"\nnext".to_string(),
@@ -279,6 +295,53 @@ mod tests {
 
         assert!(packet.contains("line \\\"a\\\"\\nnext"));
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
+    }
+
+    #[test]
+    fn context_packet_witness_nests_at_the_packet_indent() -> Result<(), String> {
+        // The witness is a serde-owned DTO; it must expand at the
+        // packet's two-space nesting like the hand-rendered fields
+        // around it, not land as one compact line.
+        let finding = sample_finding();
+        let mut packet = ContextPacket::from_finding(&finding, 5, Vec::new(), Path::new("."));
+        packet.witness = Some(DiagnosticWitness {
+            kind: "static_discriminator_gap".to_string(),
+            probe_family: "predicate".to_string(),
+            changed_expression: "x >= 0".to_string(),
+            before: None,
+            after: Some("x >= 0".to_string()),
+            expected_sink: None,
+            missing_discriminators: Vec::new(),
+            fix_site: None,
+            suggested_assertion: None,
+            explain_command: "ripr explain probe:src_lib_rs:9:error_path".to_string(),
+            confidence: DiagnosticConfidence {
+                value: Some(0.5),
+                basis: "static_only".to_string(),
+            },
+            limitations: Vec::new(),
+        });
+
+        let rendered = render_context_packet_dto(&packet);
+
+        assert!(
+            rendered.contains("\n    \"probe_family\": \"predicate\""),
+            "witness fields must render one per line at the packet's indent:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\"witness\": {\"kind\""),
+            "the witness must not render as a single compact line:\n{rendered}"
+        );
+        // Whitespace changed, the wire value must not: the packet still
+        // parses and the witness round-trips.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+        assert_eq!(parsed["witness"]["kind"], "static_discriminator_gap");
+        assert_eq!(
+            parsed["witness"]["explain_command"],
+            "ripr explain probe:src_lib_rs:9:error_path"
+        );
+        Ok(())
     }
 
     #[test]
@@ -399,6 +462,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

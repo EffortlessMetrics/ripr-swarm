@@ -74,7 +74,7 @@ pub(super) struct EvidenceEntry {
 ///   sentence and its fixed `... unexecuted (observation_unverified). Add a
 ///   test input ...` tail;
 /// - the TypeScript adapter's exact strong-oracle-no-flow summary.
-pub(super) fn plain_observation_wording(text: &str) -> String {
+pub(crate) fn plain_observation_wording(text: &str) -> String {
     const MARKER: &str = " (observation_unverified)";
     const PYTHON_PREFIX: &str = "A strong Python oracle reaches `";
     const PYTHON_METHOD_CALL: &str =
@@ -103,28 +103,45 @@ pub(super) fn plain_observation_wording(text: &str) -> String {
 }
 
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
-    evidence_path(finding, wording, |text, _| text)
+    evidence_path_lines_with_files(finding, wording, None)
 }
 
-pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
-    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
-        // Multi-line literals retain their existing rendering locally and cannot
-        // forge a catalogue definition or generated reference.
-        let key = if !with_keys
-            || matches!(source, EvidenceSource::Window)
-            || text.contains(['\n', '\r'])
-        {
-            None
-        } else {
-            serde_json::to_vec(&(source, &text)).ok()
-        };
-        EvidenceEntry { text, key }
-    })
+pub(super) fn evidence_path_lines_with_files(
+    finding: &Finding,
+    wording: JsonPointerWording,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> Vec<String> {
+    evidence_path(finding, wording, files, |text, _| text)
+}
+pub(super) fn evidence_path_entries(
+    finding: &Finding,
+    with_keys: bool,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> Vec<EvidenceEntry> {
+    evidence_path(
+        finding,
+        JsonPointerWording::CheckFlag,
+        files,
+        |text, source| {
+            // Multi-line literals retain their existing rendering locally and cannot
+            // forge a catalogue definition or generated reference.
+            let key = if !with_keys
+                || matches!(source, EvidenceSource::Window)
+                || text.contains(['\n', '\r'])
+            {
+                None
+            } else {
+                serde_json::to_vec(&(source, &text)).ok()
+            };
+            EvidenceEntry { text, key }
+        },
+    )
 }
 
 fn evidence_path<T>(
     finding: &Finding,
     wording: JsonPointerWording,
+    files: Option<&[Option<std::path::PathBuf>]>,
     mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
 ) -> Vec<T> {
     let mut lines = vec![
@@ -187,11 +204,9 @@ fn evidence_path<T>(
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
-        let why = crate::output::related_test_miss::related_test_miss_reason(
-            test,
-            &finding.activation.missing_discriminators,
-        );
-        if let Some(why) = why.as_deref().filter(|_| test.is_unmatched()) {
+        let why =
+            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family);
+        if let Some(why) = why.as_deref().filter(|_| test.is_examined_only()) {
             // #5344: an examined test with no matched oracle says why it
             // misses, then shows the assertion it was judged by, so the
             // claim can be checked in the source.
@@ -291,16 +306,23 @@ fn evidence_path<T>(
         .collect::<Vec<_>>();
     // #8389: a bare `at line N` is only ambiguous when the shown window mixes
     // facts from more than one test file; then each line names its file.
-    let name_files = shown_values
-        .iter()
-        .filter_map(|value| value.file.as_deref())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len()
-        > 1;
-    for value in shown_values {
+    let files = files.filter(|files| files.len() == observed_values_total);
+    let name_files = files
+        .map(|files| {
+            files
+                .iter()
+                .take(MAX_OBSERVED_VALUES_SHOWN)
+                .filter_map(|file| file.as_deref())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 1
+        })
+        .unwrap_or(false);
+    for (index, value) in shown_values.into_iter().enumerate() {
+        let file = files.and_then(|files| files[index].as_deref());
         lines.push(project(
             if name_files {
-                crate::output::observed_values::source_value_evidence_line_with_file(value)
+                crate::output::observed_values::source_value_evidence_line_with_file(value, file)
             } else {
                 crate::output::observed_values::human_source_value_evidence_line(value)
             },
@@ -362,7 +384,10 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
                 && !is_preview_actionability_missing_summary(missing)
                 && !restates_no_static_path_evidence(finding, missing)
         })
-        .cloned()
+        // #9929: the Python adapter's reason text carries the producer marker
+        // `(observation_unverified)`; the human list drops it, JSON `missing`
+        // keeps it.
+        .map(|missing| plain_observation_wording(missing))
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
         lines.push(format!(

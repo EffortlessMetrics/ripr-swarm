@@ -286,6 +286,23 @@ The server remains a bounded adapter over shared RIPR authority:
   adapter edits nothing, launches nothing, and executes nothing a returned
   route names.
 
+## Per-language completeness in session status (#6475)
+
+`ripr_workspace_status` gains one additive, optional session field,
+`language_completeness: [{language, status}]`, read from the producer's
+crate-private mixed-language completeness view that the shared check returns
+beside its output (the same sidecar the LSP receives). MCP remains a bounded
+read-only projection: it computes no per-language state of its own, adds no
+tool, and does not change the public check API, the session schema version,
+any existing field, or the snapshot identity. Presence is intentionally
+conditional: the field appears only once a snapshot with a view is committed
+(on the status tool and the `ripr://workspace/status` resource, which render
+the same session block), so omission preserves the previous shape only when
+nothing is committed. Advertised-schema validators and unknown-key-tolerant
+readers are supported; a reader pinned to a frozen strict-closed session
+shape is not (MCP is Unstable in `docs/SEMVER.md`), and no deployed-client
+failure is claimed.
+
 ## Analysis-configuration loading (#6825)
 
 The read-only boundary is about authority, not ignorance: the adapter never

@@ -43,6 +43,10 @@ struct CancellationState {
     budget: Option<AnalysisBudget>,
     interrupted: Option<Arc<AtomicBool>>,
     native_publication: Option<Arc<AtomicBool>>,
+    /// Only an MCP attempt opts into a fresh owned Unix process group.
+    /// Capturing the token carries this authority to its analysis workers.
+    #[cfg(unix)]
+    owns_process_groups: bool,
 }
 
 #[derive(Clone)]
@@ -92,6 +96,8 @@ impl AnalysisCancellationToken {
             budget: None,
             interrupted: None,
             native_publication: None,
+            #[cfg(unix)]
+            owns_process_groups: false,
         }))
     }
 
@@ -103,6 +109,8 @@ impl AnalysisCancellationToken {
             outcome: AtomicU8::new(OUTCOME_NONE),
             interrupted: None,
             native_publication: None,
+            #[cfg(unix)]
+            owns_process_groups: false,
             budget: Some(AnalysisBudget {
                 started,
                 limit,
@@ -122,6 +130,22 @@ impl AnalysisCancellationToken {
             budget: None,
             interrupted: Some(interrupted),
             native_publication: Some(native_publication),
+            #[cfg(unix)]
+            owns_process_groups: false,
+        }))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn with_server_interrupt(interrupted: Arc<AtomicBool>) -> Self {
+        Self(Arc::new(CancellationState {
+            reason: AtomicU8::new(ACTIVE),
+            outcome: AtomicU8::new(OUTCOME_NONE),
+            budget: None,
+            interrupted: Some(interrupted),
+            // MCP publishes a typed attempt on the same session; it never
+            // hands publication to the standalone CLI's native escape.
+            native_publication: None,
+            owns_process_groups: true,
         }))
     }
 
@@ -135,6 +159,8 @@ impl AnalysisCancellationToken {
             budget: None,
             interrupted: self.0.interrupted.clone(),
             native_publication: self.0.native_publication.clone(),
+            #[cfg(unix)]
+            owns_process_groups: self.0.owns_process_groups,
         }))
     }
 
@@ -297,6 +323,17 @@ pub(crate) fn current_token() -> Option<AnalysisCancellationToken> {
     CURRENT_TOKEN.with(|slot| slot.borrow().clone())
 }
 
+/// Whether the current captured attempt owns Unix child process groups.
+/// Ordinary CLI, library and LSP tokens preserve caller process configuration.
+#[cfg(unix)]
+pub(crate) fn owns_process_groups() -> bool {
+    CURRENT_TOKEN.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|token| token.0.owns_process_groups)
+    })
+}
+
 /// Install exactly the captured context, including no token. Restoring the
 /// previous context prevents cancellation leaking between reused pool jobs.
 pub(crate) fn with_optional_token<T>(
@@ -373,6 +410,50 @@ pub(crate) fn is_cancellation_error(error: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[cfg(unix)]
+    #[test]
+    fn server_group_authority_follows_captured_token_only() -> Result<(), String> {
+        assert!(!owns_process_groups());
+        let flag = Arc::new(AtomicBool::new(false));
+        let server = AnalysisCancellationToken::with_server_interrupt(flag.clone());
+        let ordinary = AnalysisCancellationToken::new();
+        let cli = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        for token in [&ordinary, &cli] {
+            with_token(token, || assert!(!owns_process_groups()));
+        }
+        let captured = with_token(&server, || {
+            assert!(owns_process_groups());
+            begin_cli_publication()?;
+            assert!(!flag.load(Ordering::SeqCst));
+            current_token().ok_or_else(|| "server context missing".to_string())
+        })?;
+        let worker = captured.for_check_budget_worker();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    assert!(!owns_process_groups());
+                    with_optional_token(Some(&worker), || {
+                        assert!(owns_process_groups());
+                        flag.store(true, Ordering::SeqCst);
+                        assert_eq!(
+                            checkpoint_typed(),
+                            Err(AnalysisCancellation {
+                                kind: AnalysisAbortKind::Cancelled
+                            }),
+                        );
+                    });
+                    assert!(!owns_process_groups());
+                })
+                .join()
+                .map_err(|_| "captured server worker failed".to_string())
+        })?;
+        assert!(!owns_process_groups());
+        Ok(())
+    }
 
     #[test]
     fn optional_worker_context_restores_after_unwind() -> Result<(), String> {

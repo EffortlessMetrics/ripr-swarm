@@ -1,0 +1,9 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,5 +4,5 @@ impl Formatter {
+     pub fn format(&self, out: &mut String, other: &mut String) {
+         out.push('x');
+-        other.push_str(&out.capacity().to_string());
++        other.push_str(&out.len().to_string());
+     }
+ }

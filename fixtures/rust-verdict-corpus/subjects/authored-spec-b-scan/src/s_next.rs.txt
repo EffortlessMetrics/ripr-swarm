@@ -1,0 +1,42 @@
+//! One arm computes its next state through a call.
+
+fn next_for(input: &str) -> &'static str {
+    if input.is_empty() {
+        "text"
+    } else {
+        "word"
+    }
+}
+
+pub fn scan_next(input: &str) -> &'static str {
+    let mut state = "text";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            ("text", ' ') => "text",
+            ("text", _) => next_for(input),
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    state
+}
+
+pub fn classify_next(input: &str) -> &'static str {
+    let final_state = scan_next(input);
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_next() {
+        assert_eq!(classify_next("ab"), "word");
+        assert_eq!(classify_next("ab "), "blank");
+    }
+}

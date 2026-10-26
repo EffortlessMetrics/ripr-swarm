@@ -26,8 +26,14 @@ fn boolean_pin_credits(
         .find(|owner| owner.name == "isAdult")
         .ok_or_else(|| format!("{label}: owner isAdult not extracted"))?;
     let tests = extract_tests(Path::new("tests/adult.test.ts"), test_source);
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let facts = ts_boolean_pin_facts(
         &ProbeFamily::Predicate,
         &owner,

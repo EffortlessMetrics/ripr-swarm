@@ -18,7 +18,7 @@ use crate::domain::language_capability::{
     AnalysisMode, CAPABILITY_CELLS, CapabilityFamily, FRAMEWORK_ANY, state_establishes_capability,
 };
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 /// Whole-diff completeness. `Incomplete` is the fail-closed default: it also
@@ -49,6 +49,13 @@ pub(crate) struct LanguageAggregate {
     /// Children keyed by canonical language label (`javascript` is its own
     /// key, never folded into `typescript`).
     pub(crate) outcomes: BTreeMap<String, LanguageAnalysisOutcomeV1>,
+    /// Labels recorded more than once where one row would let the aggregate
+    /// claim completeness and another blocks it. The kept child is still the
+    /// deterministic blocker-first one; this only makes the disagreement
+    /// visible to `validate` (#6473). Two blocking rows (a configured adapter
+    /// that errors beside its own not-selected advisory) are not a conflict.
+    /// Not part of the digest.
+    pub(crate) conflicts: BTreeSet<String>,
     /// The completeness this aggregate asserts; `validate` rejects a claim the
     /// children do not support.
     pub(crate) claimed: DiffCompleteness,
@@ -70,6 +77,7 @@ impl LanguageAggregate {
             mode,
             scope,
             outcomes: BTreeMap::new(),
+            conflicts: BTreeSet::new(),
             claimed: DiffCompleteness::Incomplete,
             semantic_digest: String::new(),
         };
@@ -87,6 +95,12 @@ impl LanguageAggregate {
                 candidate.semantic_digest.clone(),
             )
         };
+        if let Some(existing) = self.outcomes.get(&outcome.language)
+            && existing.status.is_complete_for_aggregate()
+                != outcome.status.is_complete_for_aggregate()
+        {
+            self.conflicts.insert(outcome.language.clone());
+        }
         match self.outcomes.get(&outcome.language) {
             Some(existing) if rank(existing) >= rank(&outcome) => {}
             _ => {
@@ -180,12 +194,44 @@ impl LanguageAggregate {
                     outcome.mode, self.mode
                 ));
             }
+            if self.mode == OutcomeMode::Repo {
+                // Complete-zero needs positive discovery proof (#6473): a
+                // zero-finding result with no discovered production file is
+                // nothing in scope, and a missing count is not a proof.
+                let production = outcome.resources.production_files;
+                if outcome.status == LanguageOutcomeStatus::CompleteZero
+                    && production.is_none_or(|files| files == 0)
+                {
+                    return Err(format!(
+                        "diff language aggregate: {label} claims complete_zero without discovery proof (production_files {production:?})"
+                    ));
+                }
+                if outcome.status == LanguageOutcomeStatus::NoCurrentScope && production != Some(0)
+                {
+                    return Err(format!(
+                        "diff language aggregate: {label} claims no_current_scope but production_files is {production:?}"
+                    ));
+                }
+            }
             if outcome.scope != self.scope {
                 return Err(format!(
                     "diff language aggregate: {label} ran over scope {:?}, aggregate over {:?}",
                     outcome.scope, self.scope
                 ));
             }
+        }
+        // The TypeScript adapter serves both ids, so its two loop runs may
+        // legitimately disagree on the family labels (a bridge profile's
+        // Rust-line findings stay with the loop language's child). Any other
+        // label recorded twice with different content is a conflict (#6473).
+        if let Some(label) = self
+            .conflicts
+            .iter()
+            .find(|label| !matches!(label.as_str(), "typescript" | "javascript"))
+        {
+            return Err(format!(
+                "diff language aggregate: {label} recorded twice with conflicting outcomes"
+            ));
         }
         if self.claimed == DiffCompleteness::Complete
             && self.completeness() != DiffCompleteness::Complete
@@ -202,6 +248,21 @@ impl LanguageAggregate {
         }
         if self.semantic_digest != self.compute_digest() {
             return Err("diff language aggregate: digest does not match its children".to_string());
+        }
+        Ok(())
+    }
+
+    /// Rejects an aggregate that omits a selected language: every language
+    /// the run selected must have recorded a child, so an empty or short run
+    /// vector cannot hide it (#6473).
+    pub(crate) fn validate_selected(&self, selected: &[LanguageId]) -> Result<(), String> {
+        for language in selected {
+            if !self.outcomes.contains_key(language.as_str()) {
+                return Err(format!(
+                    "diff language aggregate: selected language {} has no child",
+                    language.as_str()
+                ));
+            }
         }
         Ok(())
     }

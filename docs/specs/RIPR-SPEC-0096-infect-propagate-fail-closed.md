@@ -126,71 +126,30 @@ escape.
 
 ## Acceptance Examples
 
-### A — Wildcard discard (must downgrade)
-
-```
-probe family:  call_deletion
-expression:    let _ = compute_fee(amount * 9);
-test:          assert_eq!(process(42), 42);
-
-Before fix:    exposed / confidence 1.0
-After fix:     infection_unknown / confidence 0.74
-```
-
-### A — Named binding (must stay exposed)
-
-```
-probe family:  call_deletion
-expression:    let result = helper(amount * 9);
-test:          assert_eq!(score(10), 10);
-
-Before fix:    exposed / confidence 1.0
-After fix:     exposed / confidence 1.0   (unchanged — named binding still used)
-```
-
-### B — Swallowed tail (must downgrade)
-
-```
-probe family:  call_deletion
-expression:    self.persist(amount * 9).ok();
-test:          assert_eq!(ledger.balance(), 145);
-
-Before fix:    exposed / confidence 1.0
-After fix:     propagation_unknown / confidence 0.87
-```
-
-### B — Returned call (must stay)
-
-```
-probe family:  side_effect / call_deletion
-expression:    return self.persist(amount * 9);
-test:          assert!(ledger.apply(5).is_ok());
-
-Before fix:    weakly_exposed / confidence N
-After fix:     weakly_exposed / confidence N   (unchanged — return is not swallowed)
-```
-
-### C — stdout macro (must downgrade)
-
-```
-probe family:  side_effect
-expression:    println!("amount is {}", amount * 9);
-test:          report(5);  // smoke only
-
-Before fix:    exposed / confidence N
-After fix:     propagation_unknown / confidence N
-```
-
-### C — log macro (must stay)
-
-```
-probe family:  side_effect
-expression:    log::info!("amount is {}", amount * 9);
-test:          report(5);  // smoke only
-
-Before fix:    reachable_unrevealed / propagation yes
-After fix:     reachable_unrevealed / propagation yes   (unchanged — log:: is capturable)
-```
+1. A, wildcard discard, must downgrade. Probe family `call_deletion`,
+   expression `let _ = compute_fee(amount * 9);`, test
+   `assert_eq!(process(42), 42);`. Before the fix: `exposed` / confidence 1.0.
+   After: `infection_unknown` / confidence 0.74.
+2. A, named binding, must stay exposed. Probe family `call_deletion`,
+   expression `let result = helper(amount * 9);`, test
+   `assert_eq!(score(10), 10);`. Before and after the fix: `exposed` /
+   confidence 1.0 (unchanged: the named binding is still used).
+3. B, swallowed tail, must downgrade. Probe family `call_deletion`,
+   expression `self.persist(amount * 9).ok();`, test
+   `assert_eq!(ledger.balance(), 145);`. Before the fix: `exposed` /
+   confidence 1.0. After: `propagation_unknown` / confidence 0.87.
+4. B, returned call, must stay. Probe family `side_effect` / `call_deletion`,
+   expression `return self.persist(amount * 9);`, test
+   `assert!(ledger.apply(5).is_ok());`. Before and after the fix:
+   `weakly_exposed` / confidence N (unchanged: the return is not swallowed).
+5. C, stdout macro, must downgrade. Probe family `side_effect`, expression
+   `println!("amount is {}", amount * 9);`, test `report(5);` (smoke only).
+   Before the fix: `exposed` / confidence N. After: `propagation_unknown` /
+   confidence N.
+6. C, log macro, must stay. Probe family `side_effect`, expression
+   `log::info!("amount is {}", amount * 9);`, test `report(5);` (smoke only).
+   Before and after the fix: `reachable_unrevealed` / propagation yes
+   (unchanged: `log::` is capturable).
 
 ## Required Evidence
 

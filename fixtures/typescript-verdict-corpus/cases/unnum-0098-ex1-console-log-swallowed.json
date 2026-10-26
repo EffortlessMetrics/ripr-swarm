@@ -1,0 +1,47 @@
+{
+  "case_id": "unnum-0098-ex1-console-log-swallowed",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0098-ex1-console-log-swallowed.diff",
+  "anchor": {
+    "file": "src/auditedLog.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect_only",
+  "test_shape": "vitest_expect_tobe_on_unchanged_return",
+  "hard_case": "the changed line only feeds `console.log`; both assertions pin the unchanged return value",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "console.log(\"audit\", amount * 8);",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The changed statement is `console.log(\"audit\", amount * 9)`, a side effect nothing reads. Both tests assert only `chargeAudited`'s return value, which the edit does not touch, so a strong oracle on another value must not credit the line. RIPR-SPEC-0098 example 1 (before and after): the pre-guard reading was `exposed`; the guarded reading is `weakly_exposed` with `propagation_unknown`.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0098#1"
+  ]
+}

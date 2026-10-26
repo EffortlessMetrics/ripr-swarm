@@ -92,7 +92,7 @@ pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> 
         PolicyReportSpec {
             report_file: "capability-producers.md",
             check: "check-capability-producers",
-            why_it_matters: "A new language, adapter or Cargo language feature without a capability registration would read as `not_proven` only by accident of absence. When this check is run it reports an unregistered producer as a failure; it is not wired into any required lane, so it does not by itself stop a merge.",
+            why_it_matters: "A new language, adapter or Cargo language feature without a capability registration would read as `not_proven` only by accident of absence. It reports an unregistered producer as a failure and is hosted in rust-gates.yml (and the docs-gate for docs/specs changes), so it stops a merge.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Add the language to `LanguageId::ALL` and register at least one cell in `domain/language_capability.rs` with an explicit state (`not_proven` is a valid disposition).",

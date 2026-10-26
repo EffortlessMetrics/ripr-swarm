@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-equal-arm-ladder-multiline",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for #10134 (equal-valued arms of a rustfmt-layout branch chain)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "d84888e278d89433bbbbbe452eff402ba51766d1df4cbd89e7af596e4ab84fe9"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "350e872abe2da82de4fe499c0762598765591c6376e702d304d8036af81dd357"
+    }
+  ]
+}

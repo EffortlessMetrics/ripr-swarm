@@ -324,3 +324,87 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_controls (28)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (29)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (30)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (31)
+
+Reason:
+RIPR-SPEC-0164: alternatives, char scrutinee and literal-tail callee resolve; computed-value and char probes read weakly_exposed (tests pin one row)
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (32)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (33)
+
+Reason:
+RIPR-SPEC-0164: guard-variant probe moves infection_unknown -> weakly_exposed because an exactly evaluable match guard (spec-b-0164-guard-arm) now resolves the helper operand; the bare-identifier variant stays fail-closed; mirrors the #10196 literal-callee/char moves
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (34)
+
+Reason:
+RIPR-SPEC-0164: guard-variant probe credits on the combined tree; union-resolve the pending-entry reason with main's #10426 evidence-legend rewording
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

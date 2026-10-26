@@ -561,6 +561,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
         finding.missing.push(
             "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: blocked"
@@ -650,6 +652,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let Some(actionability) = preview_actionability_for(&finding) else {

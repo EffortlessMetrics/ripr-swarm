@@ -10,10 +10,13 @@ Linked issues:
 
 - First-run-trust / P3 Rust reachability lane: distinguish integration-test
   public-API reach limits from generic transitive helper limits.
+- #9982: a workspace facade crate that re-exports the owner's crate and carries
+  the tests reads as a definite `no_static_path`; name the limit instead, and
+  stop an unrelated doctest from relating through a shared name token.
 
 Linked PRs:
 
-- This PR
+- #9995 (facade re-export trigger, #9982)
 
 Support-tier impact:
 
@@ -68,6 +71,62 @@ witnessing test path:
 2. Otherwise, keep the existing generic
    `StaticLimitKind::RustTransitiveReachUnresolved`.
 
+#### Second trigger: workspace facade re-export (#9982)
+
+After every witness above is absent, the same limitation kind is chosen for a
+workspace facade crate that re-exports the owner's crate and carries the tests,
+so a test calls the owner through `facade::Item` and never spells the owner or
+its crate. All of these must hold, read from manifests and source, never from
+names alone:
+
+1. The path-dependency graph is `Complete`.
+2. The facade package has a forward **normal** `[dependencies]` edge to the
+   owner's package (a dev-dependency edge is not visible to its library).
+3. The facade's `src/lib.rs` has a crate-root, unconditional, non-macro
+   `pub use` of the owner's crate (dependency name, `-` folded to `_`) that
+   covers the owner: the whole crate (`inner::*`, `inner`, `inner as x`,
+   `inner::{self}`), or a path that is a prefix of the owner's public path
+   (its module chain, then the free function, or for a method its enclosing
+   type), or a glob or `self` under such a prefix. A path that leaves the
+   owner's (`inner::sub::Other`, `inner::bump` for a method of `Counter`) does
+   not cover it. A `pub use` inside a module,
+   function, impl or macro body, behind `#[cfg]`/`#[cfg_attr]` or any
+   attribute other than `doc`, `allow`, `expect`, `deprecated`, `must_use`,
+   or restricted (`pub(crate)`), does not count.
+4. The owner is an unrestricted `pub` free function at module depth zero, or
+   an unrestricted `pub` method of a `pub struct`/`enum`/`union` declared at
+   the root of a library file with the `impl` at that file's root (the
+   impl must sit in the type's own file, not nested in a module), and every
+   module on the way is declared
+   `pub mod` at the root of its parent file. A private, `pub(crate)`,
+   trait-method, nested or unlocatable owner, a private module or type, or an
+   owner in `src/main.rs` or `src/bin/*` never fires.
+5. The facade crate's name is read from its manifest (`[lib] name`, else
+   `[package] name`, `-` folded to `_`), never from the directory name; an
+   unreadable manifest, a non-default `[lib] path`, or a std-crate name does
+   not fire.
+6. An integration test file of the facade package names the facade crate as a
+   path root (`facade::...`) outside comments and strings and ties to the
+   owner: it globs the facade (`use facade::*;`, `use facade::{.., *}`) or
+   mentions the owner's name or its enclosing type as a whole word. Naming
+   only an unrelated facade item (`facade::VERSION`) does not tie. (A test
+   that spells the owner's name is also a related test of it, which is a
+   different finding class.)
+
+The finding keeps `no_static_path`, pushes `transitive_reach_unresolved`, and
+names the test as an inspection pointer. The re-export is not resolved and no
+item is matched beyond the names in (3): the pointer says only that the test
+names the facade crate and the facade's root `pub use` names the owner's crate.
+
+#### Doctest relation guard (#9982)
+
+A doctest is named for the item it documents and runs only that item's
+example. Outside the changed owner's own file, a doctest is related to a change
+only through a call to the owner, a helper-chain or seam-callee route, an
+equality dispatch, or an assertion reference. Sharing only a name token with the
+changed expression (`ready` from `Poll::Ready`) no longer relates it. Every
+other relation is unchanged.
+
 ### When found
 
 The existing RIPR-SPEC-0114/0115 evidence remains unchanged:
@@ -90,6 +149,11 @@ origin witnesses.
   expansion, or type identity from the path kind.
 - If the witness path is not recognized as an integration test path, keep the
   existing generic `rust_transitive_reach_unresolved` kind.
+- The facade trigger fails closed on anything it cannot prove: a missing,
+  dev-only or limited graph edge, a nested, cfg-gated, macro or non-root
+  `pub use`, a list that does not name the owner, a non-`pub` owner, a manifest
+  that cannot name the crate, or a facade test that does not name the facade.
+  It only ever withholds a repair gap; it never adds a related test.
 
 ## Wire Format
 
@@ -124,7 +188,15 @@ origin witnesses.
 3. **Pinned external semver launch point**: the semver boundary patch emits
    `rust_integration_public_api_path_unresolved`, discloses the exact witness
    and limitation detail, and stays non-actionable.
-4. **Non-integration helper chain**: a transitive witness from ordinary Rust
+4. **Facade re-export**: `facade` depends on `inner`, has `pub use inner::*;`
+   at its crate root, and `facade/tests/t.rs` has `use facade::*;` (a test that
+   only has `use facade::Ext;` does not tie to the owner and does not fire). A changed
+   `pub fn` of `inner` reads `no_static_path` plus
+   `rust_integration_public_api_path_unresolved`, with no related test and no
+   repair gap. A dev-dependency-only edge, a cfg-gated or nested `pub use`, a
+   braced list not naming the owner, or a private owner keeps the plain
+   `no_static_path`.
+5. **Non-integration helper chain**: a transitive witness from ordinary Rust
    source keeps `rust_transitive_reach_unresolved`.
 
 ## Required Evidence
@@ -148,6 +220,29 @@ origin witnesses.
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_integration_public_api_static_limit_kind`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_reexport_with_a_test_naming_the_facade_names_the_limit_and_keeps_the_class`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_cover_the_owner_fire`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_do_not_provably_cover_the_owner_are_unchanged`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::package_name_comes_from_the_manifest_not_the_directory`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::absent_or_dev_only_dependency_edge_keeps_the_definite_result`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::private_or_restricted_owner_never_fires`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::limited_graph_keeps_the_definite_result`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::test_in_the_owners_own_package_naming_the_facade_does_not_count`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::paths_must_be_a_prefix_of_the_owners_path`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::only_crate_root_unconditional_public_uses_count`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::baseline_without_a_tying_facade_test_keeps_the_repair_gap`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::narrowed_index_scopes_still_name_the_limit`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_tests_tie_to_the_owner_by_glob_or_type`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::inherent_method_owners_are_named_by_their_type_not_the_method`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::owner_module_chain_must_be_public`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::binary_target_owner_never_fires`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::test_that_never_names_the_facade_crate_is_unchanged`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_sharing_a_name_token_is_not_related`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_in_the_owners_own_file_stays_related`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_that_calls_the_owner_stays_related`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::whole_crate_reexports_cover_any_owner`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::facade_tests_tie_by_owner_name_type_or_glob`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::pub_items_need_pub_attribute_free_declarations`
 - `fixtures/rust_transitive_reach_positive/expected/check.json`
 - `fixtures/rust_transitive_reach_test_helper_chain/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
@@ -159,6 +254,8 @@ origin witnesses.
 |---|---|
 | Static limit enum and text | `crates/ripr/src/domain/language.rs` |
 | Integration-vs-generic selection | `crates/ripr/src/analysis/language/rust/mod.rs` |
+| Facade re-export witness (#9982) | `crates/ripr/src/analysis/classify/facade_reach.rs` |
+| Doctest name-token guard (#9982) | `crates/ripr/src/analysis/classify/related_tests.rs` |
 | Path predicate reused by selection | `crates/ripr/src/analysis/rust_index.rs` |
 | LSP gap-artifact known-kind validation | `crates/ripr/src/lsp/gap_artifacts.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |

@@ -394,3 +394,39 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unwrap_err_generic_is_err (34)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless unwrap_err_generic_is_err --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_generic_is_err (35)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless unwrap_err_generic_is_err --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_generic_is_err (36)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless unwrap_err_generic_is_err --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

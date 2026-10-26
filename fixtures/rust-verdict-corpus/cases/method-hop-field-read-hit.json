@@ -33,12 +33,12 @@
       "silent"
     ]
   },
-  "reasoning": "`check_hit` calls `size.hit_as(si)`, which calls `hit(self.0, si)`; the test passes Size::kib(1) with si true, so bytes is 1_024 and `unit` is 1_024. The boundary row is now read through the method hop (infection yes), but the helper's assertion observes the method's result and no forwarding rule pairs it with the owner's, so the verdict abstains at propagation. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "reasoning": "`check_hit` calls `size.hit_as(si)`, which calls `hit(self.0, si)`; the test passes Size::kib(1) with si true, so bytes is 1_024 and `unit` is 1_024. The boundary row is read through the method hop (infection yes) and the helper's single assertion compares the method's result, which hands the owner's result back unchanged, so the exact pin pairs with the boundary row and the verdict is exposed. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "da433a6",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "propagation_unknown"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   },

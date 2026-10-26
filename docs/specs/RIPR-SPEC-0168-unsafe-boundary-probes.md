@@ -74,9 +74,9 @@ construction, so the classifier cannot promote reach plus an oracle into
 
 ## Acceptance Examples
 
-- The `unsafe_boundary_probe` fixture: a changed loop body inside an
-  `unsafe {}` block produces the boundary probe at the changed line and keeps
-  the ordinary value probes for the surrounding function.
+1. The `unsafe_boundary_probe` fixture: a changed loop body inside an
+   `unsafe {}` block produces the boundary probe at the changed line and keeps
+   the ordinary value probes for the surrounding function.
 
 ## Test Mapping
 

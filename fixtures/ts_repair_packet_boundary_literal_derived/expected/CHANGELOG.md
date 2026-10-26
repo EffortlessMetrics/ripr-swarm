@@ -267,3 +267,63 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (23)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (24)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (25)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (26)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (27)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

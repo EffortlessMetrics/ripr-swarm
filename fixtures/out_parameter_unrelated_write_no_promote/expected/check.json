@@ -1,0 +1,97 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/out_parameter_unrelated_write_no_promote/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:59f9dc3a7a6590e2fd776321bf1bbf38ad423b6a7756fcf4f47ffb48534e041a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:4c18eee1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Formatter::format:call_deletion:call_deletion:other.push_str_out.len_.to_string",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Formatter::format:call_deletion:call_deletion:other.push_str_out.len_.to_string",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Formatter::format",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "other.push_str_out.len_.to_string"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:4c18eee1",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "other.push_str(&out.len().to_string())"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach format: writes_x"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: other.push_str(&out.len().to_string())"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach format: writes_x", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: other.push_str(&out.len().to_string())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: other.push_str(&out.len().to_string()) (line 6)", "related test src/lib.rs:15 writes_x uses strong exact value oracle: assert_eq!(a, \"x\");", "source assertion argument value \"x\" at line 19"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":"other.push_str(&out.len().to_string())","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence call effect: other.push_str(&out.len().to_string())", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach format: writes_x"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "19": "assert_eq!(a, \"x\");"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 19,
+            "value": "\"x\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 19,
+          "value": "\"x\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "writes_x",
+          "file": "src/lib.rs",
+          "line": 15,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(a, \"x\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

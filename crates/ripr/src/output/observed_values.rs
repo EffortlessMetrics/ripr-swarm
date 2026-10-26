@@ -13,16 +13,51 @@
 //! full vector.
 
 use crate::domain::{ValueContext, ValueFact};
+use crate::value_origins::LocatedValueFact;
+use std::path::Path;
+
+/// The bounded projection reads the same source fields from a public DTO or
+/// an internal located fact. It returns the original references, retaining
+/// origin metadata inside the internal classifier/cache path.
+pub(crate) trait SourceValue {
+    fn line(&self) -> usize;
+    fn value(&self) -> &str;
+    fn context(&self) -> &ValueContext;
+}
+
+impl SourceValue for ValueFact {
+    fn line(&self) -> usize {
+        self.line
+    }
+    fn value(&self) -> &str {
+        &self.value
+    }
+    fn context(&self) -> &ValueContext {
+        &self.context
+    }
+}
+
+impl SourceValue for LocatedValueFact {
+    fn line(&self) -> usize {
+        self.line
+    }
+    fn value(&self) -> &str {
+        &self.value
+    }
+    fn context(&self) -> &ValueContext {
+        &self.context
+    }
+}
 
 /// Describe a retained source value without claiming assertion execution or
 /// admitted observation. ValueFact also represents refused assertion source
 /// and bounded static value transfer; its presence is not an oracle witness.
-pub(crate) fn source_value_evidence_line(fact: &ValueFact) -> String {
+pub(crate) fn source_value_evidence_line(fact: &impl SourceValue) -> String {
     format!(
         "source {} value {} at line {}",
-        fact.context.as_str().replace('_', " "),
-        fact.value,
-        fact.line
+        fact.context().as_str().replace('_', " "),
+        fact.value(),
+        fact.line()
     )
 }
 
@@ -39,11 +74,14 @@ pub(crate) fn human_source_value_evidence_line(fact: &ValueFact) -> String {
 }
 
 /// The human-output spelling of [`source_value_evidence_line`]: the same
-/// sentence, with the test file named (`path:line`) when the producer recorded
+/// sentence, with the test file named (`path:line`) when the producer context recorded
 /// it. The value is read from a related test, which is usually not in the diff,
 /// so a bare line number cannot be found. Check JSON keeps the bare spelling.
-pub(crate) fn source_value_evidence_line_with_file(fact: &ValueFact) -> String {
-    let Some(file) = &fact.file else {
+pub(crate) fn source_value_evidence_line_with_file(
+    fact: &ValueFact,
+    file: Option<&Path>,
+) -> String {
+    let Some(file) = file else {
         return human_source_value_evidence_line(fact);
     };
     // A multi-line string value would otherwise break the one-row layout of
@@ -69,19 +107,19 @@ pub(crate) const MAX_OBSERVED_VALUES_PER_FINDING: usize = 32;
 /// rows, builder calls, enum variants, returns) ahead of bare assertion
 /// arguments, then restores the original order so the output stays stable
 /// and reads like the uncapped list.
-pub(crate) fn bounded_observed_values(facts: &[ValueFact]) -> Vec<&ValueFact> {
+pub(crate) fn bounded_observed_values<T: SourceValue>(facts: &[T]) -> Vec<&T> {
     if facts.len() <= MAX_OBSERVED_VALUES_PER_FINDING {
         return facts.iter().collect();
     }
     let mut ranked = facts.iter().enumerate().collect::<Vec<_>>();
-    ranked.sort_by_key(|(index, fact)| (context_rank(&fact.context), *index));
+    ranked.sort_by_key(|(index, fact)| (context_rank(fact.context()), *index));
     ranked.truncate(MAX_OBSERVED_VALUES_PER_FINDING);
     ranked.sort_by_key(|(index, _)| *index);
     ranked.into_iter().map(|(_, fact)| fact).collect()
 }
 
 /// The pre-cap count to disclose, or `None` when nothing was dropped.
-pub(crate) fn elided_observed_values_total(facts: &[ValueFact]) -> Option<usize> {
+pub(crate) fn elided_observed_values_total<T>(facts: &[T]) -> Option<usize> {
     (facts.len() > MAX_OBSERVED_VALUES_PER_FINDING).then_some(facts.len())
 }
 
@@ -105,7 +143,6 @@ mod tests {
 
     fn fact(line: usize, context: ValueContext) -> ValueFact {
         ValueFact {
-            file: None,
             line,
             text: format!("assert_eq!(f({line}), {line});"),
             value: line.to_string(),
@@ -118,10 +155,10 @@ mod tests {
         // #9165: a snapshot-style string literal spans lines; the human row
         // collapses it, and the JSON spelling still carries the raw value.
         let mut multi = fact(44, ValueContext::AssertionArgument);
-        multi.file = Some(std::path::PathBuf::from("tests/test_expr.rs"));
+        let multi_file = std::path::PathBuf::from("tests/test_expr.rs");
         multi.value = "\"\n    Expr::Range {\n        limits: HalfOpen,\n    }\n    \"".to_string();
 
-        let human = source_value_evidence_line_with_file(&multi);
+        let human = source_value_evidence_line_with_file(&multi, Some(&multi_file));
         assert!(!human.contains('\n'), "{human:?}");
         assert_eq!(
             human,
@@ -130,17 +167,16 @@ mod tests {
         assert!(source_value_evidence_line(&multi).contains('\n'));
 
         // Without a recorded file the human row is still one line.
-        multi.file = None;
-        let bare = source_value_evidence_line_with_file(&multi);
+        let bare = source_value_evidence_line_with_file(&multi, None);
         assert!(!bare.contains('\n'), "{bare:?}");
         assert!(bare.ends_with(" at line 44"), "{bare:?}");
 
         // Negative control: a single-line value is unchanged.
         let mut single = fact(7, ValueContext::AssertionArgument);
-        single.file = Some(std::path::PathBuf::from("tests/pricing.rs"));
+        let single_file = std::path::PathBuf::from("tests/pricing.rs");
         single.value = "\"a  b\"".to_string();
         assert_eq!(
-            source_value_evidence_line_with_file(&single),
+            source_value_evidence_line_with_file(&single, Some(&single_file)),
             "source assertion argument value \"a  b\" at tests/pricing.rs:7"
         );
     }

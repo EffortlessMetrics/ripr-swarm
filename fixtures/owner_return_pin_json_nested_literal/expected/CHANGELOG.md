@@ -109,3 +109,51 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (10)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (11)
+
+Reason:
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (12)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (13)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

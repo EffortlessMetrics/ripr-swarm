@@ -434,6 +434,9 @@ fn inspect_repair_attempts(
         return Some(Vec::new());
     }
     let current_head = crate::agent::artifact::current_git_head(root).ok();
+    // Finished attempts re-read one worktree; share a capture per policy for
+    // this call only (#9823).
+    let _capture_scope = crate::edit_cage::ReevaluationMemoScope::begin();
     let mut attempts = Vec::new();
     let mut trusted = true;
     for entry in entries {
@@ -673,8 +676,9 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(crate::agent::human_after_phase_follow_up(
+                        Some(crate::agent::human_after_phase_follow_up_for_display(
                             &manifest.next_command,
+                            root_display,
                         )),
                     ),
                 ),
@@ -1543,10 +1547,30 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
     })
 }
 
-fn pilot_python_repair_card_message(card: &PilotPythonCard, root_display: &str) -> String {
+fn pilot_python_repair_card_message(
+    card: &PilotPythonCard,
+    root_display: &str,
+    gap_start: Option<&str>,
+) -> String {
     let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
         message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+    }
+    // `ripr check` admits a gap-bound start for its selected Python finding
+    // (#10373), so the warning must not say `agent repair` cannot run.
+    if let Some(start) = gap_start {
+        message.push_str(&format!(
+            "; `ripr check --root {root}` prints the gap-bound start `{start}` for its selected finding, which runs the delegated before/after loop for that gap. Run that start, or follow the card from `ripr first-pr --root {root}` by hand",
+            root = shell_arg(root_display)
+        ));
+        if let Some(verify) = &card.verify_command {
+            message.push_str(&format!(" (`{verify}`)"));
+        }
+        message.push_str(&format!(
+            ". If the workspace changed since that run, rerun `{}`",
+            pilot_select_command(root_display)
+        ));
+        return message;
     }
     message.push_str(&format!(
         "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
@@ -1876,7 +1900,44 @@ fn routed_code_phrase(languages: &[String]) -> String {
     }
 }
 
-fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) -> String {
+/// The gap-bound `ripr agent repair` start the next routed `ripr check` would
+/// print, or `None` (#10001). Status consults the same admission check uses
+/// ([`default_check_gap_start`], which ends in the shared agent-packet
+/// validator) rather than assuming the route offers no start; only a
+/// TypeScript-family or Python route can be admitted (#10373), and anything
+/// undecidable keeps
+/// the "offers no start" wording (fail-closed).
+///
+/// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
+fn pilot_routed_gap_start(
+    root: &Path,
+    root_display: &str,
+    routes: &PilotCheckRoutes,
+) -> Option<String> {
+    // No enabled route command means the warning never names `ripr check`
+    // as a route, so no start claim is made and no analysis is run.
+    if routes.commands.is_empty()
+        || !routes
+            .enabled_languages
+            .iter()
+            .any(|language| matches!(language.as_str(), "typescript" | "javascript" | "python"))
+    {
+        return None;
+    }
+    let route = crate::app::gap_bound_repair::default_check_gap_start(root)?;
+    Some(crate::app::gap_bound_repair::gap_bound_start_command(
+        root_display,
+        "",
+        &route.gap_id,
+        &route.base,
+    ))
+}
+
+fn pilot_routed_to_check_message(
+    routes: &PilotCheckRoutes,
+    root_display: &str,
+    gap_start: Option<&str>,
+) -> String {
     let mut message =
         "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
     if !routes.commands.is_empty() {
@@ -1886,10 +1947,17 @@ fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) 
             .map(|command| format!("`{command}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        message.push_str(&format!(
-            ": it routed {} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
-            routed_code_phrase(&routes.enabled_languages)
-        ));
+        let code = routed_code_phrase(&routes.enabled_languages);
+        match gap_start {
+            // `ripr check` admits a gap-bound start for its selected finding,
+            // so the warning must not say it offers none (#10001).
+            Some(start) => message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start `{start}` for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+            )),
+            None => message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
+            )),
+        }
     }
     if !routes.disabled_config_languages.is_empty() {
         let entries = routes
@@ -1962,7 +2030,11 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_routed_to_check_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_routed_to_check_message(&routes, root_display),
+                message: pilot_routed_to_check_message(
+                    &routes,
+                    root_display,
+                    pilot_routed_gap_start(root, root_display, &routes).as_deref(),
+                ),
             });
             // #5205/#5248 review: a packet can route preview files to check
             // AND exclude Rust (Rust disabled while preview files are
@@ -1981,7 +2053,20 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_python_repair_card_no_agent_repair".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_python_repair_card_message(&card, root_display),
+                message: pilot_python_repair_card_message(
+                    &card,
+                    root_display,
+                    crate::app::gap_bound_repair::default_check_gap_start(root)
+                        .map(|route| {
+                            crate::app::gap_bound_repair::gap_bound_start_command(
+                                root_display,
+                                "",
+                                &route.gap_id,
+                                &route.base,
+                            )
+                        })
+                        .as_deref(),
+                ),
             });
             // #5205/#5248 review: a Python card and a Rust exclusion
             // coexist (Python-only workspace with Rust files present).
@@ -2627,19 +2712,24 @@ pub(crate) struct SelectedAttemptStatusReading {
 /// status and durable MCP reads. HEAD applicability, retained receipt state
 /// and the exact next/recovery action are composed here; adapters never use
 /// the stored after command as a substitute for this decision.
+/// `command_root` is the rendered `--root` spelling for every next-action,
+/// recovery, and withheld-restart string this reading produces. The CLI
+/// passes the bound host root ([`bound_root`] of the user's argument) so its
+/// paste-and-run display names the selected repository; bounded projections
+/// (MCP, ADR 0022) pass the portable root `.` because they never execute the
+/// display and must not leak the host-local checkout path.
 pub(crate) fn selected_attempt_status_reading(
     root: &Path,
-    root_argument: &Path,
+    command_root: &str,
     store_locator: &str,
     store_flag: &str,
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
-    let command_root = bound_root(&root_path_display(root_argument));
     let workflow_receipt = read_workflow_receipt(root);
     let gate = RepairStartGate::new(root);
     let view = status_repair_attempt(
-        &command_root,
+        command_root,
         store_locator,
         store_flag,
         manifest,
@@ -2657,7 +2747,7 @@ pub(crate) fn selected_attempt_status_reading(
     // admits the seam; otherwise status names the by-hand work instead.
     let restart_withheld = if restart_recommended_for(status_class, &view) {
         gate.check(&manifest.seam_id)
-            .map(|refusal| repair_start_withheld_note(&command_root, &manifest.seam_id, &refusal))
+            .map(|refusal| repair_start_withheld_note(command_root, &manifest.seam_id, &refusal))
     } else {
         None
     };
@@ -2667,7 +2757,7 @@ pub(crate) fn selected_attempt_status_reading(
         // reset-and-rerun-after recovery route.
         view.diverged_recovery.as_ref().map(|recovery| {
             diverged_recovery_command(
-                &command_root,
+                command_root,
                 store_flag,
                 manifest.repair_attempt_id.as_str(),
                 &manifest_label,
@@ -2679,7 +2769,7 @@ pub(crate) fn selected_attempt_status_reading(
             manifest,
             &view,
             status_class,
-            &command_root,
+            command_root,
             &manifest_label,
             store_flag,
         )
@@ -2688,7 +2778,7 @@ pub(crate) fn selected_attempt_status_reading(
         manifest,
         &view,
         status_class,
-        &command_root,
+        command_root,
         &manifest_label,
         store_flag,
         withheld,
@@ -2749,6 +2839,7 @@ pub(crate) fn build_agent_attempt_status(
     // the invocation spelling, so a command pasted from any working directory
     // resumes this attempt. The report's `root` field keeps the user's
     // spelling.
+    let command_root = bound_root(&root_path_display(root_argument));
     let SelectedAttemptStatusReading {
         view,
         status_class,
@@ -2758,7 +2849,7 @@ pub(crate) fn build_agent_attempt_status(
         restart_withheld,
     } = selected_attempt_status_reading(
         root,
-        root_argument,
+        &command_root,
         resolved.locator(),
         &store_flag,
         &manifest,
@@ -4253,7 +4344,14 @@ mod tests {
             if attempt_routes.contains("--seam-id") {
                 return Err(format!("attempt routes leak --seam-id:\n{attempt_routes}"));
             }
-            if !inventory.contains(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1"))) {
+            // The inventory is JSON text, so match the JSON-escaped spelling:
+            // on Windows `shell_arg` double-quotes `HEAD~1`, which JSON
+            // writes as `\"HEAD~1\"` (#9272).
+            let gap_start =
+                serde_json::to_string(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1")))
+                    .map_err(|error| error.to_string())?;
+            let gap_start = gap_start.trim_matches('"');
+            if !inventory.contains(gap_start) {
                 return Err(format!("inventory status names no gap start:\n{inventory}"));
             }
             // The seam-inventory gate has no verdict on a gap subject, while

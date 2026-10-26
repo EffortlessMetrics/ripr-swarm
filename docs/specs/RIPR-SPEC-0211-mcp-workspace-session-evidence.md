@@ -75,6 +75,11 @@ official SDK transport:
   correlated `-32602` Invalid Params error naming the field before session
   lookup. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
+- The `tools/call` `arguments` member is also omittable, but when present
+  must be an object. Explicit null is Invalid Params (`-32602`), including
+  for no-argument tools and `ripr_refresh`, before tool dispatch. Both
+  lifecycles retain metadata and request-ID validation precedence; valid
+  omission and an empty object keep their existing tool-specific behavior.
 - The catalog lists (`tools/list`, `prompts/list`, `resources/list`,
   `resources/templates/list`) are static and complete: the server returns
   every entry in one response and never issues a `nextCursor`. A
@@ -82,8 +87,11 @@ official SDK transport:
   instead of being accepted and silently ignored (which would let an agent
   believe paging worked while it re-read page one), it fails closed with a
   `-32602` Invalid Params error naming `cursor` and the recovery — drop the
-  argument (#9895). The SDK's default `prompts/list` answers an empty
-  catalog, so the override pins the same rule there instead of inheriting
+  argument (#9895). Every non-null cursor is refused, including malformed
+  boolean, number, array, or object values that the SDK optional-param decoder
+  would otherwise discard. Null retains the SDK omission semantics. The raw
+  input guard preserves metadata, protocol and request-ID validation precedence.
+  The SDK's default `prompts/list` answers an empty catalog, so the override pins the same rule there instead of inheriting
   the silent drop. Tool-level paging stays on `ripr_list_gaps`'s explicit
   `offset`/`limit`, which is disclosed through `page`.
 - Pre-initialize typed-shape violations recover on the wire (#5267): a
@@ -107,8 +115,19 @@ official SDK transport:
   — and the refresh settles on the same session with the typed failure in
   its `attempt` block (a completed document, `isError` false per the #5254
   commit contract).
-  A repeated signal restores native termination as the escape; process
-  exit itself stays transport-owned (stdin EOF). On non-Unix targets the
+  A sequential repeated signal before attempt settlement restores native
+  termination as the escape; process exit itself stays transport-owned
+  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
+  a signal observed during final projection converts an otherwise successful
+  result to the typed cancellation, and a signal after that boundary belongs
+  to the next attempt. Configuration refusals also settle the pending signal.
+  Later refreshes remain usable. Installation is serialized and idempotent.
+  Only MCP attempt tokens opt into Unix process groups; captured analysis
+  workers retain that choice and other callers preserve their prepared groups.
+  Cleanup observes leader exit without reaping, signals the owned group, then
+  reaps and disarms further group signals. This also settles pipe holders when
+  a primary exits early. Targets lacking the safe non-reaping observation
+  refuse contained spawn before creating a child. On non-Unix targets the
   install is a no-op: containment there is the job-object ownership in
   `process_owner`, whose std API cannot express kill-on-job-close, so an
   abrupt external termination can still outlive a git child (recorded
@@ -136,6 +155,27 @@ official SDK transport:
   the committed
   snapshot's typed `AnalysisOutcome`, and profile/support facts. No
   evidence detail is returned.
+- The session block additively carries `language_completeness`
+  (`[{language, status}]`, #6475): one row per language the committed
+  snapshot's analysis recorded, in canonical label order, with the closed
+  status spelling the producer's aggregate owns (`complete`,
+  `complete_zero`, `partial`, `unavailable`, `invalid`, `failed`,
+  `unsupported`, `not_selected`, `no_current_scope`). It is read from the
+  producer's crate-private completeness view bound at commit time, not
+  re-derived from limitation kinds. It is emitted only when a committed
+  snapshot carries a view. The presence is intentionally conditional: the
+  field appears only with a committed view, and omission preserves the
+  previous shape only when there is no committed view (a committed snapshot's
+  status now carries it). The `ripr-mcp-session-v1` version is kept, as for
+  the conditional `base_revision`; the output schema declares the property
+  optional. Supported readers are those that validate against the advertised
+  `outputSchema` (`tools/list`) and readers that tolerate unknown keys; a
+  reader pinned to a frozen strict-closed session shape is outside that
+  support (MCP behavior is Unstable in `docs/SEMVER.md`). No deployed-client
+  failure is claimed. The `ripr://workspace/status` resource renders the same
+  session block and carries the field too; the snapshot, gap and other
+  evidence resources do not. The field is not part of the snapshot identity,
+  and no existing field changes.
 - `ripr_refresh` runs one bounded static analysis through the shared
   `app::check_workspace` authority on the committed default-branch diff
   and commits the completed snapshot. Initialize/discover instructions,
@@ -236,10 +276,14 @@ official SDK transport:
   route pins the snapshot identity,
   filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
-  mixing snapshots. Only a listing that cannot fit even one page — for
-  example an omission disclosure alone over the ceiling — fails closed
-  with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
-  identity route.
+  mixing snapshots. Only a listing that cannot fit even one page fails
+  closed with `result_too_large`: when the echoed filter value itself is
+  what pushes the shell past the bound — the same shell with an empty
+  filter echo fits — the refusal names the filter as the shrinkable bound,
+  because the snapshot identity route cannot fix a filter-driven overflow;
+  for every other non-pageable disclosure (for example an omission
+  disclosure alone over the ceiling) the refusal names
+  `ripr://snapshot/{snapshot_id}` as the identity route (#9895).
 - Every served file path renders relative to the analyzed workspace
   root, so a file under the root never appears as an absolute host path
   and the snapshot identity stays portable across checkouts (#5254
@@ -328,6 +372,22 @@ Recognized resource routes keep their existing missing/stale-identity
 errors rather than receiving this generic route list. Listing a template
 is not evidence that a resource with a particular identity exists.
 
+### Resource URI trailing-slash tolerance (#9895)
+
+Every id-bearing resource route — `ripr://snapshot/{snapshot_id}`,
+`ripr://gap/{canonical_id}`, `ripr://repair-attempt/{attempt_id}`,
+`ripr://receipt/{receipt_id}`, `ripr://repair-card/{canonical_id}`, and
+the well-known `ripr://workspace/status` — normalizes exactly one trailing
+slash before the id capture: `ripr://gap/{id}/` addresses the same item
+as `ripr://gap/{id}`, and the read returns the identical document. Clients
+— especially LLMs hand-assembling `ripr://` links — not uncommonly append
+one slash. A second trailing slash is not a normalization artifact and
+still misses: `ripr://gap/{id}//` fails closed instead of resolving to a
+near-miss id, as does a slash that would leave the id empty
+(`ripr://gap//`). The single-segment grammars (`snapshot`, `repair-attempt`,
+`receipt`) stay strict inside the id, and this tolerance never turns an
+unknown route into a recognized one.
+
 ## Required Evidence
 
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
@@ -366,9 +426,11 @@ is not evidence that a resource with a particular identity exists.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
-  (#7145). Resource payloads are pretty-printed while tool payloads are
-  compact by design, so the control compares parsed documents, not
-  serialized bytes.
+  (#7145), and the #9895 trailing-slash tolerance: one appended slash on
+  the snapshot, gap, and repair-card URIs returns the identical document,
+  while a second slash fails closed. Resource payloads are pretty-printed
+  while tool payloads are compact by design, so the control compares
+  parsed documents, not serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
   receive a correlated `-32602` answer, the session then completes a normal
@@ -436,6 +498,18 @@ is not evidence that a resource with a particular identity exists.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`
+  and `status_without_a_view_keeps_the_unchanged_shape` — literal
+  `language_completeness` rows and absence without a view.
+  `every_emitted_session_key_is_declared_by_the_status_schema` is a
+  structural schema-alignment check only (emitted keys are declared, the
+  property is optional, status-enum membership), not a full JSON-Schema
+  validation.
+- `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
+  — separate real-refresh evidence: both the status tool and the
+  `ripr://workspace/status` resource serve the producer's rows (rust, plus
+  python when compiled and enabled). Dropping the commit-time view binding in
+  `run_check` fails it, for both feature profiles.
 - `crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport`
   — literal complete recovery prose and arrays, retained recognized-route
   refusal, then valid status recovery on the same session.
@@ -474,7 +548,11 @@ is not evidence that a resource with a particular identity exists.
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the
   raw-document ceiling, raw-document overflow, the `file` and `language` filters,
-  typed refusals bound to the current snapshot, and same-session recovery.
+  typed refusals bound to the current snapshot, echo-driven refusals naming
+  the filter rather than the snapshot identity route, and same-session recovery.
+- `crates/ripr/src/mcp/workspace.rs::tests::list_gaps_overflow_recovery_names_the_shrinkable_cause`
+  — filter-driven shell overflow names the filter; shell-driven overflow
+  keeps the snapshot identity route.
 - `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
   — a request id whose serialized form exceeds 16384 bytes (including one
   that fits the input cap but not the output cap) is answered with a
@@ -515,20 +593,29 @@ is not evidence that a resource with a particular identity exists.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
-- `crates/ripr/tests/mcp_stdio.rs::sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed`
-  (Linux) — a `git` shim blocks the refresh's uncommitted-diff read; an
-  external SIGTERM terminates the owned git child, the server survives,
-  the refresh settles as a completed document (`isError` stays false,
-  #5254) whose `attempt` block carries the typed `analysis_failed` failure,
-  and the session still answers ping (#9895).
-  `crates/ripr/src/cli/interrupt.rs::tests` — the SIGTERM cooperative-first
-  contract, one shared flag pair across SIGINT+SIGTERM, and idempotent
-  process-lifetime installation.
+- `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
+  (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
+  early-primary pipe holders, typed failure, last-good retention, same-session
+  recovery and an independently owned surviving sentinel. Identity-pinned
+  process handles and adopted descendant wait statuses distinguish product
+  settlement from harness cleanup.
+- `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
+  concurrent installation, repeated mixed/TERM escape, terminal signal epochs
+  and bounded adverse harness controls.
+- `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
+  successful output/status, refusal after custody loss, repeated cleanup and
+  preservation of caller process groups.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
-  never paginates and whose structured data names `cursor`; the same lists
+  never paginates and whose structured data names `cursor` and the literal
+  omission recovery;
+  string and malformed non-null inputs fail in both protocol modes, while
+  null/omitted inputs retain their defaults. The same complete lists
   still answer normally without one, on the same session (#9895).
+- `crates/ripr/tests/mcp_stdio.rs::malformed_catalog_cursors_preserve_protocol_validation_and_recover`
+  — malformed cursor refusal retains SDK metadata/protocol precedence, bounded
+  request-ID refusal, unknown-method routing and same-session recovery.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —

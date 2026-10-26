@@ -101,6 +101,8 @@ mod tests {
             relation_confidence: relation_reason.map(RelationReason::confidence),
             relation_reason,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

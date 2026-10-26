@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #3896 (the documented repair step needs a command the user can run)
+- #9553 (an index-only difference needs the same precondition)
 
 Linked PRs:
 
@@ -53,12 +54,18 @@ run an `--attempt ... --phase after` command, while step 1 prints
 
 ### Rule 1: dirty inline-target precondition
 
-When the current change came from uncommitted tracked edits and the top
-seam's repair targets an inline test module, the terminal next steps start
-with one line before step 1: if the target file has uncommitted edits, commit
-or stash them, because the repair start refuses a target that differs from
-HEAD. A clean tree, no current change, and a `tests/` target print no such
-line, because the refusal does not apply to them.
+When the top seam's repair targets an inline test module and that target
+file differs from HEAD in the index or the worktree, the terminal next steps
+start with one line before step 1: if the target file has uncommitted edits,
+commit or stash them, because the repair start refuses a target that differs
+from HEAD. The decision reads the target file's own state through the edit
+cage's `inline_target_is_uncommitted` (the predicate the repair start's
+baseline capture agrees with), not pilot's worktree-diff change state, so a
+staged-only difference (index differs, worktree matches the index, pilot sees
+no change) prints the line too. A target at HEAD, and a `tests/` target, print
+no such line, because the refusal does not apply to them. The predicate fails
+open (no line) whenever the answer is not positively established, leaving the
+repair start's own refusal authoritative.
 
 ### Rule 2: continue command
 
@@ -69,24 +76,24 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 ## Required Evidence
 
 - `pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies`
-  pins the line's presence and its position between the heading and step 1 for
-  a dirty tree with an inline target, its absence for a clean tree, no change,
-  and a dirty tree with a `tests/` target, and the step 3 wording.
+  pins, against a real repository fixture, the line's presence and its position
+  between the heading and step 1 for a worktree-dirty and for a staged-only
+  inline target (the latter with a `NoChange` current change), its absence at
+  HEAD, and for a `tests/` target, and the step 3 wording.
 - `generated_workflow_replay_prints_only_runnable_next_steps` keeps the
   Markdown summary free of a placeholder command that cannot run as printed.
 
 ## Non-Goals
 
-- Detecting an index-only difference with an otherwise clean worktree: pilot's
-  current change is the worktree diff, so that case keeps the pre-existing
-  behavior (tracked in a follow-up issue).
+- Changing pilot's current-change detection or the pilot summary JSON, which
+  stay unchanged.
 - Changing the repair start's refusal or the `--edit-authorized` flow.
 
 ## Acceptance Examples
 
-1. A dirty working tree and an inline-module repair target: the terminal prints
-   the commit-or-stash line before step 1.
-2. A clean tree or a `tests/` target: the line is absent.
+1. An inline-module repair target whose file is edited in the worktree or only
+   staged: the terminal prints the commit-or-stash line before step 1.
+2. A target at HEAD or a `tests/` target: the line is absent.
 3. Step 3 reads "run the `continue --attempt ...` command that step 1
    prints".
 
@@ -98,9 +105,10 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 ## Implementation Mapping
 
 - `crates/ripr/src/output/pilot/render/complete.rs`: `render_pilot_terminal`,
-  `render_pilot_summary_md`, `dirty_target_precondition`.
+  `render_pilot_summary_md`, `uncommitted_inline_target`,
+  `dirty_target_precondition`.
 - `crates/ripr/src/output/pilot/commands.rs`: `repair_inline_target_file`.
-- `crates/ripr/src/output/pilot/current_change.rs`: `is_uncommitted`.
+- `crates/ripr/src/edit_cage/mod.rs`: `inline_target_is_uncommitted`.
 
 ## Metrics
 

@@ -387,3 +387,40 @@ fn module_fact_spans_the_whole_source_and_empty_module_is_clean() -> Result<(), 
     assert!(empty.import_line_ranges.is_empty());
     Ok(())
 }
+
+#[test]
+fn module_rebinding_lists_are_shared_across_tests_not_copied_per_test() {
+    // Each test used to receive its own copy of every module-level name, so a
+    // file of N tests held N copies of N names (a 1 MB test file exhausted
+    // memory). Sharing keeps the same facts at O(N).
+    let mut source = String::from("import os\nvalue = 1\nvalue = 2\n");
+    for index in 0..400 {
+        source.push_str(&format!(
+            "def test_{index}():\n    assert {index} == {index}\n"
+        ));
+    }
+    let facts = facts_of("tests/test_many.py", &source);
+    assert_eq!(facts.tests.len(), 400);
+    let first = &facts.tests[0].constant_rebinding;
+    // Control: the shared lists are populated, so the pointer equality below
+    // compares real data rather than empty defaults.
+    assert!(first.module_bound.iter().any(|name| name == "test_399"));
+    assert!(first.module_names.iter().any(|name| name == "value"));
+    assert!(first.rebinds("value"));
+    assert!(!first.rebinds("os"));
+    for test in &facts.tests[1..] {
+        let bindings = &test.constant_rebinding;
+        assert!(std::sync::Arc::ptr_eq(
+            &first.module_bound,
+            &bindings.module_bound
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &first.module_names,
+            &bindings.module_names
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &first.attributes,
+            &bindings.attributes
+        ));
+    }
+}

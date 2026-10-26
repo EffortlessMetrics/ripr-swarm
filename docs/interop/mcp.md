@@ -192,8 +192,12 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   completed snapshot identity, last-known-good state, freshness relative to
   the last completed refresh (`current_at_last_refresh`, or
   `stale_after_failed_attempt` once a later attempt fails),
-  the committed snapshot's typed `AnalysisOutcome`, and profile and
-  support facts. Complete-zero and incomplete-zero outcomes stay distinct
+  the committed snapshot's typed `AnalysisOutcome`, an additive
+  `language_completeness` list of `{language, status}` rows from the same
+  analysis run (present only once a snapshot is committed, on the status tool
+  and the status resource; supported readers use the advertised `outputSchema`
+  or tolerate unknown keys), and
+  profile and support facts. Complete-zero and incomplete-zero outcomes stay distinct
   through the typed outcome; a partial outcome keeps its typed limitations;
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
@@ -490,7 +494,11 @@ cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
 unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
-name argument is wrong) with the available names in `error.data`. Unknown
+name argument is wrong) with the available names in `error.data`. The
+`tools/call` `arguments` member may be omitted; when present it must be an
+object. Null, arrays and scalar values receive a correlated Invalid Params
+(`-32602`) response before tool dispatch, including for `ripr_refresh` and
+the no-argument status tool. Unknown
 methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
 rejects a `language` filter that is not a language wire string (`rust`,
 `typescript`, `javascript`, `python`, `perl`) with Invalid Params listing the

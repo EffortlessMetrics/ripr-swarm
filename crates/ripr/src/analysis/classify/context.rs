@@ -48,6 +48,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// so no package test can call it; only changes the `no_static_path`
     /// guidance text.
     pub unmounted_build_script: bool,
+    /// #9871: the same-file functions that read the changed constant when the
+    /// probe declares one and tests were related through them.
+    pub const_readers: Vec<&'a FunctionSummary>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -76,6 +79,7 @@ impl<'a> ProbeContext<'a> {
             owner_caller_names: None,
             diff_touched: None,
             unmounted_build_script: false,
+            const_readers: Vec::new(),
         }
     }
 

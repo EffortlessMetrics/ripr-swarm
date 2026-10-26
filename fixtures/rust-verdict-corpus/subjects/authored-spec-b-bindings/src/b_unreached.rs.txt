@@ -1,0 +1,20 @@
+//! A changed binding in a function no test reaches.
+
+pub fn ext_starts_at_unreached(path: &str, at: usize) -> bool {
+    let start = path.rfind('.').map_or(0, |i| i + 1);
+    start == at
+}
+
+pub fn path_len_unreached(path: &str) -> usize {
+    path.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_length_is_exact_b_unreached() {
+        assert_eq!(path_len_unreached("a.rs"), 4);
+    }
+}

@@ -78,6 +78,29 @@ pub(crate) const RESOURCE_COST_SCHEMA_VERSION: &str = "0.1";
 /// analyzed `ripr` process; no harness measures them on this process's behalf.
 pub(crate) const RESOURCE_COST_OBSERVER_SCOPE: &str = "ripr_process_self";
 
+/// Optional receipt-authentication token. A harness that scrapes receipts from
+/// stderr sets this to a fresh random value per child; the receipt lines then
+/// carry `token=<value>` after the receipt prefix, so a line that merely starts
+/// with the receipt prefix (for example one injected through a hostile file
+/// name in a diagnostic) is not trusted as machine data. Unset, or not 1-64
+/// ASCII alphanumerics, the receipt keeps its original unauthenticated shape.
+pub(crate) const RECEIPT_TOKEN_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN";
+
+/// The receipt line prefix for `prefix` (which ends in a space), carrying the
+/// harness token when one was supplied.
+pub(crate) fn authenticated_receipt_prefix(prefix: &str) -> String {
+    receipt_prefix_with_token(prefix, std::env::var(RECEIPT_TOKEN_ENV).ok().as_deref())
+}
+
+fn receipt_prefix_with_token(prefix: &str, token: Option<&str>) -> String {
+    match token.filter(|token| {
+        (1..=64).contains(&token.len()) && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    }) {
+        Some(token) => format!("{prefix}token={token} "),
+        None => prefix.to_string(),
+    }
+}
+
 /// Whether the opt-in trace family is enabled for this process.
 pub(crate) fn latency_trace_enabled() -> bool {
     std::env::var_os(LATENCY_TRACE_ENV).is_some()
@@ -95,8 +118,26 @@ pub(crate) fn trace_latency_phase(phase: &str, status: &str, duration: Duration)
 /// visible so a consumer's test can assert the exact wire shape without
 /// reading stderr.
 pub(crate) fn latency_trace_line(phase: &str, status: &str, duration: Duration) -> String {
+    latency_trace_line_with_token(
+        phase,
+        status,
+        duration,
+        std::env::var(RECEIPT_TOKEN_ENV).ok().as_deref(),
+    )
+}
+
+/// With a valid harness token the phase line reads
+/// `ripr_repo_exposure_latency token=<t> phase=...`; without one it keeps its
+/// original shape.
+fn latency_trace_line_with_token(
+    phase: &str,
+    status: &str,
+    duration: Duration,
+    token: Option<&str>,
+) -> String {
+    let token = receipt_prefix_with_token("", token);
     format!(
-        "ripr_repo_exposure_latency phase={phase} status={status} duration_ms={}",
+        "ripr_repo_exposure_latency {token}phase={phase} status={status} duration_ms={}",
         duration.as_millis()
     )
 }
@@ -463,12 +504,16 @@ pub(crate) fn emit_run_resource_cost() {
     }
     let observation = ResourceCostObservation::observe();
     match observation.to_receipt_json() {
-        Ok(body) => eprintln!("{RESOURCE_COST_RECEIPT_PREFIX}{body}"),
+        Ok(body) => eprintln!(
+            "{}{body}",
+            authenticated_receipt_prefix(RESOURCE_COST_RECEIPT_PREFIX)
+        ),
         // The observation cannot be serialized. Emit a hand-built body that
         // names why, so the line still parses and still reports no number
         // rather than disappearing.
         Err(_) => eprintln!(
-            "{RESOURCE_COST_RECEIPT_PREFIX}{}",
+            "{}{}",
+            authenticated_receipt_prefix(RESOURCE_COST_RECEIPT_PREFIX),
             receipt_serialization_failed_body(
                 std::process::id(),
                 std::env::consts::OS,
@@ -512,6 +557,45 @@ mod tests {
         parse_resource_cost_receipt, receipt_serialization_failed_body, source_to_ms,
     };
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn receipt_prefix_carries_only_a_valid_token() {
+        use super::{latency_trace_line_with_token, receipt_prefix_with_token};
+        let base = "ripr_x_receipt ";
+        assert_eq!(
+            receipt_prefix_with_token(base, Some("abc123")),
+            "ripr_x_receipt token=abc123 "
+        );
+        let long_ok = "a".repeat(64);
+        assert_eq!(
+            receipt_prefix_with_token(base, Some(&long_ok)),
+            format!("ripr_x_receipt token={long_ok} ")
+        );
+        for rejected in [
+            None,
+            Some(""),
+            Some("has space"),
+            Some("a-b"),
+            Some("tok\nen"),
+        ] {
+            assert_eq!(receipt_prefix_with_token(base, rejected), base);
+        }
+        let too_long = "a".repeat(65);
+        assert_eq!(receipt_prefix_with_token(base, Some(&too_long)), base);
+        assert_eq!(
+            latency_trace_line_with_token(
+                "cache_load",
+                "hit",
+                Duration::from_millis(3),
+                Some("t1")
+            ),
+            "ripr_repo_exposure_latency token=t1 phase=cache_load status=hit duration_ms=3"
+        );
+        assert_eq!(
+            latency_trace_line_with_token("cache_load", "hit", Duration::from_millis(3), None),
+            "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=3"
+        );
+    }
 
     fn observation(host_os: &str) -> ResourceCostObservation {
         ResourceCostObservation {

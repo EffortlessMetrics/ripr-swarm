@@ -11,6 +11,7 @@ use std::process::Command;
 
 const TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const RECEIPT_PREFIX: &str = "ripr_resource_cost_receipt ";
+const FAMILY_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt ";
 
 fn workspace_root() -> Result<PathBuf, String> {
     // CARGO_MANIFEST_DIR is <repo>/crates/ripr.
@@ -144,7 +145,11 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
     let traced_other: Vec<&str> = traced
         .stderr
         .lines()
-        .filter(|line| !line.starts_with(RECEIPT_PREFIX) && !line.starts_with(phase_prefix))
+        .filter(|line| {
+            !line.starts_with(RECEIPT_PREFIX)
+                && !line.starts_with(FAMILY_RECEIPT_PREFIX)
+                && !line.starts_with(phase_prefix)
+        })
         .collect();
     let untraced_other: Vec<&str> = untraced.stderr.lines().collect();
     if traced_other != untraced_other {
@@ -168,6 +173,24 @@ fn tracing_on_emits_one_attributed_receipt_on_stderr() -> Result<(), String> {
         ));
     }
     let receipt = parse(receipts[0])?;
+    // The classified-seam / corpus-fingerprint store receipt is part of the
+    // same opt-in family and is emitted exactly once per traced run.
+    let family: Vec<&str> = traced
+        .stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(FAMILY_RECEIPT_PREFIX))
+        .collect();
+    if family.len() != 1 {
+        return Err(format!(
+            "expected exactly one cache family store receipt, got {}:\n{}",
+            family.len(),
+            traced.stderr
+        ));
+    }
+    let family = parse(family[0])?;
+    if family["store_errors"] != 0 || family["store_failures"] != serde_json::json!([]) {
+        return Err(format!("healthy run reported store failures: {family}"));
+    }
 
     for field in [
         "schema_version",

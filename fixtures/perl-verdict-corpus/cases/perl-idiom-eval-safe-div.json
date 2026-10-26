@@ -1,0 +1,63 @@
+{
+  "case_id": "perl-idiom-eval-safe-div",
+  "subject_id": "authored-perl-idioms-toolkit",
+  "diff": "cases/perl-idiom-eval-safe-div.diff",
+  "anchor": {
+    "file": "lib/Toolkit.pm",
+    "line": 36
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_fallback",
+  "test_shape": "eval_block_fallback",
+  "hard_case": "The fallback arm is checked with a loose like() while the success arm is exact.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "defined($r) ? $r : 'NaN!'",
+        "mutated_line": "return defined($r) ? $r : 'NaN!';",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fallback gains a suffix"
+      },
+      {
+        "replacement": "defined($r) ? $r : 'inf'",
+        "mutated_line": "return defined($r) ? $r : 'inf';",
+        "outcome": "tests_failed",
+        "failing_test": "t/toolkit.t: division by zero is not a number",
+        "equivalence_review": "not equivalent: the fallback changes"
+      },
+      {
+        "replacement": "defined($r) ? $r + 1 : 'NaN'",
+        "mutated_line": "return defined($r) ? $r + 1 : 'NaN';",
+        "outcome": "tests_failed",
+        "failing_test": "t/toolkit.t: divides",
+        "equivalence_review": "not equivalent: results gain one"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "like(safe_div(1, 0), qr/N/) accepts 'NaN!' but not 'inf'; is(safe_div(4, 2), 2) kills the success mutant. Spec cells: RIPR-SPEC-0064 oracle strength (like).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-idiom-eval-safe-div.json",
+    "sha256": "2437d7dfb45984a76c63993f63efd79808c8767fd05e34858d3a2dd2d6e71b5e",
+    "provenance": "producer"
+  }
+}

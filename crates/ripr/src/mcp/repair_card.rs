@@ -105,10 +105,15 @@ pub(crate) struct SeamCardBinding {
 /// Extract the canonical item id from a `ripr://repair-card/{id}` resource
 /// URI. The canonical id embeds a workspace-relative path (Python, and
 /// since #5268 Rust), so the suffix is read whole: the `ripr://repair-card/`
-/// prefix alone routes the URI, and only an empty suffix fails.
+/// prefix alone routes the URI, and only an empty suffix fails. One
+/// trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
-        .filter(|id| !id.is_empty())
+        .map(super::gaps::trim_one_trailing_slash)
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist. Canonical ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Changed-file scope for the card inventory, in the inventory's own
@@ -638,6 +643,7 @@ mod tests {
             Vec::new(),
         )?;
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -802,6 +808,16 @@ mod tests {
             ),
             Some("gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee")
         );
+        // #9895: one trailing slash normalizes away; a second one misses.
+        assert_eq!(
+            repair_card_resource_id("ripr://repair-card/gap:test:1/"),
+            Some("gap:test:1")
+        );
+        assert_eq!(
+            repair_card_resource_id("ripr://repair-card/gap:test:1//"),
+            None
+        );
+        assert_eq!(repair_card_resource_id("ripr://repair-card//"), None);
         for other in [
             "ripr://workspace/status",
             "ripr://repair-card/",

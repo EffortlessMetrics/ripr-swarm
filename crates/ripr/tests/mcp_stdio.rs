@@ -471,304 +471,264 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
     Ok(())
 }
 
-/// #9895: an external SIGTERM while a refresh is blocked on a git child must
-/// not leave the git child — or any pipe-inheriting descendant of it —
-/// behind. The server entry installs cooperative SIGINT+SIGTERM interrupts;
-/// the bounded child waits observe cancellation at their poll cadence and
-/// terminate the owned tree (Unix: the child's whole process group, so
-/// grandchildren a direct-child kill cannot reach die too), the refresh
-/// settles as a completed document whose `attempt` block carries the typed
-/// failure (`isError` stays false, the #5254 commit contract), and the
-/// session keeps serving — the first signal settles, only a repeated signal
-/// is the native-death escape. Linux-only: it needs `nix` for the owned
-/// signal and liveness probes.
-#[cfg(target_os = "linux")]
-#[test]
-fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(), String> {
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-
-    let root = install_b4_repair_ready_fixture()?;
-    let _guard = FixtureGuard { root: root.clone() };
-    // A `git` shim that passes every probe through but turns the refresh's
-    // uncommitted-diff read into a blocking child: it records its pid,
-    // spawns a pipe-inheriting descendant that records its own pid (the
-    // shape a direct-child kill cannot reach — pre-#9895 it outlived the
-    // server), then execs a long sleep (same pid), so the refresh sits
-    // inside the bounded git wait until the interrupt machinery terminates
-    // the owned tree.
-    let real_git = std::process::Command::new("sh")
-        .args(["-c", "command -v git"])
-        .output()
-        .map_err(|error| format!("locate real git: {error}"))
-        .and_then(|output| {
-            if output.status.success() {
-                String::from_utf8(output.stdout)
-                    .map(|text| text.trim().to_string())
-                    .map_err(|error| error.to_string())
-            } else {
-                Err("git is required for this witness".to_string())
-            }
-        })?;
-    if real_git.contains('\'') {
-        return Err(format!("real git path is not script-safe: {real_git}"));
-    }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("clock before Unix epoch: {error}"))?
-        .as_nanos();
-    let fake_dir =
-        std::env::temp_dir().join(format!("ripr-fake-git-{}-{stamp}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&fake_dir);
-    std::fs::create_dir_all(&fake_dir).map_err(|error| error.to_string())?;
-    let pid_file = fake_dir.join("fake-git.pid");
-    let descendant_pid_file = fake_dir.join("fake-git-descendant.pid");
-    std::fs::write(
-        fake_dir.join("git"),
-        format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"diff\" ]; then\n    printf '%s' \"$$\" > \"$FAKE_GIT_PID_FILE\"\n    sh -c 'printf \"%s\" \"$$\" > \"$FAKE_GIT_DESCENDANT_PID_FILE\"; exec sleep 3000' &\n    exec /bin/sleep 3000\n  fi\ndone\nexec '{real_git}' \"$@\"\n"
-        ),
-    )
-    .map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(fake_dir.join("git"))
-            .map_err(|error| error.to_string())?
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(fake_dir.join("git"), permissions)
-            .map_err(|error| error.to_string())?;
-    }
-    let original_path = std::env::var("PATH").map_err(|error| format!("read PATH: {error}"))?;
-    let pid_file_text = pid_file
-        .to_str()
-        .ok_or_else(|| "pid file path is not UTF-8".to_string())?
-        .to_string();
-    let descendant_pid_file_text = descendant_pid_file
-        .to_str()
-        .ok_or_else(|| "descendant pid file path is not UTF-8".to_string())?
-        .to_string();
-    let fake_path = format!("{}:{original_path}", fake_dir.display());
-    let env_pairs = [
-        ("PATH", fake_path.as_str()),
-        ("FAKE_GIT_PID_FILE", pid_file_text.as_str()),
-        (
-            "FAKE_GIT_DESCENDANT_PID_FILE",
-            descendant_pid_file_text.as_str(),
-        ),
-    ];
-    let mut session = SequentialStdio::spawn_with_env(&root, &env_pairs)?;
-    let server_pid = session.child.id();
-
-    // Handshake, then a refresh whose uncommitted-diff read blocks on the shim.
-    let init = session.raw_exchange(
-        &line(json!({
-            "jsonrpc": "2.0", "id": "init", "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25", "capabilities": {},
-                "clientInfo": { "name": "ripr-sigterm-test", "version": "1" }
-            }
-        }))?,
-        Duration::from_secs(30),
-    )?;
-    if init.get("id") != Some(&json!("init")) || init.get("error").is_some() {
-        return Err(format!("initialize failed: {init}"));
-    }
-    session.send_raw(&line(
-        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-    )?)?;
-    session.send_raw(&line(json!({
-        "jsonrpc": "2.0", "id": "refresh-1", "method": "tools/call",
-        "params": { "name": "ripr_refresh", "arguments": {} }
-    }))?)?;
-
-    // Wait until the refresh is demonstrably inside the blocking git child.
-    let fake_git_pid = {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Ok(text) = std::fs::read_to_string(&pid_file) {
-                if let Ok(pid) = text.trim().parse::<i32>() {
-                    if pid > 0 {
-                        break pid;
-                    }
-                }
-            }
-            if Instant::now() >= deadline {
-                return Err("the refresh never reached the blocking git child".to_string());
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    };
-    // The shim's pipe-inheriting descendant must exist before the signal so
-    // the post-signal check below certifies tree containment, not absence.
-    let descendant_pid = {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Ok(text) = std::fs::read_to_string(&descendant_pid_file) {
-                if let Ok(pid) = text.trim().parse::<i32>() {
-                    if pid > 0 {
-                        break pid;
-                    }
-                }
-            }
-            if Instant::now() >= deadline {
-                return Err("the shim never spawned its pipe-inheriting descendant".to_string());
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    };
-    let probe = |pid: i32| kill(Pid::from_raw(pid), None).is_ok();
-    if !probe(fake_git_pid) {
-        return Err(format!("fake git child {fake_git_pid} was never alive"));
-    }
-    if !probe(descendant_pid) {
-        return Err(format!("git descendant {descendant_pid} was never alive"));
-    }
-
-    // The defect under test: SIGTERM used to kill the server outright and
-    // orphan the git child. Now the first signal cooperatively settles the
-    // attempt: the bounded wait terminates the owned tree — the direct
-    // child AND its pipe-inheriting descendant (a direct-child kill cannot
-    // reach the latter; only group containment can).
-    kill(Pid::from_raw(server_pid as i32), Signal::SIGTERM)
-        .map_err(|error| format!("send SIGTERM to the server: {error}"))?;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while probe(fake_git_pid) {
-        if Instant::now() >= deadline {
-            let _ = kill(Pid::from_raw(fake_git_pid), Signal::SIGKILL);
-            return Err(format!(
-                "the git child {fake_git_pid} outlived SIGTERM mid-refresh (#9895)"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let descendant_deadline = Instant::now() + Duration::from_secs(20);
-    while probe(descendant_pid) {
-        if Instant::now() >= descendant_deadline {
-            let _ = kill(Pid::from_raw(descendant_pid), Signal::SIGKILL);
-            return Err(format!(
-                "the git descendant {descendant_pid} outlived SIGTERM mid-refresh; tree containment not established (#9895)"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    if !probe(server_pid as i32) {
-        return Err("the server must survive the first SIGTERM (cooperative settle)".to_string());
-    }
-
-    // The refresh settles per the #5254 commit contract: a failed attempt
-    // still answers as a completed document — `isError` stays false and the
-    // typed failure rides under `attempt` (mirrors the
-    // `refresh_attempt_failure_code` helper in mcp_workspace_config.rs).
-    let reply = session.next_reply(Duration::from_secs(30))?;
-    if reply.get("id") != Some(&json!("refresh-1")) {
-        return Err(format!(
-            "the interrupted refresh answer lost its id: {reply}"
-        ));
-    }
-    if reply.pointer("/result/isError") != Some(&json!(false)) {
-        return Err(format!(
-            "the interrupted refresh must stay a completed document: {reply}"
-        ));
-    }
-    let settled = reply
-        .pointer("/result/structuredContent")
-        .cloned()
-        .ok_or_else(|| "the interrupted refresh lost its structured content".to_string())?;
-    if settled["schema_version"] != json!("ripr-mcp-refresh-v1")
-        || settled["attempt"]["state"] != json!("failed")
-        || settled["attempt"]["failure"]["code"] != json!("analysis_failed")
-    {
-        return Err(format!(
-            "the interrupted refresh must settle as a typed failed attempt: {reply}"
-        ));
-    }
-    let alive = session.call("alive", "ping", json!({}), Duration::from_secs(10))?;
-    if alive.get("id") != Some(&json!("alive")) || alive.get("result") != Some(&json!({})) {
-        return Err(format!(
-            "the session did not survive the interrupted refresh: {alive}"
-        ));
-    }
-    Ok(())
-}
-
 /// A client-supplied pagination cursor on the static catalog lists used to
 /// parse fine and then be silently dropped, so an agent could believe paging
 /// worked while always re-reading page one (#9895). The lists are static and
 /// small — tools, prompts, resources, and resource templates alike: the
-/// server never issues a `nextCursor`, so any cursor can only be stale or
+/// server never issues a `nextCursor`, so any non-null cursor can only be stale or
 /// fabricated and the request must fail closed with the recovery spelled out,
 /// while the same lists still answer normally without a cursor.
 #[test]
 fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
     let root = workspace_root()?;
     let timeout = Duration::from_secs(30);
-    let mut session = SequentialStdio::spawn(&root)?;
-    let first = session.raw_exchange(
-        &line(json!({
-            "jsonrpc": "2.0", "id": "init", "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25", "capabilities": {},
-                "clientInfo": { "name": "ripr-cursor-test", "version": "1" }
+    for legacy in [true, false] {
+        let mut session = SequentialStdio::spawn(&root)?;
+        let first = if legacy {
+            session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": "init", "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": { "name": "ripr-cursor-test", "version": "1" }
+                    }
+                }))?,
+                timeout,
+            )?
+        } else {
+            session.call("init", "server/discover", json!({}), timeout)?
+        };
+        if first.get("id") != Some(&json!("init")) || first.get("result").is_none() {
+            return Err(format!("session setup failed (legacy={legacy}): {first}"));
+        }
+        if legacy {
+            session.send_raw(&line(
+                json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            )?)?;
+        }
+        let call = |session: &mut SequentialStdio, id: &str, method: &str, mut params: Value| {
+            if !legacy && let Some(object) = params.as_object_mut() {
+                object.insert("_meta".to_string(), current_meta());
             }
-        }))?,
-        timeout,
-    )?;
-    if first.get("id") != Some(&json!("init")) || first.get("error").is_some() {
-        return Err(format!("initialize failed: {first}"));
+            session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": method, "params": params
+                }))?,
+                timeout,
+            )
+        };
+        for (method, field, count) in [
+            ("tools/list", "tools", 9),
+            ("prompts/list", "prompts", 0),
+            ("resources/list", "resources", 1),
+            ("resources/templates/list", "resourceTemplates", 5),
+        ] {
+            let baseline = call(&mut session, "plain", method, json!({}))?;
+            let catalog = baseline
+                .pointer(&format!("/result/{field}"))
+                .filter(|value| value.as_array().is_some_and(|rows| rows.len() == count))
+                .ok_or_else(|| format!("{method} lost complete catalog: {baseline}"))?
+                .clone();
+            for (index, cursor) in [
+                json!("stale-page"),
+                json!(""),
+                json!("雪"),
+                json!(false),
+                json!(42),
+                json!([]),
+                json!(true),
+                json!(1.5),
+                json!({}),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = format!("cursor-{index}");
+                let response = call(&mut session, &id, method, json!({"cursor": cursor}))?;
+                let message = response
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if response.get("id") != Some(&json!(id))
+                    || response.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+                    || response.pointer("/error/data")
+                        != Some(&json!({
+                            "argument": "cursor", "expected": "omit; the complete list fits one page"
+                        }))
+                    || !message.contains(method)
+                    || !message.contains("does not paginate")
+                    || !message.contains("nextCursor")
+                    || !message.contains("drop the cursor")
+                {
+                    return Err(format!(
+                        "{method} cursor {cursor} must fail with recovery (legacy={legacy}): {response}"
+                    ));
+                }
+                let alive = call(&mut session, "recovered", method, json!({}))?;
+                if alive.get("id") != Some(&json!("recovered"))
+                    || alive.get("error").is_some()
+                    || alive.pointer(&format!("/result/{field}")) != Some(&catalog)
+                    || alive.pointer("/result/nextCursor").is_some()
+                {
+                    return Err(format!(
+                        "{method} lost same-session complete recovery: {alive}"
+                    ));
+                }
+            }
+            // SDK Option semantics retain null as omission; legacy also permits
+            // missing/null params. Discovery requests still require metadata.
+            let mut defaults = vec![json!({"cursor": null})];
+            if legacy {
+                defaults.push(Value::Null);
+            }
+            for params in defaults {
+                let reply = call(&mut session, "default", method, params)?;
+                if reply.pointer(&format!("/result/{field}")) != Some(&catalog)
+                    || reply.pointer("/result/nextCursor").is_some()
+                {
+                    return Err(format!("{method} default semantics changed: {reply}"));
+                }
+            }
+            if legacy {
+                let reply = session.raw_exchange(
+                    &line(json!({
+                        "jsonrpc": "2.0", "id": "omitted", "method": method
+                    }))?,
+                    timeout,
+                )?;
+                if reply.pointer(&format!("/result/{field}")) != Some(&catalog) {
+                    return Err(format!("{method} omitted params changed: {reply}"));
+                }
+            }
+        }
     }
-    session.send_raw(&line(
-        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-    )?)?;
-    for (id, method) in [
-        ("cursor-tools", "tools/list"),
-        ("cursor-prompts", "prompts/list"),
-        ("cursor-resources", "resources/list"),
-        ("cursor-templates", "resources/templates/list"),
+    Ok(())
+}
+
+/// Raw cursor fidelity must not bypass the SDK's lifecycle checks or the
+/// transport's envelope/ID rules, nor expand the four-catalog routing boundary.
+#[test]
+fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Result<(), String> {
+    let mut session = SequentialStdio::spawn(&workspace_root()?)?;
+    let timeout = Duration::from_secs(30);
+    let mut unsupported = current_meta();
+    unsupported
+        .as_object_mut()
+        .ok_or_else(|| "fixture metadata must be an object".to_string())?
+        .insert(
+            "io.modelcontextprotocol/protocolVersion".into(),
+            json!("2099-01-01"),
+        );
+    let unsupported_code =
+        serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
+            .map_err(|error| error.to_string())?;
+    for (id, meta, code) in [
+        ("missing", json!({}), json!(-32602)),
+        ("unsupported", unsupported, unsupported_code),
     ] {
-        let response = session.raw_exchange(
+        let baseline_id = format!("baseline-{id}");
+        let baseline = session.raw_exchange(
             &line(json!({
-                "jsonrpc": "2.0", "id": id, "method": method,
-                "params": {"cursor": "stale-page"}
+                "jsonrpc": "2.0", "id": baseline_id, "method": "tools/list",
+                "params": {"_meta": meta}
             }))?,
             timeout,
         )?;
-        if response.get("id") != Some(&json!(id))
-            || response.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        if baseline.get("id") != Some(&json!(baseline_id))
+            || baseline.pointer("/error/code") != Some(&code)
+            || (id == "missing"
+                && !baseline
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("request _meta")))
         {
-            return Err(format!(
-                "{method} cursor must fail closed as -32602: {response}"
-            ));
+            return Err(format!("{id} SDK baseline refusal changed: {baseline}"));
         }
-        let message = response
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !message.contains("does not paginate") || !message.contains("nextCursor") {
-            return Err(format!(
-                "{method} cursor error must explain why: {response}"
-            ));
-        }
-        let data = response
-            .pointer("/error/data")
-            .cloned()
-            .ok_or_else(|| format!("{method} cursor error lost structured data: {response}"))?;
-        if data["argument"] != json!("cursor") {
-            return Err(format!(
-                "{method} cursor error must name the argument: {response}"
-            ));
-        }
-        // The session stays up: the same list answers normally without a cursor.
-        let alive = session.raw_exchange(
-            &line(json!({"jsonrpc": "2.0", "id": format!("{id}-plain"), "method": method}))?,
+        let reply = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/list",
+                "params": {"_meta": meta, "cursor": false}
+            }))?,
             timeout,
         )?;
-        if alive.get("id") != Some(&json!(format!("{id}-plain"))) || alive.get("result").is_none() {
+        if reply.get("id") != Some(&json!(id)) || reply.get("error") != baseline.get("error") {
             return Err(format!(
-                "{method} must still answer without a cursor: {alive}"
+                "{id} SDK refusal must precede cursor validation: {reply}"
             ));
         }
+    }
+    // A valid inline request also selects the current lifecycle without a
+    // preceding server/discover, even when its raw cursor requires refusal.
+    let first = session.call(
+        "first-inline",
+        "tools/list",
+        json!({"cursor": false}),
+        timeout,
+    )?;
+    if first.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        || first.pointer("/error/data/argument") != Some(&json!("cursor"))
+    {
+        return Err(format!(
+            "first inline request lost cursor validation: {first}"
+        ));
+    }
+    let discovered = session.call("discover", "server/discover", json!({}), timeout)?;
+    if discovered.get("result").is_none() {
+        return Err(format!("discovery did not recover: {discovered}"));
+    }
+    for id in [json!("o".repeat(16 * 1024)), json!(null), json!([])] {
+        let reply = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/list",
+                "params": {"_meta": current_meta(), "cursor": false}
+            }))?,
+            timeout,
+        )?;
+        if reply.get("id") != Some(&Value::Null)
+            || reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+            || reply.to_string().len() > 512
+        {
+            return Err(format!(
+                "malformed cursor bypassed bounded envelope refusal: {reply}"
+            ));
+        }
+    }
+    // A notification must not acquire a response; raw_exchange below sees the
+    // next response and therefore catches an invented notification reply.
+    session.send_raw(&line(json!({
+        "jsonrpc": "2.0", "method": "tools/list",
+        "params": {"_meta": current_meta(), "cursor": false}
+    }))?)?;
+    let unknown = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "unknown", "method": "nope/never",
+            "params": {"_meta": current_meta(), "cursor": false}
+        }))?,
+        timeout,
+    )?;
+    if unknown.get("id") != Some(&json!("unknown"))
+        || unknown.pointer("/error/code").and_then(Value::as_i64) != Some(-32601)
+    {
+        return Err(format!(
+            "unknown method was rerouted as a catalog: {unknown}"
+        ));
+    }
+    let recovered = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "recovered", "method": "tools/list",
+            "params": {"_meta": current_meta()}
+        }))?,
+        timeout,
+    )?;
+    if recovered.get("id") != Some(&json!("recovered"))
+        || recovered
+            .pointer("/result/tools")
+            .and_then(Value::as_array)
+            .is_none_or(|tools| tools.len() != 9)
+    {
+        return Err(format!(
+            "protocol controls lost same-session recovery: {recovered}"
+        ));
     }
     Ok(())
 }
@@ -1409,6 +1369,268 @@ fn second_initialize_answers_already_initialized_and_the_session_recovers() -> R
         return Err(format!(
             "tools/list must still work afterwards: {}",
             responses[3]
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_tool_argument_objects_are_rejected_before_dispatch_and_recover() -> Result<(), String>
+{
+    let root = workspace_root()?;
+    // Status comes first so the pre-repair witness fails before a malformed
+    // refresh can start analysis of this repository.
+    let mut cases: Vec<(&str, Value)> = [
+        "ripr_workspace_status",
+        "ripr_refresh",
+        "ripr_list_gaps",
+        "ripr_get_gap",
+        "ripr_prepare_repair",
+        "ripr_get_repair_attempt",
+        "ripr_get_receipt_status",
+        "ripr_get_repair_card",
+        "ripr_list_repair_attempts",
+    ]
+    .into_iter()
+    .map(|name| (name, Value::Null))
+    .collect();
+    cases.extend(
+        [json!(false), json!(7), json!("oops"), json!([])]
+            .into_iter()
+            .map(|arguments| ("ripr_workspace_status", arguments)),
+    );
+    for legacy in [false, true] {
+        let setup = if legacy {
+            [
+                line(json!({
+                    "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": {"name": "argument-object-control", "version": "1"}}
+                }))?,
+                line(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?,
+            ]
+            .concat()
+        } else {
+            line(json!({
+                "jsonrpc": "2.0", "id": "setup", "method": "server/discover",
+                "params": {"_meta": current_meta()}
+            }))?
+        };
+        // Keep the safe red control in its own process; batch the remaining
+        // cases so executable custody is measured four times, not 26 times.
+        for cases in [&cases[..1], &cases[1..]] {
+            let mut requests = setup.clone();
+            let mut expected_ids = Vec::new();
+            for (index, (tool, arguments)) in cases.iter().enumerate() {
+                let id = if index % 2 == 0 {
+                    json!(format!("bad-\"\\\n雪-{index}"))
+                } else {
+                    json!(index)
+                };
+                let mut params = json!({"name": tool, "arguments": arguments});
+                if !legacy {
+                    params["_meta"] = current_meta();
+                }
+                requests.extend(line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+                }))?);
+                expected_ids.push(id);
+            }
+            // Both omission and an explicit empty object remain valid.
+            for (recovery_id, arguments) in [("omitted", None), ("empty", Some(json!({})))] {
+                let mut params = json!({"name": "ripr_workspace_status"});
+                if let Some(arguments) = arguments {
+                    params["arguments"] = arguments;
+                }
+                if !legacy {
+                    params["_meta"] = current_meta();
+                }
+                requests.extend(line(json!({
+                    "jsonrpc": "2.0", "id": recovery_id, "method": "tools/call", "params": params
+                }))?);
+            }
+            let output = run_mcp(&root, &[&requests])?;
+            let replies = response_lines(&output)?;
+            if replies.len() != cases.len() + 3 || replies[0].get("result").is_none() {
+                return Err(format!(
+                    "argument-object fixture did not initialize: {replies:?}"
+                ));
+            }
+            for ((rejected, id), (tool, arguments)) in replies[1..=cases.len()]
+                .iter()
+                .zip(&expected_ids)
+                .zip(cases)
+            {
+                if rejected.get("id") != Some(id)
+                    || rejected.pointer("/error/code") != Some(&json!(-32602))
+                    || rejected.pointer("/error/data/method") != Some(&json!("tools/call"))
+                    || rejected.get("result").is_some()
+                {
+                    return Err(format!(
+                        "legacy={legacy}, {tool} arguments={arguments} must be Invalid Params with its original id: {rejected}"
+                    ));
+                }
+            }
+            for (reply, expected_id) in replies[cases.len() + 1..].iter().zip(["omitted", "empty"])
+            {
+                let text = reply
+                    .pointer("/result/content/0/text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("status recovery omitted JSON text: {reply}"))?;
+                let document: Value =
+                    serde_json::from_str(text).map_err(|error| error.to_string())?;
+                if reply.get("id") != Some(&json!(expected_id))
+                    || reply.pointer("/result/isError") != Some(&json!(false))
+                    || reply.pointer("/result/structuredContent") != Some(&document)
+                    || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
+                {
+                    return Err(format!(
+                        "argument-object rejection lost clean status recovery: {reply}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_tool_argument_objects_preserve_protocol_validation_and_recover() -> Result<(), String>
+{
+    let mut session = SequentialStdio::spawn(&workspace_root()?)?;
+    let timeout = Duration::from_secs(30);
+    let mut unsupported = current_meta();
+    unsupported["io.modelcontextprotocol/protocolVersion"] = json!("2099-01-01");
+    let mut malformed_required = current_meta();
+    malformed_required["io.modelcontextprotocol/clientCapabilities"] = Value::Null;
+    let mut unsupported_missing = unsupported.clone();
+    unsupported_missing["io.modelcontextprotocol/clientCapabilities"] = Value::Null;
+    let metadata_cases = [
+        ("absent", None, -32602, -32602),
+        ("empty", Some(json!({})), -32602, -32602),
+        ("unsupported", Some(unsupported), -32022, -32022),
+        ("required", Some(malformed_required), -32602, -32602),
+        (
+            "unsupported-missing",
+            Some(unsupported_missing),
+            -32602,
+            -32022,
+        ),
+        ("scalar", Some(json!("bad")), -32600, -32600),
+        ("null", Some(Value::Null), -32602, -32602),
+    ];
+    // Pin SDK refusals on both sides of inline lifecycle selection. The
+    // SDK deliberately changes version/required-field ordering at that edge.
+    for established in [false, true] {
+        for (label, meta, before_code, after_code) in &metadata_cases {
+            let id = format!("baseline-{established}-{label}");
+            let mut params = json!({"name": "ripr_workspace_status", "arguments": {}});
+            if let Some(meta) = meta {
+                params["_meta"] = meta.clone();
+            }
+            let baseline = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+                }))?,
+                timeout,
+            )?;
+            let code = if established { after_code } else { before_code };
+            if baseline.get("id") != Some(&json!(id))
+                || baseline.pointer("/error/code") != Some(&json!(code))
+                || baseline.get("result").is_some()
+            {
+                return Err(format!("SDK metadata baseline changed: {baseline}"));
+            }
+            for (index, arguments) in [
+                Value::Null,
+                json!(false),
+                json!(7),
+                json!("oops"),
+                json!([]),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = format!("bad-{established}-{label}-{index}");
+                params["arguments"] = arguments;
+                let reply = session.raw_exchange(
+                    &line(json!({
+                        "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+                    }))?,
+                    timeout,
+                )?;
+                if reply.get("id") != Some(&json!(id))
+                    || reply.get("error") != baseline.get("error")
+                    || reply.get("result").is_some()
+                {
+                    return Err(format!(
+                        "argument validation displaced the SDK metadata refusal: {reply}"
+                    ));
+                }
+            }
+        }
+        if !established {
+            // An invalid argument object can itself select the inline
+            // lifecycle, while refusing the call before application dispatch.
+            let first = session.call_tool(
+                "first-inline",
+                "ripr_workspace_status",
+                Value::Null,
+                timeout,
+            )?;
+            if first.pointer("/error/code") != Some(&json!(-32602))
+                || first.pointer("/error/data/method") != Some(&json!("tools/call"))
+            {
+                return Err(format!("first inline argument refusal changed: {first}"));
+            }
+        }
+    }
+    for (id, expected_id) in [
+        (Value::Null, Value::Null),
+        (json!(false), Value::Null),
+        (json!(1.25), Value::Null),
+        (json!([]), Value::Null),
+        (json!({}), Value::Null),
+        (json!("o".repeat(16 * 1024)), Value::Null),
+        (json!(u64::MAX), json!(u64::MAX)),
+    ] {
+        let reply = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"_meta": current_meta(), "name": "ripr_refresh", "arguments": null}
+            }))?,
+            timeout,
+        )?;
+        if reply.get("id") != Some(&expected_id)
+            || reply.pointer("/error/code") != Some(&json!(-32600))
+            || reply.get("result").is_some()
+            || reply.to_string().len() > 512
+        {
+            return Err(format!(
+                "tool arguments bypassed the bounded ID refusal: {reply}"
+            ));
+        }
+    }
+    // A malformed notification must not acquire a reply or trigger refresh.
+    // raw_exchange observes the next reply without filtering mismatched IDs.
+    session.send_raw(&line(json!({
+        "jsonrpc": "2.0", "method": "tools/call",
+        "params": {"_meta": current_meta(), "name": "ripr_refresh", "arguments": null}
+    }))?)?;
+    let recovered = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "recovered", "method": "tools/call",
+            "params": {"_meta": current_meta(), "name": "ripr_workspace_status"}
+        }))?,
+        timeout,
+    )?;
+    if recovered.get("id") != Some(&json!("recovered"))
+        || recovered.pointer("/result/isError") != Some(&json!(false))
+        || recovered.pointer("/result/structuredContent/session/attempt_state")
+            != Some(&json!("no_snapshot"))
+    {
+        return Err(format!(
+            "protocol refusals lost clean status recovery: {recovered}"
         ));
     }
     Ok(())
@@ -2763,15 +2985,21 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
                 .pointer("/result/structuredContent/failure/recovery")
                 .and_then(Value::as_str)
                 .ok_or("empty-page refusal omitted recovery")?;
-            if !recovery.contains("ripr://snapshot/{snapshot_id}")
-                || !recovery.contains("ripr_get_gap")
+            // #9895 discrimination: this overflow is the echoed filter's
+            // fault — the same shell with an empty echo fits — so the
+            // recovery must name the shrinkable cause (narrow the filter
+            // and retry ripr_list_gaps), not the snapshot identity route,
+            // and the refusal itself must stay inside the wire bound.
+            if !recovery.contains("narrow the file/class/language filter")
+                || !recovery.contains("retry ripr_list_gaps")
+                || recovery.contains("ripr://snapshot/")
                 || serde_json::to_vec(&refused)
                     .map_err(|error| error.to_string())?
                     .len()
                     > RESPONSE_BOUND
             {
                 return Err(format!(
-                    "empty {field} refusal lost its bounded identity recovery"
+                    "empty {field} refusal must name the filter, not the identity route: {recovery}"
                 ));
             }
         }
@@ -2984,6 +3212,34 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     if status.pointer("/session/last_completed_snapshot/snapshot_id") != Some(&json!(snapshot_id)) {
         return Err(format!(
             "filter reads changed the completed snapshot: {status}"
+        ));
+    }
+    // #6475: the status session serves the producer's per-language
+    // completeness. Rust (and Python when compiled and enabled) each ran
+    // and produced gaps, so each row is literally `complete`.
+    let expected_languages = if cfg!(feature = "lang-python") {
+        json!([
+            {"language": "python", "status": "complete"},
+            {"language": "rust", "status": "complete"}
+        ])
+    } else {
+        json!([{"language": "rust", "status": "complete"}])
+    };
+    if status.pointer("/session/language_completeness") != Some(&expected_languages) {
+        return Err(format!(
+            "status must serve per-language completeness from the producer view: {status}"
+        ));
+    }
+    // The status resource renders the same session block.
+    let resource = read_resource_document(
+        &mut session,
+        "filter-status-resource",
+        "ripr://workspace/status",
+        timeout,
+    )?;
+    if resource.pointer("/session/language_completeness") != Some(&expected_languages) {
+        return Err(format!(
+            "the status resource must carry the same per-language completeness: {resource}"
         ));
     }
     // A different committed input replaces the snapshot. Replay the actual
@@ -3991,6 +4247,56 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         return Err(format!(
             "encoded repair-card resource id did not decode to the same document:\nencoded={card_encoded}\ntool={card_tool}"
         ));
+    }
+
+    // Trailing-slash tolerance (#9895): clients — especially LLMs
+    // hand-assembling links — not uncommonly append one slash to a resource
+    // URI. Every id route normalizes exactly one; the document must be
+    // identical to the slash-less read.
+    let snapshot_slash = read_resource_document(
+        &mut session,
+        "snapshot-resource-slash",
+        &format!("ripr://snapshot/{snapshot_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if snapshot_slash != snapshot {
+        return Err(format!(
+            "one trailing slash must not change the snapshot document:\nslash={snapshot_slash}\nplain={snapshot}"
+        ));
+    }
+    let gap_slash = read_resource_document(
+        &mut session,
+        "gap-resource-slash",
+        &format!("ripr://gap/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_slash != gap_tool {
+        return Err(format!(
+            "one trailing slash must not change the gap document:\nslash={gap_slash}\ntool={gap_tool}"
+        ));
+    }
+    let card_slash = read_resource_document(
+        &mut session,
+        "card-resource-slash",
+        &format!("ripr://repair-card/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_slash != card_tool {
+        return Err(format!(
+            "one trailing slash must not change the repair-card document:\nslash={card_slash}\ntool={card_tool}"
+        ));
+    }
+    // A second slash is not a normalization artifact: the read must fail
+    // closed instead of resolving to a near-miss id.
+    if read_resource_document(
+        &mut session,
+        "gap-resource-double-slash",
+        &format!("ripr://gap/{canonical_id}//"),
+        REPLY_TIMEOUT,
+    )
+    .is_ok()
+    {
+        return Err("two trailing slashes must not resolve".into());
     }
 
     // Attempt pair: prepare the B4 item, then read both routes.

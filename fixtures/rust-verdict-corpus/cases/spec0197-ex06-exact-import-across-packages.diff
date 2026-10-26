@@ -1,0 +1,11 @@
+diff --git a/meter/src/lib.rs b/meter/src/lib.rs
+--- a/meter/src/lib.rs
++++ b/meter/src/lib.rs
+@@ -4,6 +4,6 @@
+ 
+ impl Gauge {
+     pub fn reading() -> u32 {
+-        42
++        40 + 2
+     }
+ }

@@ -123,7 +123,7 @@ The per-finding digest line uses the same unit: `Related test (1 of N matched
 rows)` (#6807). `N` is `related_tests_total()` (matched rows before packing).
 That count is the post-dedup related-test row total already stored as
 `related_tests_matched_total`: admitted assertion rows plus examined-miss
-rows. `RelatedTest::is_unmatched` flags an examined miss inside that unit; it
+rows. `RelatedTest::is_examined_only` flags an examined miss inside that unit; it
 is not a second denominator. A distinct-test count of packed-away rows is not
 on the finding and is not invented from the packed window. JSON is unchanged.
 
