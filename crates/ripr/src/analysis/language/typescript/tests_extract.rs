@@ -983,7 +983,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
             && !{
                 // The context and the visible bindings are the same for every
                 // registration in this statement list, so they are built once
@@ -1011,7 +1012,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                         || call_callee_is_active_each_declaration(
                             call,
                             TestDeclarationRoot::Describe,
-                        ),
+                        )
+                        || conditional_describe_factory(call).is_some(),
                     names,
                 )
             }
@@ -1026,12 +1028,25 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
             && !declaration_options_are_active_with_undefined(call, false)
         {
             continue;
         }
-        if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
+        if let Some((describe_name, body, guard)) = describe_body_from_statement(stmt, source)
+            .map(|(name, body)| (name, body, None))
+            .or_else(|| {
+                conditional_describe_body(stmt, source)
+                    .map(|(name, body, guard)| (name, body, Some(guard)))
+            })
+        {
+            // #10629: a `describe.skipIf(cond)` / `describe.runIf(cond)` suite
+            // is indexed under its factory call as the guard, like an `if`.
+            let guarded = guard.is_some();
+            if let Some(guard) = guard {
+                scope.guards.push(guard);
+            }
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
             scope.levels.push(
@@ -1049,6 +1064,9 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
+            if guarded {
+                scope.guards.pop();
+            }
             continue;
         }
         if let Statement::IfStatement(if_stmt) = stmt
@@ -3054,6 +3072,47 @@ pub(crate) fn describe_body_from_statement<'a>(
     Some((name, body))
 }
 
+/// The `describe.skipIf(cond)` / `describe.runIf(cond)` factory call a
+/// registration call is made through, when its root is an active `describe`.
+fn conditional_describe_factory<'s, 'a>(
+    call: &'s oxc_ast::ast::CallExpression<'a>,
+) -> Option<&'s oxc_ast::ast::CallExpression<'a>> {
+    let Expression::CallExpression(factory) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &factory.callee else {
+        return None;
+    };
+    (matches!(member.property.name.as_str(), "skipIf" | "runIf")
+        && expression_is_active_declaration(&member.object, TestDeclarationRoot::Describe))
+    .then_some(&**factory)
+}
+
+/// `describe.skipIf(cond)('name', () => { ... })` and the `runIf` twin: the
+/// suite name, its body and the factory call's source as the guard. The
+/// condition is a runtime value static analysis does not evaluate, so the
+/// suite's tests are indexed for reach but earn no assertion credit.
+fn conditional_describe_body<'a>(
+    stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
+) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>, String)> {
+    let call = statement_call(stmt)?;
+    let factory = conditional_describe_factory(call)?;
+    if !declaration_options_are_active(call) {
+        return None;
+    }
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
+    let body = function_body_statements_from_argument(
+        call.arguments.get(declaration_callback_index(call))?,
+    )?;
+    let guard = snippet_for_span(
+        source.text(),
+        factory.span.start as usize,
+        factory.span.end as usize,
+    );
+    Some((name, body, guard))
+}
+
 /// A top-level `function name() { ... }` a registration can name as its
 /// callback: `(name, declaration)`.
 pub(crate) type DeclaredFunction<'s, 'a> = (&'s str, &'s oxc_ast::ast::Function<'a>);
@@ -4374,6 +4433,7 @@ fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
     };
     let index = if call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+        || conditional_describe_factory(call).is_some()
     {
         declaration_callback_index(call)
     } else {
