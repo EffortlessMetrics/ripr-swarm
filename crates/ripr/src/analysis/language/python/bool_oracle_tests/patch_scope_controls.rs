@@ -3,6 +3,69 @@
 use super::*;
 
 #[test]
+fn mock_calls_and_inspection_do_not_execute_user_equality_or_rebound_methods() {
+    let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
+    for (prelude, body) in [
+        (
+            "from unittest import mock\nclass Value:\n    def __eq__(self, other):\n        is_adult.__defaults__ = (0,)\n        return True\n",
+            "    handle = mock.Mock()\n    handle(Value())\n    handle.assert_called_with('x')\n",
+        ),
+        (
+            "from unittest import mock\nclass Local:\n    def assert_called(self):\n        is_adult.__defaults__ = (0,)\n",
+            "    handle = mock.Mock()\n    handle = Local()\n    handle.assert_called()\n",
+        ),
+    ] {
+        let tests = tests_with(prelude, "", body);
+        assert_eq!(
+            credited_strengths(owner, &tests).last(),
+            Some(&OracleStrength::Smoke),
+            "{tests}"
+        );
+    }
+}
+
+#[test]
+fn comprehension_targets_do_not_borrow_mock_receiver_or_import_identity() {
+    let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
+    for (prelude, body) in [
+        (
+            "from unittest import mock\nclass Local:\n    def reset_mock(self):\n        is_adult.__defaults__ = (0,)\n",
+            "    handle = mock.Mock()\n    [handle.reset_mock() for handle in [Local()]]\n",
+        ),
+        (
+            "import unittest.mock\nclass Factory:\n    def Mock(self):\n        is_adult.__defaults__ = (0,)\nclass Local:\n    @property\n    def mock(self):\n        return Factory()\n",
+            "    [unittest.mock.Mock() for unittest in [Local()]]\n",
+        ),
+    ] {
+        let tests = tests_with(prelude, "", body);
+        assert_eq!(
+            credited_strengths(owner, &tests).last(),
+            Some(&OracleStrength::Smoke),
+            "{tests}"
+        );
+    }
+}
+
+#[test]
+fn environment_arguments_do_not_execute_user_protocols() {
+    let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
+    for (method, body) in [
+        ("__fspath__", "    monkeypatch.chdir(Value())\n"),
+        ("__str__", "    monkeypatch.setenv('A', Value())\n"),
+    ] {
+        let prelude = format!(
+            "class Value:\n    def {method}(self):\n        is_adult.__defaults__ = (0,)\n        return '/tmp'\n"
+        );
+        let tests = tests_with(&prelude, "monkeypatch", body);
+        assert_eq!(
+            credited_strengths(owner, &tests),
+            vec![OracleStrength::Smoke],
+            "{tests}"
+        );
+    }
+}
+
+#[test]
 fn mock_constructor_overrides_do_not_authenticate_inspection() {
     let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
     let tests = tests_with(

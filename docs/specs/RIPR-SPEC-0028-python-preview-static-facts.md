@@ -208,8 +208,12 @@ mock expectations, and custom `assert_*` helpers.
     imported fixture type annotation, or an inert string statement, with no
     argument naming the callee or owner. Inspection such as
     `handle.assert_not_called()` remains allowed; marker-bearing inspection/reset
-    calls require a direct, unrebound zero-argument mock construction. Constructor
-    arguments can replace inspection methods, so they retain the veto. Arbitrary
+    calls require a direct, unrebound zero-argument mock construction. Comprehension
+    bindings cannot borrow an import or constructor from a different scope.
+    Environment and mock calls admit only inert literal arguments: `chdir` may
+    invoke `__fspath__`, `setenv` may invoke `__str__`, and mock comparisons may
+    invoke `__eq__`. Mock configuration and escaping references retain the veto.
+    Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
     receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
     and formatted strings are never inert docstrings. Everything else keeps the credit withheld: any other
     patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,

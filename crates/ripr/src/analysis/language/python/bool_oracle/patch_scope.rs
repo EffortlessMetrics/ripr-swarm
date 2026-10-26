@@ -5,10 +5,11 @@
 //! every real pytest file, so this pass keeps that veto and exempts only a
 //! closed allow-list of occurrences, read from the token stream:
 //!
-//! - exact `monkeypatch.setenv(` / `delenv(` / `chdir(` calls on an injected
+//! - literal-argument `monkeypatch.setenv(` / `delenv(` / `chdir(` calls on an injected
 //!   test/fixture parameter (no default, rebinding, or explicit supplying call);
 //! - zero-argument constructors from unshadowed `unittest.mock` imports;
-//! - standard inspection/reset methods on their directly assigned, unrebound objects;
+//! - literal calls and standard inspection/reset methods on their directly
+//!   assigned, unrebound objects, with no escaping references or configuration;
 //! - `import` / `from .. import` statements (a statement start, no `as`);
 //! - a formal parameter (`def test(monkeypatch)`) or a recognized fixture type;
 //! - an inert string statement (never a formatted string).
@@ -104,7 +105,12 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
         }
     }
     let regions = Regions::of(&tokens);
-    let bindings = Bindings { source, module };
+    let bindings = Bindings {
+        source,
+        module,
+        tokens: &tokens,
+    };
+    let mock_receivers = bindings.mock_receivers();
     for (index, token) in tokens.iter().enumerate() {
         match token {
             Tok::Name { name } if INDIRECT_NAMES.contains(&name.as_str()) => return true,
@@ -128,6 +134,27 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
         let Some(chain) = Chain::at(&tokens, index) else {
             continue;
         };
+        // A known mock can execute user equality or side-effect protocols if
+        // configured, called with arbitrary objects, or passed to a helper.
+        // Inspect its uses even when the variable name has no patch marker.
+        if let Some(receiver) = chain.segments.first()
+            && mock_receivers.contains(receiver)
+        {
+            if !bindings.mock_binding(&tokens, receiver) {
+                return true;
+            }
+            let assignment = chain.segments.len() == 1
+                && is_statement_start(&tokens, index)
+                && matches!(tokens.get(chain.end + 1), Some(Tok::Equal));
+            let call = matches!(tokens.get(chain.end + 1), Some(Tok::Lpar))
+                && (chain.segments.len() == 1 || bindings.mock_inspection(&tokens, &chain))
+                && inert_call_arguments(&tokens, chain.end + 1)
+                && !call_args_hide_a_target(&tokens, chain.end + 1, names);
+            if assignment || call {
+                continue;
+            }
+            return true;
+        }
         if !chain.segments.iter().any(|segment| has_marker(segment)) {
             continue;
         }
@@ -222,11 +249,34 @@ impl Regions {
 struct Bindings<'a> {
     source: &'a str,
     module: &'a [Stmt],
+    tokens: &'a [Tok],
 }
 
 impl Bindings<'_> {
+    fn mock_receivers(&self) -> std::collections::BTreeSet<&str> {
+        self.tokens
+            .iter()
+            .enumerate()
+            .filter_map(|(index, token)| {
+                let Tok::Name { name } = token else {
+                    return None;
+                };
+                if !is_statement_start(self.tokens, index)
+                    || !matches!(self.tokens.get(index + 1), Some(Tok::Equal))
+                {
+                    return None;
+                }
+                let constructor = Chain::at(self.tokens, index + 2)?;
+                (self.mock_constructor(&constructor)
+                    && matches!(self.tokens.get(constructor.end + 1), Some(Tok::Lpar))
+                    && matches!(self.tokens.get(constructor.end + 2), Some(Tok::Rpar)))
+                .then_some(name.as_str())
+            })
+            .collect()
+    }
     fn imported(&self, root: &str, module: &str, member: Option<&str>) -> bool {
-        super::count_bindings(self.module, root) == 1
+        !for_target_binds(self.tokens, root)
+            && super::count_bindings(self.module, root) == 1
             && !super::binds_by_walrus(self.source, root)
             && self
                 .module
@@ -272,7 +322,8 @@ impl Bindings<'_> {
     }
 
     fn mock_binding(&self, tokens: &[Tok], receiver: &str) -> bool {
-        super::count_bindings(self.module, receiver) == 1
+        !for_target_binds(tokens, receiver)
+            && super::count_bindings(self.module, receiver) == 1
             && !super::binds_by_walrus(self.source, receiver)
             && tokens.iter().enumerate().any(|(index, token)| {
                 if !is_statement_start(tokens, index)
@@ -439,10 +490,12 @@ fn chain_may_patch(
         let allowed = (chain.segments.len() == 2
             && chain.segments[0] == "monkeypatch"
             && ENVIRONMENT_VERBS.contains(&verb)
-            && bindings.fixture_parameter(tokens, regions, "monkeypatch"))
+            && bindings.fixture_parameter(tokens, regions, "monkeypatch")
+            && inert_call_arguments(tokens, chain.end + 1))
             || (bindings.mock_constructor(chain)
                 && matches!(tokens.get(chain.end + 2), Some(Tok::Rpar)))
-            || bindings.mock_inspection(tokens, chain);
+            || (bindings.mock_inspection(tokens, chain)
+                && inert_call_arguments(tokens, chain.end + 1));
         return !allowed || call_args_hide_a_target(tokens, chain.end + 1, names);
     }
     // A type annotation may be a patch factory, so only recognized fixture
@@ -454,6 +507,42 @@ fn chain_may_patch(
     !(mock_assignment
         || regions.parameters[start] && chain.segments.len() == 1
         || regions.annotations[start] && bindings.fixture_annotation(chain))
+}
+
+/// Comprehension targets have their own scope and are not statement bindings.
+/// Refuse any for-target with this name rather than borrow a different scope's
+/// import or constructor assignment. The input has already parsed successfully.
+fn for_target_binds(tokens: &[Tok], name: &str) -> bool {
+    tokens.iter().enumerate().any(|(index, token)| {
+        matches!(token, Tok::For)
+            && tokens[index + 1..]
+                .iter()
+                .take_while(|token| !matches!(token, Tok::In))
+                .any(|token| matches!(token, Tok::Name { name: bound } if bound == name))
+    })
+}
+
+/// Real environment and mock APIs can invoke __fspath__, __str__ or __eq__.
+/// Only primitive literal arguments avoid user-defined protocol execution.
+fn inert_call_arguments(tokens: &[Tok], open: usize) -> bool {
+    let Some(close) = matching_close(tokens, open) else {
+        return false;
+    };
+    tokens[open + 1..close]
+        .iter()
+        .enumerate()
+        .all(|(offset, token)| match token {
+            Tok::String { kind, .. } => !kind.is_any_fstring(),
+            Tok::Int { .. }
+            | Tok::Float { .. }
+            | Tok::True
+            | Tok::False
+            | Tok::None
+            | Tok::Comma
+            | Tok::Equal => true,
+            Tok::Name { .. } => matches!(tokens.get(open + offset + 2), Some(Tok::Equal)),
+            _ => false,
+        })
 }
 
 fn call_args_hide_a_target(tokens: &[Tok], open: usize, names: &[&str]) -> bool {
