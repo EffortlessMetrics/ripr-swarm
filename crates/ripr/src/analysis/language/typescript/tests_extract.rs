@@ -223,7 +223,6 @@ fn extract_tests_expanding_suite_factories(
             &ret.program.body,
             file,
             &SourceText::new(source),
-            &mocks,
             &imports,
             &mut scope,
             &mut tests,
@@ -242,6 +241,13 @@ fn extract_tests_expanding_suite_factories(
             .chain(scope.names.iter().cloned())
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
+        // File-wide lists are held once and shared by every test of the file.
+        let shared_mocks: Shared<String> = mocks.into();
+        let shared_imports: Shared<TypeScriptImport> = imports.clone().into();
+        for test in &mut tests {
+            test.mocks_in_file = shared_mocks.clone();
+            test.imports_in_file = shared_imports.clone();
+        }
         let code = blank_ranges(source, &masked);
         let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
         let unstable_member_roots: Vec<String> = imports
@@ -255,35 +261,41 @@ fn extract_tests_expanding_suite_factories(
             })
             .map(|import| import.local.clone())
             .collect();
+        let unstable_member_roots: Shared<String> = unstable_member_roots.into();
         for test in &mut tests {
             test.unstable_member_roots_in_file = unstable_member_roots.clone();
         }
         let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
+            let helpers: Shared<_> = helpers.into();
             for test in &mut tests {
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
         let member_only = default_member_only_locals(&imports, &code);
         if !member_only.is_empty() {
+            let member_only: Shared<_> = member_only.into();
             for test in &mut tests {
                 test.default_member_only_locals_in_file = member_only.clone();
             }
         }
         let rewritten = rewritten_identifier_names(&code);
         if !rewritten.is_empty() {
+            let rewritten: Shared<_> = rewritten.into();
             for test in &mut tests {
                 test.written_locals_in_file = rewritten.clone();
             }
         }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
+            let factories: Shared<_> = factories.into();
             for test in &mut tests {
                 test.mock_factories_in_file = factories.clone();
             }
         }
         let spread_sources = mock_spread_sources(&ret.program.body, &code);
         if !spread_sources.is_empty() {
+            let spread_sources: Shared<_> = spread_sources.into();
             for test in &mut tests {
                 test.mock_spread_sources_in_file = spread_sources.clone();
             }
@@ -842,7 +854,6 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     statements: &'s [Statement<'a>],
     file: &Path,
     source: &SourceText<'_>,
-    mocks: &[String],
     imports: &[TypeScriptImport],
     scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
@@ -864,6 +875,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
+    let mut shared_bindings: Option<ScopeBindings> = None;
+    let mut registration_scope: Option<(TypeScriptAdmissionContext, RegistrationNames)> = None;
     for stmt in statements {
         if !returned {
             collect_const_iterables(stmt, &mut iterables);
@@ -963,21 +976,37 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
-            && !scope.admission.registration_is_known(
-                call,
-                call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe),
-                scope
-                    .levels
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(depth, level)| {
-                        level.iter().map(move |(name, _, phase)| {
-                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
-                        })
-                    })
-                    .chain(scope.registration_levels.iter().flatten().cloned()),
-            )
+            && !{
+                // The context and the visible bindings are the same for every
+                // registration in this statement list, so they are built once
+                // (#10017).
+                let (context, names) = registration_scope.get_or_insert_with(|| {
+                    (
+                        scope.admission.registration_context(),
+                        RegistrationNames::new(
+                            scope
+                                .levels
+                                .iter()
+                                .enumerate()
+                                .flat_map(|(depth, level)| {
+                                    level.iter().map(move |(name, _, phase)| {
+                                        (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                                    })
+                                })
+                                .chain(scope.registration_levels.iter().flatten().cloned()),
+                        ),
+                    )
+                });
+                context.registration_is_known_in(
+                    call,
+                    call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                        || call_callee_is_active_each_declaration(
+                            call,
+                            TestDeclarationRoot::Describe,
+                        ),
+                    names,
+                )
+            }
         {
             continue;
         }
@@ -1007,11 +1036,54 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.describe_names.push(describe_name);
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
+            continue;
+        }
+        if let Statement::IfStatement(if_stmt) = stmt
+            && constant_condition_value(&if_stmt.test).is_none()
+        {
+            // #10438: a registration under a platform or environment guard
+            // is indexed so it reaches its owner, marked conditional so its
+            // assertions earn no credit. The condition is the guard for the
+            // consequent; the alternate runs under its negation.
+            let condition = snippet_for_span(
+                source.text(),
+                if_stmt.test.span().start as usize,
+                if_stmt.test.span().end as usize,
+            );
+            for (branch, guard) in std::iter::once((&if_stmt.consequent, condition.clone())).chain(
+                if_stmt
+                    .alternate
+                    .iter()
+                    .map(|alternate| (alternate, format!("!({condition})"))),
+            ) {
+                scope.guards.push(guard);
+                match branch {
+                    Statement::BlockStatement(block) => collect_tests_from_statements(
+                        &block.body,
+                        file,
+                        source,
+                        mocks,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                    other => collect_tests_from_statements(
+                        std::slice::from_ref(other),
+                        file,
+                        source,
+                        mocks,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                }
+                scope.guards.pop();
+            }
             continue;
         }
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
@@ -1027,7 +1099,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.iterables.push(Vec::new());
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
@@ -1053,19 +1125,32 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &assertion_bindings,
             &functions,
         ) {
-            test.mocks_in_file = mocks.to_vec();
-            test.imports_in_file = imports.to_vec();
             if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters = statement_callback_parameter_names(stmt)
+            let parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
-            test.scope_bindings = scope.resolve_with(parameters);
+            // Tests with no parameters of their own see the same scope, so
+            // they share one resolved list (#10017).
+            test.scope_bindings = if parameters.is_empty() {
+                shared_bindings
+                    .get_or_insert_with(|| scope.resolve_with(Vec::new()).into())
+                    .clone()
+            } else {
+                scope.resolve_with(parameters).into()
+            };
             test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
+            if !scope.guards.is_empty() {
+                // Fail-closed cap: the test still reaches its owner, but a
+                // registration that may not happen cannot credit an oracle.
+                test.conditional_registration = Some(scope.guards.join(" && "));
+                test.assertions.clear();
+                test.assertion_admission = TypeScriptAssertionAdmission::Unresolved;
+            }
             tests.push(test);
         }
     }
@@ -1229,6 +1314,9 @@ pub(crate) struct TestScope {
     assertion_bindings: TypeScriptAssertionBindings,
     /// File-wide facts for each test's assertion admission (#5524).
     admission: TypeScriptAdmissionContext,
+    /// The unevaluated `if` conditions the statements being walked sit
+    /// under, outermost first (#10438).
+    guards: Vec<String>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1640,8 +1728,18 @@ fn withhold_rebound_scope_receivers(
         std::collections::HashMap::new();
     let mut name_verdicts: std::collections::HashMap<String, bool> =
         std::collections::HashMap::new();
+    // Tests that see the same scope share one list; withhold each distinct
+    // list once and hand every test the result (#10017).
+    let mut withheld: std::collections::HashMap<*const Vec<TypeScriptScopeBinding>, ScopeBindings> =
+        std::collections::HashMap::new();
     for test in tests {
-        for binding in &mut test.scope_bindings {
+        let identity = test.scope_bindings.identity();
+        if let Some(done) = withheld.get(&identity) {
+            test.scope_bindings = done.clone();
+            continue;
+        }
+        let mut bindings = test.scope_bindings.to_vec();
+        for binding in &mut bindings {
             let Some(constructor) = &binding.constructed_by else {
                 continue;
             };
@@ -1673,6 +1771,9 @@ fn withhold_rebound_scope_receivers(
                 binding.constructed_by = None;
             }
         }
+        let rewritten = ScopeBindings::from(bindings);
+        withheld.insert(identity, rewritten.clone());
+        test.scope_bindings = rewritten;
     }
 }
 
@@ -3057,20 +3158,21 @@ pub(crate) fn test_from_statement<'s, 'a>(
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
-        mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
-        unstable_member_roots_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        default_member_only_locals_in_file: Vec::new(),
-        written_locals_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
-        mock_spread_sources_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        imports_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        conditional_registration: None,
     })
 }
 
