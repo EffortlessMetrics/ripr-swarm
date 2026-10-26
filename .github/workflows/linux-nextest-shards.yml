@@ -106,6 +106,16 @@ jobs:
           shared-key: ripr-swarm-rust-shards-${{ runner.os }}
           save-if: false
 
+      # The archive extracts a second copy of every test binary next to the
+      # restored cache and checkout, and the second trial ran the runner out of disk
+      # with debug info already off. Preinstalled SDKs this job never uses are the
+      # cheapest space to give back.
+      - name: Free runner disk
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
       - name: Prepare locked owner-return fixture dependencies
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
