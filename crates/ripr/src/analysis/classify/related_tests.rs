@@ -1906,17 +1906,22 @@ fn use_statement_paths(stripped: &str) -> Vec<&str> {
     let bytes = stripped.as_bytes();
     let mut paths = Vec::new();
     let mut search_from = 0usize;
-    while let Some(relative) = stripped[search_from..].find("use ") {
+    while let Some(relative) = stripped[search_from..].find("use") {
         let at = search_from + relative;
-        search_from = at + 4;
-        if at > 0
-            && bytes
+        search_from = at + 3;
+        // The keyword ends at any non-identifier character, as in
+        // `file_level_use_text`, so a tab- or newline-separated `use` is seen.
+        let starts_word = at == 0
+            || bytes
                 .get(at - 1)
-                .is_some_and(|byte| is_ident_char(char::from(*byte)))
-        {
+                .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        let ends_word = bytes
+            .get(at + 3)
+            .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        if !(starts_word && ends_word) {
             continue;
         }
-        let rest = &stripped[at + 4..];
+        let rest = &stripped[at + 3..];
         paths.push(rest.split(';').next().unwrap_or(rest).trim());
     }
     paths
@@ -10745,6 +10750,10 @@ fn crate_c_score_test() {
             "use crate_a::*; struct LevelFilter; LevelFilter::current()",
             // Another import names the type.
             "use crate_a::*; use other::LevelFilter; LevelFilter::current()",
+            // Tab- and newline-separated `use` keywords are still statements.
+            "use crate_a::*;\nuse\tother::LevelFilter; LevelFilter::current()",
+            "use crate_a::*;\nuse\nother::LevelFilter; LevelFilter::current()",
+            "use crate_a::*;\nuse\tcrate_b::*; LevelFilter::current()",
             // The glob belongs to a dependency that is not the owner's.
             "use crate_b::*; LevelFilter::current()",
             // A brace glob hides a second path.

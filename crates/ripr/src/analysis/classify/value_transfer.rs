@@ -118,7 +118,8 @@ pub(crate) fn evaluate_initializer(initializer: &str, inputs: &ExactInputs) -> E
 /// The folded decimal value of a literal-only integer expression (#10479):
 /// plain decimal literals joined by `+ - * / %` and parentheses, with no
 /// names, suffixes, signs or method calls. A bare literal is not an
-/// expression to fold (its own token already confirms), and an overflow, an
+/// expression to fold (a literal of three or more digits is its own token; a
+/// shorter folded value confirms where the bare literal never does), and an overflow, an
 /// underflow, a division by zero or a result at the arithmetic bound answers
 /// `None` through [`evaluate_initializer`]'s fail-closed arithmetic. The
 /// unwritten integer type could change a result beyond that bound.

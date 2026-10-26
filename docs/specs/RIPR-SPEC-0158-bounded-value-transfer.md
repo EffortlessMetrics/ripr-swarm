@@ -236,7 +236,9 @@ A changed `return_value` expression made only of plain decimal literals, `+ - * 
 and parentheses (`8 * 100`, `(2 + 2) * 200`) folds, through the same exact integer
 arithmetic, to its value. That value is one more owner-scoped digit token of the
 probe, so an exact-value assertion bound to the owner's result and carrying the
-folded literal confirms observation, as an unrewritten literal already does. A
+folded literal confirms observation, as an unrewritten literal of three or more
+digits already does; a one- or two-digit value is never kept as a bare-literal
+token, so the folded spelling (`40 + 2`) confirms where the bare `42` does not. A
 wrong expected value (`801`), a result at or above the arithmetic bound, an
 overflow, an underflow, a division by zero, and any name, suffix, sign,
 underscore, string or method call leave the expression unfolded and the
