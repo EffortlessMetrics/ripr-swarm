@@ -203,7 +203,7 @@ fn a_same_line_discarded_row_cannot_lend_an_asserted_far_call_its_boundary() -> 
     assert_eq!(finding.ripr.infect.state, StageState::Yes);
     assert_eq!(finding.ripr.propagate.state, StageState::Yes);
     assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
-    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:#?}");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:#?}");
     Ok(())
 }
 
@@ -213,7 +213,7 @@ fn a_boundary_call_in_an_assertion_message_cannot_supply_a_pin() -> Result<(), S
         "assert!(fits(\"abc\", 3));",
         "assert!(fits(\"ab\", 3), \"{}\", fits(\"abc\", 3));",
     );
-    assert_ne!(finding(&source)?.class, ExposureClass::Exposed);
+    assert_eq!(finding(&source)?.class, ExposureClass::InfectionUnknown);
     Ok(())
 }
 
@@ -296,7 +296,11 @@ fn computed_arguments_and_unsupported_owner_expressions_stay_unknown() -> Result
     let source = candidate().replace("text.as_bytes().len()", initializer);
     let diff = DIFF.replace("text.as_bytes().len()", initializer);
     let finding = finding_with_diff(&source, &diff)?;
-    assert_ne!(finding.class, ExposureClass::Exposed, "{initializer}");
+    assert_eq!(
+        finding.class,
+        ExposureClass::PropagationUnknown,
+        "{initializer}"
+    );
     assert!(
         finding
             .activation
@@ -357,7 +361,7 @@ fn same_named_foreign_owner_and_weak_oracle_do_not_get_credit() -> Result<(), St
     let source = format!(
         "{source}\nstruct Other; impl Other {{ fn fits(_: &str, _: usize) -> bool {{ true }} }}\n"
     );
-    assert_ne!(finding(&source)?.class, ExposureClass::Exposed);
+    assert_eq!(finding(&source)?.class, ExposureClass::InfectionUnknown);
     let source = candidate().replace(
         "assert!(fits(\"abc\", 3));",
         "assert!(fits(\"abc\", 3) || true);",
@@ -457,5 +461,46 @@ fn an_old_initializer_other_than_plain_len_is_not_assumed_equivalent() -> Result
         );
         assert_ne!(finding.class, ExposureClass::Exposed, "{old}");
     }
+    Ok(())
+}
+
+fn rows_source(extra_true_rows: usize) -> String {
+    let extra = "assert!(fits(\"abc\", 3)); ".repeat(extra_true_rows);
+    candidate().replace(
+        "assert!(!fits(\"abcd\", 3));",
+        &format!("assert!(!fits(\"abcd\", 3)); {extra}"),
+    )
+}
+
+/// The longer row's string token (quotes included) is `over_token_bytes` long
+/// and exceeds the width by one byte, bracketing the boundary with the shorter
+/// row of exactly the width.
+fn wide_source(over_token_bytes: usize) -> String {
+    let width = over_token_bytes - 3;
+    let on = "a".repeat(width);
+    let over = "a".repeat(width + 1);
+    candidate()
+        .replace("fits(\"abc\", 3)", &format!("fits(\"{on}\", {width})"))
+        .replace("fits(\"abcd\", 3)", &format!("fits(\"{over}\", {width})"))
+}
+
+#[test]
+fn the_row_budget_admits_sixty_four_rows_and_refuses_sixty_five() -> Result<(), String> {
+    // The candidate already has two rows.
+    assert_eq!(finding(&rows_source(62))?.class, ExposureClass::Exposed);
+    assert_eq!(
+        finding(&rows_source(63))?.class,
+        ExposureClass::InfectionUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn the_string_token_budget_admits_512_bytes_and_refuses_513() -> Result<(), String> {
+    assert_eq!(finding(&wide_source(512))?.class, ExposureClass::Exposed);
+    assert_eq!(
+        finding(&wide_source(513))?.class,
+        ExposureClass::InfectionUnknown
+    );
     Ok(())
 }

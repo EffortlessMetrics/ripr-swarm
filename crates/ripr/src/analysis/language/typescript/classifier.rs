@@ -1206,6 +1206,134 @@ fn ts_mask_lexically(
     out
 }
 
+/// The owner's source lines, line `owner.start_line + i` at index `i`. Read
+/// from the text the owner was parsed from, so committed-history analysis
+/// sees the committed owner, not the worktree; the worktree file is the
+/// fallback when the owner carries no source.
+fn owner_source_lines(
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<Vec<String>> {
+    if let Some(text) = owner.source_text.as_deref() {
+        return Some(text.lines().map(str::to_string).collect());
+    }
+    let source = std::fs::read_to_string(workspace_root?.join(&owner.file)).ok()?;
+    Some(
+        source
+            .lines()
+            .skip(owner.start_line.saturating_sub(1))
+            .take(owner.end_line.saturating_sub(owner.start_line) + 1)
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// The old and new expression of a changed one-line `return <expression>;` at
+/// the owner's own function level, when the owner can be evaluated on its
+/// call arguments: it declares parameters, never reassigns one, and opens no
+/// nested function before the return. Shared by RIPR-SPEC-0243 rule 18 and
+/// the `toBeCloseTo` tolerance pin.
+pub(crate) fn plain_changed_return<'t>(
+    line: usize,
+    line_text: &'t str,
+    old_line_text: Option<&'t str>,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<(&'t str, &'t str)> {
+    if owner.arity.is_none() || owner.params.is_empty() {
+        return None;
+    }
+    let (Some(old_line_text), Some(_)) = (old_line_text, workspace_root) else {
+        return None;
+    };
+    let (Some(old_expression), Some(new_expression)) = (
+        returned_line_expression(old_line_text),
+        returned_line_expression(line_text),
+    ) else {
+        return None;
+    };
+    // An earlier statement may rebind a parameter, so the call arguments
+    // would not be the values the returned expression reads.
+    let lines = owner_source_lines(owner, workspace_root)?;
+    let changed = line.checked_sub(owner.start_line)?;
+    let body_text: String = lines
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index > 0 && *index != changed)
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if owner
+        .params
+        .iter()
+        .any(|param| identifier_written_in(&body_text, param))
+    {
+        return None;
+    }
+    // The changed return must sit at the owner's own function level: inside a
+    // nested function its parameters can shadow the owner's.
+    let before_return: String = lines
+        .iter()
+        .take(changed)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Drop the signature: only what follows the owner's opening brace can
+    // open a nested function.
+    let before_return = before_return
+        .split_once('{')
+        .map_or(String::new(), |(_, rest)| rest.to_string());
+    if before_return.contains("=>")
+        || before_return.contains("function")
+        || before_return.lines().any(nested_method_head)
+    {
+        return None;
+    }
+    Some((old_expression, new_expression))
+}
+
+/// Whether the changed `return` at `line` runs for every call of a plain,
+/// synchronous owner: nothing between the signature and the return branches,
+/// returns or throws early, and the owner is neither `async` nor a generator.
+/// Rule 18 only withdraws credit, so it does not need this; the
+/// `toBeCloseTo` pin grants credit, and an early `return` for the asserted
+/// input would leave the changed line unexecuted on both versions.
+pub(crate) fn changed_return_runs_unconditionally(
+    line: usize,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let Some(lines) = owner_source_lines(owner, workspace_root) else {
+        return false;
+    };
+    let Some(changed) = line.checked_sub(owner.start_line) else {
+        return false;
+    };
+    let head = lines
+        .iter()
+        .take(changed)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let masked = ts_mask_literals_and_comments(&head);
+    let Some((signature, prefix)) = masked.split_once('{') else {
+        return false;
+    };
+    let word = |text: &str, name: &str| {
+        text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .any(|token| token == name)
+    };
+    !(word(signature, "async")
+        || signature.contains('*')
+        || prefix.contains('{')
+        || [
+            "if", "else", "switch", "case", "for", "while", "do", "try", "catch", "return",
+            "throw", "break", "continue", "yield",
+        ]
+        .iter()
+        .any(|keyword| word(prefix, keyword)))
+}
+
 /// RIPR-SPEC-0243 rule 18: the changed single-line `return <expression>;`
 /// is shown unexercised when EVERY strong assertion of every oracle-eligible
 /// related test observes owner calls whose arguments are all literals and on
@@ -1230,63 +1358,14 @@ pub(crate) fn ts_returned_expression_unexercised(
     workspace_root: Option<&Path>,
     other_credit_present: bool,
 ) -> bool {
-    if other_credit_present || owner.arity.is_none() || owner.params.is_empty() {
+    if other_credit_present {
         return false;
     }
-    let (Some(old_line_text), Some(root)) = (old_line_text, workspace_root) else {
+    let Some((old_expression, new_expression)) =
+        plain_changed_return(line, line_text, old_line_text, owner, workspace_root)
+    else {
         return false;
     };
-    let (Some(old_expression), Some(new_expression)) = (
-        returned_line_expression(old_line_text),
-        returned_line_expression(line_text),
-    ) else {
-        return false;
-    };
-    // An earlier statement may rebind a parameter, so the call arguments
-    // would not be the values the returned expression reads.
-    let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
-        return false;
-    };
-    let body_text: String = source
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| {
-            let number = index + 1;
-            number > owner.start_line && number <= owner.end_line && number != line
-        })
-        .map(|(_, text)| text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    if owner
-        .params
-        .iter()
-        .any(|param| identifier_written_in(&body_text, param))
-    {
-        return false;
-    }
-    // The changed return must sit at the owner's own function level: inside a
-    // nested function its parameters can shadow the owner's.
-    let before_return: String = source
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| {
-            let number = index + 1;
-            number >= owner.start_line && number < line
-        })
-        .map(|(_, text)| text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    // Drop the signature: only what follows the owner's opening brace can
-    // open a nested function.
-    let before_return = before_return
-        .split_once('{')
-        .map_or(String::new(), |(_, rest)| rest.to_string());
-    if before_return.contains("=>")
-        || before_return.contains("function")
-        || before_return.lines().any(nested_method_head)
-    {
-        return false;
-    }
     let mut evaluated = false;
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
@@ -6361,6 +6440,16 @@ pub(crate) fn classify_resolved_owner(
     ));
     pin_facts.extend(ts_boolean_pin_facts(
         &probe_shape.family,
+        owner,
+        related_candidates,
+        alias_map,
+        workspace_root,
+    ));
+    pin_facts.extend(ts_close_to_pin_facts(
+        &probe_shape.family,
+        line,
+        line_text,
+        old_line_text,
         owner,
         related_candidates,
         alias_map,
