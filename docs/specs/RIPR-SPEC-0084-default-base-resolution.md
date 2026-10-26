@@ -126,6 +126,14 @@ never the current branch, with a `--base` example); the current branch is
 the only one. A Git probe that fails to run adds no context rather than a
 guessed cause.
 
+A damaged repository is not a missing base. When the `HEAD` probe itself
+fails with a Git `fatal:` line (exit 128, for example a corrupt
+`.git/packed-refs`), the default-base failure is the unreadable-repository
+refusal: Git's own reason plus the repair naming the file to correct or
+restore, typed as an unusable repository root (`repository_root_unusable`),
+never "no commits yet" and never `base_unresolvable` (#10566). Only a quiet
+exit 1 reads as an unborn `HEAD`.
+
 This message explicitly says the analysis did not run (unlike "No probes
 found", which means the analysis ran and found nothing). It names the
 problem and the two remediation paths.
@@ -304,6 +312,7 @@ Start-here action owns the remediation instead.
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
 - `crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent`
 - `crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out`
+- `crates/ripr/tests/hostile_repos.rs::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
 - `crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags`
 - `crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal`
 - `crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source`

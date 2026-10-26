@@ -1,0 +1,9 @@
+# Registers the corrupt packed-refs default-base regression (#10566) under RIPR-SPEC-0084.
+[[extend]]
+id = "RIPR-SPEC-0084"
+tests = [
+  "crates/ripr/tests/hostile_repos.rs::corrupt_packed_refs_without_base_is_not_reported_as_unborn",
+]
+code = [
+  "crates/ripr/src/analysis/diff/load.rs",
+]

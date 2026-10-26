@@ -1123,13 +1123,25 @@ fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), St
     if ran.code != Some(2) {
         return Err(format!("expected a refusal\n{}", ran.stderr));
     }
-    for needle in ["packed-refs", "correct or restore it"] {
+    for needle in ["packed-refs", "fatal:", "garbage", "correct or restore it"] {
         if !ran.stderr.contains(needle) {
             return Err(format!("missing `{needle}`\n{}", ran.stderr));
         }
     }
     if ran.stderr.contains("no commits yet") {
         return Err(format!("wrong cause `no commits yet`\n{}", ran.stderr));
+    }
+    // Structured consumers key their repair on the refusal identity: a damaged
+    // repository is an unusable root, not an unresolved base.
+    let json = ripr(&root, &["check", "--format", "json"], &[])?;
+    assert_sane(&json, "corrupt packed-refs, json")?;
+    if !json.stdout.contains("repository_root_unusable")
+        || json.stdout.contains("base_unresolvable")
+    {
+        return Err(format!(
+            "expected repository_root_unusable\n{}",
+            json.stdout
+        ));
     }
     Ok(())
 }

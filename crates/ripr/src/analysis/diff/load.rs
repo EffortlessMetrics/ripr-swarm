@@ -857,7 +857,17 @@ pub(crate) fn resolve_effective_base_core_with_commit(
         return resolve_default_base(root, git_timeout)
             .map(|resolved| (resolved, None))
             .map_err(|err| {
-                core_error_for_git_root_probe(probe_git_root(root, git_timeout), root, err)
+                let probe = probe_git_root(root, git_timeout);
+                // An unreadable ref store answers the root probe "inside a
+                // work tree", so only the HEAD probe sees the damage; type it
+                // as an unusable root, not an unresolved base, so structured
+                // consumers do not offer a base repair (#10566).
+                if matches!(probe, GitRootProbe::Unanswered)
+                    && let Some(message) = damaged_head_message(root, git_timeout)
+                {
+                    return CoreError::repository_root_unusable(message);
+                }
+                core_error_for_git_root_probe(probe, root, err)
             });
     };
 
@@ -1310,6 +1320,22 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
 /// checkout never fetched its base branch, and a repository whose default
 /// branch is not `main`/`master` (`trunk`, `develop`) names its branches.
 /// Empty when none applies or Git cannot answer.
+/// The repair message when `HEAD` itself cannot be read because the
+/// repository is damaged (exit 128 with a `fatal:` line), or `None` when HEAD
+/// resolves, is merely unborn (a quiet exit 1), or Git could not answer.
+fn damaged_head_message(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let head = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        git_timeout,
+    )
+    .ok()?;
+    if head.status.success() {
+        return None;
+    }
+    unreadable_repository_message(root, &head)
+}
+
 fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> String {
     // Only a `rev-parse` that ran and answered "no" proves an unborn HEAD;
     // a missing or timed-out Git proves nothing, so it adds no context.
