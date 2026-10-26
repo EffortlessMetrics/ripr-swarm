@@ -2671,6 +2671,7 @@ fn checks_helper() {
             ),
         ];
         let mut with_probe_shapes = 0;
+        let mut with_foreign_shared = 0;
         for (path, text) in sources {
             let mut facts =
                 crate::analysis::rust_index::summarize_file(PathBuf::from(path), text.to_string());
@@ -2680,12 +2681,24 @@ fn checks_helper() {
             // probe-shape fields are skipped on the wire only when false or
             // absent.
             facts.functions[0].body = SourceText::owned("fn foreign() {}");
+            // A `Shared` body over a different allocation must inline too:
+            // the `Arc::ptr_eq` guard is what keeps a span from resolving
+            // against the wrong `source` at decode.
+            let away: Arc<str> = Arc::from("fn away() {}");
+            let has_second = facts.functions.len() > 1;
+            if let Some(fact) = facts.functions.get_mut(1) {
+                fact.body = SourceText::shared_or_owned(&away, 0, "fn away() {}");
+            }
             if let Some(shape) = facts.probe_shapes.first_mut() {
                 shape.value_consumed = true;
                 shape.source_lines = Some((1, 2));
             }
             let borrowed = serde_json::to_string(&facts)?;
             assert!(borrowed.contains("\"fn foreign() {}\""), "{path}");
+            if has_second {
+                with_foreign_shared += 1;
+                assert!(borrowed.contains("\"fn away() {}\""), "{path}");
+            }
             let owned = serde_json::to_string(&FileFactsWire::from(&facts))?;
             assert_eq!(borrowed, owned, "{path}");
             // Compare the twin itself, not only the `FileFacts` entry point
