@@ -3838,17 +3838,24 @@ impl OwnerReturnPin {
         // build only `Err`/`None`, `owner(..).unwrap()` equals the literal only
         // when the call is `Ok(literal)`/`Some(literal)`: any other exit panics
         // the unwrap. The exits are read by spelling, so an owner file that
-        // binds the wrapper name as a value (`const Ok`, `fn Some`) refuses.
+        // binds the wrapper or its opposite as a value (`const Ok`, `fn Err`)
+        // refuses.
         let unwrap_wrapper = match &self.path {
             ReturnPathGate::WholeValueField(gate) => gate.wrapper,
             ReturnPathGate::ErrVariant { .. } => Some("Err"),
             ReturnPathGate::Head(head @ ("Ok" | "Some"))
             | ReturnPathGate::EarlyHead(head @ ("Ok" | "Some")) => {
-                let owner_binds_wrapper = index
-                    .files()
-                    .get(&self.owner_file)
-                    .is_none_or(|facts| source_binds_value_name(&facts.source, head));
-                (!owner_binds_wrapper).then_some(*head)
+                // The opposite exit is read by spelling too: an imported
+                // `Err` that returns `Ok(3)` would pass the unwrap without
+                // reaching the changed tail.
+                let opposite = if *head == "Ok" { "Err" } else { "None" };
+                let owner_binds_exit_names =
+                    index.files().get(&self.owner_file).is_none_or(|facts| {
+                        [*head, opposite]
+                            .into_iter()
+                            .any(|name| source_binds_value_name(&facts.source, name))
+                    });
+                (!owner_binds_exit_names).then_some(*head)
             }
             _ => None,
         };

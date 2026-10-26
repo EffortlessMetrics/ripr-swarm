@@ -1403,9 +1403,11 @@ taken any other exit, because the unwrap panics on `Err`/`None`.
 
 1. The wrapper is the changed constructor itself. A changed early
    `return Err(..)` (`Head("Err")`) takes only `unwrap_err` (#7063).
-2. The owner's file must not bind the wrapper name (`Ok` or `Some`) as a value,
-   since the exit reasoning is by spelling and a rebound name could build the
-   same payload through another exit. The file is refused for this reading
+2. The owner's file must not bind the wrapper name (`Ok` or `Some`) or its
+   opposite (`Err` or `None`) as a value, since the exit reasoning is by
+   spelling and a rebound name could build the same payload through another
+   exit, or an opposite exit that returns the pinned value would pass the
+   unwrap without reaching the changed tail. The file is refused for this reading
    only, so direct `Ok(value)` pins keep their existing admission.
 3. A bound local follows RIPR-SPEC-0225 rule 1: a plain name bound once by an
    immutable `let` and mentioned only by that `let` and the pinned comparison.
@@ -2493,7 +2495,7 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived
   expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
-  discarded unwrap and wrapper-binding negatives).
+  discarded unwrap and wrapper- or opposite-exit-binding negatives).
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic

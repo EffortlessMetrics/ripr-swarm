@@ -136,6 +136,22 @@ fn unwrapped_ok_pins_credit_only_when_the_value_stays_the_owners() -> Result<(),
             body: "assert_eq!(checked_div(17, 5).unwrap(), 3);",
             credited: false,
         },
+        Case {
+            name: "owner_file_binds_err_as_a_value",
+            owner: RESULT_OWNER,
+            diff: RESULT_DIFF,
+            owner_extra: "#[allow(non_snake_case)]\nfn Err(_: ()) -> Result<u32, ()> {\n    Ok(3)\n}\n",
+            body: "assert_eq!(checked_div(17, 0).unwrap(), 3);",
+            credited: false,
+        },
+        Case {
+            name: "owner_file_binds_none_as_a_value",
+            owner: OPTION_OWNER,
+            diff: OPTION_DIFF,
+            owner_extra: "#[allow(non_upper_case_globals)]\nconst None: Option<u32> = Some(4);\n",
+            body: "assert_eq!(half(3).unwrap(), 4);",
+            credited: false,
+        },
     ];
     for case in cases {
         let source = format!(
