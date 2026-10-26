@@ -1970,3 +1970,70 @@ fn forwarder_method_receiver_of_a_same_named_type_in_an_integration_test_is_not_
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
+
+// A root-package owner has no package prefix, so the receiver-call entry must
+// not admit a workspace member's test by default.
+#[test]
+fn forwarder_method_called_from_a_member_of_a_root_package_is_not_related() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    let write = |path: &str, text: &str| -> Result<(), String> {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(full, text).map_err(|error| error.to_string())
+    };
+    write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[workspace]\nmembers = [\"user\"]\n\n[dependencies]\n"),
+    )?;
+    write(
+        "user/Cargo.toml",
+        "[package]\nname = \"user\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nwrapper_reach = { path = \"..\" }\n",
+    )?;
+    let lib = forwarder_source("", FORWARDING_METHOD, "")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    write("src/lib.rs", &lib)?;
+    write(
+        "user/tests/main.rs",
+        "use wrapper_reach::Pool;\n\n#[test]\nfn grow_from_a_member() {\n    let mut pool = Pool { spilled: false };\n    assert_eq!(pool.grow(4), Ok(true));\n}\n",
+    )?;
+    write(
+        "tests/root.rs",
+        "use wrapper_reach::Pool;\n\n#[test]\nfn grow_from_the_root_package() {\n    let mut pool = Pool { spilled: false };\n    assert_eq!(pool.grow(4), Ok(true));\n}\n",
+    )?;
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, FORWARDER_DIFF).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(
+        relation_of(&finding, "grow_from_a_member"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(
+        relation_of(&finding, "grow_from_the_root_package"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}

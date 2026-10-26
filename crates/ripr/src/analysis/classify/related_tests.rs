@@ -1383,9 +1383,18 @@ fn find_related_tests_with_candidates<'a>(
         // mutation test pins on its own (the later cross-package `continue`
         // and the receiver-type check refuse the same test).
         let calls_method_entry = !calls_helper_entry
-            && owner_package_prefix
-                .as_ref()
-                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && match &owner_package_prefix {
+                Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+                // A root-package owner has no prefix. Only a test that is
+                // itself outside every member package (`tests/..`, `src/..`
+                // of the root) shares its package; a workspace member's
+                // test, and any path that cannot be scoped, fails closed.
+                None => {
+                    package_prefix(&test.file).is_none()
+                        && !path_is_absolute_form(&test.file)
+                        && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+                }
+            }
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });

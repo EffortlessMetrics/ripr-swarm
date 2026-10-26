@@ -13346,27 +13346,32 @@ pub(in crate::analysis) fn test_receiver_named_type(
 }
 
 /// How many `struct`, `enum`, `union` or `type` items named `name` the
-/// workspace declares, across every module and file.
+/// workspace declares, across every module and file. The per-name table is
+/// built once per index (every file masked once), then looked up.
 fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
     index
-        .files()
-        .values()
-        .filter(|facts| facts.source.contains(name))
-        .map(|facts| {
-            let masked = mask_comments_and_strings(&facts.source);
-            ["struct", "enum", "union", "type"]
-                .iter()
-                .map(|keyword| {
-                    whole_word_offsets(&masked, keyword)
-                        .into_iter()
-                        .filter(|offset| {
-                            starts_with_word(masked[offset + keyword.len()..].trim_start(), name)
-                        })
-                        .count()
-                })
-                .sum::<usize>()
+        .call_identity_memos
+        .type_name_counts(|| {
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+            for facts in index.files().values() {
+                let masked = mask_comments_and_strings(&facts.source);
+                for keyword in ["struct", "enum", "union", "type"] {
+                    for offset in whole_word_offsets(&masked, keyword) {
+                        let rest = masked[offset + keyword.len()..].trim_start();
+                        let end = rest
+                            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                            .unwrap_or(rest.len());
+                        if end > 0 {
+                            *counts.entry(rest[..end].to_string()).or_default() += 1;
+                        }
+                    }
+                }
+            }
+            counts
         })
-        .sum()
+        .get(name)
+        .copied()
+        .unwrap_or(0)
 }
 
 /// The owner's identity, for the #6957 shadow exemption: the owner's own

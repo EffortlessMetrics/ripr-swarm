@@ -602,7 +602,7 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
 entry credit and its swallowed, transformed, shared-name, two-candidate,
-shadowed, path-call, std-receiver, unestablished-receiver, same-named-type, external-trait-impl,
+shadowed, path-call, std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
