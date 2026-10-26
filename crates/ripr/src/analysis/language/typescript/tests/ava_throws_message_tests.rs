@@ -381,18 +381,25 @@ fn ava_runner_edge_forms_credit_only_a_real_ava_registration() -> Result<(), Str
     assert_eq!(aliased.oracle_kind, OracleKind::ExactErrorVariant);
 
     let reexport = test_source_importing("export { test } from \"ava\";", call);
-    let tests = extract_tests(Path::new("tests/parse.test.ts"), &reexport);
-    for parsed in &tests {
-        for assertion in &parsed.assertions {
-            assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "re-export");
-        }
-    }
+    assert!(
+        extract_tests(Path::new("tests/parse.test.ts"), &reexport).is_empty(),
+        "a re-exported `test` must not register an AVA test"
+    );
 
-    let nested_param = only_assertion(
-        "nested-param",
+    // A callback parameter named `t` is a second binding of the receiver
+    // name; the text-level receiver check cannot tell the two apart, so it
+    // fails closed and the outer `t.throws` stays broad.
+    let nested = test_source(
         "[1].forEach(t => t.is(1, 1));\n  t.throws(() => parse(\"\"), { message: \"blank\" })",
     );
-    if let Ok(assertion) = nested_param {
+    let tests = extract_tests(Path::new("tests/parse.test.ts"), &nested);
+    let throws: Vec<_> = tests
+        .iter()
+        .flat_map(|parsed| &parsed.assertions)
+        .filter(|assertion| assertion.matcher == "throws")
+        .collect();
+    assert!(!throws.is_empty(), "nested-param: expected a `t.throws`");
+    for assertion in throws {
         assert_eq!(
             assertion.oracle_kind,
             OracleKind::BroadError,
