@@ -12,7 +12,7 @@ where
 {
     let parsed = value
         .parse::<T>()
-        .map_err(|_| format!("{flag} requires a positive integer; got {value:?}"))?;
+        .map_err(|_parse_err| format!("{flag} requires a positive integer; got {value:?}"))?;
     if parsed == T::from(0) {
         return Err(format!("{flag} requires a positive integer; got {value:?}"));
     }
