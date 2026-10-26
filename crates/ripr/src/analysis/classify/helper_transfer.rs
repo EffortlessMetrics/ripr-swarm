@@ -3983,7 +3983,7 @@ mod tests {
             "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
             "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
-            // #10284 controls: standard and logging macros expand to no
+            // #10284 controls: unshadowed bare standard macros expand to no
             // `return` of their own, and a `!=` is not a macro.
             "pub fn w(qty: u32) -> u32 {\n    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    debug_assert!(qty != 0);\n    if !is_bulk(qty) { 0 } else { 5 }\n}",

@@ -43,7 +43,7 @@ floor = 21
 [[axis]]
 id = "hostile_input"
 description = "Hostile source forms: assertions in comments and strings, raw and non-ASCII identifiers, very long and deeply nested lines, macro-generated owners, attribute stacks, cfg_attr tests, minified layout and owners reached as values."
-floor = 12
+floor = 14
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -63,7 +63,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 41
+trap_floor = 43
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -801,9 +801,9 @@ example = 6
 reason = "a partially indexed workspace; an authored crate is stored whole, so no case can present an incomplete index to ripr"
 
 # Bounded scanner-state transitions
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0163"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Bounded literal match-arm transfer
 [[spec]]

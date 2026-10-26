@@ -1,0 +1,10 @@
+diff --git a/unrun/core.py b/unrun/core.py
+--- a/unrun/core.py
++++ b/unrun/core.py
+@@ -1,5 +1,5 @@
+ def dead_zero(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def dead_none(a, b):
