@@ -332,12 +332,14 @@ pub(in crate::analysis) fn changes_only_string_literals(
 }
 
 /// The text outside string literals and the ordered `{..}` placeholder groups
-/// inside them, with `{{` and `}}` read as escapes. `None` for an unterminated
-/// literal or a lone brace, which ripr cannot read as format text.
+/// of the first literal (the format template), with `{{` and `}}` read as
+/// escapes. `None` for an unterminated literal or a lone brace, which ripr
+/// cannot read as format text.
 fn outside_strings(text: &str) -> Option<(String, Vec<String>)> {
     let mut kept = String::new();
     let mut placeholders = Vec::new();
     let mut literal = String::new();
+    let mut seen_template = false;
     let mut in_string = false;
     let mut escaped = false;
     for c in text.chars() {
@@ -351,7 +353,12 @@ fn outside_strings(text: &str) -> Option<(String, Vec<String>)> {
             } else if c == '"' {
                 in_string = false;
                 kept.push('"');
-                placeholders.extend(format_placeholders(&literal)?);
+                // Only the first literal is the format template; a later one
+                // is an argument, whose braces print as they are.
+                if !seen_template {
+                    seen_template = true;
+                    placeholders.extend(format_placeholders(&literal)?);
+                }
                 literal.clear();
             } else {
                 literal.push(c);
@@ -1601,6 +1608,15 @@ mod tests {
         assert!(same(
             "write!(f, \"{{{}}}\", self.0)",
             "write!(f, \"[{}]\", self.0)"
+        ));
+        // A brace in an argument string prints as it is; only the template is parsed.
+        assert!(same(
+            "write!(f, \"{}\", \"a}\")",
+            "write!(f, \"{}\", \"b}\")"
+        ));
+        assert!(!same(
+            "write!(f, \"{}\", \"a}\")",
+            "write!(f, \"{:?}\", \"a}\")"
         ));
         // A lone brace is not format text ripr reads.
         assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));
