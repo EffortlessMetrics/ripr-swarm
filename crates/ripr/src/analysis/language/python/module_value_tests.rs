@@ -1140,6 +1140,16 @@ fn a_lambda_edit_that_is_not_a_body_only_change_is_not_credited() -> Check {
             "triple = lambda x: x * 3",
         ),
         ("was not a lambda", "triple = lambda x: x * 4", "triple = 3"),
+        (
+            "annotation changed (the old one may not import)",
+            "triple: int = lambda x: x * 4",
+            "triple: MissingType = lambda x: x * 3",
+        ),
+        (
+            "annotation added",
+            "triple: int = lambda x: x * 4",
+            "triple = lambda x: x * 3",
+        ),
     ] {
         let finding = classify_lambda(&lambda_source(new), new, old, &[], LAMBDA_TEST)?;
         assert_lambda_withheld(&finding, label);

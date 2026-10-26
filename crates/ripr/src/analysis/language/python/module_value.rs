@@ -522,7 +522,12 @@ fn lambda_credits<'a>(
     } = *edit;
     let old_line_text = old_line_text?;
     let (old_name, old_parameters, old_body) = lambda_line(old_line_text)?;
-    if old_name != name || old_parameters != parameters {
+    // The binding header (target and any annotation) is evaluated at import,
+    // so a changed one is not a body-only edit.
+    if old_name != name
+        || old_parameters != parameters
+        || binding_header(old_line_text) != binding_header(edit.line_text)
+    {
         return None;
     }
     // Another workspace file or test file that writes the attribute or patches
@@ -661,6 +666,13 @@ fn lambda_line(text: &str) -> Option<(String, Vec<String>, Expr)> {
         parameters,
         lambda.body.as_ref().clone(),
     ))
+}
+
+/// The text before the `=` of a one-line binding: its target and annotation.
+fn binding_header(line: &str) -> &str {
+    line.split_once('=')
+        .map_or(line, |(header, _)| header)
+        .trim()
 }
 
 /// The lambda expression of an edited line, for the evidence text.
