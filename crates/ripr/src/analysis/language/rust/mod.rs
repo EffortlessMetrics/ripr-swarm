@@ -4218,8 +4218,10 @@ mod tests {
 
     /// #10191: exercise the real name-admission path, with a nonempty
     /// withheld binary, instead of only Ready's whole-workspace index.
+    /// Credit agrees even when narrowed composition is an analyzer limit,
+    /// while the full index establishes a real shadow (RIPR-SPEC-0240).
     #[test]
-    fn binary_macro_boundaries_match_full_scope_with_withheld_binary() -> Result<(), String> {
+    fn binary_macro_boundaries_preserve_credit_with_withheld_binary() -> Result<(), String> {
         use dependent_scope::DependentScopeMode;
         for shared in [false, true] {
             let root = temp_root("binary-macro-dependent-scope")?;
@@ -4288,29 +4290,38 @@ mod tests {
                 !main.contains(&"b/parse.rs".to_string()),
                 "binary must be withheld: {main:?}"
             );
-            assert_eq!(named.class, full.class, "shared={shared}");
-            assert_eq!(
-                named.ripr.reveal.observe.state,
-                full.ripr.reveal.observe.state
-            );
-            assert_eq!(
-                named.ripr.reveal.discriminate.state,
-                full.ripr.reveal.discriminate.state
-            );
             assert_eq!(named.related_tests.len(), 1);
-            assert_eq!(
-                named.related_tests[0].oracle_strength,
-                full.related_tests[0].oracle_strength
-            );
+            assert_eq!(full.related_tests.len(), 1);
             if shared {
-                assert_ne!(named.class, ExposureClass::Exposed);
-                assert_eq!(named.related_tests[0].oracle_strength, OracleStrength::None);
-            } else {
-                assert_eq!(named.class, ExposureClass::Exposed);
+                assert_eq!(full.class, ExposureClass::ReachableUnrevealed);
+                assert_eq!(named.class, ExposureClass::StaticUnknown);
                 assert_eq!(
-                    named.related_tests[0].oracle_strength,
-                    OracleStrength::Strong
+                    named.static_limit_kind,
+                    Some(StaticLimitKind::RustAssertionContextUnresolved)
                 );
+                assert!(full.static_limit_kind.is_none());
+                for finding in [&full, &named] {
+                    assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
+                    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+                    let test = &finding.related_tests[0];
+                    assert!(test.oracle.is_none());
+                    assert_eq!(test.oracle_kind, OracleKind::Unknown);
+                    assert_eq!(test.oracle_strength, OracleStrength::None);
+                    assert_eq!(
+                        test.miss,
+                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+                    );
+                }
+            } else {
+                for finding in [&full, &named] {
+                    assert_eq!(finding.class, ExposureClass::Exposed);
+                    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+                    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+                    assert_eq!(
+                        finding.related_tests[0].oracle_strength,
+                        OracleStrength::Strong
+                    );
+                }
             }
             fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         }
