@@ -264,3 +264,144 @@ fn sarif_identity_legacy_finding_baselines_require_explicit_transition() -> Resu
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn sarif_identity_native_paths_survive_policy_baselines_and_line_moves() -> Result<(), String> {
+    // Start with a validated, current finding, then deliberately retain its
+    // opaque identity at distinct native locations. This tests renderer and
+    // policy contracts, not analyzer discovery or physical-line provenance.
+    let fixture = Fixture::new("baseline_one")?;
+    let (mut output, _) = fixture.check(None)?;
+    assert_eq!(output.findings.len(), 1);
+    let cases = [
+        (r"src/a\b.pm", "src/a%5Cb.pm"),
+        ("src/a/b.pm", "src/a/b.pm"),
+        ("src/a%.pm", "src/a%25.pm"),
+        ("src/a%25.pm", "src/a%2525.pm"),
+        ("src/dé.pm", "src/d%C3%A9.pm"),
+        ("src/de\u{301}.pm", "src/de%CC%81.pm"),
+        ("src/é.pm", "src/%C3%A9.pm"),
+        ("src/%C3%A9.pm", "src/%25C3%25A9.pm"),
+        ("src/quote\"line\n.pm", "src/quote%22line%0A.pm"),
+        ("src/quote%22line%0A.pm", "src/quote%2522line%250A.pm"),
+        ("src/space #?.pm", "src/space%20%23%3F.pm"),
+        ("src/🦀.pm", "src/%F0%9F%A6%80.pm"),
+    ];
+    let template = output.findings[0].clone();
+    output.findings.clear();
+    for (index, (path, _)) in cases.iter().enumerate() {
+        let file = fixture.0.join(path);
+        std::fs::create_dir_all(file.parent().ok_or("missing parent")?)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(&file, format!("native-file-{index}\n"))
+            .map_err(|error| error.to_string())?;
+        let mut finding = template.clone();
+        finding.probe.location.file = file;
+        finding.probe.location.line = index + 10;
+        output.findings.push(finding);
+    }
+    let render = |output: &CheckOutput| -> Result<Value, String> {
+        let text = ripr::render_check(output, &OutputFormat::Sarif)?;
+        serde_json::from_str(&text).map_err(|error| error.to_string())
+    };
+    let current = render(&output)?;
+    assert_eq!(results(&current)?.len(), cases.len());
+    for (index, (path, uri)) in cases.iter().enumerate() {
+        let result = results(&current)?
+            .iter()
+            .find(|result| {
+                result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == *uri
+            })
+            .ok_or_else(|| format!("missing literal URI {uri}"))?;
+        assert_eq!(result["fingerprints"], result["partialFingerprints"]);
+        assert_eq!(
+            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            *uri
+        );
+        // Independent inverse: decode the emitted URI and read the original
+        // file, rather than checking only agreement between renderer fields.
+        let mut decoded = Vec::new();
+        let actual_uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            .as_str()
+            .ok_or("missing emitted URI")?;
+        let mut bytes = actual_uri.bytes();
+        while let Some(byte) = bytes.next() {
+            if byte == b'%' {
+                let high = (bytes.next().ok_or("short URI escape")? as char)
+                    .to_digit(16)
+                    .ok_or("invalid URI escape")?;
+                let low = (bytes.next().ok_or("short URI escape")? as char)
+                    .to_digit(16)
+                    .ok_or("invalid URI escape")?;
+                decoded.push((high * 16 + low) as u8);
+            } else {
+                decoded.push(byte);
+            }
+        }
+        assert_eq!(decoded, path.as_bytes());
+        let native = std::str::from_utf8(&decoded).map_err(|error| error.to_string())?;
+        assert_eq!(
+            std::fs::read(fixture.0.join(native)).map_err(|error| error.to_string())?,
+            format!("native-file-{index}\n").as_bytes()
+        );
+    }
+    let rows = policy_rows(&current)?;
+    assert_eq!(rows.len(), 12, "all native identities survive policy dedup");
+    assert_eq!(
+        rows.iter()
+            .map(|row| &row.key)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        12
+    );
+    for (path, uri) in &cases {
+        let row = rows
+            .iter()
+            .find(|row| row.uri == *uri)
+            .ok_or("missing policy URI")?;
+        assert_eq!(row.uri, *uri);
+        assert_eq!(row.fingerprint.rsplit('|').next(), Some(*path));
+    }
+    let mut baseline = current.clone();
+    baseline["runs"][0]["results"]
+        .as_array_mut()
+        .ok_or("missing baseline results")?
+        .retain(|result| {
+            cases[..6].iter().any(|(_, uri)| {
+                result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == *uri
+            })
+        });
+    let baseline = policy_rows(&baseline)?;
+    assert_eq!(baseline.len(), 6);
+    let report = compare(&rows, &baseline);
+    assert_eq!(report.current_compared_results, 12);
+    assert_eq!(report.new_results.len(), 6);
+    assert_eq!(
+        report
+            .new_results
+            .iter()
+            .map(|row| row.uri.as_str())
+            .collect::<BTreeSet<_>>(),
+        cases[6..].iter().map(|(_, uri)| *uri).collect()
+    );
+    assert!(compare(&rows, &rows).new_results.is_empty());
+    for finding in &mut output.findings {
+        finding.probe.location.line += 100;
+    }
+    let moved = policy_rows(&render(&output)?)?;
+    assert_eq!(moved.len(), 12);
+    assert_eq!(
+        moved.iter().map(|row| &row.key).collect::<BTreeSet<_>>(),
+        rows.iter().map(|row| &row.key).collect()
+    );
+    assert!(compare(&moved, &rows).new_results.is_empty());
+    assert_eq!(
+        moved
+            .iter()
+            .filter_map(|row| row.line)
+            .collect::<BTreeSet<_>>(),
+        (110..122).collect()
+    );
+    Ok(())
+}
