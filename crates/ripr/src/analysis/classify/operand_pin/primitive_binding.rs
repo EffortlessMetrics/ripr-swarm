@@ -66,10 +66,12 @@ fn function(owner: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
 /// disjoint block cannot establish or veto the value used by its owner.
 /// Refuse unread direct bindings instead of silently retaining a parameter's
 /// primitive evidence across a destructured or attributed rebind.
+pub(super) type LetBinding = (String, String, Option<String>, usize);
+
 pub(super) fn direct_let_bindings(
     owner: &FunctionSummary,
     index: &RustIndex,
-) -> Option<Vec<(String, String, Option<String>, usize)>> {
+) -> Option<Vec<LetBinding>> {
     let function = function(owner, index)?;
     let start = usize::from(function.fn_token()?.text_range().start());
     let body = function.body()?.stmt_list()?;
