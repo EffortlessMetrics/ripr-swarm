@@ -767,7 +767,9 @@ when a `for` loop or a consuming adaptor (`collect`, `sum`, `product`, `count`,
 drives an owned value of the impl's type; a lazy adaptor, an inherent method of
 the same name, a redeclared type, or a macro that may add an impl relates
 nothing. The site must sit at the test body's top level (not in a closure, a
-nested `fn`, a branch or a loop body, which may never run), a by-value method
+nested `fn`, a branch or a loop body, a brace-less closure, or a statement
+disabled by an attribute such as `#[cfg(any())]`, which may never run; an
+earlier `return`, `?` or `panic!` is not tracked, as for operators), a by-value method
 of the type called on the value in a scope block (`g.stash()`) may move it out
 and relates nothing, and an adaptor the iterator impl itself overrides
 (`fn count(self)` inside `impl Iterator`) does not run `next`. A related test with an exact assertion leaves the finding

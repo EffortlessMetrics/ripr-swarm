@@ -77,7 +77,19 @@ pub(super) fn at_test_top_level(masked: &str, at: usize) -> bool {
         Some(open) if masked[..open].split_whitespace().any(|word| word == "fn") => 1,
         _ => 0,
     };
-    depth_at(at) == base
+    depth_at(at) == base && statement_runs_unconditionally(masked, at)
+}
+
+/// Whether the statement that holds byte `at` is neither disabled by an
+/// attribute (`#[cfg(any())] let n = ..;`) nor the body of a closure written
+/// without braces (`let f = || drop(g);`). The statement starts after the last
+/// `;`, `{` or `}` before `at`.
+fn statement_runs_unconditionally(masked: &str, at: usize) -> bool {
+    let start = masked[..at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |separator| separator + 1);
+    let head = masked[start..at].trim_start();
+    !head.starts_with('#') && !head.contains('|')
 }
 
 /// Whether the impl that defines `owner` also defines a method called `name`:
@@ -110,6 +122,11 @@ mod tests {
         let at = |needle: &str| at_test_top_level(body, offset(body, needle));
         assert!(at("a()") && at("d()"));
         assert!(!at("b()") && !at("c()"));
+        let gated =
+            "fn t() {\n    #[cfg(any())]\n    drop(g);\n    let f = || drop(h);\n    keep(k);\n}";
+        assert!(!at_test_top_level(gated, offset(gated, "drop(g")));
+        assert!(!at_test_top_level(gated, offset(gated, "drop(h")));
+        assert!(at_test_top_level(gated, offset(gated, "keep(k")));
         let bare = "a(); { b(); }";
         assert!(at_test_top_level(bare, 0));
         assert!(!at_test_top_level(bare, offset(bare, "b()")));

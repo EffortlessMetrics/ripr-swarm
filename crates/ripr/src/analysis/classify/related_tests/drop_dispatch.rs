@@ -188,6 +188,17 @@ fn explicit_drops(masked: &str) -> Vec<(usize, usize, usize, &str)> {
         {
             continue;
         }
+        // `helpers::drop(x)` is another function; only the standard `drop`
+        // spellings are the one that runs `Drop::drop`.
+        if before.ends_with("::") {
+            let path = before.trim_end_matches("::");
+            let segment_start = path
+                .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+                .map_or(0, |separator| separator + 1);
+            if !matches!(&path[segment_start..], "mem" | "std::mem" | "core::mem") {
+                continue;
+            }
+        }
         let open = at + "drop".len();
         let mut depth = 0usize;
         let Some(close) = bytes[open..].iter().position(|&byte| {
@@ -355,6 +366,8 @@ mod tests {
             "g.drop();",
             "fn drop(g: G) {}",
             "drop(a, b);",
+            "helpers::drop(g);",
+            "crate::helpers::drop(g);",
             "drop(&g);",
             "drop(g.0);",
         ] {

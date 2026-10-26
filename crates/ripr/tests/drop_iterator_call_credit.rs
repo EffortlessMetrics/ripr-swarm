@@ -591,6 +591,26 @@ fn syntax_that_may_never_run_in_the_test_relates_nothing() -> Result<(), String>
             "if 1 == 2 {\n            for _n in Countdown(3) {}\n        }\n        assert_eq!(1, 1);",
         ),
         with_body(
+            ITERATOR,
+            "disabled_by_cfg",
+            "#[cfg(any())]\n        for _n in Countdown(3) {}\n        assert_eq!(1, 1);",
+        ),
+        with_body(
+            DROP,
+            "disabled_by_cfg_drop",
+            "let counter = Rc::new(Cell::new(0));\n        #[cfg(any())]\n        drop(Guard(counter.clone()));\n        assert_eq!(counter.get(), 0);",
+        ),
+        with_body(
+            DROP,
+            "another_function_named_drop",
+            "let counter = Rc::new(Cell::new(0));\n        let g = Guard(counter.clone());\n        helpers::drop(g);\n        assert_eq!(counter.get(), 0);",
+        ),
+        with_body(
+            DROP,
+            "braceless_closure_never_called",
+            "let counter = Rc::new(Cell::new(0));\n        let f = || drop(Guard(counter.clone()));\n        assert_eq!(counter.get(), 0);\n        let _ = f;",
+        ),
+        with_body(
             DROP,
             "closure_never_called_scope",
             "let counter = Rc::new(Cell::new(0));\n        let f = || {\n            {\n                let _g = Guard(counter.clone());\n            }\n        };\n        assert_eq!(counter.get(), 0);\n        let _ = f;",
