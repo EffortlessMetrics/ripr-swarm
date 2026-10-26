@@ -508,6 +508,38 @@ fn an_extra_run_for_a_known_label_is_tolerated() -> Result<(), String> {
 }
 
 #[test]
+fn one_typescript_run_covers_the_shared_javascript_row_only_when_both_exist() -> Result<(), String>
+{
+    let run = |language: &str| crate::analysis::LanguageRun {
+        language: language.to_string(),
+        status: LanguageRunStatus::Failed,
+        reason: None,
+    };
+    let child = |language| {
+        LanguageAnalysisOutcomeV1::from_repo_err(
+            language,
+            "boom".to_string(),
+            LanguageRunStatus::Failed,
+        )
+    };
+    let mut both = LanguageAggregate::new_repo();
+    both.record(child(LanguageId::TypeScript));
+    both.record(child(LanguageId::JavaScript));
+    let view = LanguageCompletenessView::from_aggregate(&both.finish());
+    view.reconcile_public_runs(&[run("typescript")])?;
+    // A javascript-only run does not cover a hidden typescript degradation.
+    assert!(view.reconcile_public_runs(&[run("javascript")]).is_err());
+    assert!(view.reconcile_public_runs(&[]).is_err());
+    // Without a typescript row the family exemption does not apply.
+    let mut lone = LanguageAggregate::new_repo();
+    lone.record(child(LanguageId::JavaScript));
+    let view = LanguageCompletenessView::from_aggregate(&lone.finish());
+    assert!(view.reconcile_public_runs(&[run("typescript")]).is_err());
+    view.reconcile_public_runs(&[run("javascript")])?;
+    Ok(())
+}
+
+#[test]
 fn disclosure_is_a_fixed_table_over_every_mode_and_status() {
     use LanguageDisclosure::{AdvisoryOnly, PublicRun, Silent, TypedLimitation};
     use LanguageOutcomeStatus as S;

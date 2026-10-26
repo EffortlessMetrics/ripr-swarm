@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A repo-scope analysis that selects both the `typescript` and `javascript` ids (reachable through the library pipeline; `ripr.toml` `[languages].enabled` does not accept `javascript`) now publishes one compatibility `language_runs` row for a partial TypeScript/JavaScript run instead of one per id. The row carries the canonical `typescript` label in either id order and equals the single-id run; per-label outcomes are unchanged (#10546).

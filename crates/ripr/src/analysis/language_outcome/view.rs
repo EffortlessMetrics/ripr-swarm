@@ -123,10 +123,16 @@ impl LanguageCompletenessView {
     /// `no_current_scope` row, so extra runs of known labels are allowed.
     pub(crate) fn reconcile_public_runs(&self, runs: &[LanguageRun]) -> Result<(), String> {
         for (label, disclosure) in self.disclosed() {
+            // The `typescript` and `javascript` ids share one adapter result,
+            // so with both rows present one `typescript` run covers both
+            // (#10546); a lone `javascript` row still needs its own run.
+            let covered_by_family =
+                label == "javascript" && self.rows.iter().any(|row| row.label == "typescript");
             if let LanguageDisclosure::PublicRun(status) = disclosure
-                && !runs
-                    .iter()
-                    .any(|run| run.language == label && run.status.as_str() == status)
+                && !runs.iter().any(|run| {
+                    (run.language == label || (covered_by_family && run.language == "typescript"))
+                        && run.status.as_str() == status
+                })
             {
                 return Err(format!(
                     "language view: {label} is {status} but has no public language_runs row"
