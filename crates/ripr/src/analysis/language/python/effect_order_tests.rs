@@ -300,6 +300,48 @@ fn effect_order_does_not_borrow_a_read_from_a_discarded_conjunct() -> Check {
 fn effect_order_helper_capture_does_not_gain_effect_channel_credit() -> Check {
     let helper = "\ndef assert_equal(actual, expected):\n    assert actual == expected\n";
     let body = "def test_it():\n    rec = Recorder()\n    assert_equal(rec.last, rec.note(\"error\") or None)";
+    let file = Path::new("shop/route.py");
+    let mut owners = extract_owners(file, SOURCE);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "Recorder.note")
+        .ok_or("expected Recorder.note owner")?;
+    let post_call = "def test_it():\n    rec = Recorder()\n    rec.note(\"error\"); assert_equal(rec.last, \"error\")";
+    for (control, expected) in [(body, false), (post_call, true)] {
+        let test_file = Path::new("tests/test_route.py");
+        let test_source = format!("from shop.route import Recorder\n{helper}\n{control}\n");
+        let facts = extract_source_facts(test_file, &test_source);
+        let mut tests = facts.tests;
+        apply_helper_assertions(
+            &mut tests,
+            &BTreeMap::from([(test_file.to_path_buf(), facts.helper_module)]),
+        );
+        let [test] = tests.as_slice() else {
+            return Err("expected one native test".into());
+        };
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.helper_derived)
+            .ok_or("expected resolved helper assertion")?;
+        assert!(assertion.source_range.is_some());
+        let effect = super::effect_alignment::ChangedEffect::SelfField {
+            attr: "last".to_string(),
+        };
+        let reads = super::effect_alignment::EffectReads::of(&effect, test, owner, true);
+        assert_eq!(
+            reads.observed_by(
+                &assertion.gate_text,
+                Some(assertion.line),
+                assertion.source_range,
+                &assertion.observed_operands,
+                assertion.helper_derived,
+            ),
+            expected,
+            "{control}"
+        );
+    }
     let captured = finding(false, body, false, helper)?;
     // The shared effect reader must not treat a captured argument as a later
     // field read. The separate legacy owner-result branch still credits this
