@@ -516,7 +516,7 @@ fn index_access(masked: &str, at: usize, mut_borrowed: bool) -> Option<IndexAcce
         depth == 0
     })? + at;
     let after = masked[close + 1..].trim_start();
-    if after.starts_with(['.', '[', '(']) {
+    if after.starts_with(['.', '[', '(', '{']) {
         return None;
     }
     // A site inside a parenthesised or destructured place (`(m[0]).x = 1`,
@@ -528,6 +528,7 @@ fn index_access(masked: &str, at: usize, mut_borrowed: bool) -> Option<IndexAcce
         .unwrap_or_default()
         .trim_start();
     if statement.starts_with('(')
+        || (!mut_borrowed && statement.contains("&mut"))
         || statement
             .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
             .collect::<Vec<_>>()

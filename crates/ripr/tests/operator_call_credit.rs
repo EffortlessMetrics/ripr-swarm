@@ -1336,7 +1336,7 @@ mod other {
     pub struct Money(pub i64);
 }
 ";
-    let cases: [(&str, Case); 18] = [
+    let cases: [(&str, Case); 20] = [
         (
             "another type's impl",
             Case {
@@ -1442,6 +1442,22 @@ mod other {
                 INDEX,
                 "ref_mut",
                 "let mut m = Money(1);\n        let ref mut r = m[0];\n        *r = 1;",
+            ),
+        ),
+        (
+            "a parenthesised mutable borrow",
+            with_body(
+                INDEX,
+                "paren_mut_borrow",
+                "let mut m = Money(1);\n        let r = &mut (m[0]);\n        *r = 9;",
+            ),
+        ),
+        (
+            "a match scrutinee with a ref mut arm",
+            with_body(
+                INDEX,
+                "match_ref_mut",
+                "let mut m = Money(1);\n        match m[0] {\n            ref mut x => *x = 9,\n        }",
             ),
         ),
         (
