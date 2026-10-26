@@ -166,6 +166,13 @@ path (the stdin sentinel `-` stays), never the relative spelling repeated as
 typed, so pasting one from another directory analyzes the same repository
 (#3948).
 
+A tracked, untracked or ignored routed path that is not valid UTF-8 is refused
+in default-dirty, `--worktree` and `--committed` modes rather than looked up
+lossily. The refusal names the recovery that works: `git mv` and commit the
+rename for a tracked file (a staged rename still lists the old name), or a
+plain filesystem rename for an untracked or ignored one. A byte-invalid path no
+analyzer routes is never refused (#10568).
+
 ### Doctor guidance
 
 When `ripr doctor --root <repo>` sees staged or unstaged tracked changes **and
@@ -290,6 +297,11 @@ that untracked source was analyzed.
 ## Test Mapping
 
 - `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
+- `crates/ripr/tests/hostile_repos.rs::non_utf8_tracked_path_recovery_works_in_every_mode`
+- `crates/ripr/tests/hostile_repos.rs::non_utf8_untracked_path_recovery_is_a_filesystem_rename`
+- `crates/ripr/tests/hostile_repos.rs::non_utf8_unrouted_bin_does_not_refuse`
+  - byte-invalid routed paths are refused with a recovery that works; the
+  unrouted control is not refused.
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit`
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding`
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base`
