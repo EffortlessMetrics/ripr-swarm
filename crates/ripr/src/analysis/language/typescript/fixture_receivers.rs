@@ -83,7 +83,9 @@ impl PlaywrightFixtures {
             }
         }
         let fixtures = found?;
-        test_name_is_declared_once(source, &fixtures.test).then_some(fixtures)
+        (test_name_is_declared_once(source, &fixtures.test)
+            && test_is_only_registered(source, &fixtures.test))
+        .then_some(fixtures)
     }
 
     /// The fixture bindings of a registration `test("...", ({ cart }) => ...)`
@@ -170,6 +172,45 @@ fn test_name_is_declared_once(source: &str, name: &str) -> bool {
         }
     }
     bindings == 1
+}
+
+/// Members of the extended test that register or group tests and cannot
+/// replace a fixture. Any other member (`use`, `extend`, a computed key), a
+/// template tag, or a bare reference (`alias = test`, `wrap(test)`,
+/// `export { test }`) may override or smuggle the fixture, so the file keeps
+/// the old reading. Text-level and conservative: a word spelled in a title or
+/// comment is read by what follows it, so ordinary prose is not a reference.
+const REGISTRATION_MEMBERS: &[&str] = &[
+    "describe",
+    "beforeEach",
+    "afterEach",
+    "beforeAll",
+    "afterAll",
+    "only",
+    "skip",
+    "fixme",
+    "step",
+    "slow",
+];
+
+fn test_is_only_registered(source: &str, name: &str) -> bool {
+    identifier_occurrences(source, name).all(|at| {
+        // Its own declaration, `const test = base.extend(...)`.
+        if source[..at].trim_end().ends_with("const") {
+            return true;
+        }
+        let rest = source[at + name.len()..].trim_start();
+        if let Some(member) = rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.')) {
+            let member = member.trim_start();
+            let end = member
+                .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                .unwrap_or(member.len());
+            return REGISTRATION_MEMBERS.contains(&&member[..end]);
+        }
+        !rest.is_empty()
+            && !rest.starts_with(['[', ')', ']', ';', ',', '}', '`', '|', '&', '?', ':'])
+            && (!rest.starts_with('=') || rest.starts_with("=>"))
+    })
 }
 
 fn declarator_fixtures(

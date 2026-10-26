@@ -1216,8 +1216,12 @@ methods as rule 5's receivers do. It applies only when all of these hold, and
 otherwise the parameter stays unresolved as before:
 
 - `base` is the local name of `test` imported from `@playwright/test`, and
-  the file has exactly one `.extend` call, no `mergeTests` and no `.use(`
-  override;
+  the file has exactly one `.extend` call, no `mergeTests`, and no use of
+  the extended `test` beyond calling it and its registration members
+  (`describe`, hooks, `only`, `skip`, `fixme`, `step`, `slow`): a `use`
+  override in any spelling (`.use (`, `["use"]`, a template key), an alias, a wrapper call, a
+  re-export or a template tag withholds, and so does punctuation directly
+  after the word in a comment or title;
 - the extended `test` is declared once and never reassigned;
 - the `extend` argument is one object literal of plain `key: function`
   entries (no spread, computed key, method shorthand or `[fixture, options]`
@@ -1226,7 +1230,8 @@ otherwise the parameter stays unresolved as before:
   parameter, one awaited statement, a class named by a plain identifier and
   string, number, boolean or `null` literal arguments;
 - the registration is a call of the extended `test` itself, not `test.only`
-  or another member, and its callback's first parameter destructures the key
+  or another member (a skipped registration that destructures the fixture
+  withholds the name file-wide), and its callback's first parameter destructures the key
   with a plain identifier (`{ cart }` or `{ cart: basket }`), with no
   default and no nested pattern;
 - nothing else in the file writes or redeclares that name (a hook taking

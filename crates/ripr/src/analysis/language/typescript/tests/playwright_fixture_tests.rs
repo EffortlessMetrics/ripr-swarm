@@ -112,10 +112,24 @@ fn a_file_that_overrides_or_merges_fixtures_binds_nothing() {
         ("a bracketed use override", "test[\"use\"](overrides);"),
         ("a second extend", "const other = test.extend({});"),
         ("a merge", "const merged = mergeTests(test, other);"),
+        ("a template-literal key", "test[`use`](overrides);"),
+        ("a spaced member", "test . use(overrides);"),
+        ("an alias", "const alias = test;\nalias.use(overrides);"),
+        ("a wrapper", "install(test);"),
+        ("a re-export", "export { test };"),
     ] {
         let source = spec(PLAIN, &format!("{extra}\n{USES}"));
         assert_eq!(constructors(&source, "cart"), vec![None], "{label}");
     }
+}
+
+#[test]
+fn prose_and_registration_members_do_not_withhold() {
+    let tests = "test.describe(\"a test of carts\", () => {\n  // the test then\n  test(\"adds\", ({ cart }) => {\n    cart.add(250);\n  });\n});";
+    assert_eq!(
+        constructors(&spec(PLAIN, tests), "cart"),
+        vec![Some("Cart".to_string())]
+    );
 }
 
 #[test]
