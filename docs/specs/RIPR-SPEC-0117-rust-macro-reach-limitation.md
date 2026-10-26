@@ -265,7 +265,7 @@ of a longer punct (`==>`, `..=>`), while a punct directly followed by another
 is never bound as one `tt` row element, and a literal `:` is never matched against half of a `::`, in the matcher or in
 the invocation (`::` is one token to rustc, so `:` and `: :` do not match it,
 and a matcher `::` is refused whole). A transcriber for an arrow-row table that
-declares a `mod` or a second `fn` is refused, because the registered test keeps
+declares a `mod`, a `use` or a second `fn` is refused, because the registered test keeps
 no lexical scope and could call a different function of the same name (#9967). Any other
 row layout (`=>` as the repetition separator, nested repetition, a trailing
 separator, a leftover token, a group of the wrong arity) indexes nothing. A

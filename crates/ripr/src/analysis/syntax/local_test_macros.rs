@@ -969,7 +969,7 @@ fn defines_nested_scope(body: &ast::TokenTree) -> bool {
         .filter_map(|element| element.into_token())
     {
         match token.kind() {
-            SyntaxKind::MOD_KW => return true,
+            SyntaxKind::MOD_KW | SyntaxKind::USE_KW => return true,
             SyntaxKind::FN_KW => functions += 1,
             _ => {}
         }
@@ -1417,6 +1417,10 @@ mod tests {
             (
                 "a module in the body",
                 "mod decoy { pub fn gate(_: u32) -> bool { true } } #[test] fn $name() { assert_eq!(decoy::gate($v), $w); }",
+            ),
+            (
+                "a use in the body",
+                "use decoy::gate; #[test] fn $name() { assert_eq!(gate($v), $w); }",
             ),
             (
                 "a second fn in the body",
