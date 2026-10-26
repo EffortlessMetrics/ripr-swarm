@@ -747,10 +747,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `strong_oracle_observes_changed_dataclass_default` (`direct`) credits an
   edit that replaces one numeric literal default of a field in a plain
   `@dataclass` (the bare decorator imported from `dataclasses`, never rebound
-  or mentioned elsewhere in the file; `class C:` with no base; only annotated
-  fields with numeric or `field(default_factory=..)` defaults and undecorated
-  methods in the body, none of them `__init__`, `__post_init__`, `__new__` or
-  an attribute hook) when the file's diff is that one line. The credited test
+  or mentioned elsewhere in the file; `class C:` with no base; only fields
+  annotated with a builtin type (an alias such as `ClassVar as CV` refuses)
+  with numeric or `field(default_factory=..)` defaults and
+  methods in the body (no parameter defaults or annotations, decorated only by
+  the builtin `property`, `classmethod` or `staticmethod`), none of them
+  `__init__`, `__post_init__`, `__new__` or an attribute hook; the import is
+  exactly `from dataclasses import dataclass[, field]` on its own line) when the file's diff is that one line. The credited test
   is a plain, undecorated function whose only statement is
   `assert C(<numeric literals>).<method>() == <numeric literal>`, with `C`
   imported from the owner's module, that supplies every required field and
@@ -763,8 +766,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   method outside the closed arithmetic, a second definition of the name, a
   test with a decorator, parameter, `try`, `with` or second statement, or a
   default change that rounds to the same result keeps the
-  `decorator_indirection` abstention. Evaluation is static: a test module that
-  rebinds the class name is not visible to it (#9619).
+  `decorator_indirection` abstention. The class name may appear nowhere else in the file, and every builtin the
+  class uses (`round`, `list`, `float`, `property`, ..) and `field` may appear
+  outside it only as the import, so a later patch of the method or a
+  rebinding of any of them refuses. Expression nesting and length are bounded. Evaluation is static: a test module that rebinds the
+  class name is not visible to it (#9619).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write

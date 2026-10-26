@@ -54,6 +54,43 @@ const HOOK_METHODS: &[&str] = &[
     "__slots__",
 ];
 
+/// Annotation bases that are plain stored fields, never constructor markers.
+const BUILTIN_ANNOTATIONS: &[&str] = &[
+    "int", "float", "str", "bool", "bytes", "complex", "list", "dict", "set", "tuple",
+];
+
+/// The only spellings of the import: the whole statement is the line.
+const IMPORT_LINES: &[&str] = &[
+    "from dataclasses import dataclass",
+    "from dataclasses import dataclass, field",
+    "from dataclasses import field, dataclass",
+];
+
+/// Builtins the class body may use whose meaning a module could replace, each
+/// checked by `builtins_are_unreplaced`.
+const WATCHED_BUILTINS: &[&str] = &[
+    "int",
+    "float",
+    "str",
+    "bool",
+    "bytes",
+    "complex",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "round",
+    "property",
+    "classmethod",
+    "staticmethod",
+];
+
+/// Class-body decorators that return the function or a standard descriptor.
+const SAFE_DECORATORS: &[&str] = &["@property", "@classmethod", "@staticmethod"];
+
+const MAX_EXPRESSION: usize = 200;
+const MAX_DEPTH: usize = 24;
+
 /// Python integers inside the range where `f64` arithmetic is exact.
 const EXACT_LIMIT: i64 = 1 << 53;
 
@@ -66,10 +103,7 @@ pub(super) fn changed_dataclass_default_credit<'a>(
     owner_source: &str,
     related_candidates: &[PythonRelatedCandidate<'a>],
 ) -> Option<DataclassDefaultCredit<'a>> {
-    if !sole_line_replacement
-        || !is_bare_dataclass_owner(owner, owner_source)
-        || rebinds_round(owner_source)
-    {
+    if !sole_line_replacement || !is_bare_dataclass_owner(owner, owner_source) {
         return None;
     }
     let class = parse_class(owner, owner_source)?;
@@ -100,40 +134,115 @@ pub(super) fn changed_dataclass_default_credit<'a>(
 /// occurrence of the word (a rebinding, a comment, another import) refuses.
 fn dataclass_name_is_the_import(source: &str) -> bool {
     let mut imports = 0;
-    for line in source.lines() {
-        let text = line.trim();
-        let mentions = text
-            .split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
-            .any(|word| word == "dataclass");
-        if text.starts_with("from ") && text.ends_with(" import *") || text.contains(" import *") {
+    let Some(code) = code_text(source) else {
+        return false;
+    };
+    for (line, code_line) in source.lines().zip(&code) {
+        let text = code_line.trim();
+        if text.contains(" import *") {
             return false;
         }
-        if text.starts_with("from dataclasses import ") && mentions {
-            if text.contains(['(', '\\', '#']) || text.contains(" as ") {
-                return false;
-            }
+        if IMPORT_LINES.contains(&line) {
             imports += 1;
-        } else if mentions && text != "@dataclass" {
+        } else if mentions_word(code_line, "dataclass") && text != "@dataclass" {
+            // Includes a trailing statement on the import line
+            // (`from dataclasses import dataclass; dataclass = fake`).
             return false;
         }
     }
     imports == 1
 }
 
-/// `round` is the builtin only while the file never binds the name.
-fn rebinds_round(source: &str) -> bool {
-    source.lines().map(str::trim_start).any(|line| {
-        let words: Vec<&str> = line
-            .split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
-            .filter(|word| !word.is_empty())
-            .collect();
-        words.first() == Some(&"round")
-            && !line
-                .trim_start_matches("round")
-                .trim_start()
-                .starts_with(['(', '.'])
-            || words.starts_with(&["def", "round"])
-            || (matches!(words.first(), Some(&"from" | &"import")) && words.contains(&"round"))
+/// Each line with the text of triple-quoted strings and trailing `#` comments
+/// removed, so a docstring that names `property` is not read as a binding of
+/// it. `None` when a quote precedes a triple quote or a comment on the same
+/// line (`x = '#'; round = f`): the scan cannot tell code from text there.
+fn code_text(source: &str) -> Option<Vec<String>> {
+    let mut open: Option<&str> = None;
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let mut rest = line;
+        let mut code = String::new();
+        loop {
+            if let Some(quote) = open {
+                match rest.find(quote) {
+                    Some(at) => {
+                        rest = &rest[at + quote.len()..];
+                        open = None;
+                    }
+                    None => break,
+                }
+                continue;
+            }
+            let triple = ["\"\"\"", "'''"]
+                .into_iter()
+                .filter_map(|quote| rest.find(quote).map(|at| (at, quote)))
+                .min();
+            let comment = rest.find('#');
+            let cut = match (triple, comment) {
+                (Some((at, _)), Some(c)) => at.min(c),
+                (Some((at, _)), None) => at,
+                (None, Some(c)) => c,
+                (None, None) => {
+                    code.push_str(rest);
+                    break;
+                }
+            };
+            if rest[..cut].contains(['"', '\'']) {
+                return None;
+            }
+            code.push_str(&rest[..cut]);
+            match triple {
+                Some((at, quote)) if at == cut => {
+                    rest = &rest[at + quote.len()..];
+                    open = Some(quote);
+                }
+                _ => break,
+            }
+        }
+        out.push(code);
+    }
+    Some(out)
+}
+
+fn mentions_word(line: &str, word: &str) -> bool {
+    line.split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .any(|candidate| candidate == word)
+}
+
+/// Nothing else in the file can replace the evaluated class or a builtin the
+/// class body relies on: the class name appears only in its own definition;
+/// each watched builtin (`round`, `list`, `property`, ..) the class uses
+/// appears nowhere outside it, and no field or method takes its name; `field`
+/// appears outside only in the import. A module-level rebinding (an
+/// assignment, a loop target, an import, a patch after the class) refuses.
+fn class_and_builtins_are_unreplaced(
+    lines: &[&str],
+    code: &[String],
+    span: std::ops::Range<usize>,
+    name: &str,
+) -> bool {
+    let inside = |word: &str| {
+        code[span.clone()]
+            .iter()
+            .any(|line| mentions_word(line, word))
+    };
+    let watched: Vec<&str> = WATCHED_BUILTINS
+        .iter()
+        .copied()
+        .filter(|word| inside(word))
+        .collect();
+    lines.iter().enumerate().all(|(index, line)| {
+        if span.contains(&index) {
+            // `round` is only the call in a `return`.
+            !mentions_word(line, "round")
+                || (line.trim_start().starts_with("return ") && line.contains("round("))
+        } else {
+            let line_code = &code[index];
+            !mentions_word(line_code, name)
+                && !watched.iter().any(|word| mentions_word(line_code, word))
+                && (!mentions_word(line_code, "field") || IMPORT_LINES.contains(line))
+        }
     })
 }
 
@@ -176,7 +285,8 @@ impl Num {
     fn equals(self, other: Self) -> bool {
         match (self, other) {
             (Self::Int(left), Self::Int(right)) => left == right,
-            _ => self.as_float() == other.as_float(),
+            // Exact IEEE equality, as Python compares an `int` with a `float`.
+            _ => self.as_float().partial_cmp(&other.as_float()) == Some(std::cmp::Ordering::Equal),
         }
     }
 }
@@ -229,7 +339,9 @@ fn parse_literal(text: &str) -> Option<Num> {
         return None;
     }
     let value: i64 = text.parse().ok()?;
-    (value.abs() <= EXACT_LIMIT).then_some(Num::Int(value))
+    (-EXACT_LIMIT..=EXACT_LIMIT)
+        .contains(&value)
+        .then_some(Num::Int(value))
 }
 
 fn is_identifier(text: &str) -> bool {
@@ -256,9 +368,9 @@ fn parse_field_line(text: &str) -> Option<(String, String, Default)> {
         || !annotation
             .bytes()
             .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric() || b"[], .".contains(&byte))
-        || ["ClassVar", "InitVar", "KW_ONLY"]
-            .iter()
-            .any(|marker| annotation.contains(marker))
+        // Only a builtin type spelling: an alias or marker (`ClassVar as CV`,
+        // `InitVar`, `KW_ONLY`) may exclude the name from the constructor.
+        || !BUILTIN_ANNOTATIONS.contains(&annotation.split('[').next().unwrap_or("").trim())
     {
         return None;
     }
@@ -270,7 +382,9 @@ fn parse_field_line(text: &str) -> Option<(String, String, Default)> {
                 let factory = value
                     .strip_prefix("field(default_factory=")?
                     .strip_suffix(')')?;
-                if !is_identifier(factory) {
+                // Only a builtin container: any other callable can raise or
+                // have effects each time an instance is built.
+                if !["list", "dict", "set", "tuple"].contains(&factory) {
                     return None;
                 }
                 Default::Factory
@@ -315,6 +429,14 @@ fn parse_class(owner: &PythonOwner, source: &str) -> Option<Class> {
         return None;
     }
     let end = owner.end_line.min(lines.len());
+    if !class_and_builtins_are_unreplaced(
+        &lines,
+        &code_text(source)?,
+        header_index - 1..end,
+        &owner.name,
+    ) {
+        return None;
+    }
     let mut class = Class {
         indent: 0,
         fields: Vec::new(),
@@ -334,13 +456,24 @@ fn parse_class(owner: &PythonOwner, source: &str) -> Option<Class> {
             return None;
         }
         if text.starts_with('@') {
+            // Any other decorator may run code at class creation (a
+            // descriptor's `__set_name__` can rewrite a default).
+            if !SAFE_DECORATORS.contains(&text) {
+                return None;
+            }
             decorated = true;
             index += 1;
             continue;
         }
         if let Some(rest) = text.strip_prefix("def ") {
             let (name, signature) = rest.split_once('(')?;
-            if !is_identifier(name) {
+            // Parameter defaults and annotations run at class creation.
+            let parameters = signature.strip_suffix("):")?;
+            if !is_identifier(name)
+                || !parameters.bytes().all(|byte| {
+                    byte == b'_' || byte == b',' || byte == b' ' || byte.is_ascii_alphanumeric()
+                })
+            {
                 return None;
             }
             let mut body = Vec::new();
@@ -403,7 +536,9 @@ fn parse_class(owner: &PythonOwner, source: &str) -> Option<Class> {
         .collect();
     names.sort_unstable();
     if names.windows(2).any(|pair| pair[0] == pair[1])
-        || names.iter().any(|name| HOOK_METHODS.contains(name))
+        || names.iter().any(|name| {
+            HOOK_METHODS.contains(name) || WATCHED_BUILTINS.contains(name) || *name == "field"
+        })
     {
         return None;
     }
@@ -460,6 +595,22 @@ fn discriminating_assertion<'a>(
         return None;
     }
     let call = parse_assertion(statement, &owner.name)?;
+    // The test module may replace the imported class or patch its attributes,
+    // and code outside the test may run at import or implicitly.
+    let facts = &test.constant_rebinding;
+    if facts.rebinds(&owner.name)
+        || facts.implicit_reach
+        || facts.header_reach
+        || facts.edited_in_diff
+        || facts.assigns_attribute(&owner.name)
+        || facts.assigns_attribute(&call.method)
+        || class
+            .fields
+            .iter()
+            .any(|field| facts.assigns_attribute(&field.name))
+    {
+        return None;
+    }
     let assertion = test
         .assertions
         .iter()
@@ -573,6 +724,7 @@ fn parse_assertion(statement: &str, class: &str) -> Option<ParsedAssertion> {
 struct Evaluator<'a> {
     text: &'a [u8],
     position: usize,
+    depth: usize,
     field: &'a dyn Fn(&str) -> Option<Num>,
 }
 
@@ -581,11 +733,15 @@ impl<'a> Evaluator<'a> {
         Self {
             text: text.as_bytes(),
             position: 0,
+            depth: 0,
             field,
         }
     }
 
     fn run(mut self) -> Option<Num> {
+        if self.text.len() > MAX_EXPRESSION {
+            return None;
+        }
         let value = self.expression()?;
         self.skip_space();
         (self.position == self.text.len()).then_some(value)
@@ -635,11 +791,23 @@ impl<'a> Evaluator<'a> {
     }
 
     fn factor(&mut self) -> Option<Num> {
+        // Nesting (`((((..`, `----..`) is bounded so a long input cannot
+        // exhaust the stack.
+        if self.depth >= MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let value = self.factor_inner();
+        self.depth -= 1;
+        value
+    }
+
+    fn factor_inner(&mut self) -> Option<Num> {
         match self.peek()? {
             b'-' => {
                 self.position += 1;
                 match self.factor()? {
-                    Num::Int(value) => Some(Num::Int(-value)),
+                    Num::Int(value) => bounded(value.checked_neg()?),
                     Num::Float(value) => Some(Num::Float(-value)),
                 }
             }
@@ -699,7 +867,9 @@ impl<'a> Evaluator<'a> {
 }
 
 fn bounded(value: i64) -> Option<Num> {
-    (value.abs() <= EXACT_LIMIT).then_some(Num::Int(value))
+    (-EXACT_LIMIT..=EXACT_LIMIT)
+        .contains(&value)
+        .then_some(Num::Int(value))
 }
 
 fn finite(value: f64) -> Option<Num> {
@@ -730,7 +900,7 @@ fn round(value: Num) -> Option<Num> {
         Num::Int(_) => Some(value),
         Num::Float(float) => {
             let rounded = float.round_ties_even();
-            (rounded.abs() <= EXACT_LIMIT as f64).then(|| Num::Int(rounded as i64))
+            (rounded.abs() <= EXACT_LIMIT as f64).then_some(Num::Int(rounded as i64))
         }
     }
 }
@@ -791,6 +961,53 @@ mod tests {
         ] {
             assert_eq!(evaluate(text, 5, 0.5), None, "{text}");
         }
+    }
+
+    #[test]
+    fn integers_outside_the_exact_range_are_refused_without_panicking() {
+        assert_eq!(bounded(i64::MIN), None);
+        assert_eq!(bounded(i64::MAX), None);
+        assert_eq!(bounded(-EXACT_LIMIT - 1), None);
+        assert_eq!(bounded(EXACT_LIMIT + 1), None);
+        assert_eq!(bounded(-EXACT_LIMIT), Some(Num::Int(-EXACT_LIMIT)));
+        assert_eq!(bounded(EXACT_LIMIT), Some(Num::Int(EXACT_LIMIT)));
+        // `2**31 * -(2**32)` is `i64::MIN`; the product is out of range.
+        assert_eq!(
+            evaluate("-(2147483648 * -4294967296) / 4294967296", 0, 0.0),
+            None
+        );
+        assert_eq!(parse_literal("9223372036854775808"), None);
+    }
+
+    #[test]
+    fn docstrings_and_comments_are_not_code() {
+        let source = "\"\"\"Dataclass, property shapes.\n\nmore property text\n\"\"\"\nimport os  # round\nx = 1\n";
+        assert_eq!(
+            code_text(source),
+            Some(vec![
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                "import os  ".to_string(),
+                "x = 1".to_string(),
+            ])
+        );
+        // A quote before a comment or a triple quote hides what is code.
+        assert_eq!(code_text("x = '#'; round = f\n"), None);
+        assert_eq!(code_text("x = '\"\"\"'; round = f\n"), None);
+    }
+
+    #[test]
+    fn nesting_and_length_are_bounded() {
+        let deep = format!("{}1{}", "(".repeat(5000), ")".repeat(5000));
+        assert_eq!(evaluate(&deep, 0, 0.0), None);
+        let negations = format!("{}1", "-".repeat(5000));
+        assert_eq!(evaluate(&negations, 0, 0.0), None);
+        let shallow = format!("{}1{}", "(".repeat(10), ")".repeat(10));
+        assert_eq!(evaluate(&shallow, 0, 0.0), Some(Num::Int(1)));
+        let long = vec!["1"; 150].join(" + ");
+        assert_eq!(evaluate(&long, 0, 0.0), None);
     }
 
     #[test]

@@ -476,3 +476,192 @@ fn a_field_marker_that_is_not_a_stored_default_is_not_credited() -> Check {
     }
     Ok(())
 }
+
+#[test]
+fn a_class_or_round_the_module_may_replace_is_not_credited() -> Check {
+    for (name, source) in [
+        (
+            "method patched after the class",
+            format!("{MODELS}\n\nInvoice.total = lambda self: 120\n"),
+        ),
+        (
+            "class rebound after the class",
+            format!("{MODELS}\n\nInvoice = other(Invoice)\n"),
+        ),
+        (
+            "round bound by a loop",
+            MODELS.replace(
+                "\n\n\n@dataclass",
+                "\nfor round in [lambda _: 120]:\n    pass\n\n\n@dataclass",
+            ),
+        ),
+        (
+            "round imported",
+            MODELS.replace(
+                "\n\n\n@dataclass",
+                "\nfrom numpy import round\n\n\n@dataclass",
+            ),
+        ),
+        (
+            "round bound inside the class",
+            MODELS.replace("    amount: int\n", "    amount: int\n    round = 1\n"),
+        ),
+        (
+            "aliased class variable before the edited field",
+            MODELS
+                .replace(
+                    "import dataclass, field",
+                    "import dataclass, field\nfrom typing import ClassVar as CV",
+                )
+                .replace(
+                    "    amount: int\n",
+                    "    amount: int\n    phantom: CV[int] = 3\n",
+                ),
+        ),
+    ] {
+        let finding = classify_rate(
+            &source,
+            &test_file("    assert Invoice(100, 0.2).total() == 120"),
+        )?;
+        assert_abstains(&finding, name);
+        let finding = classify_rate(
+            &source,
+            &test_file("    assert Invoice(100).total() == 120"),
+        )?;
+        assert_abstains(&finding, name);
+    }
+    Ok(())
+}
+
+#[test]
+fn integer_arithmetic_at_the_range_edge_does_not_panic_or_credit() -> Check {
+    // Old and new results are both 0.0 in Python; the product `scale * -2**32`
+    // reaches `i64::MIN` after the edit.
+    let new_src = "from dataclasses import dataclass\n\n\n@dataclass\nclass Invoice:\n    scale: int = 2147483648\n\n    def total(self):\n        return -(self.scale * -4294967296) / 4294967296 - self.scale\n";
+    let finding = classify_edit(
+        new_src,
+        "    scale: int = 1",
+        "    scale: int = 2147483648",
+        &test_file("    assert Invoice().total() == 0"),
+        true,
+    )?;
+    assert_abstains(&finding, "i64::MIN product");
+    Ok(())
+}
+
+#[test]
+fn class_creation_effects_and_shadowed_names_are_not_credited() -> Check {
+    for (name, source) in [
+        (
+            "statement after the import",
+            MODELS.replace(
+                "from dataclasses import dataclass, field",
+                "from dataclasses import dataclass; saved = dataclass; dataclass = fake",
+            ),
+        ),
+        (
+            "descriptor decorator on another method",
+            format!("{MODELS}\n    @tweak\n    def other(self):\n        return 1\n"),
+        ),
+        (
+            "factory builtin shadowed",
+            MODELS.replace("\n\n\n@dataclass", "\nlist = make_list\n\n\n@dataclass"),
+        ),
+        (
+            "annotation builtin rebound to a marker",
+            MODELS.replace("\n\n\n@dataclass", "\nfloat = ClassVar\n\n\n@dataclass"),
+        ),
+        (
+            "field shadowed",
+            MODELS.replace("\n\n\n@dataclass", "\nfield = other_field\n\n\n@dataclass"),
+        ),
+        (
+            "parameter default runs at class creation",
+            format!("{MODELS}\n    def other(self, extra=boom()):\n        return 1\n"),
+        ),
+        (
+            "annotated parameter",
+            format!("{MODELS}\n    def other(self, extra: int):\n        return 1\n"),
+        ),
+        (
+            "field named like a builtin",
+            MODELS.replace("    amount: int\n", "    amount: int\n    round: int = 1\n"),
+        ),
+    ] {
+        assert_class_abstains(&source, name)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_builtin_descriptor_methods_keep_the_credit() -> Check {
+    let source = format!(
+        "{MODELS}\n    @property\n    def is_large(self):\n        return self.amount >= 1000\n\n    @classmethod\n    def free(cls):\n        return cls(0, 0.0)\n\n    @staticmethod\n    def parse_amount(text):\n        return int(text.strip())\n"
+    );
+    let finding = classify_rate(
+        &source,
+        &test_file("    assert Invoice(100).total() == 120"),
+    )?;
+    assert_credited(&finding);
+    Ok(())
+}
+
+#[test]
+fn an_unused_factory_that_can_fail_is_not_credited() -> Check {
+    for factory in ["fail", "make_tags", "dict_of"] {
+        let source = MODELS.replace(
+            "field(default_factory=list)",
+            &format!("field(default_factory={factory})"),
+        );
+        assert_class_abstains(&source, factory)?;
+    }
+    let source = MODELS.replace("field(default_factory=list)", "field(default_factory=dict)");
+    assert_credited(&classify_rate(
+        &source,
+        &test_file("    assert Invoice(100).total() == 120"),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_test_module_that_replaces_or_patches_the_class_is_not_credited() -> Check {
+    for (name, test_src) in [
+        (
+            "constructor replaced by a lambda",
+            "from shapes.models import Invoice\n\n\nclass Constant:\n    def total(self):\n        return 120\n\n\nInvoice = lambda amount: Constant()\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n",
+        ),
+        (
+            "class patched at import",
+            "from shapes.models import Invoice\n\nInvoice.total = lambda self: 120\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n",
+        ),
+        (
+            "default patched at import",
+            "from shapes.models import Invoice\n\nInvoice.tax_rate = 0.2\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n",
+        ),
+        (
+            "autouse fixture runs implicitly",
+            "import pytest\nfrom shapes.models import Invoice\n\n\n@pytest.fixture(autouse=True)\ndef patch():\n    Invoice.total = lambda self: 120\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n",
+        ),
+        (
+            "global rebinding in a helper",
+            "from shapes.models import Invoice\n\n\ndef helper():\n    global Invoice\n    Invoice = None\n\n\ndef test_it():\n    assert Invoice(100).total() == 120\n",
+        ),
+    ] {
+        let finding = classify_rate(MODELS, test_src)?;
+        assert_abstains(&finding, name);
+    }
+    Ok(())
+}
+
+#[test]
+fn docstrings_do_not_hide_or_cause_a_refusal() -> Check {
+    let documented = format!(
+        "\"\"\"Dataclass, property, classmethod and round shapes.\n\nMore list text.\n\"\"\"\n{MODELS}"
+    );
+    assert_credited(&classify_rate(
+        &documented,
+        &test_file("    assert Invoice(100).total() == 120"),
+    )?);
+    let hidden = MODELS.replace("\n\n\n@dataclass", "\nx = '#'; round = f\n\n\n@dataclass");
+    assert_class_abstains(&hidden, "binding after a quoted hash")
+}
