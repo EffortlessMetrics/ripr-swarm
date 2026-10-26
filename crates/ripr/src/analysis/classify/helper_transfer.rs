@@ -1175,6 +1175,46 @@ pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
     chain.hops.iter().any(|hop| hop.receiver.is_some())
 }
 
+/// #9638: whether `test` enters `chain` through a receiver call of a hop
+/// caller that is a method (`v.grow(8)` for `fn grow(&mut self, ..) {
+/// self.try_grow(..) }`), the form the free-call test in `find_related_tests`
+/// cannot see. Every condition fails closed:
+///
+/// - the entry is an inherent method (`impl Type`, a plain `self` receiver
+///   parameter) in production source, and the one workspace function of its
+///   name, so the receiver's type is not guessed from a collision;
+/// - every hop from the owner up to that entry is a direct call or an
+///   identity-bound `self.` hop: no macro hop, no foreign import, no
+///   test-local binding or nested `fn` of the name;
+/// - the test's only mentions of the name are receiver calls (`x.grow(..)`),
+///   so a path call, a function value or a macro argument never counts.
+///
+/// This only relates the test. Whether the entry's result reaches an oracle
+/// is still decided by the forwarding rules, which refuse a method entry
+/// they cannot read.
+pub(crate) fn test_calls_method_entry(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    chain: &HelperChain,
+) -> bool {
+    use crate::analysis::facts::FunctionContainer;
+    chain.hops.iter().enumerate().any(|(at, hop)| {
+        let entry = &hop.caller;
+        matches!(entry.item.container, FunctionContainer::Inherent { .. })
+            && entry.item.has_self_param
+            && !entry.source_role.is_evidence_role()
+            && chain.hops[..=at].iter().all(|below| !below.through_macro)
+            && super::activation::signature_parameter_texts(entry)
+                .first()
+                .is_some_and(|first| matches!(first.trim(), "self" | "&self" | "&mut self"))
+            && test.calls.iter().any(|call| {
+                call.name == entry.name
+                    && mentions_only_as_receiver_call(&call.text, &entry.name)
+                    && !test_call_is_shadowed(index, test, &entry.name, call.line)
+            })
+    })
+}
+
 /// The receiver self forms a method hop admits. `&mut self` is refused: the
 /// method may change a field before it reaches the owner, so the receiver
 /// value the test built is no longer the value the owner sees.

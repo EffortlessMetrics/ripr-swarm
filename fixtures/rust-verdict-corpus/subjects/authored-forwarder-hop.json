@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-forwarder-hop",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26; owners reached through a same-impl forwarder method that an integration test calls with a receiver (#9638)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "f890c86759fdab7b0aaf2944b3d4d4f8d7785cf0db0352bc2ed6021802aef19a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "2d897adc93223b8265a0550698d2a78d11cf19a32ce2e45ef0d40ef2a9fe5ae6"
+    },
+    {
+      "path": "tests/main.rs",
+      "sha256": "1cf7004c308e081365c87d642db62911448aacf5bcab0d6348a643a504c51e27"
+    }
+  ]
+}

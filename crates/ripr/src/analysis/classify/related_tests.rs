@@ -1374,9 +1374,22 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
+        // #9638: a receiver call of a method hop's caller (`v.grow(8)` for
+        // `fn grow(&mut self, ..) { self.try_grow(..) }`). Unlike the free
+        // call above it does not bypass the package guard: only a test in the
+        // owner's package can use it, since a receiver call has no crate path
+        // that could tie it to the owner's package.
+        let calls_method_entry = !calls_helper_entry
+            && !property_only_owner_call
+            && owner_package_prefix
+                .as_ref()
+                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && helper_chain.is_some_and(|chain| {
+                super::helper_transfer::test_calls_method_entry(index, test, chain)
+            });
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
-            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
+            && (calls_helper_entry || calls_method_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner

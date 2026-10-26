@@ -1,0 +1,27 @@
+use forwarder_hop::{Fin, Lane, Pool, Right};
+
+#[test]
+fn grow_keeps_four_inline_and_spills_five() {
+    let mut pool = Pool::default();
+    assert_eq!(pool.grow(4), Ok(false));
+    assert_eq!(pool.grow(5), Ok(true));
+}
+
+#[test]
+fn merge_runs_without_checking_the_outcome() {
+    let mut lane = Lane::default();
+    assert!(lane.merge(4));
+    assert!(lane.merge(5));
+}
+
+#[test]
+fn fold_answers_for_the_other_type() {
+    let mut fin = Fin::default();
+    assert_eq!(fin.fold(4), Ok(true));
+}
+
+#[test]
+fn cut_answers_for_the_right_type() {
+    let mut right = Right::default();
+    assert_eq!(right.cut(4), Ok(true));
+}

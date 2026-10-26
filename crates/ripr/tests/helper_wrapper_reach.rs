@@ -1586,3 +1586,122 @@ fn return_value_behind_a_receiver_tuple_index_keeps_its_reading() -> Result<(), 
     assert_ne!(finding["classification"], "infection_unknown", "{finding}");
     Ok(())
 }
+
+// #9638: a test reaches an inherent owner method through a same-impl
+// forwarder method it calls with a receiver (`pool.grow(4)` for
+// `fn grow(&mut self, ..) { self.try_grow(..) }`).
+//
+// The owner `try_grow` is line 8 of the source (the edited `wanted >= 4`).
+const FORWARDER_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,7 +5,7 @@\n }\n impl Pool {\n     pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n-        if wanted > 4 {\n+        if wanted >= 4 {\n             self.spilled = true;\n             return Ok(true);\n         }\n";
+
+fn forwarder_source(extra_items: &str, forwarder: &str, tests: &str) -> String {
+    format!(
+        "#[derive(Debug, PartialEq)]\npub struct Overflow;\npub struct Pool {{\n    spilled: bool,\n}}\nimpl Pool {{\n    pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {{\n        if wanted >= 4 {{\n            self.spilled = true;\n            return Ok(true);\n        }}\n        Ok(false)\n    }}\n\n{forwarder}\n}}\n{extra_items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn grow_pins_the_boundary() {{\n        let mut pool = Pool {{ spilled: false }};\n{tests}\n    }}\n}}\n"
+    )
+}
+
+const FORWARDING_METHOD: &str = "    pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        self.try_grow(wanted)\n    }";
+const GROW_TESTS: &str =
+    "        assert_eq!(pool.grow(3), Ok(false));\n        assert_eq!(pool.grow(4), Ok(true));";
+
+fn forwarder_finding(extra_items: &str, forwarder: &str, tests: &str) -> Result<Value, String> {
+    let finding = predicate_finding(
+        &forwarder_source(extra_items, forwarder, tests),
+        FORWARDER_DIFF,
+    )?;
+    assert_eq!(
+        finding["probe"]["expression"], "wanted >= 4",
+        "{finding}"
+    );
+    Ok(finding)
+}
+
+#[test]
+fn forwarder_method_relates_and_pairs_its_boundary_pin() -> Result<(), String> {
+    let finding = forwarder_finding("", FORWARDING_METHOD, GROW_TESTS)?;
+    assert_eq!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(finding["ripr"]["reach"]["state"], "yes", "{finding}");
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_that_drops_or_transforms_the_result_is_not_credited() -> Result<(), String> {
+    for forwarder in [
+        "    pub fn grow(&mut self, wanted: usize) -> bool {\n        let _ = self.try_grow(wanted);\n        true\n    }",
+        "    pub fn grow(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).is_ok()\n    }",
+        "    pub fn grow(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).unwrap_or(false) || wanted > 100\n    }",
+    ] {
+        let tests = "        assert!(pool.grow(3) || !pool.grow(4));";
+        let finding = forwarder_finding("", forwarder, tests)?;
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{forwarder}: {finding}"
+        );
+        assert_ne!(
+            finding["classification"], "weakly_exposed",
+            "{forwarder}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_name_shared_with_another_type_is_not_related() -> Result<(), String> {
+    let other = "pub struct Fin;\nimpl Fin {\n    pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        Ok(wanted > 1)\n    }\n}";
+    let finding = forwarder_finding(other, FORWARDING_METHOD, GROW_TESTS)?;
+    assert_ne!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_to_an_owner_name_with_two_candidates_is_not_related() -> Result<(), String> {
+    let other = "pub struct Fin;\nimpl Fin {\n    pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        Ok(wanted > 1)\n    }\n}";
+    let finding = forwarder_finding(other, FORWARDING_METHOD, GROW_TESTS)?;
+    assert_ne!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_shadowed_in_the_test_is_not_related() -> Result<(), String> {
+    let tests = "        fn grow(_pool: &mut Pool, wanted: usize) -> Result<bool, Overflow> {\n            Ok(wanted >= 4)\n        }\n        assert_eq!(grow(&mut pool, 3), Ok(false));\n        assert_eq!(pool.grow(4), Ok(true));";
+    let finding = forwarder_finding("", FORWARDING_METHOD, tests)?;
+    assert_ne!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_called_by_path_or_value_is_not_related() -> Result<(), String> {
+    for tests in [
+        "        assert_eq!(Pool::grow(&mut pool, 4), Ok(true));",
+        "        let call = Pool::grow;\n        assert_eq!(call(&mut pool, 4), Ok(true));",
+    ] {
+        let finding = forwarder_finding("", FORWARDING_METHOD, tests)?;
+        assert_ne!(
+            relation_of(&finding, "grow_pins_the_boundary"),
+            Some("helper_owner_call"),
+            "{tests}: {finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{tests}: {finding}");
+    }
+    Ok(())
+}

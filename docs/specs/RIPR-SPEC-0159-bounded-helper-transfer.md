@@ -89,6 +89,23 @@ can only hint that a caller "may lead here" without changing anything.
   scrutinee selection through the entry is not established (for
   example a `self.<field>` set through a `from_str` match behind `?`)
   keeps its fail-closed class; only its reach is established.
+- Method entry (#9638): a test may enter the chain through a receiver call
+  of a hop caller that is a method, `pool.grow(4)` for `fn grow(&mut self, ..)
+  { self.try_grow(..) }`, the form the free-call entry test cannot see. The
+  test relates as `HelperOwnerCall` only when the entry is an inherent method
+  taking `self`, `&self` or `&mut self` in production source, is the one
+  workspace function of its name (a second `grow` on any type refuses), every
+  hop beneath it is a direct call or an identity-bound `self.` hop (no macro
+  hop), the test's only mentions of the name are receiver calls (a path call
+  `Pool::grow(&mut pool, 4)` or a function value never counts), no test-local
+  binding, nested `fn` or foreign import shadows the name, and the test lives
+  in the owner's package. It relates the test only: reach, infection and
+  propagation still follow the rules above, so an entry that drops or
+  transforms the owner's result keeps `propagation_unknown`, and an owner
+  name with two candidates never forms the chain
+  (`helper_transfer::test_calls_method_entry`). It adds no tolerance for
+  `unwrap_or_else` or `?` in the forwarder: a forwarder that unwraps the
+  owner's result is a transform and still abstains.
 - The chain relation outranks any file-path, test-name or token
   proximity reason (#6694, #6672): a test that calls a resolved hop's
   caller relates as `HelperOwnerCall`, not `same_test_file`,
@@ -536,6 +553,16 @@ Reach on that rewritten finding is `unknown` and the stop reason is
    literals and prefix forms (`&input`, `*input`), and abstains wholesale
    (#9889). The trade-off is precision: `&input`, `.clone()` and
    constants abstain although the value is knowable.
+10. Accept: a method forwarder that hands the owner's result back unchanged,
+    called with a receiver by an integration test that pins the boundary row
+    (`forwarder-hop-forwarded-hit`: `pool.grow(4)` asserted `Ok(false)` for
+    `grow` forwarding `self.try_grow(wanted)`). The verdict is `exposed`.
+11. Reject: a forwarder that drops the owner's result
+    (`forwarder-hop-swallowed-result`, `propagation_unknown`), a forwarder
+    name shared with another type's method whose test calls the other one
+    (`forwarder-hop-name-collision`), and an owner name with two candidates
+    where the test calls the forwarder of the unchanged one
+    (`forwarder-hop-multi-candidate`): none is credited.
 
 ## Test Mapping
 
@@ -556,6 +583,9 @@ wrong-receiver tail-forwarding control, the #8633 review controls
 (transformed tail, self-computed expectation, projected entry value,
 foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
+`crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
+entry credit and its swallowed, transformed, shared-name, two-candidate,
+shadowed and path-call controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
 
