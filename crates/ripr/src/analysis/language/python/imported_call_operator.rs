@@ -183,7 +183,7 @@ fn credits<'a>(
                 .parameters
                 .iter()
                 .cloned()
-                .zip(arguments.into_iter())
+                .zip(arguments)
                 .collect();
             if !fails_under_new_operator(&old_shape, &new_shape, &bound, expected) {
                 continue;
@@ -220,11 +220,7 @@ fn pinned_call(expression: &Expr, spellings: &[String]) -> Option<(Vec<Value>, i
     if !spellings.contains(&callee) || !call.keywords.is_empty() {
         return None;
     }
-    let arguments = call
-        .args
-        .iter()
-        .map(|argument| literal(argument))
-        .collect::<Option<Vec<_>>>()?;
+    let arguments = call.args.iter().map(literal).collect::<Option<Vec<_>>>()?;
     match literal(expected)? {
         Value::Int(expected) => Some((arguments, expected)),
         _ => None,
