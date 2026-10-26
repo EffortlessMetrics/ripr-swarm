@@ -454,6 +454,9 @@ impl ItemBindings {
                     continue;
                 }
                 import.attrs().next().is_none()
+                    && !node
+                        .ancestors()
+                        .any(|ancestor| ast::ItemList::can_cast(ancestor.kind()))
                     && scope.globs.is_empty()
                     && !matching.is_empty()
                     && matching.iter().all(|import| match &import.binding {

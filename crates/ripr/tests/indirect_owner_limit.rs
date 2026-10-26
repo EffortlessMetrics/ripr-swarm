@@ -907,3 +907,24 @@ fn a_nested_module_owner_value_does_not_inherit_a_block_shadow() -> Result<(), S
     );
     withheld(&lib, BEFORE, "    x + 2", "nested module owner")
 }
+
+#[test]
+fn a_nested_module_import_does_not_borrow_the_test_module_context() -> Result<(), String> {
+    let lib = values(
+        "    fn inc(x: u32) -> u32 { x + 9 }
+    #[test]
+    fn positive() {
+        mod inner {
+            use crate::inc;
+            pub fn mapped() -> [u32; 2] {
+                use self::inc;
+                [1, 2].map(inc)
+            }
+        }
+        assert!(crate::inc(1) > 0);
+        assert_eq!(inner::mapped(), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, "    x + 2", "nested module import context")
+}
