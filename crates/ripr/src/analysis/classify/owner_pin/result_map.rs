@@ -27,9 +27,14 @@ pub(in crate::analysis) fn admitted_rewrite(
             .is_none_or(|facts| facts.used_lexical_fallback)
         || probe.family != ProbeFamily::ReturnValue
         || probe.owner.as_ref() != Some(&owner.id)
-        || ["Result", "Ok", "Err"]
+        || ["Result", "Ok", "Err", "std", "core"]
             .iter()
             .any(|name| wrapper_may_be_rebound(name, index))
+        || index.files().get(&owner.file).is_none_or(|facts| {
+            ["Ok", "Err"]
+                .iter()
+                .any(|name| super::source_binds_value_name(&facts.source, name))
+        })
     {
         return None;
     }
@@ -189,7 +194,62 @@ fn result_receiver(receiver: &ast::Expr, owner: &FunctionSummary, index: &RustIn
     {
         return None;
     }
+    let source = index.source_syntax.get(index, &owner.file)?;
+    let owner_declaration = source.declaration(owner)?;
+    let reader_declaration = source.declaration(declaration)?;
+    // A same-named declaration is not a method-resolution receipt: cfg can
+    // remove it and a different receiver shape can select a trait method.
+    // Keep this rule within one unconditional lexical impl/trait block.
+    if declaration_container(&owner_declaration)? != declaration_container(&reader_declaration)?
+        || plain_receiver(&owner_declaration)? != plain_receiver(&reader_declaration)?
+    {
+        return None;
+    }
     Some(())
+}
+
+fn declaration_container(function: &ast::Fn) -> Option<SyntaxNode> {
+    let mut container = None;
+    for node in function.syntax().ancestors() {
+        let gated = if let Some(item) = ast::Fn::cast(node.clone()) {
+            super::has_cfg_attr(&item)
+                || item
+                    .body()
+                    .and_then(|body| body.stmt_list())
+                    .is_some_and(|list| super::has_cfg_attr(&list))
+        } else if let Some(item) = ast::Impl::cast(node.clone()) {
+            container.get_or_insert(node.clone());
+            super::has_cfg_attr(&item)
+        } else if let Some(item) = ast::Trait::cast(node.clone()) {
+            container.get_or_insert(node.clone());
+            super::has_cfg_attr(&item)
+        } else if let Some(item) = ast::Module::cast(node.clone()) {
+            super::has_cfg_attr(&item)
+        } else if let Some(item) = ast::AssocItemList::cast(node.clone()) {
+            super::has_cfg_attr(&item)
+        } else if let Some(item) = ast::ItemList::cast(node.clone()) {
+            super::has_cfg_attr(&item)
+        } else if let Some(item) = ast::SourceFile::cast(node.clone()) {
+            super::has_cfg_attr(&item)
+        } else {
+            return None;
+        };
+        if gated {
+            return None;
+        }
+    }
+    container
+}
+
+fn plain_receiver(function: &ast::Fn) -> Option<(bool, bool)> {
+    let receiver = function.param_list()?.self_param()?;
+    if receiver.ty().is_some() || super::has_cfg_attr(&receiver) {
+        return None;
+    }
+    Some((
+        receiver.amp_token().is_some(),
+        receiver.mut_token().is_some(),
+    ))
 }
 fn standard_result(function: &ast::Fn) -> bool {
     function

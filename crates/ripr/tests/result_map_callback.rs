@@ -197,6 +197,39 @@ fn result_map_refuses_rebound_standard_names() -> Result<(), String> {
 }
 
 #[test]
+fn result_map_refuses_opaque_imports_and_shadowed_result_roots() -> Result<(), String> {
+    // An external glob can supply an Option alias called Result and a
+    // function called Ok. Neither the receiver nor the old constructor has
+    // standard identity, even though both return-type spellings match.
+    for (prelude, production) in [
+        (
+            "use support::*;",
+            INHERENT_SOURCE.replace("if self.fail { Err(E) } else { Ok(7) }", "None"),
+        ),
+        (
+            "use support as std;",
+            INHERENT_SOURCE.replace("Result<", "std::result::Result<"),
+        ),
+        (
+            "use support as core;",
+            INHERENT_SOURCE.replace("Result<", "core::result::Result<"),
+        ),
+    ] {
+        let production = format!("{prelude}\n{production}");
+        let finding = analyze_source(
+            &production,
+            INHERENT_ORIGINAL,
+            INHERENT_FORWARDED,
+            "#[test] fn direct_ok() { let r = Reader { fail: false }; assert_eq!(r.mapped(), Ok(8)); }",
+            "",
+        )?;
+        assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+        assert_ne!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
 fn result_map_refuses_an_async_reader_with_a_discarding_future_map() -> Result<(), String> {
     let extension = "trait FutureMap { fn map<F: FnOnce(u64) -> i64>(self, ignored: F) -> Result<i64, TryGetError>; } impl<T: core::future::Future<Output = Result<u64, TryGetError>>> FutureMap for T { fn map<F: FnOnce(u64) -> i64>(self, _ignored: F) -> Result<i64, TryGetError> { Ok(-1) } }";
     let finding = analyze_with_reader(FORWARDED, GOOD, extension, true, false)?;
@@ -211,6 +244,46 @@ fn result_map_refuses_ambiguous_same_line_async_reader_declarations() -> Result<
     let finding = analyze_with_reader(FORWARDED, GOOD, extension, true, true)?;
     assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_refuses_an_inactive_or_different_receiver_reader() -> Result<(), String> {
+    let production = r#"#[derive(Debug, PartialEq)] struct E;
+struct Reader { fail: bool }
+impl Reader {
+    #[cfg(any())]
+    fn read(&self) -> Result<u64, E> { Ok(7) }
+    fn mapped(&self) -> Result<u64, E> {
+        Ok(self.read()? + 1)
+    }
+}
+trait ReadFuture { async fn read(&self) -> Result<u64, E>; }
+impl ReadFuture for Reader { async fn read(&self) -> Result<u64, E> { Ok(7) } }
+trait FutureMap { fn map<F: FnOnce(u64) -> u64>(self, ignored: F) -> Result<u64, E>; }
+impl<T: core::future::Future<Output = Result<u64, E>>> FutureMap for T {
+    fn map<F: FnOnce(u64) -> u64>(self, _ignored: F) -> Result<u64, E> { Ok(8) }
+}
+"#;
+    // In both current subjects, Rust selects the async trait reader and
+    // FutureMap ignores the callback. The old spelling is only diff input,
+    // as in the async-reader control above, not a compiled baseline claim.
+    let different_receiver = production.replace("    #[cfg(any())]\n", "").replacen(
+        "fn read(&self)",
+        "fn read(&mut self)",
+        1,
+    );
+    for source in [production, different_receiver.as_str()] {
+        let finding = analyze_source(
+            source,
+            INHERENT_ORIGINAL,
+            INHERENT_FORWARDED,
+            "#[test] fn direct_ok() { let r = Reader { fail: false }; assert_eq!(r.mapped(), Ok(8)); }",
+            "",
+        )?;
+        assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+        assert_ne!(finding["classification"], "exposed", "{finding}");
+    }
     Ok(())
 }
 
