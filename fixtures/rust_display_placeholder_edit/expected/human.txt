@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_display_placeholder_edit/input --diff <cwd>/fixtures/rust_display_placeholder_edit/diff.patch --mode fast probe:src_display.rs:return_value:f7797365
   ripr context --root <cwd>/fixtures/rust_display_placeholder_edit/input --diff <cwd>/fixtures/rust_display_placeholder_edit/diff.patch --mode fast --at probe:src_display.rs:return_value:f7797365
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: return_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_display_placeholder_edit/input --at src/display.rs:7 --kind return_value
 
