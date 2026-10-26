@@ -123,7 +123,10 @@ fn a_single_row_is_credited_like_two() -> Result<(), String> {
 fn a_matcher_or_predicate_expectation_is_not_a_literal_comparison() -> Result<(), String> {
     for (label, rows) in [
         ("matches", "    #[test_case(10 => matches 12)]\n"),
-        ("with", "    #[test_case(10 => with |v: i64| assert!(v > 0))]\n"),
+        (
+            "with",
+            "    #[test_case(10 => with |v: i64| assert!(v > 0))]\n",
+        ),
         ("panics", "    #[test_case(10 => panics \"boom\")]\n"),
         ("it", "    #[test_case(10 => it is_positive())]\n"),
     ] {
