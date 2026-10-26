@@ -508,10 +508,16 @@ when the new operator over that `X` gives another value; only then is the
 `missing_import_graph` limit lifted. An assertion both operators satisfy, a
 non-literal, keyword or short call, a second call, a division, a changed
 operand, side or argument, a decorated, unresolved, ambiguous or rebound
-callee or owner, a patched owner, any workspace type that defines `__add__`,
-`__sub__`, `__mul__` or a reflected form (its result need not be the pinned
-number), or a test that rebinds, writes or may skip keeps
-`missing_import_graph`. A function defined under a
+callee or owner, a patched owner, any workspace file reachable from the owner's
+or the callee's module through imports that defines `__add__`, `__sub__`,
+`__mul__` or a reflected form (its result need not be the pinned number), or a
+test that rebinds, writes or may skip keeps `missing_import_graph`. The
+guarantee is bounded: the pass does not prove the call returns an ordinary
+integer. An exact integer assertion is taken to describe the returned value,
+and the abstention covers only arithmetic defined in reachable workspace
+files. A third-party or dynamically built type with its own `+`, `-` or `*` is
+not visible to this scan, and a pinned number it produced may not behave as the
+algebra assumes. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
