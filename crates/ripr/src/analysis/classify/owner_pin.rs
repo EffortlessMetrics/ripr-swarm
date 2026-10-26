@@ -77,8 +77,8 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, source_imports_claims_macro,
+    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -4060,6 +4060,20 @@ impl OwnerReturnPin {
                                             })
                                             .map(|call| (call, true))
                                     })
+                                    // claims' `assert_ok!(call)` / `assert_some!(call)`
+                                    // yield the payload exactly as `.unwrap()` does,
+                                    // on a verified `use claims::..` import.
+                                    .or_else(|| {
+                                        let (name, call) = claims_payload_call(initializer)?;
+                                        let imported =
+                                            index.files().get(&test.file).is_some_and(|facts| {
+                                                source_imports_claims_macro(&facts.source, name)
+                                            });
+                                        (unwrap_wrapper.is_some() && imported)
+                                            .then(|| self.awaited_call_shape(call, &self.name))
+                                            .flatten()
+                                            .map(|call| (call, true))
+                                    })
                             };
                             match (bound_whole(0), bound_whole(1)) {
                                 (Some((call, unwraps)), None) => {
@@ -4463,6 +4477,16 @@ impl OwnerReturnPin {
         let owner_scope =
             OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
+        // claims' assertion macros the test's file imports from the crate
+        // (the syntax admission settles the manifest and shadowing): they
+        // evaluate their operand and bind nothing, so an owner call inside
+        // one is no rebinding.
+        let claims_macros: Vec<&str> = CLAIMS_MACROS
+            .into_iter()
+            .filter(|name| {
+                test_source.is_some_and(|source| source_imports_claims_macro(source, name))
+            })
+            .collect();
         match (&self.call, call) {
             // #7082: a cfg on the owner or an enclosing module may compile
             // a same-named `static`, `const` or `use` in its place, which
@@ -4482,7 +4506,7 @@ impl OwnerReturnPin {
                     })
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
-                    && !bound_by_macro(&masked_body, &self.name)
+                    && !bound_by_macro_with(&masked_body, &self.name, &claims_macros)
                     && helper.as_deref().is_none_or(|helper| {
                         helper_pins_owner_call(helper, &masked_body, &self.name)
                     })
@@ -5547,6 +5571,29 @@ fn bound_owner_initializer<'a>(
     test.body.get(equals + 1..end)
 }
 
+/// The claims macro name and operand call when `operand` is exactly
+/// `assert_ok!(<call>)` or `assert_some!(<call>)`: each evaluates its operand
+/// once, panics on the other variant and yields the payload, so a passing
+/// test read the call's `Ok`/`Some` payload as `.unwrap()` would. The caller
+/// verifies the `claims` import.
+fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
+    let operand = operand.trim();
+    let masked = mask_comments_and_strings(operand);
+    let name = ["assert_ok", "assert_some"]
+        .into_iter()
+        .find(|name| masked.starts_with(name))?;
+    let after_bang = masked[name.len()..]
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    let open = masked.len() - after_bang.len();
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    (close + 1 == masked.len()).then_some((name, operand[open + 1..close].trim()))
+}
+
 /// RIPR-SPEC-0225 decision 6: the call `operand` unwraps, when it is
 /// `<call>.unwrap()` or `<call>.expect("..")` with one plain string literal
 /// message. Both panic on `Err`/`None`, so a passing comparison of the
@@ -6285,7 +6332,18 @@ fn assertion_context_macros() -> Vec<&'static str> {
 /// verifies `use expect_test::{expect, expect_file};`, a bare one is a
 /// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
 /// bodies and binding reads never count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect", "expect_file"];
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
+    "assert_err",
+    "assert_none",
+    "assert_ok",
+    "assert_some",
+    "expect",
+    "expect_file",
+];
+
+/// claims' assertion macros: each evaluates its operand once and panics on
+/// the wrong variant, so none returns from or binds a name in the test.
+const CLAIMS_MACROS: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
@@ -8800,9 +8858,15 @@ fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
 /// its arguments: `let_assert!(Ok(p) = ..)` and similar macros bind
 /// patterns ripr does not read.
 fn bound_by_macro(masked: &str, name: &str) -> bool {
+    bound_by_macro_with(masked, name, &[])
+}
+
+/// [`bound_by_macro`] where the macros in `bounded` are also known to bind
+/// nothing: the caller verified their import (claims' assertion macros).
+fn bound_by_macro_with(masked: &str, name: &str, bounded: &[&str]) -> bool {
     macro_invocations(masked)
         .into_iter()
-        .filter(|(macro_name, _)| !is_bounded_macro(macro_name))
+        .filter(|(macro_name, _)| !is_bounded_macro(macro_name) && !bounded.contains(macro_name))
         .any(|(_, delimiter)| {
             let (open, close) = match masked.as_bytes()[delimiter] {
                 b'(' => (b'(', b')'),

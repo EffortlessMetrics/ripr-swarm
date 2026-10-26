@@ -470,7 +470,15 @@ pub(crate) fn macro_binding_scan(
 pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "assert",
     "assert_eq",
+    // claims' `assert_ok!`, `assert_err!`, `assert_some!` and `assert_none!`
+    // evaluate their operand and panic on the wrong variant; none can
+    // return. Only a manifest-verified `use claims::{assert_ok, ..}` import
+    // keeps one trusted.
+    "assert_err",
     "assert_ne",
+    "assert_none",
+    "assert_ok",
+    "assert_some",
     "cfg",
     "column",
     "concat",
@@ -1358,9 +1366,15 @@ const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 /// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
+/// `claims` exports `assert_ok!`/`assert_err!`/`assert_some!`/`assert_none!`:
+/// each evaluates its operand once, panics unless it has the named variant,
+/// and (for `assert_ok!`/`assert_some!`) yields the payload.
+const CLAIMS_CRATES: &[&str] = &["claims"];
+
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
     match name {
+        "assert_ok" | "assert_err" | "assert_some" | "assert_none" => CLAIMS_CRATES,
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
@@ -1393,6 +1407,26 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
         segments.as_slice(),
         [root, imported] if crates.contains(root) && *imported == name
     )
+}
+
+/// Whether `source` names the claims macro `name` by a `use claims::name;`
+/// (or `use claims::{name, ..};`) import, under its own name. A source that
+/// does not parse cleanly imports nothing provable. The import's manifest
+/// verdict and shadowing are the binding scan's, which already treats an
+/// unverified or foreign import of a trusted name as a binding site.
+pub(crate) fn source_imports_claims_macro(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source).is_some_and(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(|item| {
+                item.use_tree_list().is_none()
+                    && item.rename().is_none()
+                    && is_drop_in_assertion(&item, name)
+            })
+    })
 }
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
