@@ -246,7 +246,7 @@ impl ReExportIndex {
         // Owner.imports also carries synthetic re-export records for call
         // discovery. A re-export creates no local binding, so only the
         // actual-only imports collected from this module can anchor a root.
-        let imports = if normalized_path(file) == normalized_path(&test.file) {
+        let imports: &[TypeScriptImport] = if normalized_path(file) == normalized_path(&test.file) {
             &test.imports_in_file
         } else {
             self.enum_imports.get(&module)?
@@ -318,7 +318,7 @@ impl ReExportIndex {
             return None;
         };
         let unstable_roots: Vec<String> = if normalized_path(file) == normalized_path(&test.file) {
-            test.unstable_member_roots_in_file.clone()
+            test.unstable_member_roots_in_file.to_vec()
         } else {
             self.unstable_enum_roots
                 .iter()
@@ -1650,7 +1650,7 @@ pub(crate) fn receiver_owner_call_relation(
     // A receiver built in the enclosing scope (`const cart = new Cart()` in a
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
-    for binding in &test.scope_bindings {
+    for binding in test.scope_bindings.iter() {
         if binding
             .constructed_by
             .as_ref()
@@ -1700,7 +1700,7 @@ pub(crate) fn owner_method_receiver_names(
                 constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
             let mut receivers =
                 receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
-            for binding in &test.scope_bindings {
+            for binding in test.scope_bindings.iter() {
                 if binding
                     .constructed_by
                     .as_ref()

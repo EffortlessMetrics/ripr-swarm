@@ -1,0 +1,20 @@
+{
+  "id": "rust_returned_closure_effective_values",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/returned_closure_arithmetic_masking",
+  "vector": "body_values_and_result_or_callee_attribution_require_an_admitted_pin",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 11
+    },
+    {
+      "type": "must_not_promote"
+    }
+  ]
+}

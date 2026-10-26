@@ -19,7 +19,7 @@
 
 use super::decision::confidence_score;
 use super::reveal::ASSERTION_CONTEXT_UNESTABLISHED;
-use crate::analysis::facts::{FunctionContainer, TestFact};
+use crate::analysis::facts::{FunctionContainer, TestFact, cfg_predicates};
 use crate::analysis::rust_index::RustIndex;
 use crate::domain::*;
 
@@ -1090,7 +1090,9 @@ fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize
 pub(in crate::analysis) fn is_ignored(test: &TestFact) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact == "#[ignore]" || compact.starts_with("#[ignore=")
+        compact == "#[ignore]"
+            || compact.starts_with("#[ignore=")
+            || cfg_predicates::attribute_introduces_bare(attr, "ignore")
     })
 }
 
