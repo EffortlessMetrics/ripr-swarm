@@ -728,7 +728,8 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
     let masked =
         crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
     let tokens = tokenize(&masked)?;
-    fold_block(&tokens, &environment, fold_range)
+    let uniform = fold_range.filter(|range| widths.iter().all(|width| *width == Some(*range)));
+    fold_block(&tokens, &environment, fold_range, uniform)
 }
 
 /// The inclusive value range a recognized Rust integer type admits, or
@@ -906,9 +907,22 @@ struct Parser<'a> {
     /// the declared width, so a mathematical value outside the range does
     /// not describe a value the owner can return.
     range: Option<(i128, i128)>,
+    /// The shared declared range when every parameter and the return type
+    /// are the same recognized integer type. The shifts and the saturating
+    /// methods depend on the operand's own width, which the return range
+    /// stands for only then: a comparison or a differently typed parameter
+    /// can hold a value of another width.
+    uniform: Option<(i128, i128)>,
 }
 
 impl<'a> Parser<'a> {
+    /// The bit width of the uniform integer type, when there is one.
+    fn uniform_bits(&self) -> Option<u32> {
+        let (low, high) = self.uniform?;
+        let magnitude = 128 - u128::try_from(high).ok()?.leading_zeros();
+        Some(if low < 0 { magnitude + 1 } else { magnitude })
+    }
+
     fn check_range(&self, value: i128) -> Option<i128> {
         match self.range {
             Some((low, high)) if !(low..=high).contains(&value) => None,
@@ -1183,21 +1197,22 @@ impl<'a> Parser<'a> {
                 "^" => left_value ^ right_value,
                 "&" => left_value & right_value,
                 // A shift past the integer's width panics in a debug build
-                // and loses bits in a release build; an amount outside
-                // `0..=126` or a left shift whose result overflows the
-                // declared width is not a value the owner returns.
-                "<<" => {
+                // and loses bits in a release build; an amount at or past the
+                // width, or a left shift whose result overflows the declared
+                // width, is not a value the owner returns. The width is known
+                // only for a uniform integer type.
+                "<<" | ">>" => {
+                    let bits = self.uniform_bits()?;
                     let amount = u32::try_from(right_value)
                         .ok()
-                        .filter(|amount| *amount <= 126)?;
-                    left_value.checked_mul(1i128.checked_shl(amount)?)?
+                        .filter(|amount| *amount < bits)?;
+                    if op == "<<" {
+                        left_value.checked_mul(1i128.checked_shl(amount)?)?
+                    } else {
+                        left_value >> amount
+                    }
                 }
-                _ => {
-                    let amount = u32::try_from(right_value)
-                        .ok()
-                        .filter(|amount| *amount <= 126)?;
-                    left_value >> amount
-                }
+                _ => return None,
             };
             left = Value::Int(self.check_range(value)?);
         }
@@ -1309,9 +1324,8 @@ impl<'a> Parser<'a> {
             None
         };
         self.expect_symbol(")")?;
-        // Every integer in a folded body shares the owner's declared return
-        // type (a cast or a comparison would leave the fold), so that type's
-        // range is the receiver's range for the saturating forms.
+        // The saturating forms clamp at the receiver's own range, known only
+        // when every parameter and the return type share one integer type.
         let value = match name.as_str() {
             "pow" => receiver.checked_pow(u32::try_from(argument).ok()?)?,
             "min" => receiver.min(argument),
@@ -1325,7 +1339,7 @@ impl<'a> Parser<'a> {
                 receiver.clamp(argument, upper)
             }
             "saturating_add" | "saturating_sub" => {
-                let (low, high) = self.range?;
+                let (low, high) = self.uniform?;
                 let exact = if name == "saturating_add" {
                     receiver.checked_add(argument)?
                 } else {
@@ -1448,6 +1462,7 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
         position: 0,
         environment,
         range: None,
+        uniform: None,
     };
     let value = parser.parse_expression()?;
     if parser.position != tokens.len() {
@@ -1465,12 +1480,14 @@ fn fold_block(
     tokens: &[Token],
     environment: &BTreeMap<String, i128>,
     range: Option<(i128, i128)>,
+    uniform: Option<(i128, i128)>,
 ) -> Option<i128> {
     let mut parser = Parser {
         tokens,
         position: 0,
         environment,
         range,
+        uniform,
     };
     let value = parser.parse_block_value()?;
     if parser.position != tokens.len() {
@@ -2027,6 +2044,21 @@ mod tests {
         // declared width, inverted clamp bounds, a saturating form with no
         // declared return width and a stray `|` (a closure bar) fail the fold.
         assert_eq!(fold_text("fn f(a: u32) -> u32 { a >> 200 }", &[1]), None);
+        assert_eq!(fold_text("fn f(a: u32) -> u32 { a >> 32 }", &[1]), None);
+        assert_eq!(
+            fold_text("fn f(a: u32) -> u32 { a >> 31 }", &[1 << 31]),
+            Some(1)
+        );
+        // The operand's width is unknown unless parameters and return agree.
+        assert_eq!(fold_text("fn f(a: u8) -> u32 { a >> 1 }", &[4]), None);
+        assert_eq!(fold_text("fn f(a: usize) -> usize { a << 63 }", &[2]), None);
+        assert_eq!(
+            fold_text(
+                "fn f(a: u8) -> i32 { if a.saturating_sub(5) == 0 { 1 } else { 0 } }",
+                &[3]
+            ),
+            None
+        );
         assert_eq!(fold_text("fn f(a: u8) -> u8 { a << 7 }", &[3]), None);
         assert_eq!(
             fold_text("fn f(a: u32) -> u32 { a.clamp(5, 2) }", &[1]),
