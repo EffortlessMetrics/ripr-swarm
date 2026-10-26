@@ -6,7 +6,6 @@ use std::path::Path;
 fn matches_expected_panic_native_outcomes_are_not_support_promotion() -> Result<(), String> {
     let scratch = Scratch::create()?;
     let source = r#"
-#![allow(dead_code)]
 #[derive(Debug, PartialEq)]
 enum Fault { Bad, Other }
 fn parse(_: &str) -> Result<(), Fault> {
