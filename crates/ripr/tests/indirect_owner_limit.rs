@@ -1028,3 +1028,36 @@ fn a_reassigned_let_is_not_read_as_its_initializer() -> Result<(), String> {
     edited(&lib, TAX_BEFORE, "    p + p / 5")?;
     Ok(())
 }
+
+/// Two assertions reading one bound result are one owner call in the test, so
+/// the hidden input is still withheld, and the same shape at a separating
+/// input keeps the plain form's verdict.
+#[test]
+fn two_assertions_over_one_bound_result_are_still_read() -> Result<(), String> {
+    let exposed_for = |input: &str, expected: &str| -> Result<bool, String> {
+        let lib = ASYNC_OWNER.replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            &format!(
+                "let actual = block_on(add_tax({input}));\n        let expected = {expected};\n        assert_eq!(actual, expected);\n        assert_eq!(actual, expected);"
+            ),
+        );
+        let findings = edited(&lib, TAX_BEFORE, "    p + p / 5")?;
+        Ok(findings.iter().any(|f| f.class == ExposureClass::Exposed))
+    };
+    if exposed_for("0", "0")? {
+        return Err("input 0 hides the change through two assertions on one result".into());
+    }
+    let single = {
+        let lib = ASYNC_OWNER.replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let actual = block_on(add_tax(100));\n        let expected = 110;\n        assert_eq!(actual, expected);",
+        );
+        edited(&lib, TAX_BEFORE, "    p + p / 5")?
+            .iter()
+            .any(|f| f.class == ExposureClass::Exposed)
+    };
+    if exposed_for("100", "110")? != single {
+        return Err("a repeated assertion changed the verdict at a separating input".into());
+    }
+    Ok(())
+}

@@ -328,15 +328,22 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         // assertion, may separate the versions at an input the fold never saw.
         // The call may sit in either operand, or in the `let` that binds the
         // operand, so the operands are resolved before the mentions are counted.
-        let resolved: Vec<Vec<String>> = test
+        let resolved: Vec<Vec<ResolvedOperand>> = test
             .assertions
             .iter()
             .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
             .collect();
+        // A `let` read by several assertions is one call in the body, so each
+        // binding's initializer counts once however many assertions use it.
+        let mut counted_bindings = std::collections::BTreeSet::new();
         let resolved_mentions: usize = resolved
             .iter()
             .flatten()
-            .map(|operand| count_name_tokens(operand, &owner.name))
+            .filter(|operand| match &operand.binding {
+                Some(name) => counted_bindings.insert(name.clone()),
+                None => true,
+            })
+            .map(|operand| count_name_tokens(&operand.text, &owner.name))
             .sum();
         if count_name_tokens(test.body.as_str(), &owner.name) != resolved_mentions {
             return false;
@@ -344,6 +351,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         resolved.iter().all(|operands| {
             let mut holding = operands
                 .iter()
+                .map(|operand| operand.text.as_str())
                 .filter(|operand| count_name_tokens(operand, &owner.name) > 0);
             let (Some(actual), None) = (holding.next(), holding.next()) else {
                 return false;
@@ -383,7 +391,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
 /// sides of `assert!(a == b)`), each bare identifier replaced by the one
 /// `let` initializer that binds it in `test_body`. Empty when the assertion
 /// is not an equality shape.
-fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<String> {
+fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand> {
     let operands: Vec<String> = match equality_assertion_shape(oracle_text) {
         Some((_, arguments)) => arguments.into_iter().take(2).collect(),
         None => crate::analysis::classify::equality_condition_operands(oracle_text)
@@ -392,8 +400,27 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<String> {
     };
     operands
         .into_iter()
-        .map(|operand| let_initializer(test_body, operand.trim()).unwrap_or(operand))
+        .map(|operand| {
+            let name = operand.trim().to_string();
+            match let_initializer(test_body, &name) {
+                Some(text) => ResolvedOperand {
+                    text,
+                    binding: Some(name),
+                },
+                None => ResolvedOperand {
+                    text: operand,
+                    binding: None,
+                },
+            }
+        })
         .collect()
+}
+
+/// A compared operand after `let` resolution; `binding` names the `let` it
+/// was read through so a shared binding is counted once.
+struct ResolvedOperand {
+    text: String,
+    binding: Option<String>,
 }
 
 /// The initializer of the single `let [mut] name = init;` in `body`.
