@@ -1330,18 +1330,37 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
 /// (#9619).
 #[test]
 fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), String> {
-    let finding = classify_case(
-        DISCOUNT_SOURCE,
-        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
-        2,
-        "    if quantity > 100:",
-        "    if quantity >= 100:",
-    )?;
-    assert_eq!(finding.class, ExposureClass::StaticUnknown);
-    assert_eq!(
-        finding.static_limit_kind,
-        Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture)
-    );
+    // A value the read cannot settle (#10685) may route the name too.
+    for indirect in ["True", "IND", "[\"quantity\"]", "[NAME]", "routes()", "1"] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            &format!(
+                "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect={indirect})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+            ),
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{indirect}");
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "{indirect}"
+        );
+    }
+    // Control: values that leave the name direct keep it a pytest value.
+    for indirect in ["False", "None", "[\"other\"]", "()"] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            &format!(
+                "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect={indirect})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+            ),
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert_eq!(finding.static_limit_kind, None, "{indirect}");
+    }
     Ok(())
 }
 

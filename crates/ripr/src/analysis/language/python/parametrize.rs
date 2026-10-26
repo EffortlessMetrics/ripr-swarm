@@ -106,9 +106,9 @@ pub(super) fn parametrize_cases(
 /// Argnames a pytest parametrize decorator supplies directly to the test,
 /// read syntactically and independent of the literal-cases parser (which
 /// gives up on variable argvalues, `pytest.param(marks=...)`, large products
-/// and any `indirect=`). An argname is excluded only when `indirect=` is the
-/// literal `True` or a literal list naming it; any other `indirect` value is
-/// treated as not routing to a fixture, so the name is not resolved as one.
+/// and any `indirect=`). An argname is excluded when `indirect=` may route it
+/// to its fixture ([`indirect_routes`]): the name is then resolved as a
+/// fixture and counts toward the fixture limit.
 pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
     let mut direct = Vec::new();
     for decorator in decorators {
@@ -139,16 +139,23 @@ pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
     direct
 }
 
-/// Whether a literal `indirect=` value routes `name` to its fixture.
+/// Whether an `indirect=` value may route `name` to its fixture. Only
+/// literal `False`/`None` and a literal list of strings that omits the name
+/// leave it direct; any value read cannot settle (`indirect=IND`, a computed
+/// list) may route it, so the name stays a fixture the test cannot be
+/// credited through (#10685).
 fn indirect_routes(value: &Expr, name: &str) -> bool {
     let listed = |elements: &[Expr]| {
-        string_elements(elements).is_some_and(|names| names.iter().any(|listed| listed == name))
+        string_elements(elements).is_none_or(|names| names.iter().any(|listed| listed == name))
     };
     match value {
-        Expr::Constant(constant) => matches!(constant.value, ast::Constant::Bool(true)),
+        Expr::Constant(constant) => !matches!(
+            constant.value,
+            ast::Constant::Bool(false) | ast::Constant::None
+        ),
         Expr::List(list) => listed(&list.elts),
         Expr::Tuple(tuple) => listed(&tuple.elts),
-        _ => false,
+        _ => true,
     }
 }
 

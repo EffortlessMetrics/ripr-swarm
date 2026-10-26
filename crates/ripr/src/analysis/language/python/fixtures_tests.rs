@@ -312,6 +312,9 @@ fn given_indirect_routing_the_argname_to_its_fixture_then_the_fixture_is_resolve
         "@pytest.mark.parametrize('out', ['abc'], indirect=True)",
         "@pytest.mark.parametrize('out', VALUES, indirect=['out'])",
         "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+        // A value the read cannot settle may route the name (#10685).
+        "@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=[NAME])",
     ] {
         let test = with_decorator(decorator);
         assert_eq!(

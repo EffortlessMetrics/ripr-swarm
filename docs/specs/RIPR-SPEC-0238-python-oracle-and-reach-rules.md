@@ -410,7 +410,10 @@ This order is the existing behavior and is normative:
   pytest test that calls the owner and uses a non-auxiliary fixture in its
   body. A direct `@pytest.mark.parametrize` argname is a value pytest
   supplies, not a fixture; a parametrize mark does not resolve the test's
-  other fixtures, and an `indirect=` argname is a fixture (#9619). A fixture is resolved, and does not
+  other fixtures, and an argname `indirect=` may route is a fixture: only
+  literal `False`, `None` or a literal string list that omits it leaves the
+  argname direct, so `indirect=IND` or a computed list keeps the limit
+  (#9619, #10685). A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,
