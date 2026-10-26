@@ -29,10 +29,6 @@ case = "py-mocker-patch-caller-arithmetic"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
-case = "py-shapes-dataclass-default-rate"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "py-shapes-decorator-loop-bound"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -71,6 +67,14 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "py-spec0233-ex30-property"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0233-ex33-key-lambda-no-arg"
+reason = "RIPR-SPEC-0238 example 33 requires an `unsupported_syntax` abstention for a changed line carrying `lambda`, though the test catches the edit; accepted as the spec-mandated limit (#10617)."
+
+[[entry]]
+case = "py-spec0233-ex33-spaced-getattr"
+reason = "RIPR-SPEC-0238 example 33 requires a `dynamic_dispatch` abstention for a spaced `getattr` call, though the test catches the edit; accepted as the spec-mandated limit (#10617)."
 
 [[entry]]
 case = "py-trap-platform-matched"

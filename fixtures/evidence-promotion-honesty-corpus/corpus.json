@@ -1039,6 +1039,35 @@
       ]
     },
     {
+      "id": "typescript_namespace_pick_never_renames_an_inactive_member",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_namespace_inactive_pick",
+      "vector": "skipped_runner_member_renamed_off_a_require_namespace_cannot_register",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "typescript_local_registration_does_not_register_callbacks",
       "language": "typescript",
       "tier": "pure",
@@ -14148,6 +14177,32 @@
       "tier": "pure",
       "source_fixture": "fixtures/python_table_code_replacement_removed",
       "vector": "reader_without_code_replacement_keeps_credit",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "python_scalar_code_replacement",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_scalar_code_replacement",
+      "vector": "scalar_reader_code_replacement_withholds_credit",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "python_scalar_code_replacement_removed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_scalar_code_replacement_removed",
+      "vector": "scalar_reader_without_code_replacement_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
         { "type": "expected_finding_count", "count": 1 },
