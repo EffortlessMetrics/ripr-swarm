@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-spec0247-5ship",
+  "origin": "authored",
+  "version_label": "authored@2026-10-26",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "b9ac36beb841293348a6ff28057d841a39ef13d3dd8f7d647f8d0afab2071108"
+    },
+    {
+      "path": "package.json",
+      "sha256": "6722151a06edb742071c44d96f81eee362b8effa376c255cab9b2ecba7b7dd9e"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "7a283b58801cad2a97a42946da481f0ef505de406375d670b1a595587690a7a4"
+    },
+    {
+      "path": "src/ship.ts",
+      "sha256": "dc8dea8b2a3f97653e9c295e99f2faf418e2b72c3c5edfa150551d27eb096eac"
+    },
+    {
+      "path": "tests/ship.test.ts",
+      "sha256": "bdc46cf7b4420bc51d55b2ca79afd8d5bdb6248d50a93e9a6e9d4f6abd26b1da"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "2cc44b4f7a7e604b331f2782b8343dd922543ed2b34c067261e7fb8bd09d4839"
+    }
+  ]
+}
