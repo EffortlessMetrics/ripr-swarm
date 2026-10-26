@@ -227,3 +227,82 @@ fn effect_order_keeps_unresolved_single_line_receiver_binding_weak() -> Check {
     );
     Ok(())
 }
+
+#[test]
+fn effect_order_does_not_borrow_reads_from_assertion_messages() -> Check {
+    for (module, body) in [
+        (
+            false,
+            "def test_it():\n    rec = Recorder()\n    assert rec.last == None, (rec.note(\"error\"), rec.last)",
+        ),
+        (
+            true,
+            "def test_it():\n    assert response.status_code == 422, (checkout(), response.status_code)",
+        ),
+        (
+            false,
+            "import unittest\nclass TestOrder(unittest.TestCase):\n    def test_it(self):\n        rec = Recorder()\n        self.assertEqual(rec.last, None, msg=(rec.note(\"error\"), rec.last))",
+        ),
+        (
+            true,
+            "import unittest\nclass TestOrder(unittest.TestCase):\n    def test_it(self):\n        self.assertEqual(response.status_code, 422, msg=(checkout(), response.status_code))",
+        ),
+    ] {
+        assert_ne!(
+            finding(module, body, false, "")?.class,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn effect_order_keeps_message_bearing_post_call_reads() -> Check {
+    for (module, body) in [
+        (
+            false,
+            "def test_it():\n    rec = Recorder()\n    rec.note(\"error\"); assert rec.last == \"error\", rec.last",
+        ),
+        (
+            true,
+            "def test_it():\n    checkout(); assert response.status_code == 422, response.status_code",
+        ),
+        (
+            false,
+            "import unittest\nclass TestOrder(unittest.TestCase):\n    def test_it(self):\n        rec = Recorder()\n        rec.note(\"error\"); self.assertEqual(rec.last, \"error\", msg=rec.last)",
+        ),
+        (
+            true,
+            "import unittest\nclass TestOrder(unittest.TestCase):\n    def test_it(self):\n        checkout(); self.assertEqual(response.status_code, 422, msg=response.status_code)",
+        ),
+    ] {
+        assert_eq!(
+            finding(module, body, false, "")?.class,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn effect_order_does_not_borrow_a_read_from_a_discarded_conjunct() -> Check {
+    let body = "def test_it():\n    rec = Recorder()\n    assert rec.last == None and (rec.note(\"error\") is None or rec.last)";
+    assert_ne!(
+        finding(false, body, false, "")?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn effect_order_helpers_do_not_launder_argument_evaluation_order() -> Check {
+    let helper = "\ndef assert_equal(actual, expected):\n    assert actual == expected\n";
+    let body = "def test_it():\n    rec = Recorder()\n    assert_equal(rec.last, rec.note(\"error\") or None)";
+    assert_ne!(
+        finding(false, body, false, helper)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

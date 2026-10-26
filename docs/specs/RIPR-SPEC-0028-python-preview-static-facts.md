@@ -726,6 +726,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   arguments, or the field read through a bound receiver (RIPR-SPEC-0238
   rule 17).
 
+Effect-channel observations use native assertion and compared-operand spans.
+The owner call must finish before the operand is read, including statements at
+different columns on one line. Failure messages and weaker, discarded conjuncts
+cannot supply a later read for an earlier comparison. Resolved assertion helpers
+retain their call-site identity and require the owner to complete before their
+arguments are evaluated.
+
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
 JSON `schema_version`. Python's support tier remains governed by

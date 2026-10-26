@@ -146,6 +146,14 @@ Arbitrary helper effects and general object-flow inference remain outside
 this bounded reader. Direct-write behavior and exclusion-side decisions are
 unchanged.
 
+An observation also follows the completed owner call in source statement order.
+Native assertion spans distinguish assertions at different columns on one line;
+an earlier semicolon-separated assertion does not observe a later call. The
+retention interval belongs to the assertion that earns credit, so an earlier
+assertion cannot lend retention to a later masked read. Resolved assertion
+helpers keep the exact helper-call span; argument evaluation does not establish
+that a field captured before the owner call observes its changed value.
+
 ## Required Evidence
 
 Unit tests cover the fail-open shapes (`or` and `not` guards whole-condition

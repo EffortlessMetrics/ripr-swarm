@@ -1171,6 +1171,7 @@ pub(super) fn classify_sink_alignment_prepared(
                     &unit.text,
                     unit.line,
                     unit.source_range,
+                    &unit.observed_operands,
                     unit.helper_derived,
                 )
             })
@@ -1273,9 +1274,9 @@ pub(super) fn classify_sink_alignment_prepared(
 /// Memoize a fact that depends only on the related test holding an
 /// assertion, so a test with many assertions computes it once per finding
 /// rather than once per assertion and branch.
-fn per_related_test<'a, T: Clone>(
-    fact: impl Fn(&AlignmentUnit<'a>) -> T,
-) -> impl Fn(&AlignmentUnit<'a>) -> T {
+fn per_related_test<T: Clone>(
+    fact: impl Fn(&AlignmentUnit<'_>) -> T,
+) -> impl Fn(&AlignmentUnit<'_>) -> T {
     let cache: RefCell<HashMap<*const RelatedTest, T>> = RefCell::new(HashMap::new());
     move |unit| {
         let key = std::ptr::from_ref(unit.related);
@@ -1307,6 +1308,7 @@ struct AlignmentUnit<'a> {
     /// The file line the assertion starts on, when it is a source assertion.
     line: Option<usize>,
     source_range: Option<rustpython_parser::text_size::TextRange>,
+    observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     kind: OracleKind,
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
@@ -1347,6 +1349,7 @@ fn alignment_units<'a>(
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
                     source_range: assertion.source_range,
+                    observed_operands: assertion.observed_operands.clone(),
                     kind: assertion.oracle_kind.clone(),
                     effect_only: !strong,
                     helper_derived: assertion.helper_derived,
@@ -1367,6 +1370,7 @@ fn alignment_units<'a>(
                 reported: text.clone(),
                 line: None,
                 source_range: None,
+                observed_operands: Vec::new(),
                 kind: related.oracle_kind.clone(),
                 effect_only: false,
                 // A legacy reported oracle must not wash out known helper

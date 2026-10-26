@@ -3925,7 +3925,6 @@ code = [
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/analysis/language/python/helper_inline.rs",
   "crates/ripr/src/analysis/language/python/related_tests.rs",
-  "crates/ripr/src/analysis/language/python/effect_alignment/order.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/owners_tests.rs",
@@ -18335,7 +18334,6 @@ code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
   "crates/ripr/src/analysis/language/python/boundary.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
-  "crates/ripr/src/analysis/language/python/effect_alignment/order.rs",
 ]
 outputs = [
   "fixtures/python_guarded_write_alias_overwrite/expected/check.json",

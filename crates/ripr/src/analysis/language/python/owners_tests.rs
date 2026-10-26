@@ -465,6 +465,16 @@ fn test_assertions(
                 )
             })
         });
+        assertion.observed_operands.retain_mut(|(_, range)| {
+            if range.start() < test_range.start() || range.end() > test_range.end() {
+                return false;
+            }
+            *range = TextRange::new(
+                range.start() - test_range.start(),
+                range.end() - test_range.start(),
+            );
+            true
+        });
     }
     assertions
 }

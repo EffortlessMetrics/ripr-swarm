@@ -483,6 +483,8 @@ struct PythonAssertion {
     helper_derived: bool,
     /// Native assertion/call span, relative to the containing test body.
     source_range: Option<rustpython_parser::text_size::TextRange>,
+    /// Only the native operands retained by the oracle gate, never its message.
+    observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,

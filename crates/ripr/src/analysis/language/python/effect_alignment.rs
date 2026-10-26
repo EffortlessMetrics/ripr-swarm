@@ -20,7 +20,7 @@ use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
 use rustpython_parser::text_size::TextRange;
 
-mod order;
+use std::rc::Rc;
 
 /// The side effect a changed line writes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,11 +188,10 @@ impl ChangedEffect {
 /// reach its channel and the mock methods it may pin. Built once per related
 /// test, so each of its assertions is checked against it cheaply.
 #[derive(Debug, Default)]
-pub(super) struct EffectReads<'a> {
-    source: &'a str,
+pub(super) struct EffectReads {
     first_call_start: Option<usize>,
     first_call_end: Option<usize>,
-    guarded_field: Option<String>,
+    guarded_field: Option<(String, Rc<str>)>,
     operands: Vec<String>,
     mocked_calls: Vec<String>,
     /// The file line of the test's first owner call. A read on an earlier
@@ -201,16 +200,15 @@ pub(super) struct EffectReads<'a> {
     first_call_line: Option<usize>,
 }
 
-impl<'a> EffectReads<'a> {
+impl EffectReads {
     pub(super) fn of(
         effect: &ChangedEffect,
-        test: &'a PythonTest,
+        test: &PythonTest,
         owner: &PythonOwner,
         guard_entered: bool,
     ) -> Self {
         let calls = owner_calls(test, owner);
         let mut reads = Self {
-            source: &test.body_text,
             first_call_start: calls.first().map(|(offset, _)| *offset),
             first_call_end: calls
                 .iter()
@@ -219,7 +217,9 @@ impl<'a> EffectReads<'a> {
                 })
                 .min(),
             guarded_field: match effect {
-                ChangedEffect::SelfField { attr } if guard_entered => Some(attr.clone()),
+                ChangedEffect::SelfField { attr } if guard_entered => {
+                    Some((attr.clone(), Rc::from(test.body_text.as_str())))
+                }
                 _ => None,
             },
             first_call_line: calls
@@ -319,6 +319,7 @@ impl<'a> EffectReads<'a> {
         assertion: &str,
         line: Option<usize>,
         source_range: Option<TextRange>,
+        observations: &[(String, TextRange)],
         helper_derived: bool,
     ) -> bool {
         if self
@@ -342,15 +343,19 @@ impl<'a> EffectReads<'a> {
             if !compared.contains(&operand.as_str()) {
                 continue;
             }
-            let read = if before_assertion && (helper_derived || self.guarded_field.is_none()) {
+            let read = if helper_derived {
                 Some(usize::from(range.start()))
             } else {
-                order::read_after(self.source, range, operand, call_end)
+                observations
+                    .iter()
+                    .filter(|(text, read)| text == operand && usize::from(read.start()) >= call_end)
+                    .map(|(_, read)| usize::from(read.start()))
+                    .min()
             };
             if let Some(read) = read
-                && self.guarded_field.as_ref().is_none_or(|attr| {
+                && self.guarded_field.as_ref().is_none_or(|(attr, source)| {
                     self.first_call_start.is_some_and(|start| {
-                        super::guard_credit::field_retained_after(self.source, start, read, attr)
+                        super::guard_credit::field_retained_after(source, start, read, attr)
                     })
                 })
             {
@@ -440,7 +445,7 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
 /// its own name, an import alias, or a module-qualified spelling. A method is
 /// called only on a local bound to its class (rule 9), so a same-named method
 /// of another class does not count.
-pub(super) fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+pub(super) fn owner_calls<'a>(test: &PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
     let names = owner_call_names(test, owner);
     let mut calls: Vec<(usize, &str)> = names
         .iter()
