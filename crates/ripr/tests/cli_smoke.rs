@@ -26727,6 +26727,29 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
     ]);
     assert_success(&default);
 
+    // A path-equivalent spelling names exactly the accepted directory; only
+    // genuinely different directories stay refused (#10542).
+    let dotted = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "./target/ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&dotted);
+    let trailing_slash = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/workflow/",
+        "--json",
+    ]);
+    assert_success(&trailing_slash);
+
     ignore_remove_dir_all(&root);
     Ok(())
 }

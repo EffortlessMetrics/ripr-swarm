@@ -1088,11 +1088,15 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
     // commands. Passing the workflow directory there rendered
     // `--root ./target/ripr/workflow`, a command that cannot run (#3893).
     // A non-default `--out` is refused rather than silently ignored until
-    // the inspected paths can follow it.
+    // the inspected paths can follow it. The comparison is lexical, not raw
+    // `PathBuf` equality: `--out ./target/ripr/workflow` names exactly the
+    // accepted directory and must not fail on its `./` spelling (#10542).
     if let Some(dir) = &options.out_dir {
         let requested = resolve_agent_start_out_dir(&options.root, dir);
         let default_dir = options.root.join("target/ripr/workflow");
-        if requested != default_dir {
+        if crate::agent::loop_commands::lexically_clean(&requested)
+            != crate::agent::loop_commands::lexically_clean(&default_dir)
+        {
             return Err(format!(
                 "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
                 dir.display(),
