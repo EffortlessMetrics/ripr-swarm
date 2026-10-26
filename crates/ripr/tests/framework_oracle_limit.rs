@@ -1046,12 +1046,18 @@ fn fixture_receiver_literal_pin_reads_helper_data() -> Result<(), String> {
         ("reversed", "        assert_eq!(42, fixture().total());"),
         ("raw module", "        assert_eq!(fixture().total(), 42);"),
         (
+            "attribute text",
+            "        assert_eq!(fixture().total(), 42);",
+        ),
+        (
             "bound",
             "        let cart = fixture();\n        assert_eq!(cart.total(), 42);",
         ),
     ] {
         let source = if label == "raw module" {
             format!("mod r#owner {{\n{}\n}}", cart_source(body))
+        } else if label == "attribute text" {
+            cart_source(body).replace("\"a\"", "\"#[cfg(any())]\"")
         } else {
             cart_source(body)
         };
@@ -1167,6 +1173,12 @@ fn fixture_receiver_cfg_rows_do_not_supply_literal_data() -> Result<(), String> 
         "        self.items.iter().map(|(_, value)| value).sum()",
     );
     withheld(source, &edit, 4, "cfg removes the separating row")?;
+    withheld(
+        &source.replace("#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]"),
+        &edit,
+        4,
+        "cfg_attr removes the separating row",
+    )?;
     let empty = source
         .replace(", (7, 7)", "")
         .replace("cfg_total(), 7", "cfg_total(), 0");
