@@ -986,7 +986,7 @@ impl PythonAdapter {
                         .map_err(|err| format!("refused file count overflows u64: {err}"))?,
                 )?
                 .with_detail(format!(
-                    "python workspace walk stopped at the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed files are always analyzed.",
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed .py files are kept past this cap.",
                     walk_limits.max_workspace_files,
                 ))?,
             );

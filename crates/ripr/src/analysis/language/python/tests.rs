@@ -6307,7 +6307,7 @@ fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), S
     );
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(
-        detail.contains("changed files are always analyzed"),
+        detail.contains("changed .py files are kept past this cap"),
         "disclosure must say changed files were kept: {detail}"
     );
     Ok(())
