@@ -257,6 +257,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
         XtaskCommand::SizeScaling(args) => super::size_scaling::run(&args),
+        XtaskCommand::WarmAb(args) => super::warm_ab::run(&args),
         XtaskCommand::TerminationQualification(args) => {
             super::termination_qualification::run(&args)
         }
