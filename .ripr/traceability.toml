@@ -7879,7 +7879,8 @@ tests = [
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_counts_and_skips_ignored_dirs",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_reports_cancellation_instead_of_a_partial_count",
   "crates/ripr/src/app/tests/python_test_note.rs::python_test_note_gate_matches_the_renderer_eligibility",
-  "crates/ripr/src/app/tests/python_test_note.rs::python_tests_are_discovered_only_for_human_output"
+  "crates/ripr/src/app/tests/python_test_note.rs::python_tests_are_discovered_only_for_human_output",
+  "crates/ripr/src/app/tests/python_test_note.rs::python_test_note_preserves_literal_backslashes_on_unix"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -17254,6 +17255,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::repository_tracking_nothing_under_root_is_unknown",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::computed_and_member_spellings_of_delegating_keys_stay_medium",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::json_escaped_whitespace_before_the_update_flag_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::unicode_json_update_flags_stay_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::unicode_json_config_flag_separators_stay_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::unicode_json_literal_escapes_keep_snapshot_credit",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::submodule_git_file_does_not_end_the_walk",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::submodule_named_worktrees_still_reads_the_superproject",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::spaced_bracket_keys_are_still_seen",
