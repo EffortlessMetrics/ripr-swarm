@@ -420,6 +420,9 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           range_end_line: diagnostic.range.end.line, range_end_character: diagnostic.range.end.character }, error);
       };
       // Observe the original request once; do not retry or alter cancellation.
+      const providerObservation = trace.observeProviderRequest(
+        vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString()),
+        diagnostic.range, { client_id: clientIdentity(client)!, client_pid: client.serverProcess?.pid });
       stages.push({ phase, code_action_request: requestEvidence() });
       trace.record('command.begin', { document_uri: uri.toString(), client_id: clientIdentity(client) });
       let actions: Array<vscode.CodeAction | vscode.Command>;
@@ -429,7 +432,8 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         trace.record('command.resolve', { document_uri: uri.toString(), client_id: clientIdentity(client) });
       } catch (error) {
         trace.record('command.reject', { document_uri: uri.toString(), client_id: clientIdentity(client) }, error);
-        stages.push({ phase, code_action_failure: requestEvidence(error) });
+        stages.push({ phase, code_action_failure: requestEvidence(error),
+          code_action_provider_observation: providerObservation() });
         // executeCodeActionProvider throws a bare illegal-argument when the
         // URI has no open text model; disclose the open-document set so the
         // failing point is diagnosable from the CI log alone.
@@ -437,6 +441,15 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           + ` open=${vscode.workspace.textDocuments.map(d => d.uri.toString()).join(', ')}`
           + ` phase=${phase}`, { cause: error });
       }
+      // Qualify the actual installed client hook, not a synthetic provider.
+      // Retain the verdict now: teardown can legitimately evict these events.
+      // This assertion is outside the catch so it cannot replace a command error.
+      const observed = providerObservation();
+      stages.push({ phase, code_action_provider_observation: observed });
+      assert.strictEqual(observed.status, 'observed',
+        `real-client trace observation is ${observed.status}: ${JSON.stringify(observed)}`);
+      assert.strictEqual(observed.terminal_kind, 'provider.resolve',
+        'the successful command must retain a matching resolved provider invocation');
       const commands = (actions ?? []).flatMap(action => {
         const command = typeof action.command === 'string' ? action as vscode.Command : action.command;
         return command?.command.startsWith('ripr.') ? [command] : [];

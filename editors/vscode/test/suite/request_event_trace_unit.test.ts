@@ -5,12 +5,15 @@ import { stripTypeScriptTypes } from 'node:module';
 import type * as vscode from 'vscode';
 import { MAX_REQUEST_TRACE_BYTES, MAX_REQUEST_TRACE_EVENTS, observeDocuments, RequestEventTrace } from '../requestEventTrace';
 
-class Token {
+class Token implements vscode.CancellationToken {
   isCancellationRequested = false;
   readonly listeners = new Set<() => void>();
-  onCancellationRequested = (listener: () => void) => {
-    this.listeners.add(listener);
-    return { dispose: () => { this.listeners.delete(listener); } };
+  onCancellationRequested: vscode.Event<unknown> = (listener, thisArgs, disposables) => {
+    const invoke = () => listener.call(thisArgs, undefined);
+    this.listeners.add(invoke);
+    const subscription = { dispose: () => { this.listeners.delete(invoke); } };
+    disposables?.push(subscription);
+    return subscription;
   };
   cancel(): void {
     this.isCancellationRequested = true;
@@ -18,7 +21,97 @@ class Token {
   }
 }
 
+function providerFixture(trace = new RequestEventTrace()) {
+  const document = { uri: { toString: () => 'file:///fixture/alpha.rs' }, version: 2 } as vscode.TextDocument;
+  const range = { start: { line: 1, character: 4 }, end: { line: 1, character: 12 } } as vscode.Range;
+  const context: vscode.CodeActionContext = { diagnostics: [], triggerKind: 1, only: undefined };
+  const client = { client_id: 7, client_pid: 123 };
+  const token = new Token();
+  return { trace, document, range, context, client, token };
+}
+
 suite('Request event trace unit controls', () => {
+  test('qualifies the matching invocation at settlement and preserves its verdict after eviction', () => {
+    const { trace, document, range, context, client, token } = providerFixture();
+    const wrapped = trace.middleware(undefined, client);
+    const actions: vscode.Command[] = [];
+    wrapped(document, range, context, token, () => actions); // A stale match cannot qualify this command.
+    const observe = trace.observeProviderRequest(document, range, client);
+    assert.strictEqual(observe().status, 'missing');
+    trace.record('command.begin');
+    assert.strictEqual(wrapped(document, range, context, token, () => actions), actions);
+    trace.record('command.resolve');
+    const retained = observe();
+    assert.deepStrictEqual(retained, { status: 'observed', matching_invocations: 1,
+      invocation_id: 2, begin_sequence: 4, terminal_sequence: 5, terminal_kind: 'provider.resolve' });
+    for (let index = 0; index < MAX_REQUEST_TRACE_EVENTS; index++) { trace.record('document.save'); }
+    assert.strictEqual(observe().status, 'incomplete');
+    assert.strictEqual(retained.status, 'observed', 'the retained verdict must not depend on the later snapshot');
+  });
+
+  for (const wrong of ['client', 'pid', 'document', 'version', 'start', 'end', 'trigger'] as const) {
+    test(`does not credit an invocation with the wrong ${wrong}`, () => {
+      const { trace, document, range, context, client, token } = providerFixture();
+      const observe = trace.observeProviderRequest(document, range, client);
+      const receivedClient = { ...client };
+      let receivedDocument = document;
+      const receivedRange = { start: { ...range.start }, end: { ...range.end } } as vscode.Range;
+      const receivedContext = { ...context };
+      if (wrong === 'client') { receivedClient.client_id++; }
+      if (wrong === 'pid') { receivedClient.client_pid++; }
+      if (wrong === 'document') { receivedDocument = { ...document }; }
+      if (wrong === 'version') { Object.assign(document, { version: 3 }); }
+      if (wrong === 'start') { Object.assign(receivedRange.start, { character: 5 }); }
+      if (wrong === 'end') { Object.assign(receivedRange.end, { line: 2 }); }
+      if (wrong === 'trigger') { receivedContext.triggerKind = 2; }
+      trace.middleware(undefined, receivedClient)(receivedDocument, receivedRange, receivedContext, token, () => []);
+      assert.deepStrictEqual(observe(), { status: 'missing', matching_invocations: 0 });
+    });
+  }
+
+  test('missing hook and duplicate matching invocations cannot qualify', () => {
+    const { trace, document, range, context, client, token } = providerFixture();
+    const observe = trace.observeProviderRequest(document, range, client);
+    trace.record('command.begin');
+    trace.record('command.resolve');
+    assert.deepStrictEqual(observe(), { status: 'missing', matching_invocations: 0 });
+    const wrapped = trace.middleware(undefined, client);
+    wrapped(document, range, context, token, () => []);
+    wrapped(document, range, context, token, () => []);
+    assert.deepStrictEqual(observe(), { status: 'ambiguous', matching_invocations: 2 });
+  });
+
+  test('requires the same invocation terminal and retains original rejection identity', async () => {
+    const { trace, document, range, context, client, token } = providerFixture();
+    const observe = trace.observeProviderRequest(document, range, client);
+    let reject!: (error: unknown) => void;
+    const result = trace.middleware(undefined, client)(document, range, context, token,
+      () => new Promise<never>((_resolve, refuse) => { reject = refuse; }));
+    const begin = (trace.snapshot().events as Array<Record<string, unknown>>)[0];
+    trace.record('provider.resolve', { ...begin, invocation_id: 999 });
+    assert.strictEqual(observe().status, 'incomplete', 'another invocation cannot supply the terminal');
+    const original = new Error('original request rejected');
+    reject(original);
+    await assert.rejects(Promise.resolve(result), error => error === original);
+    assert.strictEqual(observe().status, 'observed');
+    assert.strictEqual(observe().terminal_kind, 'provider.reject', 'rejection is observed, not success');
+  });
+
+  test('missing document and lost observations remain incomplete', () => {
+    let failClock = false;
+    const trace = new RequestEventTrace(() => {
+      if (failClock) { throw new Error('clock failed'); }
+      return 0;
+    });
+    const { document, range, context, client, token } = providerFixture(trace);
+    assert.strictEqual(trace.observeProviderRequest(undefined, range, client)().status, 'incomplete');
+    const observe = trace.observeProviderRequest(document, range, client);
+    failClock = true;
+    const actions: vscode.Command[] = [];
+    assert.strictEqual(trace.middleware(undefined, client)(document, range, context, token, () => actions), actions);
+    assert.strictEqual(observe().status, 'incomplete');
+  });
+
   for (const stimulus of ['model-edit', 'matching-provider-change', 'neither'] as const) {
     test(`${stimulus} retains distinct observations and exactly one original invocation`, async () => {
       let tick = 0;
@@ -38,8 +131,8 @@ suite('Request event trace unit controls', () => {
       const pending = new Promise<vscode.Command[]>((resolve, refuse) => { release = resolve; reject = refuse; });
       let calls = 0;
       const range = {} as vscode.Range;
-      const context = { diagnostics: [], triggerKind: 1 } as vscode.CodeActionContext;
-      const result = trace.middleware()(document, range, context, token as vscode.CancellationToken,
+      const context: vscode.CodeActionContext = { diagnostics: [], triggerKind: 1, only: undefined };
+      const result = trace.middleware()(document, range, context, token,
         (receivedDocument, receivedRange, receivedContext, receivedToken) => {
           calls++;
           assert.strictEqual(receivedDocument, document);
@@ -51,7 +144,8 @@ suite('Request event trace unit controls', () => {
       trace.record(`control.${stimulus}`);
       if (stimulus === 'model-edit') {
         Object.assign(document, { version: 3 });
-        changed?.({ document, contentChanges: [{}] } as vscode.TextDocumentChangeEvent);
+        changed?.({ document, reason: undefined,
+          contentChanges: [{ range, rangeOffset: 0, rangeLength: 0, text: ' ' }] });
       }
       if (stimulus === 'neither') { release(actions); assert.strictEqual(await result, actions); }
       else {

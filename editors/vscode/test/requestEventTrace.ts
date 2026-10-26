@@ -20,6 +20,15 @@ interface Fields {
   range_end_line?: number; range_end_character?: number;
 }
 
+export interface ProviderObservation {
+  status: 'observed' | 'missing' | 'ambiguous' | 'incomplete';
+  matching_invocations?: number;
+  invocation_id?: number;
+  begin_sequence?: number;
+  terminal_sequence?: number;
+  terminal_kind?: 'provider.resolve' | 'provider.reject';
+}
+
 /** Local observations only: no wire IDs or inferred cancellation reason. */
 export class RequestEventTrace {
   private readonly events: Record<string, unknown>[] = [];
@@ -70,6 +79,49 @@ export class RequestEventTrace {
     return { schema: 'ripr-request-event-trace-v1', dropped_events: this.dropped,
       events: this.events.map(event => ({ ...event })),
       claim_limit: 'Local observation IDs and delivery order; no LSP request IDs, global provider-set observation or cancellation-cause attribution.' };
+  }
+
+  /** Read immediately at command settlement, before later events can evict it.
+   * This qualifies matching local observations, not command or wire identity.
+   */
+  observeProviderRequest(document: DocumentIdentity | undefined, range: vscode.Range,
+    client: { client_id: number; client_pid?: number }): () => ProviderObservation {
+    try {
+      const after = this.sequence;
+      const dropped = this.dropped;
+      const target = document && { document_id: this.document(document).document_id,
+        document_version: document.version, ...client,
+        range_start_line: range.start.line, range_start_character: range.start.character,
+        range_end_line: range.end.line, range_end_character: range.end.character,
+        trigger_kind: 1 }; // CodeActionTriggerKind.Invoke; no runtime vscode import.
+      return () => {
+        try {
+          // Conservatively refuse even if a drop evicted only pre-window data.
+          // The counter also includes observer failures, not just eviction.
+          if (!target || this.dropped !== dropped) { return { status: 'incomplete' }; }
+          const matches = (event: Record<string, unknown>) =>
+            Object.entries(target).every(([key, value]) => event[key] === value);
+          const begins = this.events.filter(event => event.kind === 'provider.begin'
+            && Number(event.sequence) > after && matches(event));
+          if (begins.length !== 1) {
+            return { status: begins.length === 0 ? 'missing' : 'ambiguous',
+              matching_invocations: begins.length };
+          }
+          const begin = begins[0];
+          const terminals = this.events.filter(event =>
+            (event.kind === 'provider.resolve' || event.kind === 'provider.reject')
+            && event.invocation_id === begin.invocation_id
+            && Number(event.sequence) > Number(begin.sequence) && matches(event));
+          return { status: terminals.length === 1 ? 'observed' : 'incomplete',
+            matching_invocations: 1, invocation_id: Number(begin.invocation_id),
+            begin_sequence: Number(begin.sequence),
+            ...(terminals.length === 1 ? {
+              terminal_sequence: Number(terminals[0].sequence),
+              terminal_kind: terminals[0].kind as 'provider.resolve' | 'provider.reject',
+            } : {}) };
+        } catch { return { status: 'incomplete' }; }
+      };
+    } catch { return () => ({ status: 'incomplete' }); }
   }
 
   middleware(previous?: ProviderMiddleware, client: Fields = {}): ProviderMiddleware {
