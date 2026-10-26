@@ -7,7 +7,7 @@
 //! type, a shadowed type or a second impl of the trait for the type does not.
 //! Relating the test never raises a class by itself.
 
-use ripr::domain::RelationReason;
+use ripr::domain::{ExposureClass, RelationReason};
 use ripr::{CheckInput, Finding, Mode, OutputFormat, check_workspace};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,6 +60,20 @@ mod tests {{
 }
 
 fn direct_tests(case: &Case) -> Result<Vec<String>, String> {
+    let findings = findings_of(case)?;
+    let mut names: Vec<String> = findings
+        .iter()
+        .flat_map(|finding| &finding.related_tests)
+        .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .map(|test| test.name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The findings on the changed line, in a throwaway workspace.
+fn findings_of(case: &Case) -> Result<Vec<Finding>, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root: PathBuf = std::env::temp_dir().join(format!(
         "ripr-operator-credit-{}-{}",
@@ -71,7 +85,7 @@ fn direct_tests(case: &Case) -> Result<Vec<String>, String> {
     result.map_err(|message| format!("{}: {message}", case.label))
 }
 
-fn run(case: &Case, root: &Path) -> Result<Vec<String>, String> {
+fn run(case: &Case, root: &Path) -> Result<Vec<Finding>, String> {
     std::fs::create_dir_all(root.join("src")).map_err(|e| format!("create dir: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -121,15 +135,7 @@ index 1111111..2222222 100644
     if findings.is_empty() {
         return Err("premise: the changed line yields a finding".to_string());
     }
-    let mut names: Vec<String> = findings
-        .iter()
-        .flat_map(|finding| &finding.related_tests)
-        .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
-        .map(|test| test.name.clone())
-        .collect();
-    names.sort();
-    names.dedup();
-    Ok(names)
+    Ok(findings)
 }
 
 const ADD: Case = Case {
@@ -651,4 +657,74 @@ fn reference_operands_do_not_reach_the_owned_impl() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
+    Ok(findings_of(case)?
+        .into_iter()
+        .map(|finding| finding.class)
+        .collect())
+}
+
+/// Relating the test says the operator runs, not that an assertion would
+/// notice the impl change. A result built from the impl's own tokens
+/// (`Money(..)`) is observed by the test's `Money(..)` operands and reads
+/// `exposed`; one built through `Self(..)` shares no token with the assertion,
+/// so the credit is unconfirmed and the gap stays withheld rather than turning
+/// into an "add a test" signal for code the test pins.
+#[test]
+fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> {
+    let confirmed = with_body(
+        ADD,
+        "confirmed",
+        "assert_eq!(Money(2) + Money(3), Money(5));",
+    );
+    assert_eq!(classes(&confirmed)?, [ExposureClass::Exposed]);
+
+    let unconfirmed = Case {
+        label: "self_constructor",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let findings = findings_of(&unconfirmed)?;
+    let got: Vec<_> = findings
+        .iter()
+        .map(|finding| finding.class.clone())
+        .collect();
+    if got != [ExposureClass::StaticUnknown] {
+        return Err(format!("self_constructor: got {got:?}"));
+    }
+    let limit = findings[0].static_limit_kind.map(|kind| kind.as_str());
+    assert_eq!(limit, Some("rust_implicit_call_unresolved"));
+
+    // A result bound under the method's own name is not a call: the operator
+    // still reaches the impl, no assertion confirms the changed line, and the
+    // gap stays withheld.
+    let bound_as_method_name = Case {
+        label: "bound_as_add",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "let add = Money(2) + Money(3);\n    assert_eq!(add, Money(5));",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&bound_as_method_name)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // The same impl is a gap when the test never exercises the operator.
+    let unexercised = Case {
+        label: "self_constructor_unexercised",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "assert_eq!(Money(5), Money(5));",
+        ..ADD
+    };
+    let got = classes(&unexercised)?;
+    assert!(
+        !got.contains(&ExposureClass::StaticUnknown),
+        "no operator use is a real gap: {got:?}"
+    );
+    Ok(())
 }

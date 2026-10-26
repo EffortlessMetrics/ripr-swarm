@@ -1,0 +1,12 @@
+diff --git a/unrun/core.py b/unrun/core.py
+--- a/unrun/core.py
++++ b/unrun/core.py
+@@ -55,7 +55,7 @@
+ 
+ 
+ def xfail_false(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def skip_unless(a, b):

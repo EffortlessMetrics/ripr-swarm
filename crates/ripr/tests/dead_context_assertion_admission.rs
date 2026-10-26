@@ -69,6 +69,15 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                     "if_false",
                     "closure_uncalled",
                     "mixed",
+                    "loop_outer_inner_break",
+                    "while_true",
+                    "while_paren_true",
+                    "exit_qualified",
+                    "exit_use_process",
+                    "exit_use_leaf",
+                    "exit_renamed_module",
+                    "loop_break",
+                    "labeled_break",
                 ] {
                     let body = match context {
                         "direct" => assertion.clone(),
@@ -87,6 +96,28 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                         "if_false" => format!("if false {{\n{assertion}\n}}"),
                         "closure_uncalled" => format!("let _never = || {{\n{assertion}\n}};"),
                         "mixed" => format!("{assertion}\n{{ return; }}\n{assertion}"),
+                        // An inner loop's `break` does not leave the outer loop.
+                        "loop_outer_inner_break" => {
+                            format!("loop {{ for _ in 0..1 {{ break; }} }}\n{assertion}")
+                        }
+                        "while_true" => format!("while true {{ }}\n{assertion}"),
+                        "while_paren_true" => format!("while (true) {{ }}\n{assertion}"),
+                        "exit_qualified" => format!("std::process::exit(0);\n{assertion}"),
+                        "exit_use_process" => {
+                            format!("use std::process;\nprocess::exit(0);\n{assertion}")
+                        }
+                        "exit_use_leaf" => {
+                            format!("use std::process::exit;\nexit(0);\n{assertion}")
+                        }
+                        "exit_renamed_module" => {
+                            format!("use std::process as quit;\nquit::exit(0);\n{assertion}")
+                        }
+                        // Live controls: a `break` that leaves the loop, own or
+                        // through its label, lets the assertion run.
+                        "loop_break" => format!("loop {{ break; }}\n{assertion}"),
+                        "labeled_break" => {
+                            format!("'outer: loop {{ loop {{ break 'outer; }} }}\n{assertion}")
+                        }
                         _ => return Err("unknown context".into()),
                     };
                     let (production, diff, setup, test_name, line, expression, families) =
@@ -178,19 +209,10 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                             )
                         })
                         .collect::<Vec<_>>();
-                    let live = context == "direct" || context == "mixed";
+                    let live =
+                        matches!(context, "direct" | "mixed" | "loop_break" | "labeled_break");
                     if !live {
                         for family in &families {
-                            // Residual: a boolean `assert!`/`debug_assert!` still
-                            // credits a return-value finding from a dead context.
-                            // Gating it also demotes live `assert!(approx_eq!(..))`
-                            // rows in the Rust verdict corpus, so it is a separate
-                            // claim (#10389).
-                            if *family == "return_value"
-                                && matches!(macro_name, "assert" | "debug_assert")
-                            {
-                                continue;
-                            }
                             assert!(
                                 !credited(family),
                                 "{key}: dead assertion credited {family}: {classes:?}"
@@ -216,15 +238,17 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
         }
     }
     for (key, classes) in &outcomes {
-        if let Some(prefix) = key.strip_suffix("_mixed") {
-            assert_eq!(
-                outcomes.get(&format!("{prefix}_direct")),
-                Some(classes),
-                "{key}: a dead sibling changed a live assertion's credit"
-            );
+        for live_suffix in ["_mixed", "_loop_break", "_labeled_break"] {
+            if let Some(prefix) = key.strip_suffix(live_suffix) {
+                assert_eq!(
+                    outcomes.get(&format!("{prefix}_direct")),
+                    Some(classes),
+                    "{key}: a dead sibling or a loop that exits changed a live assertion's credit"
+                );
+            }
         }
     }
-    assert_eq!(count, 264);
+    assert_eq!(count, 480);
     Ok(())
 }
 
@@ -280,6 +304,153 @@ fn helper_borne_assertions_keep_credit_for_every_admitted_macro() -> Result<(), 
             matches!(effect.class.as_str(), "exposed" | "weakly_exposed"),
             "{macro_name}: helper-borne assertion lost credit: {}",
             effect.class.as_str()
+        );
+    }
+    Ok(())
+}
+
+/// A boolean `assert!` whose operand only nests an unresolved third-party
+/// comparison macro (`float_cmp::approx_eq!`) keeps its return-value credit
+/// when it runs, while an operand that can leave the test does not (#10389).
+#[test]
+fn boolean_assert_with_nested_macro_operand_credits_only_when_it_runs_and_cannot_exit()
+-> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("boolean_assert_nested_macro");
+    let production = "pub fn compute_score(base: i32) -> i32 {\n    base * 2\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn compute_score(base: i32) -> i32 {\n-    base + 1\n+    base * 2\n }\n";
+    let cases = [
+        (
+            "live_nested_macro",
+            "assert!(approx_eq!(i32, compute_score(4), 8));",
+            true,
+        ),
+        (
+            "nested_macro_with_exit",
+            "assert!(approx_eq!(i32, compute_score(4), { return; }));",
+            false,
+        ),
+        (
+            "nested_macro_after_return",
+            "return;\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "dead_plain",
+            "return;\nassert!(compute_score(4) == 8);",
+            false,
+        ),
+        (
+            "dead_after_unrelated_nested_macro",
+            "println!(\"{}\", foo!(1));\nreturn;\nassert!(compute_score(4) == 8);",
+            false,
+        ),
+        (
+            "if_false_after_unrelated_nested_macro",
+            "println!(\"{}\", foo!(1));\nif false {\nassert!(compute_score(4) == 8);\n}",
+            false,
+        ),
+        (
+            "dead_nested_and_dead_plain",
+            "return;\nassert!(approx_eq!(i32, compute_score(4), 8));\nassert!(compute_score(4) == 8);",
+            false,
+        ),
+        (
+            "if_false_nested_macro",
+            "if false {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "local_macro_that_returns",
+            "macro_rules! chk {\n($e:expr) => {{ return; }};\n}\nassert!(chk!(compute_score(4) == 8));",
+            false,
+        ),
+        (
+            "unknown_attribute_nested_macro",
+            "@#[custom::harness]|assert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "cfg_any_nested_macro",
+            "@#[cfg(any())]|assert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "live_nested_macro_with_negated_group",
+            "assert!(approx_eq!(i32, compute_score(4), 8) && !(compute_score(4) < 0));",
+            true,
+        ),
+        (
+            "deeper_path_use_of_the_macro_name",
+            "use float_cmp::other::approx_eq;\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "shadowing_use_of_the_macro_name",
+            "use other::approx_eq;\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "uncalled_fn_holding_nested_macro",
+            "fn never() {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "loop_before_nested_macro",
+            "loop {}\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "cfg_any_branch_nested_macro",
+            "if cfg!(any()) {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "labeled_break_before_nested_macro_in_block",
+            "'a: {\nif true { break 'a; }\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "live_nested_after_unrelated_block",
+            "'a: {\nif true { break 'a; }\n}\nassert!(approx_eq!(i32, compute_score(4), 8));",
+            true,
+        ),
+        (
+            "live_nested_then_dead_plain",
+            "assert!(approx_eq!(i32, compute_score(4), 8));\nreturn;\nassert!(compute_score(4) == 8);",
+            true,
+        ),
+    ];
+    for (name, body, credited) in cases {
+        let (attribute, body) = body
+            .strip_prefix('@')
+            .and_then(|rest| rest.split_once('|'))
+            .unwrap_or(("", body));
+        let source = format!(
+            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\nuse float_cmp::approx_eq;\n#[test]\n{attribute}\nfn compute_score_observed() {{\n{body}\n}}\n}}\n"
+        );
+        let root = root_dir.join(name);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"nested_macro_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| f.probe.family.as_str() == "return_value")
+            .ok_or_else(|| format!("{name}: no return_value finding"))?;
+        assert_eq!(
+            matches!(finding.class.as_str(), "exposed" | "weakly_exposed"),
+            credited,
+            "{name}: {}",
+            finding.class.as_str()
         );
     }
     Ok(())

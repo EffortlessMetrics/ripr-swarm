@@ -186,6 +186,23 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a registration the extractor drops makes the analysis partial
+  (`typescript_test_extraction_partial`) only when a test in that file can be
+  related to the diff. The test index is workspace-wide, so the disclosure is
+  consulted only when a finding was classified against it, and then only for a
+  dropped-registration file whose local import closure reaches a changed file
+  or contains the name of a changed file's owner. The closure follows relative
+  imports, `export ... from`, `require`, `import()` and `mock` calls (also
+  spelled with whitespace or comments before the parenthesis), resolving
+  `./x.js` to `x.ts`. Anything the scan cannot follow keeps the disclosure: an
+  unresolved relative import, a computed `import()` / `require()`,
+  `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
+  tsconfig path, workspace package or the root package name could resolve, a
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
+  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
+  config that declares an alias or module directory, a Rust change related
+  through the Bun bridge, and a closure over 400 files. The conditional
+  assertion credit and owner-extraction disclosures keep their own scopes.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
