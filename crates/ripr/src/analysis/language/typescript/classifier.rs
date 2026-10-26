@@ -5041,22 +5041,30 @@ fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
     if !changed.ends_with('{') || net_open != 1 {
         return Some(false);
     }
-    // One entry per brace still open before the changed line: whether the
-    // line that opened it declares a function. The first entry is the owner's
-    // own body, whatever it is declared with.
+    // One entry per brace still open before the changed line: whether that
+    // brace opens a function body. The first entry is the owner's own body,
+    // whatever it is declared with. A brace is a function body when the text
+    // since the previous `{`, `}` or `;` ends with `=>` or names `function`, so
+    // an ordinary block that merely shares its line with an arrow expression
+    // stays an ordinary block.
     let mut opened_by_function: Vec<bool> = Vec::new();
+    let mut segment = String::new();
     for line in &masked_lines[..start] {
-        let declares_function = line.contains("=>")
-            || line
-                .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
-                .any(|token| token == "function");
-        for c in line.chars() {
+        for c in line.chars().chain(std::iter::once('\n')) {
             match c {
-                '{' => opened_by_function.push(declares_function),
+                '{' => {
+                    let names_function = segment
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                        .any(|token| token == "function");
+                    opened_by_function.push(segment.trim_end().ends_with("=>") || names_function);
+                    segment.clear();
+                }
                 '}' => {
                     opened_by_function.pop();
+                    segment.clear();
                 }
-                _ => {}
+                ';' => segment.clear(),
+                _ => segment.push(c),
             }
         }
     }

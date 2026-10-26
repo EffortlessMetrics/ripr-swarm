@@ -15816,6 +15816,45 @@ fn expected_side_is_live_gives_up_on_a_one_line_changed_if() {
     );
 }
 
+/// #7433 review: an ordinary block that shares its opening line with an
+/// unrelated arrow expression is not a nested function. Its branch pair
+/// (1/2) still folds, so a pin of `3` stays dead (`Some(false)`) and a pin of
+/// `2` stays live; refusing the block as a function would hand the dead pin
+/// boundary credit.
+#[test]
+fn expected_side_is_live_keeps_a_block_that_shares_a_line_with_an_arrow() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number, admin: boolean): number {\n",
+                "    if (admin) { const next = (n: number) => n + 1;\n",
+                "        if (s === 404) {\n",
+                "            return 1;\n",
+                "        }\n",
+                "        return 2;\n",
+                "    }\n",
+                "    return 3;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string(), "admin".to_string()],
+        ..boundary_witness_owner()
+    };
+    let live = |expected: &str| {
+        expected_side_is_live(
+            &owner,
+            "        if (s === 404) {",
+            "s",
+            "404",
+            &["404".to_string()],
+            expected,
+        )
+    };
+    assert_eq!(live("3"), Some(false), "a dead pin stays withheld");
+    assert_eq!(live("2"), Some(true), "the pre-change value stays live");
+}
+
 /// #4117 review of the liveness lookup: a duplicated predicate line cannot be
 /// attributed through the declared offset (a multiline declarator can shift
 /// the offset onto the identical line of a different function), so the check
