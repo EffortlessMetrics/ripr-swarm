@@ -31657,6 +31657,57 @@ fn spec_numbering_detects_missing_index_and_reference_drift() -> Result<(), Stri
 }
 
 #[test]
+fn spec_numbering_accepts_index_rows_from_fragments() -> Result<(), String> {
+    let root = temp_dir("spec-numbering-fragments");
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-one.md"),
+        "# RIPR-SPEC-0001: One\n",
+    );
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0002-two.md"),
+        "# RIPR-SPEC-0002: Two\n",
+    );
+    write(
+        &root.join("docs/specs/README.md"),
+        "| Spec | Status | Title |\n| --- | --- | --- |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+
+    let without = spec_numbering_violations(&root)?;
+    assert!(
+        without
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]")),
+        "{without:?}"
+    );
+
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let with = spec_numbering_violations(&root)?;
+    assert!(
+        !with
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0002")),
+        "{with:?}"
+    );
+
+    // A fragment is not a license to reference a spec that does not exist.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-9999.md"),
+        "| [RIPR-SPEC-9999](missing.md) | proposed | Missing |\n",
+    );
+    let phantom = spec_numbering_violations(&root)?;
+    assert!(
+        phantom
+            .iter()
+            .any(|violation| violation.contains("references missing spec `RIPR-SPEC-9999`")),
+        "{phantom:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn spec_numbering_detects_duplicate_spec_ids() -> Result<(), String> {
     let root = temp_dir("spec-numbering-duplicate");
     write(

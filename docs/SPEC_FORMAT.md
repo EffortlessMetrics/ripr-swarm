@@ -89,8 +89,14 @@ The format check is a deterministic validation of the candidate repository
 state. It verifies required sections, status values, and title/filename ID
 consistency without consulting wall-clock time, filesystem modification time,
 or Git history. The numbering guard verifies that every spec file appears in
-`docs/specs/README.md` and that traceability/capability surfaces do not
+the spec index (`docs/specs/README.md` or a row fragment under
+`docs/spec-index.d/`) and that traceability/capability surfaces do not
 reference missing spec IDs.
+
+A PR that adds a spec puts its one index row in
+`docs/spec-index.d/RIPR-SPEC-NNNN.md` (the same three-column row the README table uses: spec link, status,
+topic) instead of appending to the README
+table, so two PRs that each add a spec do not conflict on the README tail.
 
 A PR registers its tests, fixtures, code, outputs and metrics in a file of its
 own under `.ripr/traceability.d/`. `[[extend]]` with a behavior `id` adds array
