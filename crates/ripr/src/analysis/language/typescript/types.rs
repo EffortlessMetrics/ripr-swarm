@@ -820,6 +820,12 @@ impl TypeScriptErrorPayload {
             | TypeScriptErrorPayloadKind::AssertRejectsObject => {
                 format!("await assert.rejects(..., {})", self.expected)
             }
+            TypeScriptErrorPayloadKind::AvaThrowsObject => {
+                format!("t.throws(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AvaThrowsAsyncObject => {
+                format!("await t.throwsAsync(..., {})", self.expected)
+            }
         }
     }
 }
@@ -867,4 +873,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,
+    /// AVA `t.throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10, AVA).
+    AvaThrowsObject,
+    /// AVA `t.throwsAsync(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10, AVA).
+    AvaThrowsAsyncObject,
 }
