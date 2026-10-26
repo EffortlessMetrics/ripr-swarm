@@ -14,4 +14,5 @@ tests = [
   "crates/ripr/tests/drop_iterator_call_credit.rs::an_adaptor_the_iterator_impl_overrides_does_not_run_next",
   "crates/ripr/tests/drop_iterator_call_credit.rs::syntax_that_may_never_run_in_the_test_relates_nothing",
   "crates/ripr/tests/drop_iterator_call_credit.rs::a_by_value_method_may_move_the_value_out_of_the_block",
+  "crates/ripr/tests/drop_iterator_call_credit.rs::a_drop_the_test_cannot_be_shown_to_run_relates_nothing",
 ]

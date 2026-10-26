@@ -754,8 +754,8 @@ the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
 as for operators. An unconfirmed credit stays withheld; an assertion-free test
 stays a real `weakly_exposed` gap.
 
-`Drop` and `Iterator::next` are related the same narrow way (#10553) but never
-credited. The observed value (a counter behind a shared cell, a collected
+`Drop` and `Iterator::next` are related the same narrow way (#10553); the
+relation alone credits nothing. The observed value (a counter behind a shared cell, a collected
 vector) shares no token with the changed line, so crediting the relation would
 read `weakly_exposed` on a test that pins the effect (#9567). A test relates to
 a `drop` only when it drops an owned value of the impl's type before an
@@ -769,12 +769,16 @@ the same name, a redeclared type, or a macro that may add an impl relates
 nothing. The site must sit at the test body's top level (not in a closure, a
 nested `fn`, a branch or a loop body, a brace-less closure, or a statement
 disabled by an attribute such as `#[cfg(any())]`, which may never run; an
-earlier `return`, `?` or `panic!` is not tracked, as for operators), a by-value method
-of the type called on the value in a scope block (`g.stash()`) may move it out
-and relates nothing, and an adaptor the iterator impl itself overrides
+earlier `return`, `?` or `panic!` is not tracked, as for operators), a method call on the value in a scope block (`g.stash()`, std's `into`) relates
+nothing unless a method of the type proves it borrows `&self`, an attribute in
+the block may remove the binding, a `fn drop`, `mod mem` or renaming `use` in
+the file may shadow the standard `drop`, an assertion must be an assertion
+macro after the drop (not an identifier containing `assert`), and an adaptor the iterator impl itself overrides
 (`fn count(self)` inside `impl Iterator`) does not run `next`. A related test with an exact assertion leaves the finding
-`static_unknown`; confirming that an assertion reads the carrier of the effect
-(and so crediting) is the remaining work of #10553.
+`static_unknown` unless the sibling-effect oracle confirms that the assertion
+reads a cell the iterator or guard writes (`Counter { sink: state.clone() }` then
+`assert_eq!(state.get(), 1)`), which credits it; a collected or returned value
+has no such carrier yet, and confirming one is the remaining work of #10553.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.

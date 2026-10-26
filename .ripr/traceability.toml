@@ -8068,7 +8068,7 @@ tests = [
   "crates/ripr/tests/sibling_effect_oracle.rs::direct_effect_observer_retains_strong_credit",
   "crates/ripr/tests/sibling_effect_oracle.rs::implicit_trait_effect_observers_retain_strong_credit",
   "crates/ripr/tests/sibling_effect_oracle.rs::free_and_inherent_trait_method_names_do_not_admit_decoys",
-  "crates/ripr/tests/sibling_effect_oracle.rs::lone_proximity_retains_discrimination_with_weak_reach",
+  "crates/ripr/tests/sibling_effect_oracle.rs::a_loop_over_the_iterator_reaches_next_and_the_shared_sink_assertion_credits_it",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_effect_kind_cannot_confirm_beside_owner_caller",
   "xtask/src/reports/fixtures/observation_tail_return.rs::tests::inherited_tail_return_has_real_parser_inventory",

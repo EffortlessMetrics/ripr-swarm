@@ -650,3 +650,41 @@ impl Guard {
     };
     check_all(&[peek], &["syntax_under_test"])
 }
+
+#[test]
+fn a_drop_the_test_cannot_be_shown_to_run_relates_nothing() -> Result<(), String> {
+    let cases = [
+        // A test-local `drop` that keeps the guard alive past the assertion.
+        with_body(
+            DROP,
+            "local_fn_named_drop",
+            "fn drop(held: Guard) {\n            pending().push(held);\n        }\n        let counter = Rc::new(Cell::new(0));\n        let g = Guard(counter.clone());\n        drop(g);\n        assert_eq!(counter.get(), 0);",
+        ),
+        with_body(
+            DROP,
+            "local_mod_mem",
+            "mod mem {\n            pub fn drop<T>(_: T) {}\n        }\n        let counter = Rc::new(Cell::new(0));\n        let g = Guard(counter.clone());\n        mem::drop(g);\n        assert_eq!(counter.get(), 0);",
+        ),
+        // `into` is a std method the workspace index never sees; it can move
+        // the guard out of the block.
+        with_body(
+            DROP,
+            "moved_out_by_into",
+            "let counter = Rc::new(Cell::new(0));\n        let kept: Option<Guard>;\n        {\n            let g = Guard(counter.clone());\n            kept = g.into();\n        }\n        assert_eq!(counter.get(), 0);\n        drop(kept);",
+        ),
+        // The attribute removes the binding from the compiled test.
+        with_body(
+            DROP,
+            "binding_disabled_by_cfg",
+            "let counter = Rc::new(Cell::new(0));\n        {\n            #[cfg(any())]\n            let _g = Guard(counter.clone());\n        }\n        assert_eq!(counter.get(), 0);",
+        ),
+        // The only assertion ran while the guard was alive; `asserted` is an
+        // ordinary identifier, not a macro.
+        with_body(
+            DROP,
+            "assertion_before_the_drop",
+            "let counter = Rc::new(Cell::new(0));\n        let g = Guard(counter.clone());\n        assert_eq!(counter.get(), 0);\n        drop(g);\n        let asserted = true;\n        let _ = asserted;",
+        ),
+    ];
+    check_all(&cases, &[])
+}

@@ -116,23 +116,25 @@ pub(super) fn test_drops_owner_value(
             && !is_reference_operand(text, &masked[..before])
             && operand_has_type(text, impl_type, &masked[..before], &returns_self)
     };
-    // A by-value method of the type may move `self` somewhere the test cannot
-    // see (a thread-local, a wrapper), so the value is not dropped at block end.
-    let by_value_method = |name: &str| takes_self_by_value(index, impl_type, name);
-    let by_call = explicit_drops(&masked)
-        .into_iter()
-        .any(|(at, start, close, text)| {
-            evaluated(at)
-                && at_test_top_level(&masked, at)
-                && asserts_after(&masked, close)
-                && owned_value(start, text)
-        });
+    // A method call on the value may move `self` somewhere the test cannot see
+    // (a thread-local, a wrapper, std's `into`), so only a method of the type
+    // known to borrow leaves the value to be dropped at block end.
+    let may_move_receiver = |name: &str| !takes_self_by_ref(index, impl_type, name);
+    let by_call = !standard_drop_may_be_shadowed(source, &test.file, index)
+        && explicit_drops(&masked)
+            .into_iter()
+            .any(|(at, start, close, text)| {
+                evaluated(at)
+                    && at_test_top_level(&masked, at)
+                    && asserts_after(&masked, close)
+                    && owned_value(start, text)
+            });
     let by_scope = || {
         scope_blocks(&masked).into_iter().any(|(open, close)| {
             evaluated(open)
                 && at_test_top_level(&masked, open)
                 && asserts_after(&masked, close)
-                && scope_binds_owned_value(&masked, open, close, &owned_value, &by_value_method)
+                && scope_binds_owned_value(&masked, open, close, &owned_value, &may_move_receiver)
         })
     };
     if !(by_call || by_scope()) || !type_scope_is_clear(test, owner, source, impl_type, index) {
@@ -141,6 +143,28 @@ pub(super) fn test_drops_owner_value(
     *drop.file_level_clear.get_or_init(|| {
         file_is_clear(source, owner, impl_type, index) && !type_may_be_leaked(index, impl_type)
     })
+}
+
+/// Whether the test's file may bind `drop` or `mem` to something other than
+/// the standard function: a `fn drop` that is not a `Drop` impl's method, a
+/// `mod mem`, or a `use` that renames or imports another `drop`.
+fn standard_drop_may_be_shadowed(source: &str, file: &std::path::Path, index: &RustIndex) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declared = masked.matches("fn drop").count();
+    let impl_methods = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == "drop" && function.file == file && function.id.0.contains("::impl ")
+        })
+        .count();
+    declared > impl_methods
+        || contains_word(&masked, "mod mem")
+        || masked.contains("as drop")
+        || masked
+            .lines()
+            .filter(|line| line.trim_start().starts_with("use "))
+            .any(|line| line.contains("drop") && !line.contains("mem::drop"))
 }
 
 /// Whether any workspace file that names the type also spells a leak. A by-value
@@ -159,7 +183,18 @@ fn type_may_be_leaked(index: &RustIndex, impl_type: &str) -> bool {
 
 /// Whether an assertion macro appears after byte `from`.
 fn asserts_after(masked: &str, from: usize) -> bool {
-    masked[from..].contains("assert")
+    let bytes = masked.as_bytes();
+    masked[from..].match_indices('!').any(|(at, _)| {
+        let end = from + at;
+        let start = masked[..end]
+            .bytes()
+            .rposition(|byte| !is_ident_byte(byte))
+            .map_or(0, |separator| separator + 1);
+        let name = &masked[start..end];
+        let name = name.strip_prefix("debug_").unwrap_or(name);
+        // `assert!`, `assert_eq!`, `assert_matches!`, not `x != y`.
+        name.starts_with("assert") && bytes.get(end + 1).is_some_and(|byte| *byte != b'=')
+    })
 }
 
 /// Whether `word` occurs as a whole identifier, or as the last segment of a
@@ -279,20 +314,31 @@ fn scope_blocks(masked: &str) -> Vec<(usize, usize)> {
     blocks
 }
 
-/// The identifier that starts `text` (a field or method name after `.`).
-fn method_after(text: &str) -> &str {
+/// Whether what follows `receiver.` leaves the value in place: a field access
+/// (`g.0`), or a method call to a method `borrows` proves takes `&self`.
+fn receiver_stays_borrowed(text: &str, may_move: &dyn Fn(&str) -> bool) -> bool {
     let len = text.bytes().take_while(|&byte| is_ident_byte(byte)).count();
-    &text[..len]
+    let call = text[len..].starts_with('(') || text[len..].starts_with("::");
+    !call || !may_move(&text[..len])
 }
 
-/// Whether some method called `name` of an `impl` for `impl_type` takes `self`
-/// by value, or its signature cannot be read. A field access has no such method.
-fn takes_self_by_value(index: &RustIndex, impl_type: &str, name: &str) -> bool {
-    index.functions().iter().any(|function| {
-        function.name == name
-            && function.item.has_self_param
-            && super::impl_self_type_name(&function.id.0).as_deref() == Some(impl_type)
-            && !index
+/// Whether every method called `name` of an `impl` for `impl_type` borrows
+/// `self` (`&self` or `&mut self` on its signature line), and at least one
+/// exists. A method the workspace does not define, a trait method such as
+/// `into`, or a signature that cannot be read has no known borrow.
+fn takes_self_by_ref(index: &RustIndex, impl_type: &str, name: &str) -> bool {
+    let methods: Vec<_> = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == name
+                && function.item.has_self_param
+                && super::impl_self_type_name(&function.id.0).as_deref() == Some(impl_type)
+        })
+        .collect();
+    !methods.is_empty()
+        && methods.iter().all(|function| {
+            index
                 .files()
                 .get(&function.file)
                 .and_then(|file| {
@@ -304,7 +350,7 @@ fn takes_self_by_value(index: &RustIndex, impl_type: &str, name: &str) -> bool {
                         .map(|line| line.contains("&self") || line.contains("&mut self"))
                 })
                 .unwrap_or(false)
-    })
+        })
 }
 
 /// Whether the block `open..close` has a `let [mut] name` of the owner's type
@@ -315,9 +361,13 @@ fn scope_binds_owned_value(
     open: usize,
     close: usize,
     owned_value: &dyn Fn(usize, &str) -> bool,
-    by_value_method: &dyn Fn(&str) -> bool,
+    may_move_receiver: &dyn Fn(&str) -> bool,
 ) -> bool {
     let body = &masked[open + 1..close];
+    // An attribute may remove a binding from the compiled test.
+    if body.contains("#[") {
+        return false;
+    }
     let bytes = body.as_bytes();
     body.match_indices("let ").any(|(at, _)| {
         if at > 0 && is_ident_byte(bytes[at - 1]) {
@@ -338,7 +388,7 @@ fn scope_binds_owned_value(
                 || body[..use_at].trim_end().ends_with("let mut");
             let receiver = body[end..].starts_with('.')
                 && !body[end..].starts_with("..")
-                && !by_value_method(method_after(&body[end + 1..]));
+                && receiver_stays_borrowed(&body[end + 1..], may_move_receiver);
             !whole || is_binding || receiver
         });
         only_receiver && owned_value(close, name)
