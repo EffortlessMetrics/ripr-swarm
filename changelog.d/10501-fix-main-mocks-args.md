@@ -1,0 +1,1 @@
+- Fixed `main` failing to compile after #10456 and #10488 landed together: dropped the stale `mocks` argument from two `collect_tests_from_statements` calls in the TypeScript test extractor.
